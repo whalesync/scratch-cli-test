@@ -1,8 +1,8 @@
 'use client';
 
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
-import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
 import type { ComboboxItem } from '@mantine/core';
+import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
 import type { DataFolder, DataFolderId, TransformerConfig, TransformerType } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
@@ -96,7 +96,11 @@ export function TransformerConfigModal({
     onClose();
   };
 
-  const folderSelectData = allFolders.map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }));
+  const folderSelectData = allFolders.map((f) => ({
+    value: f.id,
+    label: f.name,
+    connectorService: f.connectorService,
+  }));
 
   const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
     <Group gap="xs" wrap="nowrap">

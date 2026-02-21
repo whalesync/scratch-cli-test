@@ -350,14 +350,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                   key={tableKey}
                   label={
                     <Group gap={6} align="center" wrap="nowrap">
-                      <Text13Regular c={table.disabled ? 'dimmed' : undefined}>
-                        {table.displayName}
-                      </Text13Regular>
+                      <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
                       {table.disabled && (
                         <Tooltip
-                          label={
-                            DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE
-                          }
+                          label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
                           multiline
                           maw={250}
                           position="right"
@@ -368,8 +364,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                       {!table.disabled && table.disabledCreates && (
                         <Tooltip
                           label={
-                            DISABLED_CREATES_MESSAGES[connectorAccount.service] ??
-                            DEFAULT_DISABLED_CREATES_MESSAGE
+                            DISABLED_CREATES_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_CREATES_MESSAGE
                           }
                           multiline
                           maw={250}
@@ -457,14 +452,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                         key={tableKey}
                         label={
                           <Group gap={6} align="center" wrap="nowrap">
-                            <Text13Regular c={table.disabled ? 'dimmed' : undefined}>
-                              {table.displayName}
-                            </Text13Regular>
+                            <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
                             {table.disabled && (
                               <Tooltip
-                                label={
-                                  DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE
-                                }
+                                label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
                                 multiline
                                 maw={250}
                                 position="right"

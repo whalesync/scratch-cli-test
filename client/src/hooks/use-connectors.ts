@@ -1,7 +1,7 @@
+import { INTERNAL_SERVICES } from '@/types/server-entities/connector-accounts';
 import { Service } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
 import { useScratchPadUser } from './useScratchpadUser';
-import { INTERNAL_SERVICES } from '@/types/server-entities/connector-accounts';
 
 export type AuthMethod = 'user_provided_params' | 'oauth' | 'oauth_custom';
 
@@ -43,10 +43,7 @@ export const useConnectors = () => {
         return 'oauth'; // Default fallback
       }
     },
-    [
-      user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH,
-      user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH,
-    ],
+    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH],
   );
 
   const getSupportedAuthMethods = useCallback(
@@ -84,19 +81,13 @@ export const useConnectors = () => {
       }
       return methods;
     },
-    [
-      user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH,
-      user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH,
-    ],
+    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH],
   );
- 
 
   // For admins show all services. Dedupe in case of overlap between flags and internal services.
   const availableServices = useMemo(() => {
     const connectorListFromFlags = (user?.experimentalFlags?.CONNECTOR_LIST ?? []) as Service[];
-    return isAdmin
-    ? [...new Set([...connectorListFromFlags, ...INTERNAL_SERVICES])]
-    : connectorListFromFlags;
+    return isAdmin ? [...new Set([...connectorListFromFlags, ...INTERNAL_SERVICES])] : connectorListFromFlags;
   }, [user?.experimentalFlags?.CONNECTOR_LIST, isAdmin]);
 
   return {

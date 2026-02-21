@@ -4,9 +4,9 @@ import { ButtonCompactDanger, ButtonCompactPrimary, ButtonCompactSecondary } fro
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { useFileByPath } from '@/hooks/use-file-path';
 import { workbookApi } from '@/lib/api/workbook';
+import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
 import { Box, Group, SegmentedControl, Text, useMantineColorScheme } from '@mantine/core';

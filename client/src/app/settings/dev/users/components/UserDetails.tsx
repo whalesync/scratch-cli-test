@@ -10,9 +10,20 @@ import { devToolsApi } from '@/lib/api/dev-tools';
 import { UserDetails } from '@/types/server-entities/dev-tools';
 import { User } from '@/types/server-entities/users';
 import { getBuildFlavor } from '@/utils/build';
-import { Accordion, Anchor, Card, Checkbox, CloseButton, Code, Group, Stack, Table, TextInput, Tooltip } from '@mantine/core';
-import { IdPrefixes } from '@spinner/shared-types';
-import { ConnectorAccountId } from '@spinner/shared-types';
+import {
+  Accordion,
+  Anchor,
+  Card,
+  Checkbox,
+  CloseButton,
+  Code,
+  Group,
+  Stack,
+  Table,
+  TextInput,
+  Tooltip,
+} from '@mantine/core';
+import { ConnectorAccountId, IdPrefixes } from '@spinner/shared-types';
 import { CreditCardIcon, HatGlassesIcon, LockKeyholeIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { clerkUserUrl, stripeCustomerUrl } from '../utils';
@@ -88,29 +99,32 @@ export const UserDetailsCard = ({
     });
   }, [newOrgId, deleteOldOrg, details, openConfirm, onRefreshUser]);
 
-  const handleViewCredentials = useCallback(async (connectionId: string) => {
-    if (credentialsMap[connectionId] !== undefined) {
-      setCredentialsMap((prev) => {
-        const next = { ...prev };
-        delete next[connectionId];
-        return next;
-      });
-      return;
-    }
-    try {
-      setLoadingCredentials((prev) => ({ ...prev, [connectionId]: true }));
-      const result = await devToolsApi.getConnectionCredentials(connectionId as ConnectorAccountId);
-      setCredentialsMap((prev) => ({ ...prev, [connectionId]: result.credentials }));
-    } catch (error) {
-      console.error('Failed to get credentials', error);
-      ScratchpadNotifications.error({
-        title: 'Failed to get credentials',
-        message: 'Could not retrieve credentials for this connection',
-      });
-    } finally {
-      setLoadingCredentials((prev) => ({ ...prev, [connectionId]: false }));
-    }
-  }, [credentialsMap]);
+  const handleViewCredentials = useCallback(
+    async (connectionId: string) => {
+      if (credentialsMap[connectionId] !== undefined) {
+        setCredentialsMap((prev) => {
+          const next = { ...prev };
+          delete next[connectionId];
+          return next;
+        });
+        return;
+      }
+      try {
+        setLoadingCredentials((prev) => ({ ...prev, [connectionId]: true }));
+        const result = await devToolsApi.getConnectionCredentials(connectionId as ConnectorAccountId);
+        setCredentialsMap((prev) => ({ ...prev, [connectionId]: result.credentials }));
+      } catch (error) {
+        console.error('Failed to get credentials', error);
+        ScratchpadNotifications.error({
+          title: 'Failed to get credentials',
+          message: 'Could not retrieve credentials for this connection',
+        });
+      } finally {
+        setLoadingCredentials((prev) => ({ ...prev, [connectionId]: false }));
+      }
+    },
+    [credentialsMap],
+  );
 
   const handleRemoveSetting = useCallback(
     async (key: string) => {

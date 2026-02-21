@@ -2,6 +2,7 @@
 
 import { Text13Medium } from '@/app/components/base/text';
 import { ComingSoonBadge } from '@/app/components/ComingSoonBadge';
+import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
@@ -9,6 +10,7 @@ import { syncApi } from '@/lib/api/sync';
 import { workbookApi } from '@/lib/api/workbook';
 import { useSyncStore } from '@/stores/sync-store';
 import { DocsUrls } from '@/utils/docs-urls';
+import type { ComboboxItem } from '@mantine/core';
 import {
   ActionIcon,
   Alert,
@@ -27,7 +29,6 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import type { ComboboxItem } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { FieldMapType, SyncId, TransformerConfig, WorkbookId } from '@spinner/shared-types';
 import {
@@ -44,7 +45,6 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { SyncPreviewPanel } from './SyncPreviewPanel';
 import { TransformerConfigModal } from './TransformerConfigModal';
 
