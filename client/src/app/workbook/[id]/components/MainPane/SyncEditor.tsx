@@ -30,7 +30,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { FieldMapType, SyncId, TransformerConfig, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, SyncId, TransformerConfig, WorkbookId } from '@spinner/shared-types';
 import {
   ArrowRight,
   ChevronDown,
@@ -254,31 +254,34 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         return p.sourceId && p.destId && hasValidMappings;
       });
 
-      const folderMappings = validPairs.map((pair) => {
-        const fieldMap: FieldMapType = {};
-        pair.fieldMappings.forEach((m) => {
-          if (m.sourceField && m.destField) {
-            fieldMap[m.sourceField] = m.transformer
-              ? { destinationField: m.destField, transformer: m.transformer }
-              : m.destField;
-          }
-        });
-
-        return {
-          sourceId: pair.sourceId,
-          destId: pair.destId,
-          fieldMap,
-          matchingDestinationField: pair.matchingDestinationField || null,
-          matchingSourceField: pair.matchingSourceField || null,
-        };
-      });
-
       const payload = {
-        name: syncName || 'Untitled Sync',
-        folderMappings,
-        schedule: schedule || null,
-        autoPublish,
-        enableValidation,
+        displayName: syncName || 'Untitled Sync',
+        mappings: {
+          version: 1 as const,
+          tableMappings: validPairs.map((pair) => {
+            const columnMappings = pair.fieldMappings
+              .filter((m) => m.sourceField && m.destField)
+              .map((m) => ({
+                sourceColumnId: m.sourceField,
+                destinationColumnId: m.destField,
+                ...(m.transformer ? { transformer: m.transformer } : {}),
+              }));
+
+            return {
+              sourceDataFolderId: pair.sourceId as DataFolderId,
+              destinationDataFolderId: pair.destId as DataFolderId,
+              columnMappings,
+              ...(pair.matchingSourceField && pair.matchingDestinationField
+                ? {
+                    recordMatching: {
+                      sourceColumnId: pair.matchingSourceField,
+                      destinationColumnId: pair.matchingDestinationField,
+                    },
+                  }
+                : {}),
+            };
+          }),
+        },
       };
 
       if (isNew) {

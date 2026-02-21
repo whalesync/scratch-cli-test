@@ -1,26 +1,20 @@
 import { TSchema } from '@sinclair/typebox';
-import { FieldMapType, FieldMappingValue } from '@spinner/shared-types';
-
-/**
- * Normalizes a field map entry to extract the destination field path.
- * Handles both simple string mappings and complex FieldMappingValue objects.
- */
-export function normalizeFieldMapEntry(value: string | FieldMappingValue): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  return value.destinationField;
-}
+import { ColumnMapping } from '@spinner/shared-types';
 
 /**
  * Validates that the source and destination fields in a mapping are compatible.
  * Returns an array of error messages, or an empty array if valid.
  */
-export function validateSchemaMapping(sourceSchema: TSchema, destSchema: TSchema, mapping: FieldMapType): string[] {
+export function validateSchemaMapping(
+  sourceSchema: TSchema,
+  destSchema: TSchema,
+  columnMappings: ColumnMapping[],
+): string[] {
   const errors: string[] = [];
 
-  for (const [sourcePath, destValue] of Object.entries(mapping)) {
-    const destPath = normalizeFieldMapEntry(destValue);
+  for (const mapping of columnMappings) {
+    const sourcePath = mapping.sourceColumnId;
+    const destPath = mapping.destinationColumnId;
     const sourceFieldSchema = getSchemaAtPath(sourceSchema, sourcePath);
     const destFieldSchema = getSchemaAtPath(destSchema, destPath);
 

@@ -1,4 +1,5 @@
 import { Type } from '@sinclair/typebox';
+import { ColumnMapping } from '@spinner/shared-types';
 import { validateSchemaMapping } from './schema-validator';
 
 describe('validateSchemaMapping', () => {
@@ -27,48 +28,45 @@ describe('validateSchemaMapping', () => {
   });
 
   it('should return no errors for compatible mappings', () => {
-    // We expect int != number failure with current logic, let's remove it from "valid" list for now or accept it fails
-    const safeMapping = {
-      name: 'fullName',
-      'details.description': 'meta.info',
-    };
+    const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'name', destinationColumnId: 'fullName' },
+      { sourceColumnId: 'details.description', destinationColumnId: 'meta.info' },
+    ];
 
-    const errors = validateSchemaMapping(sourceSchema, destSchema, safeMapping);
+    const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(0);
   });
 
   it('should detect mismatching types', () => {
-    const mapping = {
-      name: 'years', // string -> number
-      isActive: 'status', // boolean -> string
-    };
+    const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'name', destinationColumnId: 'years' }, // string -> number
+      { sourceColumnId: 'isActive', destinationColumnId: 'status' }, // boolean -> string
+    ];
 
-    const errors = validateSchemaMapping(sourceSchema, destSchema, mapping);
+    const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(2);
     expect(errors[0]).toContain("Source type 'string' cannot be mapped to Destination type 'number'");
     expect(errors[1]).toContain("Source type 'boolean' cannot be mapped to Destination type 'string'");
   });
 
   it('should handle missing fields', () => {
-    const mapping = {
-      nonExistent: 'fullName',
-      name: 'missingDest',
-    };
+    const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'nonExistent', destinationColumnId: 'fullName' },
+      { sourceColumnId: 'name', destinationColumnId: 'missingDest' },
+    ];
 
-    const errors = validateSchemaMapping(sourceSchema, destSchema, mapping);
+    const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(2);
     expect(errors[0]).toContain("Source field 'nonExistent' not found");
     expect(errors[1]).toContain("Destination field 'missingDest' not found");
   });
 
   it('should handle optional and union unwrapping', () => {
-    // optionalField (string) -> justString (string)
-    // nullableField (string) -> maybeString (string)
-    const mapping = {
-      optionalField: 'justString',
-      nullableField: 'maybeString',
-    };
-    const errors = validateSchemaMapping(sourceSchema, destSchema, mapping);
+    const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'optionalField', destinationColumnId: 'justString' },
+      { sourceColumnId: 'nullableField', destinationColumnId: 'maybeString' },
+    ];
+    const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(0);
   });
 });

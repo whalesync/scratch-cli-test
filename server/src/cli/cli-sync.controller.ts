@@ -13,8 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { SyncId, WorkbookId } from '@spinner/shared-types';
-import { CreateSyncDto, UpdateSyncDto } from '@spinner/shared-types';
+import type { SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
@@ -52,11 +51,11 @@ export class CliSyncController {
   @Post('syncs')
   async createSync(
     @Param('workbookId') workbookId: WorkbookId,
-    @Body() dto: CreateSyncDto,
+    @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     await this.verifyWorkbookAccess(workbookId, req);
-    return await this.syncService.createSync(workbookId, dto, userToActor(req.user));
+    return await this.syncService.createSync(workbookId, body, userToActor(req.user));
   }
 
   @Get('syncs/:syncId')
@@ -82,11 +81,11 @@ export class CliSyncController {
   async updateSync(
     @Param('workbookId') workbookId: WorkbookId,
     @Param('syncId') syncId: string,
-    @Body() dto: UpdateSyncDto,
+    @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     await this.verifyWorkbookAccess(workbookId, req);
-    return await this.syncService.updateSync(workbookId, syncId as SyncId, dto, userToActor(req.user));
+    return await this.syncService.updateSync(workbookId, syncId as SyncId, body, userToActor(req.user));
   }
 
   @Delete('syncs/:syncId')

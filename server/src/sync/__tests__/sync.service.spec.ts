@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type { CreateSyncDto, DataFolderId, SyncId, UpdateSyncDto, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -36,27 +36,21 @@ const SOURCE_FOLDER_ID = 'dfd_src1' as DataFolderId;
 const DEST_FOLDER_ID = 'dfd_dest1' as DataFolderId;
 const ACTOR: Actor = { userId: 'usr_abc', organizationId: 'org_xyz' };
 
-function makeCreateSyncDto(overrides?: Partial<CreateSyncDto>): CreateSyncDto {
+function makeSaveSyncBody(overrides?: Partial<SaveSyncBody>): SaveSyncBody {
   return {
-    name: 'Test Sync',
-    folderMappings: [
-      {
-        sourceId: SOURCE_FOLDER_ID,
-        destId: DEST_FOLDER_ID,
-        fieldMap: { title: 'name' },
-        matchingDestinationField: null,
-        matchingSourceField: null,
-      },
-    ],
-    schedule: null,
-    autoPublish: false,
-    enableValidation: false,
+    displayName: 'Test Sync',
+    mappings: {
+      version: 1,
+      tableMappings: [
+        {
+          sourceDataFolderId: SOURCE_FOLDER_ID,
+          destinationDataFolderId: DEST_FOLDER_ID,
+          columnMappings: [{ sourceColumnId: 'title', destinationColumnId: 'name' }],
+        },
+      ],
+    },
     ...overrides,
-  } as CreateSyncDto;
-}
-
-function makeUpdateSyncDto(overrides?: Partial<UpdateSyncDto>): UpdateSyncDto {
-  return makeCreateSyncDto(overrides) as UpdateSyncDto;
+  };
 }
 
 const MOCK_WORKBOOK = { id: WORKBOOK_ID, organizationId: 'org_xyz' };
@@ -124,8 +118,8 @@ describe('SyncService', () => {
       const createdSync = { id: SYNC_ID, displayName: 'Test Sync', syncTablePairs: [] };
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(createdSync);
 
-      const dto = makeCreateSyncDto();
-      const result = await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      const body = makeSaveSyncBody();
+      const result = await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       expect(result).toEqual(createdSync);
       expect(dbService.client.sync.create).toHaveBeenCalledTimes(1);
@@ -146,42 +140,48 @@ describe('SyncService', () => {
     it('throws NotFoundException when workbook not found', async () => {
       workbookService.findOne.mockResolvedValue(null);
 
-      await expect(service.createSync(WORKBOOK_ID, makeCreateSyncDto(), ACTOR)).rejects.toThrow(NotFoundException);
+      await expect(service.createSync(WORKBOOK_ID, makeSaveSyncBody(), ACTOR)).rejects.toThrow(NotFoundException);
       expect(dbService.client.sync.create).not.toHaveBeenCalled();
     });
 
-    it('calls fetchSchemaSpec for each folder mapping when validation enabled', async () => {
+    it('calls fetchSchemaSpec for each table mapping and validates when schemas present', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
       validateSchemaMapping.mockReturnValue([]);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({ enableValidation: true });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      const body = makeSaveSyncBody();
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledTimes(2);
       expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledWith(SOURCE_FOLDER_ID, ACTOR);
       expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledWith(DEST_FOLDER_ID, ACTOR);
     });
 
-    it('throws NotFoundException when source schema missing', async () => {
+    it('skips validation gracefully when schemas are absent', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      dataFolderService.fetchSchemaSpec.mockResolvedValueOnce(null);
+      dataFolderService.fetchSchemaSpec.mockResolvedValue(null);
+      (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({ enableValidation: true });
+      const body = makeSaveSyncBody();
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      await expect(service.createSync(WORKBOOK_ID, dto, ACTOR)).rejects.toThrow(NotFoundException);
+      expect(validateSchemaMapping).not.toHaveBeenCalled();
+      expect(dbService.client.sync.create).toHaveBeenCalled();
     });
 
-    it('throws NotFoundException when destination schema missing', async () => {
+    it('throws NotFoundException when source schema present but dest schema missing', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       dataFolderService.fetchSchemaSpec
         .mockResolvedValueOnce({ schema: MOCK_SCHEMA } as any)
         .mockResolvedValueOnce(null);
+      (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({ enableValidation: true });
+      const body = makeSaveSyncBody();
+      // Should skip validation since one schema is missing
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      await expect(service.createSync(WORKBOOK_ID, dto, ACTOR)).rejects.toThrow(NotFoundException);
+      expect(validateSchemaMapping).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException on schema validation errors', async () => {
@@ -189,64 +189,60 @@ describe('SyncService', () => {
       dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
       validateSchemaMapping.mockReturnValue(['Type mismatch for field X']);
 
-      const dto = makeCreateSyncDto({ enableValidation: true });
+      const body = makeSaveSyncBody();
 
-      await expect(service.createSync(WORKBOOK_ID, dto, ACTOR)).rejects.toThrow(BadRequestException);
+      await expect(service.createSync(WORKBOOK_ID, body, ACTOR)).rejects.toThrow(BadRequestException);
     });
 
-    it('skips schema validation when enableValidation is false', async () => {
+    it('creates multiple syncTablePairs for multiple table mappings', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({ enableValidation: false });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
-
-      expect(dataFolderService.fetchSchemaSpec).not.toHaveBeenCalled();
-    });
-
-    it('creates multiple syncTablePairs for multiple folder mappings', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
-
-      const dto = makeCreateSyncDto({
-        folderMappings: [
-          {
-            sourceId: 'dfd_src1',
-            destId: 'dfd_dest1',
-            fieldMap: { a: 'b' },
-            matchingDestinationField: null,
-          },
-          {
-            sourceId: 'dfd_src2',
-            destId: 'dfd_dest2',
-            fieldMap: { c: 'd' },
-            matchingDestinationField: null,
-          },
-        ] as any,
+      const body = makeSaveSyncBody({
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: 'dfd_src1' as DataFolderId,
+              destinationDataFolderId: 'dfd_dest1' as DataFolderId,
+              columnMappings: [{ sourceColumnId: 'a', destinationColumnId: 'b' }],
+            },
+            {
+              sourceDataFolderId: 'dfd_src2' as DataFolderId,
+              destinationDataFolderId: 'dfd_dest2' as DataFolderId,
+              columnMappings: [{ sourceColumnId: 'c', destinationColumnId: 'd' }],
+            },
+          ],
+        },
       });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       const createArg = (dbService.client.sync.create as jest.Mock).mock.calls[0][0];
       expect(createArg.data.mappings.tableMappings).toHaveLength(2);
       expect(createArg.data.syncTablePairs.create).toHaveLength(2);
     });
 
-    it('includes recordMatching when both matching fields are set', async () => {
+    it('includes recordMatching when set', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: { email: 'email_addr' },
-            matchingSourceField: 'email',
-            matchingDestinationField: 'email_addr',
-          },
-        ] as any,
+      const body = makeSaveSyncBody({
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: SOURCE_FOLDER_ID,
+              destinationDataFolderId: DEST_FOLDER_ID,
+              columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_addr' }],
+              recordMatching: {
+                sourceColumnId: 'email',
+                destinationColumnId: 'email_addr',
+              },
+            },
+          ],
+        },
       });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       const tableMapping = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0];
       expect(tableMapping.recordMatching).toEqual({
@@ -255,22 +251,12 @@ describe('SyncService', () => {
       });
     });
 
-    it('omits recordMatching when matching fields are partially set', async () => {
+    it('omits recordMatching when not set', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: { a: 'b' },
-            matchingSourceField: 'email',
-            matchingDestinationField: null,
-          },
-        ] as any,
-      });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      const body = makeSaveSyncBody();
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       const tableMapping = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0];
       expect(tableMapping.recordMatching).toBeUndefined();
@@ -281,31 +267,34 @@ describe('SyncService', () => {
       const createdSync = { id: SYNC_ID };
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(createdSync);
 
-      await service.createSync(WORKBOOK_ID, makeCreateSyncDto(), ACTOR);
+      await service.createSync(WORKBOOK_ID, makeSaveSyncBody(), ACTOR);
 
       expect(posthogService.trackCreateSync).toHaveBeenCalledWith(ACTOR, createdSync);
     });
 
-    it('handles complex FieldMappingValue with transformer', async () => {
+    it('handles columnMappings with transformer', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: {
-              price: {
-                destinationField: 'amount',
-                transformer: { type: 'string_to_number', options: { stripCurrency: true } },
-              },
+      const body = makeSaveSyncBody({
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: SOURCE_FOLDER_ID,
+              destinationDataFolderId: DEST_FOLDER_ID,
+              columnMappings: [
+                {
+                  sourceColumnId: 'price',
+                  destinationColumnId: 'amount',
+                  transformer: { type: 'string_to_number', options: { stripCurrency: true } },
+                },
+              ],
             },
-            matchingDestinationField: null,
-          },
-        ] as any,
+          ],
+        },
       });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       const columnMappings = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0]
         .columnMappings;
@@ -318,21 +307,26 @@ describe('SyncService', () => {
       ]);
     });
 
-    it('handles simple string field mapping', async () => {
+    it('handles multiple simple column mappings', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeCreateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: { title: 'name', slug: 'url_slug' },
-            matchingDestinationField: null,
-          },
-        ] as any,
+      const body = makeSaveSyncBody({
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: SOURCE_FOLDER_ID,
+              destinationDataFolderId: DEST_FOLDER_ID,
+              columnMappings: [
+                { sourceColumnId: 'title', destinationColumnId: 'name' },
+                { sourceColumnId: 'slug', destinationColumnId: 'url_slug' },
+              ],
+            },
+          ],
+        },
       });
-      await service.createSync(WORKBOOK_ID, dto, ACTOR);
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       const columnMappings = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0]
         .columnMappings;
@@ -360,8 +354,8 @@ describe('SyncService', () => {
         return fn(tx);
       });
 
-      const dto = makeUpdateSyncDto({ name: 'Updated' });
-      const result = await service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR);
+      const body = makeSaveSyncBody({ displayName: 'Updated' });
+      const result = await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
 
       expect(result).toEqual(updatedSync);
       expect(dbService.client.$transaction).toHaveBeenCalledTimes(1);
@@ -370,7 +364,7 @@ describe('SyncService', () => {
     it('throws NotFoundException when workbook not found', async () => {
       workbookService.findOne.mockResolvedValue(null);
 
-      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeUpdateSyncDto(), ACTOR)).rejects.toThrow(
+      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -379,96 +373,85 @@ describe('SyncService', () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
 
-      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeUpdateSyncDto(), ACTOR)).rejects.toThrow(
+      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR)).rejects.toThrow(
         NotFoundException,
       );
     });
 
-    it('throws BadRequestException when record matching fields are misaligned with field map', async () => {
+    it('throws BadRequestException when record matching fields are not in column mappings', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const dto = makeUpdateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: { email: 'email_addr' },
-            matchingSourceField: 'email',
-            matchingDestinationField: 'WRONG_FIELD',
-          },
-        ] as any,
+      const body = makeSaveSyncBody({
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: SOURCE_FOLDER_ID,
+              destinationDataFolderId: DEST_FOLDER_ID,
+              columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_addr' }],
+              recordMatching: {
+                sourceColumnId: 'email',
+                destinationColumnId: 'WRONG_FIELD',
+              },
+            },
+          ],
+        },
       });
 
-      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR)).rejects.toThrow(BadRequestException);
+      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR)).rejects.toThrow(BadRequestException);
     });
 
-    it('passes when record matching fields are aligned with field map', async () => {
+    it('passes when record matching fields are aligned with column mappings', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
 
-      const dto = makeUpdateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: { email: 'email_addr' },
-            matchingSourceField: 'email',
-            matchingDestinationField: 'email_addr',
-          },
-        ] as any,
-      });
-
-      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR)).resolves.toBeDefined();
-    });
-
-    it('handles complex FieldMappingValue alignment check', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
-      (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
-
-      const dto = makeUpdateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: {
-              price: { destinationField: 'amount', transformer: { type: 'string_to_number' } },
+      const body = makeSaveSyncBody({
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: SOURCE_FOLDER_ID,
+              destinationDataFolderId: DEST_FOLDER_ID,
+              columnMappings: [{ sourceColumnId: 'email', destinationColumnId: 'email_addr' }],
+              recordMatching: {
+                sourceColumnId: 'email',
+                destinationColumnId: 'email_addr',
+              },
             },
-            matchingSourceField: 'price',
-            matchingDestinationField: 'amount',
-          },
-        ] as any,
+          ],
+        },
       });
 
-      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR)).resolves.toBeDefined();
+      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR)).resolves.toBeDefined();
     });
 
-    it('validates schema mappings when enableValidation is true', async () => {
+    it('validates schema mappings when schemas are present', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
       validateSchemaMapping.mockReturnValue([]);
       (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
 
-      const dto = makeUpdateSyncDto({ enableValidation: true });
-      await service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR);
+      const body = makeSaveSyncBody();
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
 
       expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledTimes(2);
       expect(validateSchemaMapping).toHaveBeenCalled();
     });
 
-    it('skips validation when enableValidation is false', async () => {
+    it('skips validation when schemas are absent', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      dataFolderService.fetchSchemaSpec.mockResolvedValue(null);
       (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
 
-      const dto = makeUpdateSyncDto({ enableValidation: false });
-      await service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR);
+      const body = makeSaveSyncBody();
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
 
-      expect(dataFolderService.fetchSchemaSpec).not.toHaveBeenCalled();
+      expect(validateSchemaMapping).not.toHaveBeenCalled();
     });
 
     it('calls PostHog tracking after update', async () => {
@@ -477,47 +460,9 @@ describe('SyncService', () => {
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
 
-      await service.updateSync(WORKBOOK_ID, SYNC_ID, makeUpdateSyncDto(), ACTOR);
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR);
 
       expect(posthogService.trackUpdateSync).toHaveBeenCalledWith(ACTOR, updatedSync);
-    });
-
-    it('defaults matchingSourceField to "id" when missing', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
-
-      let capturedUpdateData: any;
-      (dbService.client.$transaction as jest.Mock).mockImplementation(async (fn: (tx: any) => Promise<any>) => {
-        const tx = {
-          syncTablePair: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
-          sync: {
-            update: jest.fn().mockImplementation((arg: any) => {
-              capturedUpdateData = arg;
-              return { id: SYNC_ID, syncTablePairs: [] };
-            }),
-          },
-        };
-        return fn(tx);
-      });
-
-      const dto = makeUpdateSyncDto({
-        folderMappings: [
-          {
-            sourceId: SOURCE_FOLDER_ID,
-            destId: DEST_FOLDER_ID,
-            fieldMap: { id: 'dest_id' },
-            matchingSourceField: undefined,
-            matchingDestinationField: 'dest_id',
-          },
-        ] as any,
-      });
-      await service.updateSync(WORKBOOK_ID, SYNC_ID, dto, ACTOR);
-
-      const tableMapping = capturedUpdateData.data.mappings.tableMappings[0];
-      expect(tableMapping.recordMatching).toEqual({
-        sourceColumnId: 'id',
-        destinationColumnId: 'dest_id',
-      });
     });
   });
 
@@ -652,7 +597,7 @@ describe('SyncService', () => {
         WORKBOOK_ID,
         SOURCE_FOLDER_ID,
         DEST_FOLDER_ID,
-        { title: 'name' },
+        [{ sourceColumnId: 'title', destinationColumnId: 'name' }],
         ACTOR,
       );
 
@@ -669,7 +614,7 @@ describe('SyncService', () => {
         WORKBOOK_ID,
         SOURCE_FOLDER_ID,
         DEST_FOLDER_ID,
-        { title: 'name' },
+        [{ sourceColumnId: 'title', destinationColumnId: 'name' }],
         ACTOR,
       );
 
@@ -685,7 +630,7 @@ describe('SyncService', () => {
         WORKBOOK_ID,
         SOURCE_FOLDER_ID,
         DEST_FOLDER_ID,
-        { title: 'name' },
+        [{ sourceColumnId: 'title', destinationColumnId: 'name' }],
         ACTOR,
       );
 

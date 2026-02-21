@@ -41,8 +41,5 @@ export * from './dto/workbook/list-files.dto';
 export * from './dto/workbook/pull-files.dto';
 export * from './dto/workbook/update-workbook.dto';
 
-export * from './dto/sync/create-sync.dto';
-export * from './dto/sync/preview-record.dto';
-export * from './dto/sync/update-sync.dto';
-export * from './dto/sync/validate-mapping.dto';
+export * from './dto/sync/sync-api';
 export * from './dto/transformer/test-transformer.dto';

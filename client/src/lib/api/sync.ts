@@ -1,12 +1,4 @@
-import {
-  CreateSyncDto,
-  FieldMapType,
-  PreviewRecordResponse,
-  Sync,
-  SyncId,
-  UpdateSyncDto,
-  WorkbookId,
-} from '@spinner/shared-types';
+import { ColumnMapping, SaveSyncBody, PreviewRecordResponse, Sync, SyncId, WorkbookId } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -17,20 +9,20 @@ interface RunSyncResponse {
 }
 
 export const syncApi = {
-  create: async (workbookId: WorkbookId, dto: CreateSyncDto): Promise<Sync> => {
+  create: async (workbookId: WorkbookId, body: SaveSyncBody): Promise<Sync> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<Sync>(`/workbooks/${workbookId}/syncs`, dto);
+      const res = await axios.post<Sync>(`/workbooks/${workbookId}/syncs`, body);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to create sync');
     }
   },
 
-  update: async (workbookId: WorkbookId, syncId: SyncId, dto: UpdateSyncDto): Promise<unknown> => {
+  update: async (workbookId: WorkbookId, syncId: SyncId, body: SaveSyncBody): Promise<unknown> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.patch(`/workbooks/${workbookId}/syncs/${syncId}`, dto);
+      const res = await axios.patch(`/workbooks/${workbookId}/syncs/${syncId}`, body);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to update sync');
@@ -61,14 +53,14 @@ export const syncApi = {
     workbookId: WorkbookId,
     sourceId: string,
     filePath: string,
-    fieldMap: FieldMapType,
+    columnMappings: ColumnMapping[],
   ): Promise<PreviewRecordResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<PreviewRecordResponse>(`/workbooks/${workbookId}/syncs/preview-record`, {
         sourceId,
         filePath,
-        fieldMap,
+        columnMappings,
       });
       return res.data;
     } catch (error) {

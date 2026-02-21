@@ -6,8 +6,8 @@ import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { syncApi } from '@/lib/api/sync';
 import { Alert, Badge, Box, Code, Collapse, Group, Select, Spoiler, Stack, Table } from '@mantine/core';
 import type {
+  ColumnMapping,
   DataFolderId,
-  FieldMapType,
   PreviewFieldResult,
   TransformerConfig,
   WorkbookId,
@@ -49,16 +49,21 @@ export function SyncPreviewPanel({ workbookId, sourceId, fieldMappings }: SyncPr
 
   const canPreview = !!sourceId && hasValidMappings && !!selectedFile;
 
-  const buildFieldMap = useCallback((): FieldMapType => {
-    const fieldMap: FieldMapType = {};
+  const buildColumnMappings = useCallback((): ColumnMapping[] => {
+    const columnMappings: ColumnMapping[] = [];
     for (const m of fieldMappings) {
       if (m.sourceField && m.destField) {
-        fieldMap[m.sourceField] = m.transformer
-          ? { destinationField: m.destField, transformer: m.transformer }
-          : m.destField;
+        const mapping: ColumnMapping = {
+          sourceColumnId: m.sourceField,
+          destinationColumnId: m.destField,
+        };
+        if (m.transformer) {
+          mapping.transformer = m.transformer;
+        }
+        columnMappings.push(mapping);
       }
     }
-    return fieldMap;
+    return columnMappings;
   }, [fieldMappings]);
 
   const handlePreview = async () => {
@@ -67,8 +72,8 @@ export function SyncPreviewPanel({ workbookId, sourceId, fieldMappings }: SyncPr
     setError(null);
     setResults(null);
     try {
-      const fieldMap = buildFieldMap();
-      const response = await syncApi.previewRecord(workbookId, sourceId, selectedFile!, fieldMap);
+      const columnMappings = buildColumnMappings();
+      const response = await syncApi.previewRecord(workbookId, sourceId, selectedFile!, columnMappings);
       setResults(response.fields);
     } catch (err) {
       setError(getHumanReadableErrorMessage(err));

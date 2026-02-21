@@ -12,13 +12,14 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
-import {
-  CreateSyncDto,
-  PreviewRecordDto,
+import type {
+  DataFolderId,
+  PreviewRecordBody,
   PreviewRecordResponse,
-  UpdateSyncDto,
-  ValidateMappingDto,
+  SaveSyncBody,
+  SyncId,
+  ValidateMappingBody,
+  WorkbookId,
 } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
@@ -42,20 +43,20 @@ export class SyncController {
   @Post()
   async createSync(
     @Param('workbookId') workbookId: WorkbookId,
-    @Body() dto: CreateSyncDto,
+    @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    return await this.syncService.createSync(workbookId, dto, userToActor(req.user));
+    return await this.syncService.createSync(workbookId, body, userToActor(req.user));
   }
 
   @Patch(':syncId')
   async updateSync(
     @Param('workbookId') workbookId: WorkbookId,
     @Param('syncId') syncId: SyncId,
-    @Body() dto: UpdateSyncDto,
+    @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    return await this.syncService.updateSync(workbookId, syncId, dto, userToActor(req.user));
+    return await this.syncService.updateSync(workbookId, syncId, body, userToActor(req.user));
   }
   @Get()
   async listSyncs(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<unknown> {
@@ -126,23 +127,23 @@ export class SyncController {
   @Post('preview-record')
   async previewRecord(
     @Param('workbookId') workbookId: WorkbookId,
-    @Body() dto: PreviewRecordDto,
+    @Body() body: PreviewRecordBody,
     @Req() req: RequestWithUser,
   ): Promise<PreviewRecordResponse> {
-    return this.syncService.previewRecord(workbookId, dto, userToActor(req.user));
+    return this.syncService.previewRecord(workbookId, body, userToActor(req.user));
   }
 
   @Post('validate-mapping')
   async validateMapping(
     @Param('workbookId') workbookId: WorkbookId,
-    @Body() dto: ValidateMappingDto,
+    @Body() body: ValidateMappingBody,
     @Req() req: RequestWithUser,
   ): Promise<{ valid: boolean }> {
     const valid = await this.syncService.validateFolderMapping(
       workbookId,
-      dto.sourceId as DataFolderId,
-      dto.destId as DataFolderId,
-      dto.mapping,
+      body.sourceId as DataFolderId,
+      body.destId as DataFolderId,
+      body.columnMappings,
       userToActor(req.user),
     );
     return { valid };

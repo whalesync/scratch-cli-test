@@ -1351,7 +1351,7 @@ Tests if a connection's credentials are valid.
 
 ## Syncs
 
-Syncs copy data between folders with field mapping.
+Syncs copy data between folders with field mapping and optional transformers.
 
 ### List Syncs
 
@@ -1367,21 +1367,25 @@ Returns all syncs for a workbook.
 [
   {
     "id": "sync_123",
-    "name": "Blog to Webflow",
-    "folderMappings": [
-      {
-        "sourceId": "dfolder_airtable",
-        "destId": "dfolder_webflow",
-        "fieldMap": {
-          "title": "Title",
-          "body": "Content"
-        },
-        "matchingDestinationField": "airtable-id",
-        "matchingSourceField": "id"
-      }
-    ],
-    "schedule": "0 */15 * * * *",
-    "autoPublish": true,
+    "displayName": "Blog to Webflow",
+    "mappings": {
+      "version": 1,
+      "tableMappings": [
+        {
+          "sourceDataFolderId": "dfolder_airtable",
+          "destinationDataFolderId": "dfolder_webflow",
+          "columnMappings": [
+            { "sourceColumnId": "title", "destinationColumnId": "name" },
+            { "sourceColumnId": "body", "destinationColumnId": "content" }
+          ],
+          "recordMatching": {
+            "sourceColumnId": "id",
+            "destinationColumnId": "airtable_id"
+          }
+        }
+      ]
+    },
+    "lastSyncTime": "2025-01-19T12:00:00.000Z",
     "createdAt": "2025-01-19T00:00:00.000Z"
   }
 ]
@@ -1400,21 +1404,25 @@ Returns a single sync by ID.
 ```json
 {
   "id": "sync_123",
-  "name": "Blog to Webflow",
-  "folderMappings": [
-    {
-      "sourceId": "dfolder_airtable",
-      "destId": "dfolder_webflow",
-      "fieldMap": {
-        "title": "Title",
-        "body": "Content"
-      },
-      "matchingDestinationField": "airtable-id",
-      "matchingSourceField": "id"
-    }
-  ],
-  "schedule": "0 */15 * * * *",
-  "autoPublish": true,
+  "displayName": "Blog to Webflow",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [
+      {
+        "sourceDataFolderId": "dfolder_airtable",
+        "destinationDataFolderId": "dfolder_webflow",
+        "columnMappings": [
+          { "sourceColumnId": "title", "destinationColumnId": "name" },
+          { "sourceColumnId": "body", "destinationColumnId": "content" }
+        ],
+        "recordMatching": {
+          "sourceColumnId": "id",
+          "destinationColumnId": "airtable_id"
+        }
+      }
+    ]
+  },
+  "lastSyncTime": "2025-01-19T12:00:00.000Z",
   "createdAt": "2025-01-19T00:00:00.000Z"
 }
 ```
@@ -1436,36 +1444,43 @@ Creates a new sync between folders.
 
 ```json
 {
-  "name": "Blog to Webflow",
-  "folderMappings": [
-    {
-      "sourceId": "dfolder_airtable",
-      "destId": "dfolder_webflow",
-      "fieldMap": {
-        "title": "Title",
-        "body": "Content",
-        "slug": "Slug"
-      },
-      "matchingDestinationField": "airtable-id",
-      "matchingSourceField": "id"
-    }
-  ],
-  "schedule": null,
-  "autoPublish": true
+  "displayName": "Blog to Webflow",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [
+      {
+        "sourceDataFolderId": "dfolder_airtable",
+        "destinationDataFolderId": "dfolder_webflow",
+        "columnMappings": [
+          { "sourceColumnId": "title", "destinationColumnId": "name" },
+          { "sourceColumnId": "body", "destinationColumnId": "content" },
+          { "sourceColumnId": "slug", "destinationColumnId": "slug" }
+        ],
+        "recordMatching": {
+          "sourceColumnId": "id",
+          "destinationColumnId": "airtable_id"
+        }
+      }
+    ]
+  }
 }
 ```
 
-| Field                                       | Type    | Required | Description                                |
-| ------------------------------------------- | ------- | -------- | ------------------------------------------ |
-| `name`                                      | string  | Yes      | Sync name                                  |
-| `folderMappings`                            | array   | Yes      | Array of folder mappings                   |
-| `folderMappings[].sourceId`                 | string  | Yes      | Source folder ID                           |
-| `folderMappings[].destId`                   | string  | Yes      | Destination folder ID                      |
-| `folderMappings[].fieldMap`                 | object  | Yes      | Field mapping (dest field -> source field) |
-| `folderMappings[].matchingDestinationField` | string  | No       | Field used to match records (destination)  |
-| `folderMappings[].matchingSourceField`      | string  | No       | Field used to match records (source)       |
-| `schedule`                                  | string  | No       | Cron schedule for automatic runs           |
-| `autoPublish`                               | boolean | No       | Auto-publish after sync (default: true)    |
+| Field                                                           | Type   | Required | Description                             |
+| --------------------------------------------------------------- | ------ | -------- | --------------------------------------- |
+| `displayName`                                                   | string | Yes      | Sync display name                       |
+| `mappings`                                                      | object | Yes      | Sync mapping configuration              |
+| `mappings.version`                                              | number | Yes      | Schema version (must be `1`)            |
+| `mappings.tableMappings`                                        | array  | Yes      | Array of table mappings                 |
+| `mappings.tableMappings[].sourceDataFolderId`                   | string | Yes      | Source data folder ID                   |
+| `mappings.tableMappings[].destinationDataFolderId`              | string | Yes      | Destination data folder ID              |
+| `mappings.tableMappings[].columnMappings`                       | array  | Yes      | Array of column mappings                |
+| `mappings.tableMappings[].columnMappings[].sourceColumnId`      | string | Yes      | Source column/field ID                  |
+| `mappings.tableMappings[].columnMappings[].destinationColumnId` | string | Yes      | Destination column/field ID             |
+| `mappings.tableMappings[].columnMappings[].transformer`         | object | No       | Transformer configuration               |
+| `mappings.tableMappings[].recordMatching`                       | object | No       | Record matching configuration           |
+| `mappings.tableMappings[].recordMatching.sourceColumnId`        | string | Yes      | Source field used to match records      |
+| `mappings.tableMappings[].recordMatching.destinationColumnId`   | string | Yes      | Destination field used to match records |
 
 **Response (201):** Returns created sync.
 
@@ -1481,14 +1496,13 @@ Updates an existing sync configuration.
 
 ```json
 {
-  "name": "Updated Sync Name",
-  "folderMappings": [...],
-  "schedule": "0 */30 * * * *",
-  "autoPublish": false
+  "displayName": "Updated Sync Name",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [...]
+  }
 }
 ```
-
-All fields are optional.
 
 **Response:** Returns updated sync.
 
@@ -1526,7 +1540,7 @@ Manually triggers a sync run.
 POST /workbooks/:workbookId/syncs/validate-mapping
 ```
 
-Validates a folder mapping configuration before creating or updating a sync.
+Validates column mappings between a source and destination folder before creating or updating a sync.
 
 **Request Body:**
 
@@ -1534,18 +1548,18 @@ Validates a folder mapping configuration before creating or updating a sync.
 {
   "sourceId": "dfolder_source",
   "destId": "dfolder_dest",
-  "mapping": {
-    "title": "Title",
-    "body": "Content"
-  }
+  "columnMappings": [
+    { "sourceColumnId": "title", "destinationColumnId": "name" },
+    { "sourceColumnId": "body", "destinationColumnId": "content" }
+  ]
 }
 ```
 
-| Field      | Type   | Required | Description                          |
-| ---------- | ------ | -------- | ------------------------------------ |
-| `sourceId` | string | Yes      | Source data folder ID                |
-| `destId`   | string | Yes      | Destination data folder ID           |
-| `mapping`  | object | Yes      | Field mapping (dest field -> source) |
+| Field            | Type   | Required | Description                          |
+| ---------------- | ------ | -------- | ------------------------------------ |
+| `sourceId`       | string | Yes      | Source data folder ID                |
+| `destId`         | string | Yes      | Destination data folder ID           |
+| `columnMappings` | array  | Yes      | Array of column mappings to validate |
 
 **Response:**
 

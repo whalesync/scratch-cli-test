@@ -62,7 +62,7 @@ The --config flag accepts either a file path or inline JSON.
 
 Examples:
   scratchmd syncs create --config sync-config.json
-  scratchmd syncs create --config '{"name":"My Sync","folderMappings":[...]}'
+  scratchmd syncs create --config '{"displayName":"My Sync","mappings":{"version":1,"tableMappings":[...]}}'
   scratchmd syncs create --workbook wb_abc123 --config sync-config.json`,
 	RunE: runSyncsCreate,
 }
@@ -76,7 +76,7 @@ The --config flag accepts either a file path or inline JSON.
 
 Examples:
   scratchmd syncs update sync_abc123 --config sync-config.json
-  scratchmd syncs update sync_abc123 --config '{"name":"Updated","folderMappings":[...]}'`,
+  scratchmd syncs update sync_abc123 --config '{"displayName":"Updated","mappings":{"version":1,"tableMappings":[...]}}'`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSyncsUpdate,
 }

@@ -4,18 +4,15 @@ import { TSchema } from '@sinclair/typebox';
 import {
   ColumnMapping,
   createScratchPendingPublishId,
-  CreateSyncDto,
   createSyncId,
   DataFolderId,
-  FieldMappingValue,
-  FieldMapType,
   LookupFieldOptions,
   PreviewFieldResult,
-  PreviewRecordDto,
+  PreviewRecordBody,
   PreviewRecordResponse,
+  SaveSyncBody,
   SyncId,
   TableMapping,
-  UpdateSyncDto,
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
@@ -28,6 +25,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
+import { previewRecordBodySchema, saveSyncBodySchema } from 'src/sync/sync-mapping.schema';
 import {
   createLookupTools,
   getTransformer,
@@ -41,31 +39,6 @@ import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
 import { WorkbookService } from 'src/workbook/workbook.service';
-
-/**
- * Converts a FieldMapType entry to a ColumnMapping.
- * Handles both simple string mappings and complex FieldMappingValue objects.
- */
-function fieldMapEntryToColumnMapping(sourceField: string, value: string | FieldMappingValue): ColumnMapping {
-  if (typeof value === 'string') {
-    return {
-      sourceColumnId: sourceField,
-      destinationColumnId: value,
-    };
-  }
-  return {
-    sourceColumnId: sourceField,
-    destinationColumnId: value.destinationField,
-    transformer: value.transformer,
-  };
-}
-
-/**
- * Converts a FieldMapType to an array of ColumnMapping.
- */
-function fieldMapToColumnMappings(fieldMap: FieldMapType): ColumnMapping[] {
-  return Object.entries(fieldMap).map(([sourceField, value]) => fieldMapEntryToColumnMapping(sourceField, value));
-}
 
 export interface RemoteIdMappingPair {
   sourceRemoteId: string;
@@ -99,32 +72,28 @@ export class SyncService {
 
   /**
    * Creates a new sync.
-   * Ignores schedule and autoPublish for now as they are not in the data model.
    */
-  async createSync(workbookId: WorkbookId, dto: CreateSyncDto, actor: Actor): Promise<unknown> {
-    // Verify user has access to the workbook
+  async createSync(workbookId: WorkbookId, body: SaveSyncBody, actor: Actor): Promise<unknown> {
+    const parsed = saveSyncBodySchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid sync body: ${parsed.error.message}`);
+    }
+
     const workbook = await this.workbookService.findOne(workbookId, actor);
     if (!workbook) {
       throw new NotFoundException('Workbook not found');
     }
 
-    // Validate mappings
-    if (dto.enableValidation !== false) {
-      for (const mapping of dto.folderMappings) {
-        const sourceId = mapping.sourceId as DataFolderId;
-        const destId = mapping.destId as DataFolderId;
+    // Validate mappings — skip gracefully when schemas are absent
+    for (const tableMapping of body.mappings.tableMappings) {
+      const sourceId = tableMapping.sourceDataFolderId;
+      const destId = tableMapping.destinationDataFolderId;
 
-        const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
-        const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
+      const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
+      const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
 
-        if (!sourceFolder?.schema) {
-          throw new NotFoundException(`Source folder schema not found for ${mapping.sourceId}`);
-        }
-        if (!destFolder?.schema) {
-          throw new NotFoundException(`Destination folder schema not found for ${mapping.destId}`);
-        }
-
-        const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, mapping.fieldMap);
+      if (sourceFolder?.schema && destFolder?.schema) {
+        const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
         if (errors.length > 0) {
           throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
         }
@@ -133,39 +102,17 @@ export class SyncService {
 
     const syncId = createSyncId();
 
-    // Create the sync and its table pairs in a transaction
     const sync = await this.db.client.sync.create({
       data: {
         id: syncId,
-        displayName: dto.name,
-        // Create SyncMapping structure
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        mappings: {
-          version: 1,
-          tableMappings: dto.folderMappings.map((mapping) => {
-            const columnMappings = fieldMapToColumnMappings(mapping.fieldMap);
-
-            const tableMapping: TableMapping = {
-              sourceDataFolderId: mapping.sourceId as DataFolderId,
-              destinationDataFolderId: mapping.destId as DataFolderId,
-              columnMappings,
-            };
-
-            if (mapping.matchingDestinationField && mapping.matchingSourceField) {
-              tableMapping.recordMatching = {
-                sourceColumnId: mapping.matchingSourceField,
-                destinationColumnId: mapping.matchingDestinationField,
-              };
-            }
-            return tableMapping;
-          }),
-        } as any,
+        displayName: body.displayName,
+        mappings: body.mappings as unknown as Prisma.InputJsonValue,
         syncTablePairs: {
-          create: dto.folderMappings.map((mapping) => ({
-            id: createSyncId(), // Using sync ID generator for pair ID as well
-            sourceDataFolderId: mapping.sourceId,
-            destinationDataFolderId: mapping.destId,
-            // We would store fieldMap and matchingField here if the model supported it,
+          create: body.mappings.tableMappings.map((tm) => ({
+            id: createSyncId(),
+            sourceDataFolderId: tm.sourceDataFolderId,
+            destinationDataFolderId: tm.destinationDataFolderId,
+            // We would store columnMappings and recordMatching here if the model supported it,
             // but for now we just link the folders.
             // TODO: Update SyncTablePair model to support field mappings
           })),
@@ -184,7 +131,12 @@ export class SyncService {
    * Updates an existing sync.
    * Replaces mapped folders and settings.
    */
-  async updateSync(workbookId: WorkbookId, syncId: SyncId, dto: UpdateSyncDto, actor: Actor): Promise<unknown> {
+  async updateSync(workbookId: WorkbookId, syncId: SyncId, body: SaveSyncBody, actor: Actor): Promise<unknown> {
+    const parsed = saveSyncBodySchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid sync body: ${parsed.error.message}`);
+    }
+
     const workbook = await this.workbookService.findOne(workbookId, actor);
     if (!workbook) {
       throw new NotFoundException('Workbook not found');
@@ -197,37 +149,33 @@ export class SyncService {
       throw new NotFoundException('Sync not found');
     }
 
-    // Validate mappings if validation is enabled (default false)
-    if (dto.enableValidation !== false) {
-      for (const mapping of dto.folderMappings) {
-        const sourceId = mapping.sourceId as DataFolderId;
-        const destId = mapping.destId as DataFolderId;
+    // Validate mappings — skip gracefully when schemas are absent
+    for (const tableMapping of body.mappings.tableMappings) {
+      const sourceId = tableMapping.sourceDataFolderId;
+      const destId = tableMapping.destinationDataFolderId;
 
-        const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
-        const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
+      const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
+      const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
 
-        if (!sourceFolder?.schema) {
-          throw new NotFoundException(`Source folder schema not found for ${mapping.sourceId}`);
-        }
-        if (!destFolder?.schema) {
-          throw new NotFoundException(`Destination folder schema not found for ${mapping.destId}`);
-        }
-
-        const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, mapping.fieldMap);
+      if (sourceFolder?.schema && destFolder?.schema) {
+        const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
         if (errors.length > 0) {
           throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
         }
       }
     }
 
-    // Validate record matching fields exist in field mappings
-    for (const mapping of dto.folderMappings) {
-      if (mapping.matchingSourceField && mapping.matchingDestinationField) {
-        const destField = mapping.fieldMap[mapping.matchingSourceField];
-        const resolvedDest = typeof destField === 'string' ? destField : destField?.destinationField;
-        if (resolvedDest !== mapping.matchingDestinationField) {
+    // Validate record matching fields exist in column mappings
+    for (const tableMapping of body.mappings.tableMappings) {
+      if (tableMapping.recordMatching) {
+        const hasMatchingColumn = tableMapping.columnMappings.some(
+          (cm) =>
+            cm.sourceColumnId === tableMapping.recordMatching!.sourceColumnId &&
+            cm.destinationColumnId === tableMapping.recordMatching!.destinationColumnId,
+        );
+        if (!hasMatchingColumn) {
           throw new BadRequestException(
-            `Record matching fields "${mapping.matchingSourceField}" -> "${mapping.matchingDestinationField}" do not match any field mapping`,
+            `Record matching fields "${tableMapping.recordMatching.sourceColumnId}" -> "${tableMapping.recordMatching.destinationColumnId}" do not match any column mapping`,
           );
         }
       }
@@ -244,33 +192,16 @@ export class SyncService {
       return tx.sync.update({
         where: { id: syncId },
         data: {
-          displayName: dto.name,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          mappings: {
-            version: 1,
-            tableMappings: dto.folderMappings.map((mapping) => {
-              const columnMappings = fieldMapToColumnMappings(mapping.fieldMap);
-
-              const tableMapping: TableMapping = {
-                sourceDataFolderId: mapping.sourceId as DataFolderId,
-                destinationDataFolderId: mapping.destId as DataFolderId,
-                columnMappings,
-              };
-
-              if (mapping.matchingDestinationField) {
-                tableMapping.recordMatching = {
-                  sourceColumnId: mapping.matchingSourceField || 'id',
-                  destinationColumnId: mapping.matchingDestinationField,
-                };
-              }
-              return tableMapping;
-            }),
-          } as any,
+          displayName: body.displayName,
+          mappings: body.mappings as unknown as Prisma.InputJsonValue,
           syncTablePairs: {
-            create: dto.folderMappings.map((mapping) => ({
+            create: body.mappings.tableMappings.map((tm) => ({
               id: createSyncId(),
-              sourceDataFolderId: mapping.sourceId,
-              destinationDataFolderId: mapping.destId,
+              sourceDataFolderId: tm.sourceDataFolderId,
+              destinationDataFolderId: tm.destinationDataFolderId,
+              // We would store columnMappings and recordMatching here if the model supported it,
+              // but for now we just link the folders.
+              // TODO: Update SyncTablePair model to support field mappings
             })),
           },
         },
@@ -1173,31 +1104,39 @@ export class SyncService {
   }
 
   /**
-   * Previews how a single source record would be transformed by the given field mappings.
+   * Previews how a single source record would be transformed by the given column mappings.
    * Does not write anything — returns per-field source/transformed pairs.
    */
-  async previewRecord(workbookId: WorkbookId, dto: PreviewRecordDto, actor: Actor): Promise<PreviewRecordResponse> {
+  async previewRecord(workbookId: WorkbookId, body: PreviewRecordBody, actor: Actor): Promise<PreviewRecordResponse> {
+    const parsed = previewRecordBodySchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid preview body: ${parsed.error.message}`);
+    }
+
     const workbook = await this.workbookService.findOne(workbookId, actor);
     if (!workbook) {
       throw new NotFoundException('Workbook not found');
     }
 
-    const sourceId = dto.sourceId as DataFolderId;
+    const sourceId = body.sourceId as DataFolderId;
     const sourceFolder = await this.db.client.dataFolder.findUnique({ where: { id: sourceId } });
     if (!sourceFolder) {
-      throw new NotFoundException(`Source folder ${dto.sourceId} not found`);
+      throw new NotFoundException(`Source folder ${body.sourceId} not found`);
     }
 
     const sourceIdColumn = this.getIdColumnFromSchema(sourceFolder.schema);
 
     // Fetch the single source file
-    const file = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, dto.filePath);
+    const file = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, body.filePath);
     if (!file) {
-      throw new NotFoundException(`File not found: ${dto.filePath}`);
+      throw new NotFoundException(`File not found: ${body.filePath}`);
     }
 
-    const record = parseFileToRecord({ folderId: sourceId, path: dto.filePath, content: file.content }, sourceIdColumn);
-    const columnMappings = fieldMapToColumnMappings(dto.fieldMap);
+    const record = parseFileToRecord(
+      { folderId: sourceId, path: body.filePath, content: file.content },
+      sourceIdColumn,
+    );
+    const columnMappings = body.columnMappings;
 
     // Stub lookup tools — FK lookups are not available in preview
     const notAvailableInPreviewError = new Error('Lookup is not available in preview');
@@ -1263,7 +1202,7 @@ export class SyncService {
     workbookId: WorkbookId,
     sourceId: DataFolderId,
     destId: DataFolderId,
-    mapping: Record<string, string>,
+    columnMappings: ColumnMapping[],
     actor: Actor,
   ): Promise<boolean> {
     const sourceSpec = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
@@ -1279,17 +1218,16 @@ export class SyncService {
       return true;
     }
 
-    return this.validateSchemaMapping(sourceSpec.schema, destSpec.schema, mapping);
+    return this.validateSchemaMapping(sourceSpec.schema, destSpec.schema, columnMappings);
   }
 
   /**
    * Pure validation logic between two schemas.
    */
-  private validateSchemaMapping(sourceSchema: TSchema, destSchema: TSchema, mapping: Record<string, string>): boolean {
-    // Keep variables usage to satisfy linter until implemented
+  private validateSchemaMapping(sourceSchema: TSchema, destSchema: TSchema, columnMappings: ColumnMapping[]): boolean {
     void sourceSchema;
     void destSchema;
-    void mapping;
+    void columnMappings;
     return true;
   }
 }

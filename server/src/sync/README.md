@@ -77,17 +77,38 @@ This two-phase approach is necessary because destination records must exist (cre
 | `DELETE` | `/workbooks/:workbookId/syncs/:syncId`          | Delete a sync                              |
 | `POST`   | `/workbooks/:workbookId/syncs/validate-mapping` | Validate field mapping between two schemas |
 
-### Create/Update Sync DTO
+### Create/Update Sync
 
-DTOs are defined in `@spinner/shared-types` (see [packages/shared-types/src/dto/sync/](../../../packages/shared-types/src/dto/sync/)). Key fields:
+The API accepts a `SaveSyncBody` interface (defined in `@spinner/shared-types`):
 
-- `name`: Display name for the sync
-- `folderMappings`: Array of source→destination folder mappings, each with:
-  - `sourceId`, `destId`: DataFolder IDs
-  - `fieldMap`: `FieldMapType` mapping source columns to destination columns. Values can be either a simple `string` (destination field name) or a `FieldMappingValue` object with `destinationField` and an optional `transformer` configuration.
-  - `matchingSourceField`, `matchingDestinationField`: Optional columns used for record matching
-- `schedule`, `autoPublish`: Accepted but not yet implemented
-- `enableValidation` (UpdateSyncDto only): Set to `false` to skip schema validation on update
+```json
+{
+  "displayName": "My Sync",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [
+      {
+        "sourceDataFolderId": "dfd_source",
+        "destinationDataFolderId": "dfd_dest",
+        "columnMappings": [
+          { "sourceColumnId": "title", "destinationColumnId": "name" },
+          {
+            "sourceColumnId": "price",
+            "destinationColumnId": "amount",
+            "transformer": { "type": "string_to_number", "options": { "stripCurrency": true } }
+          }
+        ],
+        "recordMatching": {
+          "sourceColumnId": "id",
+          "destinationColumnId": "source_id"
+        }
+      }
+    ]
+  }
+}
+```
+
+The `mappings` field uses the `SyncMapping` type directly — there is no conversion layer between the API payload and the stored format. Validation is performed using zod schemas in `sync-mapping.schema.ts`.
 
 ## Examples
 
@@ -99,52 +120,33 @@ Sync blog posts from Airtable to a Webflow CMS collection, renaming fields to ma
 
 ```json
 {
-  "name": "Airtable Posts → Webflow",
-  "folderMappings": [
-    {
-      "sourceId": "datafolder_airtable_posts",
-      "destId": "datafolder_webflow_posts",
-      "fieldMap": {
-        "Title": "name",
-        "Body": "post-body",
-        "Author Name": "author",
-        "Published": "is-published"
-      },
-      "matchingSourceField": "id",
-      "matchingDestinationField": "airtable_id"
-    }
-  ]
-}
-```
-
-**Stored SyncMapping** — the server converts the DTO `fieldMap` object into a `columnMappings` array:
-
-```json
-{
-  "version": 1,
-  "tableMappings": [
-    {
-      "sourceDataFolderId": "datafolder_airtable_posts",
-      "destinationDataFolderId": "datafolder_webflow_posts",
-      "columnMappings": [
-        { "sourceColumnId": "Title", "destinationColumnId": "name" },
-        { "sourceColumnId": "Body", "destinationColumnId": "post-body" },
-        { "sourceColumnId": "Author Name", "destinationColumnId": "author" },
-        { "sourceColumnId": "Published", "destinationColumnId": "is-published" }
-      ],
-      "recordMatching": {
-        "sourceColumnId": "id",
-        "destinationColumnId": "airtable_id"
+  "displayName": "Airtable Posts → Webflow",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [
+      {
+        "sourceDataFolderId": "datafolder_airtable_posts",
+        "destinationDataFolderId": "datafolder_webflow_posts",
+        "columnMappings": [
+          { "sourceColumnId": "Title", "destinationColumnId": "name" },
+          { "sourceColumnId": "Body", "destinationColumnId": "post-body" },
+          { "sourceColumnId": "Author Name", "destinationColumnId": "author" },
+          { "sourceColumnId": "Published", "destinationColumnId": "is-published" }
+        ],
+        "recordMatching": {
+          "sourceColumnId": "id",
+          "destinationColumnId": "airtable_id"
+        }
       }
-    }
-  ]
+    ]
+  }
 }
 ```
 
 **What happens at sync time:**
 
 - Source record `{ "id": "rec_001", "Title": "Hello World", "Body": "...", "Author Name": "Jane", "Published": true }` becomes destination record `{ "airtable_id": "rec_001", "name": "Hello World", "post-body": "...", "author": "Jane", "is-published": true }`.
-- `airtable_id` is auto-injected via record matching even though it's not in `fieldMap`.
+- `airtable_id` is auto-injected via record matching even though it's not in `columnMappings`.
 - On subsequent runs, records with matching `id` ↔ `airtable_id` values are updated in place rather than duplicated.
 
 ### Example 2: Transformers and foreign key resolution
@@ -155,61 +157,63 @@ Sync products and their categories from Notion to a CMS. Products reference cate
 
 ```json
 {
-  "name": "Notion Products → CMS",
-  "folderMappings": [
-    {
-      "sourceId": "datafolder_notion_categories",
-      "destId": "datafolder_cms_categories",
-      "fieldMap": {
-        "Name": "name",
-        "Description": "description"
-      },
-      "matchingSourceField": "id",
-      "matchingDestinationField": "notion_id"
-    },
-    {
-      "sourceId": "datafolder_notion_products",
-      "destId": "datafolder_cms_products",
-      "fieldMap": {
-        "Name": "title",
-        "Price": {
-          "destinationField": "price",
-          "transformer": {
-            "type": "string_to_number",
-            "options": { "stripCurrency": true }
-          }
-        },
-        "Category ID": {
-          "destinationField": "category_id",
-          "transformer": {
-            "type": "source_fk_to_dest_fk",
-            "options": { "referencedDataFolderId": "datafolder_notion_categories" }
-          }
+  "displayName": "Notion Products → CMS",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [
+      {
+        "sourceDataFolderId": "datafolder_notion_categories",
+        "destinationDataFolderId": "datafolder_cms_categories",
+        "columnMappings": [
+          { "sourceColumnId": "Name", "destinationColumnId": "name" },
+          { "sourceColumnId": "Description", "destinationColumnId": "description" }
+        ],
+        "recordMatching": {
+          "sourceColumnId": "id",
+          "destinationColumnId": "notion_id"
         }
       },
-      "matchingSourceField": "id",
-      "matchingDestinationField": "notion_id"
-    }
-  ]
+      {
+        "sourceDataFolderId": "datafolder_notion_products",
+        "destinationDataFolderId": "datafolder_cms_products",
+        "columnMappings": [
+          { "sourceColumnId": "Name", "destinationColumnId": "title" },
+          {
+            "sourceColumnId": "Price",
+            "destinationColumnId": "price",
+            "transformer": { "type": "string_to_number", "options": { "stripCurrency": true } }
+          },
+          {
+            "sourceColumnId": "Category ID",
+            "destinationColumnId": "category_id",
+            "transformer": {
+              "type": "source_fk_to_dest_fk",
+              "options": { "referencedDataFolderId": "datafolder_notion_categories" }
+            }
+          },
+          {
+            "sourceColumnId": "Category ID",
+            "destinationColumnId": "category_name",
+            "transformer": {
+              "type": "lookup_field",
+              "options": {
+                "referencedDataFolderId": "datafolder_notion_categories",
+                "referencedFieldPath": "Name"
+              }
+            }
+          }
+        ],
+        "recordMatching": {
+          "sourceColumnId": "id",
+          "destinationColumnId": "notion_id"
+        }
+      }
+    ]
+  }
 }
 ```
 
-> **Note on `fieldMap` limitations:** Since `fieldMap` is a `Record<string, ...>`, each source field can only appear once. To map one source field to multiple destination fields (e.g., using both `source_fk_to_dest_fk` and `lookup_field` on the same column), edit the stored `SyncMapping.columnMappings` array directly, which supports duplicate `sourceColumnId` entries:
->
-> ```json
-> "columnMappings": [
->   {
->     "sourceColumnId": "Category ID",
->     "destinationColumnId": "category_id",
->     "transformer": { "type": "source_fk_to_dest_fk", "options": { "referencedDataFolderId": "datafolder_notion_categories" } }
->   },
->   {
->     "sourceColumnId": "Category ID",
->     "destinationColumnId": "category_name",
->     "transformer": { "type": "lookup_field", "options": { "referencedDataFolderId": "datafolder_notion_categories", "referencedFieldPath": "Name" } }
->   }
-> ]
-> ```
+> **Note:** Since `columnMappings` is an array, the same source field can appear multiple times — e.g., `Category ID` is mapped to both `category_id` (via `source_fk_to_dest_fk`) and `category_name` (via `lookup_field`).
 
 **What happens at sync time:**
 
@@ -222,22 +226,25 @@ Copy data into a fresh destination (no matching needed — all records are creat
 
 ```json
 {
-  "name": "Import Event Speakers",
-  "folderMappings": [
-    {
-      "sourceId": "datafolder_speakers_csv",
-      "destId": "datafolder_website_speakers",
-      "fieldMap": {
-        "full_name": "name",
-        "bio_text": "biography",
-        "headshot_url": "photo"
+  "displayName": "Import Event Speakers",
+  "mappings": {
+    "version": 1,
+    "tableMappings": [
+      {
+        "sourceDataFolderId": "datafolder_speakers_csv",
+        "destinationDataFolderId": "datafolder_website_speakers",
+        "columnMappings": [
+          { "sourceColumnId": "full_name", "destinationColumnId": "name" },
+          { "sourceColumnId": "bio_text", "destinationColumnId": "biography" },
+          { "sourceColumnId": "headshot_url", "destinationColumnId": "photo" }
+        ]
       }
-    }
-  ]
+    ]
+  }
 }
 ```
 
-Without `matchingSourceField` / `matchingDestinationField`, every source record creates a new destination record on each run. This is useful for one-time imports or sources where records don't have stable IDs.
+Without `recordMatching`, every source record creates a new destination record on each run. This is useful for one-time imports or sources where records don't have stable IDs.
 
 ## Schema Validation
 
@@ -248,7 +255,7 @@ The `validateSchemaMapping()` function in [schema-validator.ts](schema-validator
 - Compares base types (string, number, boolean, object)
 - Returns validation errors if types don't match
 
-Validation runs on create and update by default. Set `enableValidation: false` in the update DTO to skip it.
+Validation always runs on create and update, but is skipped gracefully when either source or destination schema is absent (e.g., for scratch folders).
 
 ## Record Matching
 
@@ -307,14 +314,12 @@ If a transformer fails, the record is skipped and an error is added to the sync 
 
 ## Key Files
 
-| File                                                                                                  | Description                                                     |
-| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [sync.service.ts](sync.service.ts)                                                                    | Core sync logic                                                 |
-| [sync.controller.ts](sync.controller.ts)                                                              | REST API endpoints                                              |
-| [schema-validator.ts](schema-validator.ts)                                                            | Schema compatibility checking                                   |
-| [transformers/](transformers/)                                                                        | Transformer registry, types, `LookupTools`, and implementations |
-| [shared-types/.../create-sync.dto.ts](../../../packages/shared-types/src/dto/sync/create-sync.dto.ts) | Canonical DTO definitions                                       |
-
-## Limitations
-
-- `schedule` and `autoPublish` are accepted in DTOs but not used
+| File                                                                                    | Description                                                     |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [sync.service.ts](sync.service.ts)                                                      | Core sync logic                                                 |
+| [sync.controller.ts](sync.controller.ts)                                                | REST API endpoints                                              |
+| [schema-validator.ts](schema-validator.ts)                                              | Schema compatibility checking                                   |
+| [sync-mapping.schema.ts](sync-mapping.schema.ts)                                        | Zod validation schemas for request bodies                       |
+| [transformers/](transformers/)                                                          | Transformer registry, types, `LookupTools`, and implementations |
+| [shared-types/.../sync-api.ts](../../../packages/shared-types/src/dto/sync/sync-api.ts) | API interface definitions                                       |
+| [shared-types/.../sync-mapping.ts](../../../packages/shared-types/src/sync-mapping.ts)  | SyncMapping type definitions                                    |

@@ -78,20 +78,29 @@ describe('SyncController', () => {
   // createSync
   // ---------------------------------------------------------------------------
   describe('createSync', () => {
-    const dto = {
-      name: 'My Sync',
-      folderMappings: [{ sourceId: 'dfd_src', destId: 'dfd_dest', fieldMap: { a: 'b' } }],
+    const body = {
+      displayName: 'My Sync',
+      mappings: {
+        version: 1 as const,
+        tableMappings: [
+          {
+            sourceDataFolderId: 'dfd_src' as DataFolderId,
+            destinationDataFolderId: 'dfd_dest' as DataFolderId,
+            columnMappings: [{ sourceColumnId: 'a', destinationColumnId: 'b' }],
+          },
+        ],
+      },
     };
 
     it('delegates to syncService.createSync and returns its result', async () => {
       const expected = { id: SYNC_ID, displayName: 'My Sync' };
       syncService.createSync.mockResolvedValue(expected);
 
-      const result = await controller.createSync(WORKBOOK_ID, dto as any, makeReqWithUser());
+      const result = await controller.createSync(WORKBOOK_ID, body, makeReqWithUser());
 
       expect(syncService.createSync).toHaveBeenCalledWith(
         WORKBOOK_ID,
-        dto,
+        body,
         expect.objectContaining({ userId: USER_ID, organizationId: ORG_ID }),
       );
       expect(result).toEqual(expected);
@@ -100,7 +109,7 @@ describe('SyncController', () => {
     it('passes actor derived from req.user via userToActor', async () => {
       syncService.createSync.mockResolvedValue({});
 
-      await controller.createSync(WORKBOOK_ID, dto as any, makeReqWithUser());
+      await controller.createSync(WORKBOOK_ID, body, makeReqWithUser());
 
       const actor = syncService.createSync.mock.calls[0][2];
       expect(actor.userId).toBe(USER_ID);
@@ -112,21 +121,30 @@ describe('SyncController', () => {
   // updateSync
   // ---------------------------------------------------------------------------
   describe('updateSync', () => {
-    const dto = {
-      name: 'Updated Sync',
-      folderMappings: [{ sourceId: 'dfd_src', destId: 'dfd_dest', fieldMap: { x: 'y' } }],
+    const body = {
+      displayName: 'Updated Sync',
+      mappings: {
+        version: 1 as const,
+        tableMappings: [
+          {
+            sourceDataFolderId: 'dfd_src' as DataFolderId,
+            destinationDataFolderId: 'dfd_dest' as DataFolderId,
+            columnMappings: [{ sourceColumnId: 'x', destinationColumnId: 'y' }],
+          },
+        ],
+      },
     };
 
     it('delegates to syncService.updateSync and returns its result', async () => {
       const expected = { id: SYNC_ID, displayName: 'Updated Sync' };
       syncService.updateSync.mockResolvedValue(expected);
 
-      const result = await controller.updateSync(WORKBOOK_ID, SYNC_ID, dto as any, makeReqWithUser());
+      const result = await controller.updateSync(WORKBOOK_ID, SYNC_ID, body, makeReqWithUser());
 
       expect(syncService.updateSync).toHaveBeenCalledWith(
         WORKBOOK_ID,
         SYNC_ID,
-        dto,
+        body,
         expect.objectContaining({ userId: USER_ID }),
       );
       expect(result).toEqual(expected);
@@ -286,15 +304,19 @@ describe('SyncController', () => {
   // ---------------------------------------------------------------------------
   describe('previewRecord', () => {
     it('delegates to syncService.previewRecord and returns its result', async () => {
-      const dto = { sourceId: 'dfd_src', filePath: 'folder/file.json', fieldMap: { a: 'b' } };
+      const body = {
+        sourceId: 'dfd_src',
+        filePath: 'folder/file.json',
+        columnMappings: [{ sourceColumnId: 'a', destinationColumnId: 'b' }],
+      };
       const expected = { recordId: 'rec1', fields: [] };
       syncService.previewRecord.mockResolvedValue(expected);
 
-      const result = await controller.previewRecord(WORKBOOK_ID, dto as any, makeReqWithUser());
+      const result = await controller.previewRecord(WORKBOOK_ID, body as any, makeReqWithUser());
 
       expect(syncService.previewRecord).toHaveBeenCalledWith(
         WORKBOOK_ID,
-        dto,
+        body,
         expect.objectContaining({ userId: USER_ID }),
       );
       expect(result).toEqual(expected);
@@ -305,12 +327,16 @@ describe('SyncController', () => {
   // validateMapping
   // ---------------------------------------------------------------------------
   describe('validateMapping', () => {
-    const dto = { sourceId: 'dfd_src', destId: 'dfd_dest', mapping: { col1: 'col2' } };
+    const body = {
+      sourceId: 'dfd_src',
+      destId: 'dfd_dest',
+      columnMappings: [{ sourceColumnId: 'col1', destinationColumnId: 'col2' }],
+    };
 
     it('returns { valid: true } when service returns true', async () => {
       syncService.validateFolderMapping.mockResolvedValue(true);
 
-      const result = await controller.validateMapping(WORKBOOK_ID, dto as any, makeReqWithUser());
+      const result = await controller.validateMapping(WORKBOOK_ID, body as any, makeReqWithUser());
 
       expect(result).toEqual({ valid: true });
     });
@@ -318,21 +344,21 @@ describe('SyncController', () => {
     it('returns { valid: false } when service returns false', async () => {
       syncService.validateFolderMapping.mockResolvedValue(false);
 
-      const result = await controller.validateMapping(WORKBOOK_ID, dto as any, makeReqWithUser());
+      const result = await controller.validateMapping(WORKBOOK_ID, body as any, makeReqWithUser());
 
       expect(result).toEqual({ valid: false });
     });
 
-    it('passes sourceId/destId cast as DataFolderId and mapping to service', async () => {
+    it('passes sourceId/destId cast as DataFolderId and columnMappings to service', async () => {
       syncService.validateFolderMapping.mockResolvedValue(true);
 
-      await controller.validateMapping(WORKBOOK_ID, dto as any, makeReqWithUser());
+      await controller.validateMapping(WORKBOOK_ID, body as any, makeReqWithUser());
 
       expect(syncService.validateFolderMapping).toHaveBeenCalledWith(
         WORKBOOK_ID,
         'dfd_src' as DataFolderId,
         'dfd_dest' as DataFolderId,
-        { col1: 'col2' },
+        [{ sourceColumnId: 'col1', destinationColumnId: 'col2' }],
         expect.objectContaining({ userId: USER_ID }),
       );
     });

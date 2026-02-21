@@ -94,7 +94,8 @@
     "stripe": "^18.5.0",
     "turndown": "^7.2.1",
     "webflow-api": "^3.2.0",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
