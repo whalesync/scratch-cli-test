@@ -522,6 +522,43 @@ describe('SyncService', () => {
   });
 
   // ===========================================================================
+  // findOneForWorkbook
+  // ===========================================================================
+  describe('findOneForWorkbook', () => {
+    const mockSyncWithPairs = { id: SYNC_ID, displayName: 'Test Sync', syncTablePairs: [] };
+
+    it('returns sync scoped to workbook with syncTablePairs included', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(mockSyncWithPairs);
+
+      const result = await service.findOneForWorkbook(WORKBOOK_ID, SYNC_ID, ACTOR);
+
+      expect(result).toEqual(mockSyncWithPairs);
+      expect(dbService.client.sync.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: SYNC_ID,
+          syncTablePairs: { some: { sourceDataFolder: { workbookId: WORKBOOK_ID } } },
+        },
+        include: { syncTablePairs: true },
+      });
+    });
+
+    it('throws NotFoundException when workbook not found', async () => {
+      workbookService.findOne.mockResolvedValue(null);
+
+      await expect(service.findOneForWorkbook(WORKBOOK_ID, SYNC_ID, ACTOR)).rejects.toThrow(NotFoundException);
+      expect(dbService.client.sync.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when sync not found', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.findOneForWorkbook(WORKBOOK_ID, SYNC_ID, ACTOR)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ===========================================================================
   // findAllForWorkbook
   // ===========================================================================
   describe('findAllForWorkbook', () => {

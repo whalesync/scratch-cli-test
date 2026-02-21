@@ -285,6 +285,36 @@ export class SyncService {
   }
 
   /**
+   * Gets a single sync by ID, scoped to the given workbook.
+   */
+  async findOneForWorkbook(workbookId: WorkbookId, syncId: SyncId, actor: Actor): Promise<unknown> {
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    const sync = await this.db.client.sync.findFirst({
+      where: {
+        id: syncId,
+        syncTablePairs: {
+          some: {
+            sourceDataFolder: { workbookId },
+          },
+        },
+      },
+      include: {
+        syncTablePairs: true,
+      },
+    });
+
+    if (!sync) {
+      throw new NotFoundException('Sync not found');
+    }
+
+    return sync;
+  }
+
+  /**
    * Lists all syncs for a workbook.
    */
   async findAllForWorkbook(workbookId: WorkbookId, actor: Actor): Promise<unknown[]> {

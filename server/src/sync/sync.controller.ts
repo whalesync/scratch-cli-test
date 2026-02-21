@@ -62,6 +62,15 @@ export class SyncController {
     return await this.syncService.findAllForWorkbook(workbookId, userToActor(req.user));
   }
 
+  @Get(':syncId')
+  async getSync(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('syncId') syncId: SyncId,
+    @Req() req: RequestWithUser,
+  ): Promise<unknown> {
+    return await this.syncService.findOneForWorkbook(workbookId, syncId, userToActor(req.user));
+  }
+
   @Post(':syncId/run')
   async runSync(
     @Param('workbookId') workbookId: WorkbookId,

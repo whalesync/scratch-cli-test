@@ -45,6 +45,7 @@ describe('SyncController', () => {
     syncService = {
       createSync: jest.fn(),
       updateSync: jest.fn(),
+      findOneForWorkbook: jest.fn(),
       findAllForWorkbook: jest.fn(),
       deleteSync: jest.fn(),
       previewRecord: jest.fn(),
@@ -129,6 +130,31 @@ describe('SyncController', () => {
         expect.objectContaining({ userId: USER_ID }),
       );
       expect(result).toEqual(expected);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getSync
+  // ---------------------------------------------------------------------------
+  describe('getSync', () => {
+    it('delegates to syncService.findOneForWorkbook and returns its result', async () => {
+      const expected = { id: SYNC_ID, displayName: 'My Sync', syncTablePairs: [] };
+      syncService.findOneForWorkbook.mockResolvedValue(expected);
+
+      const result = await controller.getSync(WORKBOOK_ID, SYNC_ID, makeReqWithUser());
+
+      expect(syncService.findOneForWorkbook).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        SYNC_ID,
+        expect.objectContaining({ userId: USER_ID, organizationId: ORG_ID }),
+      );
+      expect(result).toEqual(expected);
+    });
+
+    it('propagates NotFoundException from service when sync not found', async () => {
+      syncService.findOneForWorkbook.mockRejectedValue(new NotFoundException('Sync not found'));
+
+      await expect(controller.getSync(WORKBOOK_ID, SYNC_ID, makeReqWithUser())).rejects.toThrow(NotFoundException);
     });
   });
 

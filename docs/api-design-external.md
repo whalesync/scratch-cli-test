@@ -105,6 +105,7 @@ POST   /connector-accounts/:id/test                     # Test connection
 
 ```
 GET    /workbooks/:workbookId/syncs                     # List syncs
+GET    /workbooks/:workbookId/syncs/:syncId             # Get sync
 POST   /workbooks/:workbookId/syncs                     # Create sync
 PATCH  /workbooks/:workbookId/syncs/:syncId             # Update sync
 DELETE /workbooks/:workbookId/syncs/:syncId             # Delete sync
@@ -1385,6 +1386,43 @@ Returns all syncs for a workbook.
   }
 ]
 ```
+
+### Get Sync
+
+```
+GET /workbooks/:workbookId/syncs/:syncId
+```
+
+Returns a single sync by ID.
+
+**Response:**
+
+```json
+{
+  "id": "sync_123",
+  "name": "Blog to Webflow",
+  "folderMappings": [
+    {
+      "sourceId": "dfolder_airtable",
+      "destId": "dfolder_webflow",
+      "fieldMap": {
+        "title": "Title",
+        "body": "Content"
+      },
+      "matchingDestinationField": "airtable-id",
+      "matchingSourceField": "id"
+    }
+  ],
+  "schedule": "0 */15 * * * *",
+  "autoPublish": true,
+  "createdAt": "2025-01-19T00:00:00.000Z"
+}
+```
+
+**Errors:**
+
+- `404`: Workbook not found
+- `404`: Sync not found
 
 ### Create Sync
 
