@@ -178,13 +178,13 @@ export class PublishPlanService {
       onProgress,
     );
 
-    // Identify files that need editing because they reference a deleted file
+    // Identify files that need editing because they reference a deleted file.
+    // This includes files that are themselves being deleted — their FK references
+    // must still be cleared in the edit phase before the delete phase runs,
+    // since delete ordering is not guaranteed.
     const filesReferringToDeletedFiles = new Set<string>();
     for (const ref of inboundRefs) {
-      // Exclude files that are themselves being deleted
-      if (!deletedPathsSet.has(ref.sourceFilePath)) {
-        filesReferringToDeletedFiles.add(ref.sourceFilePath);
-      }
+      filesReferringToDeletedFiles.add(ref.sourceFilePath);
     }
 
     // --- Phase 1: [edit] ---
