@@ -179,7 +179,25 @@ export class PublishRunService {
         });
       }
 
-      const finalStatus = phase ? `${phase}s-completed` : 'completed';
+      // Query final entry counts to determine accurate status
+      const counts = await this.db.client.publishPlanEntry.groupBy({
+        by: ['status'],
+        where: { planId: pipelineId },
+        _count: true,
+      });
+
+      const successCount = counts.find((c) => c.status === 'success')?._count ?? 0;
+      const failedCount = counts.find((c) => c.status === 'failed-batch')?._count ?? 0;
+      const finalStatus = failedCount > 0 ? 'completed-with-errors' : phase ? `${phase}s-completed` : 'completed';
+
+      // Store status + result in DB
+      await this.db.client.publishPlan.update({
+        where: { id: pipelineId },
+        data: {
+          status: finalStatus,
+          result: { successCount, failedCount },
+        },
+      });
 
       // Rebase dirty on top of main so published changes disappear from dirty
       WSLogger.info({
@@ -197,6 +215,8 @@ export class PublishRunService {
         branchName: plan.branchName,
         createdAt: plan.createdAt,
         status: finalStatus,
+        successCount,
+        failedCount,
       };
     } catch (err) {
       WSLogger.error({

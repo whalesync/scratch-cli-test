@@ -72,15 +72,18 @@ export class PublishRunJobHandler implements JobHandlerBuilder<PublishRunJobDefi
     try {
       // runPipeline is already resumable — it fetches only 'pending' entries per phase.
       // If this job is retried after a crash, it picks up from where it left off.
-      await this.publishRunService.runPipeline(data.pipelineId, data.phase);
+      const result = await this.publishRunService.runPipeline(data.pipelineId, data.phase);
+
+      const successCount = result.successCount ?? 0;
+      const failedCount = result.failedCount ?? 0;
 
       await checkpoint({
         publicProgress: {
           status: 'completed',
           currentPhase: 'done',
-          totalEntries: 0,
-          completedEntries: 0,
-          failedEntries: 0,
+          totalEntries: successCount + failedCount,
+          completedEntries: successCount,
+          failedEntries: failedCount,
         },
         jobProgress: {},
         connectorProgress: {},

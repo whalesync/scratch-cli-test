@@ -14,4 +14,6 @@ export interface PublishPlanInfo {
   branchName: string;
   createdAt: Date;
   status: string;
+  successCount?: number;
+  failedCount?: number;
 }

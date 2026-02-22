@@ -239,15 +239,17 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                           color={
                             p.status === 'completed'
                               ? 'green'
-                              : p.status === 'failed'
-                                ? 'red'
-                                : p.status.endsWith('-running')
-                                  ? 'blue'
-                                  : p.status.endsWith('-completed')
-                                    ? 'teal'
-                                    : p.status === 'planned'
-                                      ? 'yellow'
-                                      : 'gray'
+                              : p.status === 'completed-with-errors'
+                                ? 'orange'
+                                : p.status === 'failed'
+                                  ? 'red'
+                                  : p.status.endsWith('-running')
+                                    ? 'blue'
+                                    : p.status.endsWith('-completed')
+                                      ? 'teal'
+                                      : p.status === 'planned'
+                                        ? 'yellow'
+                                        : 'gray'
                           }
                           size="sm"
                         >
@@ -267,52 +269,54 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                           >
                             View Entries
                           </Button>
-                          {p.status !== 'completed' && !p.status.endsWith('-running') && (
-                            <Group gap={0}>
-                              <Button
-                                size="xs"
-                                variant="light"
-                                color="green"
-                                leftSection={<PlayIcon size={12} />}
-                                loading={runningId === p.id}
-                                onClick={() => handleRun(p.id)}
-                                disabled={isPlanning || (runningId !== null && runningId !== p.id)}
-                                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
-                              >
-                                Run All
-                              </Button>
-                              <Menu position="bottom-end" withinPortal>
-                                <Menu.Target>
-                                  <Button
-                                    size="xs"
-                                    variant="light"
-                                    color="green"
-                                    px={6}
-                                    disabled={isPlanning || (runningId !== null && runningId !== p.id)}
-                                    style={{
-                                      borderTopLeftRadius: 0,
-                                      borderBottomLeftRadius: 0,
-                                      borderLeft: '1px solid var(--mantine-color-green-light-hover)',
-                                    }}
-                                  >
-                                    <ChevronDownIcon size={12} />
-                                  </Button>
-                                </Menu.Target>
-                                <Menu.Dropdown>
-                                  <Menu.Label>Run single phase</Menu.Label>
-                                  {PHASES.map((phase) => (
-                                    <Menu.Item
-                                      key={phase}
-                                      onClick={() => handleRun(p.id, phase)}
-                                      leftSection={<PlayIcon size={12} />}
+                          {p.status !== 'completed' &&
+                            p.status !== 'completed-with-errors' &&
+                            !p.status.endsWith('-running') && (
+                              <Group gap={0}>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color="green"
+                                  leftSection={<PlayIcon size={12} />}
+                                  loading={runningId === p.id}
+                                  onClick={() => handleRun(p.id)}
+                                  disabled={isPlanning || (runningId !== null && runningId !== p.id)}
+                                  style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                                >
+                                  Run All
+                                </Button>
+                                <Menu position="bottom-end" withinPortal>
+                                  <Menu.Target>
+                                    <Button
+                                      size="xs"
+                                      variant="light"
+                                      color="green"
+                                      px={6}
+                                      disabled={isPlanning || (runningId !== null && runningId !== p.id)}
+                                      style={{
+                                        borderTopLeftRadius: 0,
+                                        borderBottomLeftRadius: 0,
+                                        borderLeft: '1px solid var(--mantine-color-green-light-hover)',
+                                      }}
                                     >
-                                      {phase.charAt(0).toUpperCase() + phase.slice(1)}
-                                    </Menu.Item>
-                                  ))}
-                                </Menu.Dropdown>
-                              </Menu>
-                            </Group>
-                          )}
+                                      <ChevronDownIcon size={12} />
+                                    </Button>
+                                  </Menu.Target>
+                                  <Menu.Dropdown>
+                                    <Menu.Label>Run single phase</Menu.Label>
+                                    {PHASES.map((phase) => (
+                                      <Menu.Item
+                                        key={phase}
+                                        onClick={() => handleRun(p.id, phase)}
+                                        leftSection={<PlayIcon size={12} />}
+                                      >
+                                        {phase.charAt(0).toUpperCase() + phase.slice(1)}
+                                      </Menu.Item>
+                                    ))}
+                                  </Menu.Dropdown>
+                                </Menu>
+                              </Group>
+                            )}
                           <Button
                             size="xs"
                             variant="subtle"
