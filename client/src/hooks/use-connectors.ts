@@ -85,7 +85,11 @@ export const useConnectors = () => {
   );
 
   // For admins show all services. Dedupe in case of overlap between flags and internal services.
+  // In development, show all connectors without filtering.
   const availableServices = useMemo(() => {
+    if (process.env.NODE_ENV === 'development') {
+      return Object.values(Service);
+    }
     const connectorListFromFlags = (user?.experimentalFlags?.CONNECTOR_LIST ?? []) as Service[];
     return isAdmin ? [...new Set([...connectorListFromFlags, ...INTERNAL_SERVICES])] : connectorListFromFlags;
   }, [user?.experimentalFlags?.CONNECTOR_LIST, isAdmin]);
