@@ -1,4 +1,4 @@
-import { ColumnMapping, SaveSyncBody, PreviewRecordResponse, Sync, SyncId, WorkbookId } from '@spinner/shared-types';
+import { ColumnMapping, PreviewRecordResponse, SaveSyncBody, Sync, SyncId, WorkbookId } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
