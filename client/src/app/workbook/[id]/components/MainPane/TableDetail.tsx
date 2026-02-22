@@ -18,7 +18,7 @@ export function TableDetail({ folder, workbookId }: TableDetailProps) {
 
   const stats = useMemo(() => {
     const fileItems = files.filter((f) => f.type === 'file');
-    const dirtyCount = fileItems.filter((f) => f.status === 'modified' || f.status === 'created').length;
+    const dirtyCount = fileItems.filter((f) => f.status === 'modified' || f.status === 'added').length;
 
     return {
       totalFiles: fileItems.length,

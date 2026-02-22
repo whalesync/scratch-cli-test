@@ -6,6 +6,11 @@ import { Service } from './enums';
 import { DataFolderId } from './ids';
 
 /**
+ * Diff status of a file relative to the published branch.
+ */
+export type FileDiffStatus = 'added' | 'modified' | 'deleted';
+
+/**
  * Reference to a file in the workbook
  */
 export interface FileRefEntity {
@@ -18,8 +23,8 @@ export interface FileRefEntity {
   parentFolderId: DataFolderId | null;
   /** Whether the file has unpublished changes */
   dirty?: boolean;
-  /** a marker showing if this file has been modified */
-  status?: string;
+  /** Diff status relative to the published branch */
+  status?: FileDiffStatus;
 }
 
 /**

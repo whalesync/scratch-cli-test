@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
+import { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
 import { ParsedContent, Schema } from 'src/utils/objects';
@@ -102,7 +102,7 @@ export class PublishBuildService {
     // 2. Get diff between main and dirty
     let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{
       path: string;
-      status: 'added' | 'modified' | 'deleted';
+      status: FileDiffStatus;
     }>;
 
     await onProgress?.(`Diffing branches (${changes.length} changes found)`);

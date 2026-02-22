@@ -522,7 +522,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
     }
 
     const dirty = fileItems.filter(
-      (f) => f.status === 'modified' || f.status === 'created' || f.status === 'deleted',
+      (f) => f.status === 'modified' || f.status === 'added' || f.status === 'deleted',
     ).length;
     const limited = fileItems.slice(0, FILE_LIMIT);
     const hidden = Math.max(0, fileItems.length - FILE_LIMIT);
@@ -755,7 +755,7 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
   const isSelected = pathname.includes(`/${routeBase}/${encodedPath}`);
 
   // Determine if file is dirty (modified)
-  const isDirty = file.status === 'modified' || file.status === 'created' || file.status === 'deleted';
+  const isDirty = file.status === 'modified' || file.status === 'added' || file.status === 'deleted';
   const isDeleted = file.status === 'deleted';
 
   // Text color: always primary (the dot indicator is enough)
@@ -809,16 +809,29 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
         }}
       >
         <Group gap={6} wrap="nowrap">
-          {/* Dirty indicator dot (or spacer for alignment) */}
+          {/* Dirty indicator (or spacer for alignment) */}
           <Box
             style={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              backgroundColor: isDirty ? 'var(--mantine-color-orange-6)' : 'transparent',
+              width: 8,
+              height: 8,
               flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 10,
+              fontWeight: 700,
+              lineHeight: 1,
+              color: isDeleted
+                ? 'var(--mantine-color-red-6)'
+                : file.status === 'added'
+                  ? 'var(--mantine-color-green-6)'
+                  : isDirty
+                    ? 'var(--mantine-color-orange-6)'
+                    : 'transparent',
             }}
-          />
+          >
+            {isDeleted ? '×' : file.status === 'added' ? '+' : isDirty ? '•' : ''}
+          </Box>
 
           <TextMono12Regular c={textColor} truncate style={{ flex: 1 }}>
             {file.name}

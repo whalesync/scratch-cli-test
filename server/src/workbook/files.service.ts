@@ -1,5 +1,5 @@
 import { Injectable, InternalServerErrorException, NotFoundException, NotImplementedException } from '@nestjs/common';
-import type { DataFolderId, FileRefEntity, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, FileDiffStatus, FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import {
   FileDetailsResponseDto,
   ListFilesResponseDto,
@@ -116,7 +116,7 @@ export class FilesService {
       return diffs.some((d) => d.path === path);
     };
 
-    const modifiedStatus = (path: string): string | undefined => {
+    const modifiedStatus = (path: string): FileDiffStatus | undefined => {
       return diffs.find((d) => d.path === path)?.status;
     };
 

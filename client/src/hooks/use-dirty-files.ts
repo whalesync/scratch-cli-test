@@ -1,11 +1,11 @@
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
-import { WorkbookId } from '@spinner/shared-types';
+import { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import useSWR from 'swr';
 
 export interface DirtyFile {
   path: string;
-  status: 'added' | 'modified' | 'deleted';
+  status: FileDiffStatus;
 }
 
 export interface UseDirtyFilesReturn {

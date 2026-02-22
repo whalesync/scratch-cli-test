@@ -5,7 +5,7 @@ import { Text13Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { workbookApi } from '@/lib/api/workbook';
 import { Badge, Box, Stack, Tooltip, UnstyledButton } from '@mantine/core';
-import type { WorkbookId } from '@spinner/shared-types';
+import type { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import { FolderIcon, PencilIcon, RefreshCwIcon, SquareIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
@@ -22,7 +22,7 @@ interface NavTab {
 
 interface DirtyFile {
   path: string;
-  status: 'added' | 'modified' | 'deleted';
+  status: FileDiffStatus;
 }
 
 export function NavTabs() {

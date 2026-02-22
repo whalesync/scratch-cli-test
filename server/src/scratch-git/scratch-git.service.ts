@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
+import { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import { ScratchGitClient } from './scratch-git.client';
 
 // The object returned by listRepoFiles
@@ -170,7 +170,7 @@ export class ScratchGitService {
   async getFolderDiff(
     workbookId: WorkbookId,
     folderPath: string,
-  ): Promise<Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>> {
+  ): Promise<Array<{ path: string; status: FileDiffStatus }>> {
     return this.scratchGitClient.getFolderDiff(workbookId, folderPath);
   }
 

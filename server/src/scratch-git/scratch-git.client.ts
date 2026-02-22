@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { FileDiffStatus } from '@spinner/shared-types';
 // Trigger reload
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 
@@ -157,10 +158,7 @@ export class ScratchGitClient {
     return this.callGitApi(`/api/repo/read/${repoId}/diff?path=${encodeURIComponent(path)}`, 'GET') as Promise<string>;
   }
 
-  async getFolderDiff(
-    repoId: string,
-    folder: string,
-  ): Promise<Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>> {
+  async getFolderDiff(repoId: string, folder: string): Promise<Array<{ path: string; status: FileDiffStatus }>> {
     return this.callGitApi(
       `/api/repo/diff/${repoId}/folder-diff?folder=${encodeURIComponent(folder)}`,
       'GET',

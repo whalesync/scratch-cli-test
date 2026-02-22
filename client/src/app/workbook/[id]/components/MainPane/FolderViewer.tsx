@@ -30,7 +30,7 @@ export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' 
 
     // In review mode, only show dirty files
     if (mode === 'review') {
-      fileItems = fileItems.filter((f) => f.status === 'modified' || f.status === 'created');
+      fileItems = fileItems.filter((f) => f.status === 'modified' || f.status === 'added');
     }
 
     const total = fileItems.length;
@@ -139,8 +139,16 @@ function FileCard({ file, workbookId, mode = 'files' }: FileCardProps) {
   const routeBase = mode === 'review' ? 'review' : 'files';
   const href = `/workbook/${workbookId}/${routeBase}/${encodedPath}`;
 
-  // Determine if file is dirty (modified)
-  const isDirty = file.status === 'modified' || file.status === 'created';
+  // Determine if file is dirty
+  const isDirty = file.status === 'modified' || file.status === 'added';
+  const isDeleted = file.status === 'deleted';
+
+  const indicatorColor = isDeleted
+    ? 'var(--mantine-color-red-6)'
+    : file.status === 'added'
+      ? 'var(--mantine-color-green-6)'
+      : 'var(--mantine-color-orange-6)';
+  const indicatorSymbol = isDeleted ? '×' : file.status === 'added' ? '+' : '•';
 
   return (
     <Link href={href} style={{ textDecoration: 'none' }}>
@@ -162,16 +170,23 @@ function FileCard({ file, workbookId, mode = 'files' }: FileCardProps) {
       >
         <Group gap="xs" wrap="nowrap">
           {/* Dirty indicator */}
-          {isDirty ? (
+          {isDirty || isDeleted ? (
             <Box
               style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                backgroundColor: 'var(--mantine-color-orange-6)',
+                width: 8,
+                height: 8,
                 flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: 1,
+                color: indicatorColor,
               }}
-            />
+            >
+              {indicatorSymbol}
+            </Box>
           ) : (
             <FileIcon size={12} color="var(--fg-muted)" style={{ flexShrink: 0 }} />
           )}
