@@ -11,7 +11,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
-import { SyncService } from '../sync.service';
+import { SyncService, transformRecordAsync } from '../sync.service';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -635,6 +635,97 @@ describe('SyncService', () => {
       );
 
       expect(result).toBe(true);
+    });
+  });
+});
+
+// ===========================================================================
+// transformRecordAsync (standalone function)
+// ===========================================================================
+describe('transformRecordAsync', () => {
+  describe('key ordering preservation', () => {
+    it('preserves original key order when updating an existing record via baseFields', async () => {
+      // Simulate the exact scenario from the bug: a destination JSON file has keys in a
+      // specific order (id, cmsLocaleId, ..., fieldData). After syncing, the key order
+      // must remain identical — only the mapped field values should change.
+      const existingFields = {
+        id: '6994a4d364f1775dd68f1589',
+        cmsLocaleId: '6930533529443b9f130b26e6',
+        lastPublished: '2026-02-17T17:26:43.762Z',
+        lastUpdated: '2026-02-17T17:26:43.762Z',
+        createdOn: '2026-02-17T17:26:43.762Z',
+        isArchived: false,
+        isDraft: false,
+        fieldData: {
+          'airtable-id': 'rechCcin6LPjgFMfY',
+          name: 'Atlantic Mackerel',
+          slug: 'atlantic-mackerel',
+        },
+      };
+
+      const sourceRecord = {
+        id: 'rechCcin6LPjgFMfY',
+        filePath: 'source/atlantic-mackerel.json',
+        fields: {
+          Name: 'Atlantic Mackerel',
+          Link: 'https://en.wikipedia.org/wiki/Atlantic_mackerel',
+        },
+      };
+
+      const columnMappings = [
+        { sourceColumnId: 'Name', destinationColumnId: 'fieldData.name' },
+        { sourceColumnId: 'Link', destinationColumnId: 'fieldData.link' },
+      ];
+
+      const result = await transformRecordAsync(sourceRecord, columnMappings, undefined, 'DATA', existingFields);
+
+      // The mapped fields should be updated/added
+      expect((result as any).fieldData.name).toBe('Atlantic Mackerel');
+      expect((result as any).fieldData.link).toBe('https://en.wikipedia.org/wiki/Atlantic_mackerel');
+
+      // Non-mapped fields must still be present
+      expect(result.id).toBe('6994a4d364f1775dd68f1589');
+      expect(result.cmsLocaleId).toBe('6930533529443b9f130b26e6');
+      expect(result.isArchived).toBe(false);
+
+      // CRITICAL: Key order must match the original. JSON.stringify uses insertion order,
+      // so serializing the result must produce keys in the same order as the original object.
+      const resultKeys = Object.keys(result);
+      const originalKeys = Object.keys(existingFields);
+      expect(resultKeys).toEqual(originalKeys);
+    });
+
+    it('does not mutate the original baseFields object', async () => {
+      const existingFields = { id: '123', name: 'Original' };
+      const sourceRecord = {
+        id: 'src1',
+        filePath: 'source/test.json',
+        fields: { title: 'Updated' },
+      };
+      const columnMappings = [{ sourceColumnId: 'title', destinationColumnId: 'name' }];
+
+      await transformRecordAsync(sourceRecord, columnMappings, undefined, 'DATA', existingFields);
+
+      expect(existingFields.name).toBe('Original');
+    });
+
+    it('builds a fresh object without baseFields (new record)', async () => {
+      const sourceRecord = {
+        id: 'src1',
+        filePath: 'source/test.json',
+        fields: { title: 'New Item', slug: 'new-item' },
+      };
+      const columnMappings = [
+        { sourceColumnId: 'title', destinationColumnId: 'fieldData.name' },
+        { sourceColumnId: 'slug', destinationColumnId: 'fieldData.slug' },
+      ];
+
+      const result = await transformRecordAsync(sourceRecord, columnMappings);
+
+      expect((result as any).fieldData.name).toBe('New Item');
+      expect((result as any).fieldData.slug).toBe('new-item');
+      // No extra keys from any base — only the mapped fields
+      expect(Object.keys(result)).toEqual(['fieldData']);
     });
   });
 });

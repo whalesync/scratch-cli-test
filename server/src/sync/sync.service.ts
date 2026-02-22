@@ -16,7 +16,6 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
-import merge from 'lodash/merge';
 import set from 'lodash/set';
 import zipObjectDeep from 'lodash/zipObjectDeep';
 import { DbService } from 'src/db/db.service';
@@ -529,17 +528,17 @@ export class SyncService {
         }
 
         try {
-          const transformedFields = await transformRecordAsync(
-            sourceRecord,
-            tableMapping.columnMappings,
-            lookupTools,
-            phase,
-          );
-
           let destinationPath: string;
+          let transformedFields: Record<string, unknown>;
 
           if (mapping.destinationFilePath === null) {
             // This is a new record
+            transformedFields = await transformRecordAsync(
+              sourceRecord,
+              tableMapping.columnMappings,
+              lookupTools,
+              phase,
+            );
 
             // Generate a temporary ID for the new record so it can be matched on subsequent syncs,
             // but only if the column mappings haven't already set the destination ID column.
@@ -569,15 +568,19 @@ export class SyncService {
             result.recordsCreated++;
             result.createdPaths.push(destinationPath);
           } else {
-            // Use the file path from the mapping (from SyncMatchKeys.filePath via buildRecordMatchingMappings)
+            // Existing record: pass the existing fields as the base so transformRecordAsync
+            // surgically updates only the mapped fields. This is critical to preserve the
+            // original JSON key ordering in the destination file (see baseFields param docs).
             destinationPath = mapping.destinationFilePath;
-
-            // Merge existing destination fields with transformed source fields (source takes precedence).
-            // This preserves destination fields that aren't covered by column mappings.
             const existingRecord = destinationRecordsByPath.get(mapping.destinationFilePath);
-            if (existingRecord) {
-              Object.assign(transformedFields, merge({}, existingRecord.fields, transformedFields));
-            }
+
+            transformedFields = await transformRecordAsync(
+              sourceRecord,
+              tableMapping.columnMappings,
+              lookupTools,
+              phase,
+              existingRecord?.fields,
+            );
 
             result.recordsUpdated++;
             result.updatedPaths.push(destinationPath);
@@ -1271,13 +1274,21 @@ function parseFileToRecord(file: FileContent, idColumnRemoteId: string): SyncRec
  * @param sourceRecord - The source record to transform
  * @param columnMappings - Array of column mappings defining field transformations
  * @param lookupTools - Tools for FK lookups (optional, required for FK transformers)
+ * @param phase - The sync phase (DATA or FK)
+ * @param baseFields - When updating an existing record, pass its current fields here.
+ *   The function will clone this object and use lodash `set()` to write only the mapped
+ *   values into it. This preserves the original JSON key ordering of the destination file.
+ *   IMPORTANT: Do NOT replace this with a merge/spread/Object.assign approach — those
+ *   strategies reorder keys based on insertion order which corrupts the destination file's
+ *   key ordering. When omitted (new records), builds a fresh object with zipObjectDeep.
  * @returns Transformed fields for the destination record
  */
-async function transformRecordAsync(
+export async function transformRecordAsync(
   sourceRecord: SyncRecord,
   columnMappings: ColumnMapping[],
   lookupTools?: LookupTools,
   phase: SyncPhase = 'DATA',
+  baseFields?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const definedPaths: string[] = [];
   const definedValues: unknown[] = [];
@@ -1346,6 +1357,18 @@ async function transformRecordAsync(
       definedPaths.push(mapping.destinationColumnId);
       definedValues.push(transformedValue);
     }
+  }
+
+  // IMPORTANT: When baseFields is provided (updating an existing record), we clone the
+  // existing object and use lodash set() to write only the mapped fields. This preserves
+  // the original key ordering of the JSON file. Do NOT replace this with merge/spread/
+  // Object.assign — those approaches reorder keys and corrupt the destination file layout.
+  if (baseFields) {
+    const result = structuredClone(baseFields);
+    for (let i = 0; i < definedPaths.length; i++) {
+      set(result, definedPaths[i], definedValues[i]);
+    }
+    return result;
   }
 
   return zipObjectDeep(definedPaths, definedValues) as Record<string, unknown>;
