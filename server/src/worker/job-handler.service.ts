@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { WSLogger } from 'src/logger';
 import { FileIndexService } from 'src/publish-pipeline/file-index.service';
 import { FileReferenceService } from 'src/publish-pipeline/file-reference.service';
-import { PublishBuildService } from 'src/publish-pipeline/publish-build.service';
+import { PublishPlanService } from 'src/publish-pipeline/publish-plan.service';
 import { PublishRunService } from 'src/publish-pipeline/publish-run.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
@@ -35,7 +35,7 @@ export class JobHandlerService {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
-    private readonly pipelineBuildService: PublishBuildService,
+    private readonly pipelinePlanService: PublishPlanService,
     private readonly pipelineRunService: PublishRunService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
@@ -80,7 +80,7 @@ export class JobHandlerService {
         ) as JobHandler<JobDefinition>;
 
       case 'publish-plan':
-        return new PublishPlanJobHandler(this.pipelineBuildService) as JobHandler<JobDefinition>;
+        return new PublishPlanJobHandler(this.pipelinePlanService) as JobHandler<JobDefinition>;
 
       case 'publish-run':
         return new PublishRunJobHandler(this.pipelineRunService) as JobHandler<JobDefinition>;

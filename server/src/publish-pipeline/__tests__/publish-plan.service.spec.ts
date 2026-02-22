@@ -3,7 +3,7 @@ import { DbService } from '../../db/db.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
-import { PublishBuildService } from '../publish-build.service';
+import { PublishPlanService } from '../publish-plan.service';
 import { PublishSchemaService } from '../publish-schema.service';
 import { RefCleanerService } from '../ref-cleaner.service';
 
@@ -31,8 +31,8 @@ function makeDbMock() {
   };
 }
 
-describe('PublishBuildService', () => {
-  let service: PublishBuildService;
+describe('PublishPlanService', () => {
+  let service: PublishPlanService;
   let db: ReturnType<typeof makeDbMock>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let fileIndexService: jest.Mocked<FileIndexService>;
@@ -67,7 +67,7 @@ describe('PublishBuildService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PublishBuildService,
+        PublishPlanService,
         { provide: DbService, useValue: db },
         { provide: ScratchGitService, useValue: scratchGitService },
         { provide: FileIndexService, useValue: fileIndexService },
@@ -77,7 +77,7 @@ describe('PublishBuildService', () => {
       ],
     }).compile();
 
-    service = module.get<PublishBuildService>(PublishBuildService);
+    service = module.get<PublishPlanService>(PublishPlanService);
   });
 
   it('should be defined', () => {

@@ -5,14 +5,14 @@ import type { RequestWithUser } from '../auth/types';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { PlanPublishV2Dto, RunPublishV2Dto } from './dto/publish-v2.dto';
 import { PublishAdminService } from './publish-admin.service';
-import { PublishBuildService } from './publish-build.service';
+import { PublishPlanService } from './publish-plan.service';
 import { PublishRunService } from './publish-run.service';
 
 @Controller('workbook/:workbookId/publish-v2')
 @UseGuards(ScratchAuthGuard)
 export class PublishPipelineController {
   constructor(
-    private readonly publishBuildService: PublishBuildService,
+    private readonly publishPlanService: PublishPlanService,
     private readonly publishRunService: PublishRunService,
     private readonly publishAdminService: PublishAdminService,
     private readonly bullEnqueuerService: BullEnqueuerService,
@@ -22,7 +22,7 @@ export class PublishPipelineController {
 
   @Post('plan')
   async plan(@Param('workbookId') workbookId: WorkbookId, @Body() body: PlanPublishV2Dto, @Req() req: RequestWithUser) {
-    return this.publishBuildService.buildPipeline(workbookId, req.user.id, body.connectorAccountId);
+    return this.publishPlanService.buildPipeline(workbookId, req.user.id, body.connectorAccountId);
   }
 
   @Post('run')
@@ -38,13 +38,13 @@ export class PublishPipelineController {
     @Body() body: PlanPublishV2Dto,
     @Req() req: RequestWithUser,
   ) {
-    const hasDiffs = await this.publishBuildService.hasDiffs(workbookId, body.connectorAccountId);
+    const hasDiffs = await this.publishPlanService.hasDiffs(workbookId, body.connectorAccountId);
     if (!hasDiffs) {
       return { jobId: null, pipelineId: null };
     }
 
     // Create the pipeline record first so we can return the pipelineId immediately
-    const { pipelineId } = await this.publishBuildService.createPipeline(
+    const { pipelineId } = await this.publishPlanService.createPipeline(
       workbookId,
       req.user.id,
       body.connectorAccountId,

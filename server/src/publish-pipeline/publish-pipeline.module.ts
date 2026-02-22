@@ -8,8 +8,8 @@ import { FileReferenceService } from './file-reference.service';
 import { ScratchGitModule } from '../scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
 import { PublishAdminService } from './publish-admin.service';
-import { PublishBuildService } from './publish-build.service';
 import { PublishPipelineController } from './publish-pipeline.controller';
+import { PublishPlanService } from './publish-plan.service';
 import { PublishRefResolverService } from './publish-ref-resolver.service';
 import { PublishRunService } from './publish-run.service';
 import { PublishSchemaService } from './publish-schema.service';
@@ -22,7 +22,7 @@ import { RefCleanerService } from './ref-cleaner.service';
     FileIndexService,
     FileReferenceService,
     PublishAdminService,
-    PublishBuildService,
+    PublishPlanService,
     PublishRefResolverService,
     PublishRunService,
     RefCleanerService,
@@ -32,7 +32,7 @@ import { RefCleanerService } from './ref-cleaner.service';
     FileIndexService,
     FileReferenceService,
     PublishAdminService,
-    PublishBuildService,
+    PublishPlanService,
     PublishRefResolverService,
     PublishRunService,
     RefCleanerService,

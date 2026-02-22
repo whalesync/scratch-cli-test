@@ -9,7 +9,7 @@ import { randomUUID } from 'crypto';
 import 'dotenv/config';
 import { AppModule } from '../src/app.module';
 import { DbService } from '../src/db/db.service';
-import { PublishBuildService } from '../src/publish-pipeline/publish-build.service';
+import { PublishPlanService } from '../src/publish-pipeline/publish-plan.service';
 import { PublishRunService } from '../src/publish-pipeline/publish-run.service';
 import { ScratchGitService } from '../src/scratch-git/scratch-git.service';
 
@@ -19,7 +19,7 @@ async function bootstrap() {
     const app = await NestFactory.createApplicationContext(AppModule, {
       logger: ['error', 'warn'],
     });
-    const buildService = app.get(PublishBuildService);
+    const planService = app.get(PublishPlanService);
     const runService = app.get(PublishRunService);
     const gitService = app.get(ScratchGitService);
     const dbService = app.get(DbService);
@@ -143,7 +143,7 @@ async function bootstrap() {
 
     // 5. Build Pipeline
     console.log('Building pipeline...');
-    const plan = await buildService.buildPipeline(workbook.id, user.id);
+    const plan = await planService.buildPipeline(workbook.id, user.id);
     console.log(`Built Pipeline: ${plan.pipelineId}`);
     // console.log(`Phases:`, JSON.stringify(plan.phases, null, 2));
 

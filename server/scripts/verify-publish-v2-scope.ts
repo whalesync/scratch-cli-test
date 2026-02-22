@@ -3,14 +3,14 @@ import { WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { AppModule } from '../src/app.module';
 import { DbService } from '../src/db/db.service';
-import { PublishBuildService } from '../src/publish-pipeline/publish-build.service';
+import { PublishPlanService } from '../src/publish-pipeline/publish-plan.service';
 import { ScratchGitService } from '../src/scratch-git/scratch-git.service';
 
 async function bootstrap() {
   try {
     const app = await NestFactory.createApplicationContext(AppModule);
     const dbService = app.get(DbService);
-    const buildService = app.get(PublishBuildService);
+    const planService = app.get(PublishPlanService);
     const gitService = app.get(ScratchGitService);
 
     console.log('Context created. Getting user...');
@@ -68,7 +68,7 @@ async function bootstrap() {
     // Build Pipeline Scoped to DataFolder
     // We expect only fileA to be in the pipeline
     console.log('Building pipeline scoped to Folder A...');
-    const plan = await buildService.buildPipeline(workbook.id, user.id, dataFolder.id);
+    const plan = await planService.buildPipeline(workbook.id, user.id, dataFolder.id);
     console.log(`Built Pipeline: ${plan.pipelineId}`);
 
     // Verify Entries
