@@ -5,14 +5,13 @@ import axios, { AxiosInstance } from 'axios';
  */
 class ApiConfig {
   private apiUrl: string;
-  private authToken: string | null;
+  private tokenProvider: (() => Promise<string | null>) | null = null;
   private snapshotWebsocketToken: string | null;
   // Axios instance calls to the API server
   private apiAxiosInstance: AxiosInstance | null = null;
 
   constructor() {
     this.apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3010';
-    this.authToken = null;
     this.snapshotWebsocketToken = null;
   }
 
@@ -20,24 +19,13 @@ class ApiConfig {
     return this.apiUrl;
   }
 
-  public setAuthToken(token: string) {
-    this.authToken = token;
-    // Reset axios instance to pick up new token
-    this.apiAxiosInstance = null;
-  }
-
-  public getAuthToken() {
-    return this.authToken;
-  }
-
-  getAuthHeaders(): HeadersInit {
-    return {
-      Authorization: `Bearer ${this.authToken}`,
-    };
+  public setTokenProvider(provider: (() => Promise<string | null>) | null) {
+    this.tokenProvider = provider;
   }
 
   /**
-   * Get or create an axios instance configured with base URL and auth headers
+   * Get or create an axios instance configured with base URL and auth headers.
+   * The request interceptor calls the token provider on every request to get a fresh token.
    */
   public getAxiosInstance(): AxiosInstance {
     if (!this.apiAxiosInstance) {
@@ -48,10 +36,11 @@ class ApiConfig {
         },
       });
 
-      // Add request interceptor to include auth token
-      this.apiAxiosInstance.interceptors.request.use((config) => {
-        if (this.authToken) {
-          config.headers.Authorization = `Bearer ${this.authToken}`;
+      // Add async request interceptor to fetch a fresh token per request
+      this.apiAxiosInstance.interceptors.request.use(async (config) => {
+        const token = await this.tokenProvider?.();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
         }
         return config;
       });

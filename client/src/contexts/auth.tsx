@@ -32,7 +32,8 @@ export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): J
 
 /**
  * This provider handles combining Clerk auth with Scratch auth.
- * It refreshes the JWT token periodically and sets the value into the API_CONFIG so all API calls can be authenticated
+ * It registers a token provider on API_CONFIG so every API request fetches a fresh JWT on-demand,
+ * and periodically checks session validity to detect sign-outs.
  */
 export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.Element => {
   const { getToken, signOut } = useAuth();
@@ -44,12 +45,13 @@ export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.El
 
   const loadToken = useCallback(async () => {
     /*
-     * Fetch a new JWT token from Clerk SDK (likely the cookie). This has to be done using an async function
+     * Check session validity by calling getToken(). The actual token is fetched
+     * on-demand by the token provider registered on API_CONFIG, so we don't need
+     * to store it here — this is purely for sign-out detection.
      */
     const newToken = await getToken();
 
     if (newToken) {
-      API_CONFIG.setAuthToken(newToken);
       hadTokenRef.current = true;
       setTokenLoaded(true);
     } else if (hadTokenRef.current) {
@@ -60,16 +62,25 @@ export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.El
     }
   }, [getToken, signOut, router]);
 
-  // This sets the token when the first load of the page is complete
+  // Register the token provider so every API request fetches a fresh token on-demand
   useEffect(() => {
     if (isLoaded && isSignedIn) {
-      // load the token any time our auth state changes
+      API_CONFIG.setTokenProvider(() => getToken());
+    }
+    return () => {
+      API_CONFIG.setTokenProvider(null);
+    };
+  }, [isLoaded, isSignedIn, getToken]);
+
+  // Check session validity when auth state changes
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
       loadToken().catch(console.error);
     }
   }, [isLoaded, isSignedIn, loadToken]);
 
   /*
-   * Periodically refresh the JWT token so the version in authState is as recent as possible
+   * Periodically check session validity so we detect sign-outs promptly
    */
   useEffect(() => {
     const interval = setInterval(() => {
