@@ -230,38 +230,62 @@ export class FileReferenceService {
       return [];
     }
 
-    // This is a complex OR query.
-    // For each target, we want to find refs that match (folder AND filename) OR (folder AND recordId).
-    // Split targets into chunks to avoid Postgres parameter limits (max 32767 on some query topologies)
-    const chunks = chunk(targets, 2000);
+    // Split into two flat queries instead of nested ORs per target.
+    // A single IN clause on an indexed column is far faster than thousands of nested OR conditions.
     const results: { sourceFilePath: string; branch: string }[] = [];
+    const seen = new Set<string>();
 
-    for (let i = 0; i < chunks.length; i++) {
-      const c = chunks[i];
-      await onProgress?.(`Finding inbound references (${i * 2000 + c.length}/${targets.length})`);
-      const conditions = c.map((t) => {
-        const orList: any[] = [];
-        if (t.fileName && t.folderPath) {
-          orList.push({ targetFolderPath: t.folderPath, targetFileName: t.fileName });
+    const addResults = (rows: { sourceFilePath: string; branch: string }[]) => {
+      for (const r of rows) {
+        const key = `${r.sourceFilePath}|${r.branch}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push(r);
         }
-        if (t.recordId) {
-          orList.push({ targetFileRecordId: t.recordId });
-        }
-        return { OR: orList };
-      });
+      }
+    };
 
-      const chunkResults = await this.db.client.fileReference.findMany({
-        where: {
-          workbookId,
-          branch: { in: branches },
-          OR: conditions,
-        },
-        select: {
-          sourceFilePath: true,
-          branch: true,
-        },
-      });
-      results.push(...chunkResults);
+    // Query 1: Match by recordId using a flat IN clause (hits targetFileRecordId index)
+    const recordIds = targets.map((t) => t.recordId).filter((id): id is string => !!id);
+    if (recordIds.length > 0) {
+      const recordIdChunks = chunk(recordIds, 10000);
+      for (let i = 0; i < recordIdChunks.length; i++) {
+        await onProgress?.(
+          `Finding inbound references by record ID (${Math.min((i + 1) * 10000, recordIds.length)}/${recordIds.length})`,
+        );
+        const chunkResults = await this.db.client.fileReference.findMany({
+          where: {
+            workbookId,
+            branch: { in: branches },
+            targetFileRecordId: { in: recordIdChunks[i] },
+          },
+          select: { sourceFilePath: true, branch: true },
+        });
+        addResults(chunkResults);
+      }
+    }
+
+    // Query 2: Match by (folderPath, fileName) pairs using flat OR conditions
+    const fileNameTargets = targets.filter((t) => t.fileName && t.folderPath);
+    if (fileNameTargets.length > 0) {
+      const fileNameChunks = chunk(fileNameTargets, 2000);
+      for (let i = 0; i < fileNameChunks.length; i++) {
+        await onProgress?.(
+          `Finding inbound references by file name (${Math.min((i + 1) * 2000, fileNameTargets.length)}/${fileNameTargets.length})`,
+        );
+        const chunkResults = await this.db.client.fileReference.findMany({
+          where: {
+            workbookId,
+            branch: { in: branches },
+            OR: fileNameChunks[i].map((t) => ({
+              targetFolderPath: t.folderPath,
+              targetFileName: t.fileName,
+            })),
+          },
+          select: { sourceFilePath: true, branch: true },
+        });
+        addResults(chunkResults);
+      }
     }
 
     return results;
