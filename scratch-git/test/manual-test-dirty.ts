@@ -114,7 +114,13 @@ function setNestedValue(obj: Record<string, unknown>, path: string[], value: unk
 
 /** Generate a value matching the type of the template value. */
 function generateFieldValue(key: string, templateValue: unknown, index: number): unknown {
-  if (typeof templateValue === 'string') return `sample_${key}_${index}`;
+  if (typeof templateValue === 'string') {
+    // Detect ISO timestamp strings and generate valid timestamps
+    if (/^\d{4}-\d{2}-\d{2}[T ]/.test(templateValue)) {
+      return new Date(Date.now() - index * 86_400_000).toISOString();
+    }
+    return `sample_${key}_${index}_${Math.random().toString(36).slice(2, 8)}`;
+  }
   if (typeof templateValue === 'number') return Math.floor(Math.random() * 1_000_000);
   if (typeof templateValue === 'boolean') return Math.random() > 0.5;
   if (Array.isArray(templateValue)) return [];
