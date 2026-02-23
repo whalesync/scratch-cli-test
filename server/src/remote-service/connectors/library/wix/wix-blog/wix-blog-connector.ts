@@ -83,8 +83,6 @@ export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
     return buildWixBlogJsonTableSpec(id);
   }
 
-  public pullRecordDeep = undefined;
-
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,

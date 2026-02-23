@@ -25,6 +25,7 @@ export interface DataFolder {
   version: number;
   tableId: string[];
   filter: string | null;
+  options: Record<string, unknown> | null;
 }
 
 ///

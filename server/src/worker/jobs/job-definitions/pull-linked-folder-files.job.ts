@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
-import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
+import type { BaseJsonTableSpec, ConnectorFile, ConnectorPullOptions } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
@@ -136,6 +136,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     }
 
     const tableSpec = dataFolder.schema as BaseJsonTableSpec;
+
+    const pullOptions = {
+      filter: dataFolder.filter ?? undefined,
+      ...((dataFolder.options as ConnectorPullOptions) ?? {}),
+    };
 
     const publicProgress: PullLinkedFolderFilesPublicProgress = {
       totalFiles: 0,
@@ -309,7 +314,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     };
 
     try {
-      await connector.pullRecordFiles(tableSpec, callback, progress, { filter: dataFolder.filter ?? undefined });
+      await connector.pullRecordFiles(tableSpec, callback, progress, pullOptions);
 
       // After download, remove files from main that no longer exist in remote
       // This ensures deleted items don't keep showing up in future diffs

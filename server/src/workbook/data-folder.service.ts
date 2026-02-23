@@ -603,6 +603,7 @@ export class DataFolderService {
       where: { id },
       data: {
         filter: dto.filter ?? null,
+        ...(dto.options !== undefined && { options: (dto.options as Record<string, any>) ?? {} }),
       },
       include: DataFolderCluster._validator.include,
     });

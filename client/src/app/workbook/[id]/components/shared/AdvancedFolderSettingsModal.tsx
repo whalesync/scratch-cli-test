@@ -4,7 +4,7 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { dataFolderApi } from '@/lib/api/data-folder';
-import { Stack, Textarea } from '@mantine/core';
+import { Checkbox, NumberInput, Stack, Textarea, TextInput } from '@mantine/core';
 import type { DataFolder } from '@spinner/shared-types';
 import { Service } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
@@ -21,25 +21,63 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Airtable options
+  const [airtableView, setAirtableView] = useState('');
+
+  // Notion options
+  const [notionExcludePageContent, setNotionExcludePageContent] = useState(false);
+  const [notionChildContentMaxDepth, setNotionChildContentMaxDepth] = useState<number | ''>('');
+
   const supportsFilter = folder.connectorService != null && FILTER_SUPPORTED_SERVICES.has(folder.connectorService);
+  const isAirtable = folder.connectorService === Service.AIRTABLE;
+  const isNotion = folder.connectorService === Service.NOTION;
+  const hasPullOptions = isAirtable || isNotion;
 
   useEffect(() => {
     if (opened) {
       setFilter(folder.filter ?? '');
+      const opts = folder.options ?? {};
+      setAirtableView((opts.view as string) ?? '');
+      setNotionExcludePageContent((opts.excludePageContent as boolean) ?? false);
+      setNotionChildContentMaxDepth((opts.childContentMaxDepth as number) ?? '');
     }
-  }, [opened, folder.filter]);
+  }, [opened, folder.filter, folder.options]);
+
+  const buildOptions = (): Record<string, unknown> | undefined => {
+    if (isAirtable) {
+      const opts: Record<string, unknown> = {};
+      if (airtableView.trim()) {
+        opts.view = airtableView.trim();
+      }
+      return opts;
+    }
+    if (isNotion) {
+      const opts: Record<string, unknown> = {};
+      if (notionExcludePageContent) {
+        opts.excludePageContent = true;
+      }
+      if (notionChildContentMaxDepth !== '' && notionChildContentMaxDepth >= 0) {
+        opts.childContentMaxDepth = notionChildContentMaxDepth;
+      }
+      return opts;
+    }
+    return undefined;
+  };
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      await dataFolderApi.update(folder.id, { filter: filter.trim() || null });
+      await dataFolderApi.update(folder.id, {
+        filter: filter.trim() || null,
+        ...(hasPullOptions && { options: buildOptions() }),
+      });
       ScratchpadNotifications.success({
         title: 'Settings Updated',
         message: `Updated settings for ${folder.name}`,
       });
       onClose();
     } catch (error) {
-      console.error('Failed to update folder settings', error);
+      console.debug('Failed to update folder settings', error);
       ScratchpadNotifications.error({
         title: 'Update Failed',
         message: 'Could not update folder settings.',
@@ -58,7 +96,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
         footer: (
           <>
             <ButtonSecondaryOutline onClick={onClose}>Cancel</ButtonSecondaryOutline>
-            <ButtonPrimaryLight onClick={handleSave} loading={loading} disabled={!supportsFilter}>
+            <ButtonPrimaryLight onClick={handleSave} loading={loading}>
               Save
             </ButtonPrimaryLight>
           </>
@@ -81,6 +119,37 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
           minRows={3}
           maxRows={6}
         />
+
+        {isAirtable && (
+          <TextInput
+            label="View"
+            description="Airtable view ID to pull records from. Leave empty to pull all records."
+            placeholder="Enter view ID..."
+            value={airtableView}
+            onChange={(e) => setAirtableView(e.currentTarget.value)}
+          />
+        )}
+
+        {isNotion && (
+          <>
+            <Checkbox
+              label="Exclude page content"
+              description="Skip downloading the body content of Notion pages. This will increase download speed for notion tables."
+              checked={notionExcludePageContent}
+              onChange={(e) => setNotionExcludePageContent(e.currentTarget.checked)}
+            />
+            <NumberInput
+              label="Child content max depth"
+              description="Maximum depth of nested child blocks to include. Leave empty for default behavior."
+              placeholder="e.g. 2"
+              value={notionChildContentMaxDepth}
+              onChange={(val) => setNotionChildContentMaxDepth(val === '' ? '' : Number(val))}
+              min={0}
+              max={10}
+              hideControls
+            />
+          </>
+        )}
       </Stack>
     </ModalWrapper>
   );

@@ -259,8 +259,6 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
     }
   }
 
-  public pullRecordDeep = undefined;
-
   /**
    * Get the batch size for CRUD operations.
    */

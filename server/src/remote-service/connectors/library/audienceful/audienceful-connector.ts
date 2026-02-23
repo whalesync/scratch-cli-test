@@ -100,8 +100,6 @@ export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> 
     }
   }
 
-  public pullRecordDeep = undefined;
-
   /**
    * Get the batch size for CRUD operations.
    * Audienceful supports batch operations.

@@ -132,8 +132,6 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
     return buildNotionJsonTableSpec(id, database);
   }
 
-  public pullRecordDeep = undefined;
-
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
@@ -175,20 +173,20 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
 
       for (const page of pageResults) {
         const connectorFile = page as unknown as ConnectorFile;
-        // Fetch children recursively for this page
-        try {
-          const childrenData = await this.pollRecordPageContentChildren(
-            page.id,
-            NotionConnector.PAGE_CONTENT_MAX_DEPTH,
-            page.id,
-          );
-          connectorFile['page_content'] = childrenData.children;
-        } catch (error) {
-          WSLogger.error({
-            source: 'NotionConnector',
-            message: `Failed to fetch content for page ${page.id}`,
-            error,
-          });
+
+        if (!options.excludePageContent) {
+          const maxChildDepth = options.childContentMaxDepth ?? NotionConnector.PAGE_CONTENT_MAX_DEPTH;
+          // Fetch children recursively for this page
+          try {
+            const childrenData = await this.pollRecordPageContentChildren(page.id, maxChildDepth, page.id);
+            connectorFile['page_content'] = childrenData.children;
+          } catch (error) {
+            WSLogger.error({
+              source: 'NotionConnector',
+              message: `Failed to fetch content for page ${page.id}`,
+              error,
+            });
+          }
         }
         files.push(connectorFile);
       }

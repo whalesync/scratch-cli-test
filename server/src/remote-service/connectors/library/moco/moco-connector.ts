@@ -106,8 +106,6 @@ export class MocoConnector extends Connector<typeof Service.MOCO> {
     }
   }
 
-  public pullRecordDeep = undefined;
-
   /**
    * Get the batch size for CRUD operations.
    */

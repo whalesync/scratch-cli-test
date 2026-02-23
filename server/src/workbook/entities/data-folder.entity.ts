@@ -1,5 +1,12 @@
+import { Prisma } from '@prisma/client';
 import { DataFolder, DataFolderGroup, DataFolderId, Service, WorkbookId } from '@spinner/shared-types';
 import { DataFolderCluster } from '../../db/cluster-types';
+
+export function normalizeJsonObject(value: Prisma.JsonValue | null | undefined): Record<string, unknown> | null {
+  if (value == null) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  return null;
+}
 
 export class DataFolderEntity implements DataFolder {
   id: DataFolderId;
@@ -19,6 +26,7 @@ export class DataFolderEntity implements DataFolder {
   version: number;
   tableId: string[];
   filter: string | null;
+  options: Record<string, unknown> | null;
 
   constructor(dataFolder: DataFolderCluster.DataFolder) {
     this.id = dataFolder.id as DataFolderId;
@@ -37,6 +45,9 @@ export class DataFolderEntity implements DataFolder {
     this.version = dataFolder.version;
     this.tableId = dataFolder.tableId;
     this.filter = dataFolder.filter ?? null;
+    this.options = dataFolder.options
+      ? normalizeJsonObject(dataFolder.options as Prisma.JsonValue | null | undefined)
+      : {};
     this.schema = {};
   }
 }

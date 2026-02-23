@@ -15,6 +15,12 @@ import { AirtableApiClient } from './airtable-api-client';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
 
+interface AirtablePullOptions extends ConnectorPullOptions {
+  filter?: string | undefined;
+  // A view ID to pull records from. If not provided, all records will be pulled.
+  view?: string | undefined;
+}
+
 export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
   readonly service = Service.AIRTABLE;
   static readonly displayName = 'Airtable';
@@ -58,24 +64,17 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
     return buildAirtableJsonTableSpec(id, table);
   }
 
-  public pullRecordDeep = undefined;
-
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
 
     _progress: JsonSafeObject,
-    options: ConnectorPullOptions,
+    options: AirtablePullOptions,
   ): Promise<void> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
-    const filterByFormula =
-      options.filter && options.filter.trim() !== '' && !options.filter.startsWith('VIEW:')
-        ? options.filter
-        : undefined;
-
-    // NOTE: this is a bit hacky, the pullRecordFiles options should probably support N custom options that are specific to the connector.
-    const view = options.filter && options.filter.startsWith('VIEW:') ? options.filter.slice(5) : undefined;
+    const filterByFormula = options.filter && options.filter.trim() !== '' ? options.filter : undefined;
+    const view = options.view ?? undefined;
 
     for await (const rawRecords of this.client.listRecords(baseId, tableId, {
       filterByFormula,

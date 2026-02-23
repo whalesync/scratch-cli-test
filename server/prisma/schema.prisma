@@ -369,6 +369,10 @@ model DataFolder {
   // A filter expression for the data folder, specific to the connector and table
   filter String?
 
+  // Additional options for interacting with the connector
+  // Will be an object matching any of the Connector options interfaces such as ConnectorPullOptions.
+  options Json? @default("{}")
+
   @@unique([workbookId, parentId, name])
   @@index([workbookId])
   @@index([connectorAccountId])

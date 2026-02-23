@@ -198,8 +198,6 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
     }
   }
 
-  public pullRecordDeep = undefined;
-
   /**
    * Get the batch size for CRUD operations.
    */

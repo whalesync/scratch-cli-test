@@ -537,8 +537,6 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
     }, resolved.connectionString);
   }
 
-  public pullRecordDeep = undefined;
-
   // -------------------------------------------------------------------------
   // Batch size
   // -------------------------------------------------------------------------
