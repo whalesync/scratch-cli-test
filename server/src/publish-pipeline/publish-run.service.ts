@@ -461,6 +461,7 @@ export class PublishRunService {
     workbookId: string,
     planId: string,
   ): Promise<void> {
+    const idField = tableSpec.idColumnRemoteId || 'id';
     const rawOps = entries.map((e) => e.operation as Record<string, unknown>).filter(Boolean);
     const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
 
@@ -470,7 +471,20 @@ export class PublishRunService {
     let opIndex = 0;
     for (const entry of entries) {
       if (!entry.operation) continue;
-      const resolvedOp = resolvedOps[opIndex++] as ParsedContent;
+      let resolvedOp = resolvedOps[opIndex++] as ParsedContent;
+
+      // Use the entry's stored remoteRecordId if present (edits).
+      // If absent (backfill for a newly-created record), look up the real ID from the file index.
+      let remoteId = entry.remoteRecordId;
+      if (!remoteId) {
+        const { folderPath, filename } = parsePath(entry.filePath);
+        remoteId = await this.fileIndexService.getRecordId(workbookId, folderPath, filename);
+      }
+      if (!remoteId) {
+        throw new Error(`Could not resolve remote ID for entry: ${entry.filePath}`);
+      }
+      resolvedOp = { ...(resolvedOp as Record<string, unknown>), [idField]: remoteId } as ParsedContent;
+
       operations.push(resolvedOp);
       entriesWithOps.push({ entry, resolvedOp });
     }
@@ -560,13 +574,13 @@ export class PublishRunService {
       // Update File Index
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
       const realId = (returned as any)[idField];
-      if (realId && typeof realId === 'string') {
+      if (realId && (typeof realId === 'string' || typeof realId === 'number')) {
         const { folderPath, filename } = parsePath(entry.filePath);
         fileIndexUpdates.push({
           workbookId,
           folderPath,
           filename,
-          recordId: realId,
+          recordId: String(realId),
         });
       }
 
