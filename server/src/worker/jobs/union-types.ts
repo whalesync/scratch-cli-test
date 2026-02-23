@@ -3,8 +3,7 @@ import { Progress } from './base-types';
 import { AddThreeNumbersJobDefinition } from './job-definitions/add-three-numbers.job';
 import { AddTwoNumbersJobDefinition } from './job-definitions/add-two-numbers.job';
 import { PublishDataFolderJobDefinition } from './job-definitions/publish-data-folder.job';
-import { PublishPlanJobDefinition } from './job-definitions/publish-plan.job';
-import { PublishRunJobDefinition } from './job-definitions/publish-run.job';
+import { PublishJobDefinition } from './job-definitions/publish.job';
 import { PullLinkedFolderFilesJobDefinition } from './job-definitions/pull-linked-folder-files.job';
 import { SyncDataFoldersJobDefinition } from './job-definitions/sync-data-folders.job';
 
@@ -12,8 +11,7 @@ export type JobDefinition =
   | AddTwoNumbersJobDefinition
   | AddThreeNumbersJobDefinition
   | PublishDataFolderJobDefinition
-  | PublishPlanJobDefinition
-  | PublishRunJobDefinition
+  | PublishJobDefinition
   | PullLinkedFolderFilesJobDefinition
   | SyncDataFoldersJobDefinition;
 export type JobData = JobDefinition['data'];

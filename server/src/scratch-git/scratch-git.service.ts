@@ -47,24 +47,8 @@ export class ScratchGitService {
     files: { path: string; content: string }[],
     message: string,
   ) {
-    const filesByDir = new Map<string, typeof files>();
-
-    for (const file of files) {
-      const dir = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '.';
-      if (!filesByDir.has(dir)) {
-        filesByDir.set(dir, []);
-      }
-      filesByDir.get(dir)!.push(file);
-    }
-
-    const sortedDirs = Array.from(filesByDir.keys()).sort();
-
-    for (const dir of sortedDirs) {
-      const dirFiles = filesByDir.get(dir);
-      if (dirFiles) {
-        await this.scratchGitClient.commitFiles(workbookId, branch, dirFiles, message);
-      }
-    }
+    if (files.length === 0) return;
+    await this.scratchGitClient.commitFiles(workbookId, branch, files, message);
   }
 
   async listRepoFiles(workbookId: WorkbookId, branch: string, folder: string): Promise<any[]> {

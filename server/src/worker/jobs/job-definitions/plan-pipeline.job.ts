@@ -8,10 +8,10 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 export type PlanPipelinePublicProgress = {
   status: 'planning' | 'completed' | 'failed';
   step?: string;
-  edits: number;
-  creates: number;
-  deletes: number;
-  backfills: number;
+  editsPlanned: number;
+  createsPlanned: number;
+  deletesPlanned: number;
+  backfillsPlanned: number;
 };
 
 // ── Job Definition ───────────────────────────────────────────────────
@@ -60,30 +60,30 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
     await checkpoint({
       publicProgress: {
         status: 'planning',
-        edits: 0,
-        creates: 0,
-        deletes: 0,
-        backfills: 0,
+        editsPlanned: 0,
+        createsPlanned: 0,
+        deletesPlanned: 0,
+        backfillsPlanned: 0,
       },
       jobProgress: {},
       connectorProgress: {},
     });
 
     const onProgress = async (counts: {
-      edits: number;
-      creates: number;
-      deletes: number;
-      backfills: number;
+      editsPlanned: number;
+      createsPlanned: number;
+      deletesPlanned: number;
+      backfillsPlanned: number;
       step?: string;
     }) => {
       await checkpoint({
         publicProgress: {
           status: 'planning',
           step: counts.step,
-          edits: counts.edits,
-          creates: counts.creates,
-          deletes: counts.deletes,
-          backfills: counts.backfills,
+          editsPlanned: counts.editsPlanned,
+          createsPlanned: counts.createsPlanned,
+          deletesPlanned: counts.deletesPlanned,
+          backfillsPlanned: counts.backfillsPlanned,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -107,10 +107,10 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       await checkpoint({
         publicProgress: {
           status: 'completed',
-          edits: plan.phases?.find((p) => p.type === 'edit')?.recordCount ?? 0,
-          creates: plan.phases?.find((p) => p.type === 'create')?.recordCount ?? 0,
-          deletes: plan.phases?.find((p) => p.type === 'delete')?.recordCount ?? 0,
-          backfills: plan.phases?.find((p) => p.type === 'backfill')?.recordCount ?? 0,
+          editsPlanned: plan.phases?.find((p) => p.type === 'edit')?.recordCount ?? 0,
+          createsPlanned: plan.phases?.find((p) => p.type === 'create')?.recordCount ?? 0,
+          deletesPlanned: plan.phases?.find((p) => p.type === 'delete')?.recordCount ?? 0,
+          backfillsPlanned: plan.phases?.find((p) => p.type === 'backfill')?.recordCount ?? 0,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -127,10 +127,10 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       await checkpoint({
         publicProgress: {
           status: 'failed',
-          edits: 0,
-          creates: 0,
-          deletes: 0,
-          backfills: 0,
+          editsPlanned: 0,
+          createsPlanned: 0,
+          deletesPlanned: 0,
+          backfillsPlanned: 0,
         },
         jobProgress: {},
         connectorProgress: {},

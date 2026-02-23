@@ -7,8 +7,7 @@ import { JobService } from 'src/job/job.service';
 import { Actor } from 'src/users/types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/publish-data-folder.job';
-import { PublishPlanJobDefinition } from '../worker/jobs/job-definitions/publish-plan.job';
-import { PublishRunJobDefinition } from '../worker/jobs/job-definitions/publish-run.job';
+import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { SyncDataFoldersJobDefinition } from '../worker/jobs/job-definitions/sync-data-folders.job';
 
@@ -136,12 +135,12 @@ export class BullEnqueuerService implements OnModuleDestroy {
     connectorAccountId?: string,
     runAfterPlan?: boolean,
   ): Promise<Job> {
-    const id = `publish-plan-${actor.userId}-${workbookId}-${createPlainId()}`;
-    const data: PublishPlanJobDefinition['data'] = {
+    const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const data: PublishJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
       pipelineId,
-      type: 'publish-plan',
+      type: 'publish',
       ...(connectorAccountId && { connectorAccountId }),
       ...(runAfterPlan && { runAfterPlan }),
     };
@@ -156,12 +155,14 @@ export class BullEnqueuerService implements OnModuleDestroy {
   }
 
   async enqueueRunPipelineJob(workbookId: WorkbookId, actor: Actor, pipelineId: string, phase?: string): Promise<Job> {
-    const id = `publish-run-${actor.userId}-${workbookId}-${createPlainId()}`;
-    const data: PublishRunJobDefinition['data'] = {
+    const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const data: PublishJobDefinition['data'] = {
       pipelineId,
       workbookId,
       userId: actor.userId,
-      type: 'publish-run',
+      type: 'publish',
+      // We are enqueuing a run explicitly
+      runAfterPlan: true,
       ...(phase && { phase }),
     };
     await this.jobService.createJob({

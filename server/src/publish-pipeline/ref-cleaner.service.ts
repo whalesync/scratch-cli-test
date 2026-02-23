@@ -46,10 +46,17 @@ export class RefCleanerService {
     return result;
   }
 
+  private fkPathsCache = new Map<string, Array<{ path: string[]; targetFolderId: string; map?: string }>>();
+
   /**
    * Traverses the schema to find all paths that are marked as foreign keys.
    */
   extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetFolderId: string; map?: string }> {
+    const schemaId = schema.$id as string | undefined;
+    if (typeof schemaId === 'string' && this.fkPathsCache.has(schemaId)) {
+      return this.fkPathsCache.get(schemaId)!;
+    }
+
     const results: Array<{ path: string[]; targetFolderId: string; map?: string }> = [];
 
     const walk = (schemaNode: any, currentPath: string[]) => {
@@ -117,6 +124,13 @@ export class RefCleanerService {
     };
 
     walk(schema, []);
+
+    const outSchemaId = schema.$id as string | undefined;
+    if (typeof outSchemaId === 'string') {
+      if (this.fkPathsCache.size > 1000) this.fkPathsCache.clear(); // Keep memory bounded
+      this.fkPathsCache.set(outSchemaId, results);
+    }
+
     return results;
   }
 

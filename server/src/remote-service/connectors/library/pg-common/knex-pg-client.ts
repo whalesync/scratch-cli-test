@@ -429,43 +429,46 @@ export class KnexPGClient {
     return sanitizeRow(rows[0]);
   }
 
-  /**
-   * Update multiple rows in a transaction. Rolls back if any single update
-   * affects more than 1 row.
-   */
   async updateMany(
     schema: string,
     tableName: string,
     primaryId: string,
     records: { id: string | number; data: Record<string, unknown> }[],
   ): Promise<(Record<string, unknown> | 'not_found')[]> {
-    const results: (Record<string, unknown> | 'not_found')[] = [];
+    if (records.length === 0) return [];
 
-    await this.knex.transaction(async (trx) => {
-      for (const record of records) {
-        const filteredData = { ...record.data };
-        delete filteredData[primaryId];
-        const escapedData = escapeObjectKeys(filteredData);
+    const updateColumns = Object.keys(records[0].data).filter((c) => c !== primaryId);
+    if (updateColumns.length === 0) return records.map(() => 'not_found');
 
-        const rows = (await trx(`${schema}.${tableName}`)
-          .where(primaryId, record.id)
-          .update(escapedData)
-          .returning('*')) as Record<string, unknown>[];
+    const quoteId = (name: string) => `"${name.replace(/"/g, '""')}"`;
+    const quotedTable = `${quoteId(schema)}.${quoteId(tableName)}`;
+    const quotedPk = quoteId(primaryId);
+    const setClauses = updateColumns.map((c) => `${quoteId(c)} = v.${quoteId(c)}`);
 
-        if (rows.length === 0) {
-          results.push('not_found');
-        } else if (rows.length > 1) {
-          throw new KnexPGClientError(
-            `UPDATE affected ${rows.length} rows (expected 1) for ${schema}.${tableName} where ${primaryId} = ${String(record.id)}`,
-            'UPDATE_MULTIPLE_ROWS',
-          );
-        } else {
-          results.push(sanitizeRow(rows[0]));
-        }
+    const payload = records.map((r) => ({ ...r.data, [primaryId]: r.id }));
+    const jsonParam = JSON.stringify(payload);
+
+    const query = `
+      UPDATE ${quotedTable} AS t 
+      SET ${setClauses.join(', ')} 
+      FROM json_populate_recordset(null::${quotedTable}, ?::json) AS v 
+      WHERE t.${quotedPk} = v.${quotedPk}
+      RETURNING t.*
+    `;
+
+    try {
+      const result = await this.knex.raw<{ rows: Record<string, unknown>[] }>(query, [jsonParam]);
+
+      const updatedRowMap = new Map<string, Record<string, unknown>>();
+      for (const row of result.rows) {
+        updatedRowMap.set(String(row[primaryId]), sanitizeRow(row));
       }
-    });
 
-    return results;
+      return records.map((r) => updatedRowMap.get(String(r.id)) || 'not_found');
+    } catch (error) {
+      console.error(error);
+      throw error;
+    }
   }
 
   // -------------------------------------------------------------------------

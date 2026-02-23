@@ -16,8 +16,7 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { AddThreeNumbersJobHandler } from './jobs/job-definitions/add-three-numbers.job';
 import { AddTwoNumbersJobHandler } from './jobs/job-definitions/add-two-numbers.job';
 import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
-import { PublishPlanJobHandler } from './jobs/job-definitions/publish-plan.job';
-import { PublishRunJobHandler } from './jobs/job-definitions/publish-run.job';
+import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
 import { SyncDataFoldersJobHandler } from './jobs/job-definitions/sync-data-folders.job';
 import { JobData, JobDefinition, JobHandler } from './jobs/union-types';
@@ -79,14 +78,12 @@ export class JobHandlerService {
           this.workbookEventService,
         ) as JobHandler<JobDefinition>;
 
-      case 'publish-plan':
-        return new PublishPlanJobHandler(
+      case 'publish':
+        return new PublishJobHandler(
           this.pipelinePlanService,
+          this.pipelineRunService,
           this.bullEnqueuerService,
         ) as JobHandler<JobDefinition>;
-
-      case 'publish-run':
-        return new PublishRunJobHandler(this.pipelineRunService) as JobHandler<JobDefinition>;
 
       default:
         throw new Error(`Unknown job type. Data: ${JSON.stringify(data)}`);

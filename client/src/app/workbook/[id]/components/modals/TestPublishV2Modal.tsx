@@ -22,11 +22,14 @@ import { notifications } from '@mantine/notifications';
 import { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
 import {
   ChevronDownIcon,
+  FilePenLineIcon,
   InfoIcon,
   ListIcon,
   PlayIcon,
+  PlusCircleIcon,
   PlusIcon,
   RefreshCwIcon,
+  RepeatIcon,
   RocketIcon,
   Trash2Icon,
   XIcon,
@@ -298,10 +301,30 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                   <Table.Th>Created At</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Job</Table.Th>
-                  <Table.Th>Edits</Table.Th>
-                  <Table.Th>Creates</Table.Th>
-                  <Table.Th>Deletes</Table.Th>
-                  <Table.Th>Backfills</Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <FilePenLineIcon size={12} />
+                      Edits
+                    </Group>
+                  </Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <PlusCircleIcon size={12} />
+                      Creates
+                    </Group>
+                  </Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <Trash2Icon size={12} />
+                      Deletes
+                    </Group>
+                  </Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <RepeatIcon size={12} />
+                      Backfills
+                    </Group>
+                  </Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -365,6 +388,21 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                               <Badge color={jobStatusBadgeColor(p.job.status)} size="sm" variant="outline">
                                 {p.job.type === 'publish-plan' ? 'planning' : 'running'} · {p.job.status}
                               </Badge>
+                              {p.job.type === 'publish-plan' &&
+                                (p.job.progress as { publicProgress?: { step?: string } })?.publicProgress?.step && (
+                                  <Text
+                                    size="xs"
+                                    c="dimmed"
+                                    style={{
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      maxWidth: '200px',
+                                    }}
+                                  >
+                                    {(p.job.progress as { publicProgress?: { step?: string } }).publicProgress!.step}
+                                  </Text>
+                                )}
                               <Popover position="bottom-start" withinPortal shadow="md" width={340}>
                                 <Popover.Target>
                                   <Button size="compact-xs" variant="subtle" color="gray" px={2}>
@@ -387,16 +425,19 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                           )}
                         </Table.Td>
                         {(['edits', 'creates', 'deletes', 'backfills'] as const).map((phaseKey) => {
-                          const totalKey = `total${phaseKey.charAt(0).toUpperCase() + phaseKey.slice(1)}` as
-                            | 'totalEdits'
-                            | 'totalCreates'
-                            | 'totalDeletes'
-                            | 'totalBackfills';
-                          const pub = p.job?.progress as
-                            | { publicProgress?: Record<string, number> }
-                            | undefined;
-                          const completed = pub?.publicProgress?.[phaseKey] ?? 0;
-                          const total = pub?.publicProgress?.[totalKey] ?? 0;
+                          const executedKey = `${phaseKey}Executed` as
+                            | 'editsExecuted'
+                            | 'createsExecuted'
+                            | 'deletesExecuted'
+                            | 'backfillsExecuted';
+                          const plannedKey = `${phaseKey}Planned` as
+                            | 'editsPlanned'
+                            | 'createsPlanned'
+                            | 'deletesPlanned'
+                            | 'backfillsPlanned';
+                          const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;
+                          const completed = pub?.publicProgress?.[executedKey] ?? 0;
+                          const total = pub?.publicProgress?.[plannedKey] ?? 0;
                           return (
                             <Table.Td key={phaseKey}>
                               {total > 0 ? (
@@ -404,9 +445,13 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                   {completed}/{total}
                                 </Text>
                               ) : completed > 0 ? (
-                                <Text size="xs" c="green">{completed}</Text>
+                                <Text size="xs" c="green">
+                                  {completed}
+                                </Text>
                               ) : (
-                                <Text size="xs" c="dimmed">—</Text>
+                                <Text size="xs" c="dimmed">
+                                  —
+                                </Text>
                               )}
                             </Table.Td>
                           );

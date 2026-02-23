@@ -42,14 +42,14 @@ export class PublishRunService {
     phase?: string,
     abortSignal?: AbortSignal,
     onProgress?: (counts: {
-      edits: number;
-      creates: number;
-      deletes: number;
-      backfills: number;
-      totalEdits: number;
-      totalCreates: number;
-      totalDeletes: number;
-      totalBackfills: number;
+      editsExecuted: number;
+      createsExecuted: number;
+      deletesExecuted: number;
+      backfillsExecuted: number;
+      editsPlanned: number;
+      createsPlanned: number;
+      deletesPlanned: number;
+      backfillsPlanned: number;
       currentPhase: string;
     }) => Promise<void>,
   ): Promise<PublishPlanInfo> {
@@ -83,14 +83,14 @@ export class PublishRunService {
 
       const reportRunProgress = async (currentPhase: string) => {
         await onProgress?.({
-          edits: completedByPhase.edit,
-          creates: completedByPhase.create,
-          deletes: completedByPhase.delete,
-          backfills: completedByPhase.backfill,
-          totalEdits: totalByPhase.edit,
-          totalCreates: totalByPhase.create,
-          totalDeletes: totalByPhase.delete,
-          totalBackfills: totalByPhase.backfill,
+          editsExecuted: completedByPhase.edit,
+          createsExecuted: completedByPhase.create,
+          deletesExecuted: completedByPhase.delete,
+          backfillsExecuted: completedByPhase.backfill,
+          editsPlanned: totalByPhase.edit,
+          createsPlanned: totalByPhase.create,
+          deletesPlanned: totalByPhase.delete,
+          backfillsPlanned: totalByPhase.backfill,
           currentPhase,
         });
       };
@@ -646,7 +646,7 @@ export class PublishRunService {
         }
       }
     } else {
-      // For edit/create: we must check if a backfill entry exists for these files
+      // For edit/create: we must check if a backfill or delete entry exists for these files
       const filePaths = items.map((i) => i.filePath);
 
       // Find all later pending phases for any of these files
@@ -655,7 +655,7 @@ export class PublishRunService {
         where: {
           planId,
           filePath: { in: filePaths },
-          phase: 'backfill',
+          phase: { in: ['backfill', 'delete'] },
           status: 'pending',
         },
         _count: true,
@@ -666,7 +666,7 @@ export class PublishRunService {
 
       for (const item of items) {
         if (!pendingMap.has(item.filePath)) {
-          // No backfill coming — this is the final content, sync to dirty
+          // No backfill or delete coming — this is the final content, sync to dirty
           if (item.content === null) {
             finalDeletes.push(item.filePath);
           } else {

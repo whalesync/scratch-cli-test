@@ -100,10 +100,10 @@ export class PublishPlanService {
     connectorAccountId?: string,
     existingPipelineId?: string,
     onProgress?: (counts: {
-      edits: number;
-      creates: number;
-      deletes: number;
-      backfills: number;
+      editsPlanned: number;
+      createsPlanned: number;
+      deletesPlanned: number;
+      backfillsPlanned: number;
       step?: string;
     }) => Promise<void>,
   ): Promise<PublishPlanInfo> {
@@ -126,7 +126,7 @@ export class PublishPlanService {
     const wkbId = workbookId as WorkbookId;
 
     // Running counts — updated as each entry is planned and passed to onProgress
-    const liveCounts = { edits: 0, creates: 0, deletes: 0, backfills: 0 };
+    const liveCounts = { editsPlanned: 0, createsPlanned: 0, deletesPlanned: 0, backfillsPlanned: 0 };
     const reportProgress = async (step?: string) => {
       await onProgress?.({ ...liveCounts, step });
     };
@@ -303,7 +303,7 @@ export class PublishPlanService {
                 status: 'pending',
               });
               editCount++;
-              liveCounts.edits++;
+              liveCounts.editsPlanned++;
             }
             continue;
           }
@@ -338,7 +338,7 @@ export class PublishPlanService {
               status: 'pending',
             });
             editCount++;
-            liveCounts.edits++;
+            liveCounts.editsPlanned++;
 
             // Backfill Logic
             if (pass2ContentStr !== pass1ContentStr) {
@@ -349,7 +349,7 @@ export class PublishPlanService {
                 dataFolderId: dataFolderId || null,
                 status: 'pending',
               });
-              liveCounts.backfills++;
+              liveCounts.backfillsPlanned++;
             }
           }
         }
@@ -398,7 +398,7 @@ export class PublishPlanService {
               status: 'pending',
             });
             createCount++;
-            liveCounts.creates++;
+            liveCounts.createsPlanned++;
             continue;
           }
 
@@ -421,7 +421,7 @@ export class PublishPlanService {
             status: 'pending',
           });
           createCount++;
-          liveCounts.creates++;
+          liveCounts.createsPlanned++;
 
           if (pass2ContentStr !== pass1ContentStr) {
             planEntries.push({
@@ -431,7 +431,7 @@ export class PublishPlanService {
               dataFolderId: dataFolderId || null,
               status: 'pending',
             });
-            liveCounts.backfills++;
+            liveCounts.backfillsPlanned++;
           }
         }
       }
@@ -464,7 +464,7 @@ export class PublishPlanService {
         dataFolderId: info?.id || null,
         status: 'pending',
       });
-      liveCounts.deletes++;
+      liveCounts.deletesPlanned++;
     }
 
     if (deletedFiles.length > 0) {
