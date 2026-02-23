@@ -3,6 +3,7 @@
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
+import { useDataFolders } from '@/hooks/use-data-folders';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { Checkbox, NumberInput, Stack, Textarea, TextInput } from '@mantine/core';
 import type { DataFolder } from '@spinner/shared-types';
@@ -18,6 +19,7 @@ interface AdvancedFolderSettingsModalProps {
 const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE, Service.SUPABASE]);
 
 export function AdvancedFolderSettingsModal({ opened, onClose, folder }: AdvancedFolderSettingsModalProps) {
+  const { refresh: refreshDataFolders } = useDataFolders();
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -71,6 +73,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
         filter: filter.trim() || null,
         ...(hasPullOptions && { options: buildOptions() }),
       });
+      await refreshDataFolders();
       ScratchpadNotifications.success({
         title: 'Settings Updated',
         message: `Updated settings for ${folder.name}`,
