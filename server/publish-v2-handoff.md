@@ -32,12 +32,12 @@ After each phase publishes and pulls canonical data back to main, the main branc
 
 ## 3. The Four Phase Types
 
-| Phase        | Commit prefix | What it does                                                                                                                  | When present                                       |
-| ------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| **Edit**     | `[edit]`      | Publishes user's modified files + synthetic reference-clearing edits (nulling fields pointing to records about to be deleted) | Files modified, or deletes need ref-clearing       |
-| **Create**   | `[create]`    | Publishes new files with unresolvable `@/` refs stripped out                                                                  | Files added                                        |
-| **Delete**   | `[delete]`    | Bulk-deletes records from external service, removes from main                                                                 | Files deleted                                      |
-| **Backfill** | `[backfill]`  | Re-applies `@/` references that were stripped during create (targets now have real IDs on main)                               | Only when creates had unresolvable `@/` cross-refs |
+| Phase        | Commit prefix | What it does                                                                                                                  | When present                                    |
+| ------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **Edit**     | `[edit]`      | Publishes user's modified files + synthetic reference-clearing edits (nulling fields pointing to records about to be deleted) | Files modified, or deletes need ref-clearing    |
+| **Create**   | `[create]`    | Publishes new files with all `@/` refs stripped out                                                                           | Files added                                     |
+| **Delete**   | `[delete]`    | Bulk-deletes records from external service, removes from main                                                                 | Files deleted                                   |
+| **Backfill** | `[backfill]`  | Re-applies all `@/` references that were stripped during edit/create (targets now have real IDs on main)                      | When any phase had `@/` refs that were stripped |
 
 **Ordering**: edit → create → delete → backfill. Each phase depends on the previous one completing.
 
@@ -339,8 +339,7 @@ Source: `/Users/ijd/repos/mackerel/src/lib/publish-pipeline/build.ts`
    - Write all edits (user + synthetic) as a single commit with message `[edit] N edit(s) + M reference-clearing fix(es)`.
 4. **Build `[create]` commit**:
    - For each added file, read from dirty branch.
-   - Parse JSON, check for `@/` references.
-   - For each `@/` ref, check FileIndex to see if the target exists on main. If not, strip the field and track it for backfill.
+   - Parse JSON, strip all `@/` references unconditionally (they are always resolved during the backfill phase).
    - Write all creates as a single commit with message `[create] N new record(s)`.
 5. **Build `[delete]` commit**:
    - Collect all deleted file paths.
@@ -375,7 +374,9 @@ Source: `/Users/ijd/repos/mackerel/src/lib/publish-pipeline/run.ts`
 
 `@/` is a notation used in file content to represent a reference to another file in the same git repo. Example: `"author": "@/webflow/conn1/site1/authors/hemingway.json"`.
 
-At publish time, `@/` refs are resolved to real external record IDs:
+**Simple rule**: During the build phase, all `@/` refs are **always stripped** unconditionally. They are then **resolved during the backfill phase** after all creates have completed and the target records have real IDs on main.
+
+At backfill time, `@/` refs are resolved to real external record IDs:
 
 1. Parse the path after `@/` — split into folder path + filename.
 2. Query `fileIndex.getRecordId(folderPath, filename)` to get the external ID.
@@ -415,7 +416,7 @@ This resolution uses FileIndex, NOT direct git reads — so FileIndex must be po
 ### During Publish
 
 1. Build: `fileReference.findRefsToFiles()` to find inbound refs to deleted files
-2. Build: `fileIndex.getRecordId()` to check `@/` target existence for stripping
+2. Build: All `@/` refs are stripped unconditionally (no FileIndex lookup needed)
 3. Run: `resolveAtRefsViaIndex()` to convert `@/` paths to real IDs via FileIndex
 4. Run (delete): `fileIndex.getRecordId()` to get external IDs for deleted files
 5. Run (delete): `fileIndex.removeBatch()` to clean up after successful deletes

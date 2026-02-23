@@ -58,7 +58,10 @@ describe('PublishPlanService', () => {
 
     refCleanerService = {
       // Pass content through unchanged by default
-      stripReferencesWithSchema: jest.fn().mockImplementation((_wkb, content) => Promise.resolve(content)),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      stripDeletedRecordRefs: jest.fn().mockImplementation((content) => content),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      stripPseudoRefs: jest.fn().mockImplementation((content) => content),
     } as unknown as jest.Mocked<RefCleanerService>;
 
     schemaService = {
@@ -151,10 +154,9 @@ describe('PublishPlanService', () => {
         { path: filePath, content: JSON.stringify(originalContent) },
       ]);
 
-      // Pass 1 (IDS_ONLY): no change; Pass 2 (PSEUDO_ONLY): strips the ref
-      refCleanerService.stripReferencesWithSchema
-        .mockResolvedValueOnce(originalContent) // pass 1
-        .mockResolvedValueOnce(strippedContent); // pass 2
+      // Pass 1 (deleted record IDs): no change; Pass 2 (pseudo-refs): strips the ref
+      refCleanerService.stripDeletedRecordRefs.mockReturnValueOnce(originalContent);
+      refCleanerService.stripPseudoRefs.mockReturnValueOnce(strippedContent);
 
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 

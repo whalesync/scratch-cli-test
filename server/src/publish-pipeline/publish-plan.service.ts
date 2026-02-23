@@ -141,9 +141,6 @@ export class PublishPlanService {
       return this.schemaService.getDataFolderInfo(workbookId, folderPath, dataFolderCache);
     };
 
-    const addedPathsSet = new Set(addedFiles.map((f) => f.path));
-    const deletedPathsSet = new Set(deletedFiles.map((f) => f.path));
-
     // --- Prepare for "Delete Ref Clearing" ---
     // 1. Identify Deleted Record IDs (bulk lookup)
 
@@ -283,25 +280,11 @@ export class PublishPlanService {
           // --- TWO PASS STRIPPING ---
 
           // Pass 1: Strip references to DELETED records.
-          const pass1ContentObj = await this.refCleanerService.stripReferencesWithSchema(
-            workbookId,
-            contentObj,
-            schema,
-            deletedPathsSet,
-            deletedRecordIds,
-            'IDS_ONLY',
-          );
+          const pass1ContentObj = this.refCleanerService.stripDeletedRecordRefs(contentObj, schema, deletedRecordIds);
           const pass1ContentStr = JSON.stringify(pass1ContentObj, null, 2);
 
-          // Pass 2: Strip references to NEW records (Pseudo-refs).
-          const pass2ContentObj = await this.refCleanerService.stripReferencesWithSchema(
-            workbookId,
-            pass1ContentObj,
-            schema,
-            addedPathsSet,
-            undefined,
-            'PSEUDO_ONLY',
-          );
+          // Pass 2: Strip all pseudo-refs (@/ references) unconditionally.
+          const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
           const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
 
           // Determine Edit Operation
@@ -383,24 +366,12 @@ export class PublishPlanService {
           const schema = info?.spec?.schema as Schema;
           const dataFolderId = info?.id;
 
-          // Pass 1: Strip Deleted
-          const pass1ContentObj = await this.refCleanerService.stripReferencesWithSchema(
-            workbookId,
-            contentObj,
-            schema,
-            deletedPathsSet,
-          );
+          // Pass 1: Strip references to DELETED records.
+          const pass1ContentObj = this.refCleanerService.stripDeletedRecordRefs(contentObj, schema, deletedRecordIds);
           const pass1ContentStr = JSON.stringify(pass1ContentObj, null, 2);
 
-          // Pass 2: Strip Pseudo
-          const pass2ContentObj = await this.refCleanerService.stripReferencesWithSchema(
-            workbookId,
-            pass1ContentObj,
-            schema,
-            addedPathsSet,
-            undefined,
-            'PSEUDO_ONLY',
-          );
+          // Pass 2: Strip all pseudo-refs (@/ references) unconditionally.
+          const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
           const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
 
           planEntries.push({

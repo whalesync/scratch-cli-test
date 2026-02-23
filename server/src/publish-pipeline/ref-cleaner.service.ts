@@ -1,39 +1,38 @@
 import { Injectable } from '@nestjs/common';
 
 import { ParsedContent, Schema } from 'src/utils/objects';
-import { FileIndexService } from './file-index.service';
-import { parsePath } from './utils';
-
-export type StripMode = 'ALL' | 'IDS_ONLY' | 'PSEUDO_ONLY';
 
 @Injectable()
 export class RefCleanerService {
-  constructor(private readonly fileIndexService: FileIndexService) {}
   /**
-   * Strip references that point to any of the paths in the set or are unresolvable pseudo-refs.
+   * Strip references whose values match any of the given deleted record IDs.
    * Returns a deep copy of content with matching refs replaced by null.
    */
-  async stripReferencesWithSchema(
-    workbookId: string,
-    content: ParsedContent,
-    schema: Schema | null,
-    addedPaths: Set<string>,
-    idsToStrip?: Set<string>,
-    mode: StripMode = 'ALL',
-  ): Promise<ParsedContent> {
-    if (!content || !schema) return content;
+  stripDeletedRecordRefs(content: ParsedContent, schema: Schema | null, idsToStrip: Set<string>): ParsedContent {
+    if (!content || !schema || idsToStrip.size === 0) return content;
 
-    // Deep copy to avoid mutating original
     const result = structuredClone(content);
-
-    // 1. Find all FK paths in the schema
     const fkPaths = this.extractForeignKeyPaths(schema);
 
     for (const fk of fkPaths) {
-      // 2. Get nodes at this path in the content
-      // We need to modify them in place, so getNodesByPath might not be enough if it returns values.
-      // We'll write a specific traverser that can update values.
-      await this.stripAtNodes(workbookId, result, fk.path, addedPaths, idsToStrip, mode);
+      this.stripAtNodes(result, fk.path, (value) => typeof value === 'string' && idsToStrip.has(value));
+    }
+
+    return result;
+  }
+
+  /**
+   * Strip all pseudo-refs (`@/` references) unconditionally.
+   * Returns a deep copy of content with `@/` refs replaced by null.
+   */
+  stripPseudoRefs(content: ParsedContent, schema: Schema | null): ParsedContent {
+    if (!content || !schema) return content;
+
+    const result = structuredClone(content);
+    const fkPaths = this.extractForeignKeyPaths(schema);
+
+    for (const fk of fkPaths) {
+      this.stripAtNodes(result, fk.path, (value) => typeof value === 'string' && value.startsWith('@/'));
     }
 
     return result;
@@ -113,15 +112,8 @@ export class RefCleanerService {
     return results;
   }
 
-  // Helper to traverse and strip at specific path
-  private async stripAtNodes(
-    workbookId: string,
-    root: any,
-    path: string[],
-    addedPaths: Set<string>,
-    idsToStrip?: Set<string>,
-    mode: StripMode = 'ALL',
-  ): Promise<void> {
+  // Helper to traverse and strip at specific path using a predicate
+  private stripAtNodes(root: any, path: string[], shouldStrip: (value: any) => boolean): void {
     if (!root) return;
     if (path.length === 0) return;
 
@@ -131,11 +123,10 @@ export class RefCleanerService {
       if (Array.isArray(root)) {
         for (let i = 0; i < root.length; i++) {
           if (tail.length === 0) {
-            // Reached the leaf node (FK value) inside array
             // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            root[i] = await this.checkAndStrip(workbookId, root[i], addedPaths, idsToStrip, mode);
+            root[i] = this.checkAndStrip(root[i], shouldStrip);
           } else {
-            await this.stripAtNodes(workbookId, root[i], tail, addedPaths, idsToStrip, mode);
+            this.stripAtNodes(root[i], tail, shouldStrip);
           }
         }
       }
@@ -143,78 +134,21 @@ export class RefCleanerService {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (root[head] !== undefined) {
         if (tail.length === 0) {
-          // Reached the leaf node (FK value)
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          root[head] = await this.checkAndStrip(workbookId, root[head], addedPaths, idsToStrip, mode);
+          root[head] = this.checkAndStrip(root[head], shouldStrip);
         } else {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          await this.stripAtNodes(workbookId, root[head], tail, addedPaths, idsToStrip, mode);
+          this.stripAtNodes(root[head], tail, shouldStrip);
         }
       }
     }
   }
 
-  private async checkAndStrip(
-    workbookId: string,
-    value: any,
-    addedPaths: Set<string>,
-    idsToStrip?: Set<string>,
-    mode: StripMode = 'ALL',
-  ): Promise<any> {
-    // Helper to check a single value (string or array of strings)
-    // Actually schema usually points to the specific field.
-    // Multiref might be an array of strings.
-
+  private checkAndStrip(value: any, shouldStrip: (value: any) => boolean): any {
     if (Array.isArray(value)) {
-      const newArray = [];
-      for (const item of value) {
-        const stripped = await this.shouldStrip(workbookId, item, addedPaths, idsToStrip, mode);
-        if (!stripped) newArray.push(item);
-      }
-      return newArray;
+      return value.filter((item) => !shouldStrip(item));
     } else {
-      const stripped = await this.shouldStrip(workbookId, value, addedPaths, idsToStrip, mode);
-      return stripped ? null : value;
+      return shouldStrip(value) ? null : value;
     }
-  }
-
-  private async shouldStrip(
-    workbookId: string,
-    value: any,
-    addedPaths: Set<string>,
-    idsToStrip?: Set<string>,
-    mode: StripMode = 'ALL',
-  ): Promise<boolean> {
-    if (typeof value !== 'string') return false;
-
-    // Check 0: Is it in idsToStrip? (Only if mode is ALL or IDS_ONLY)
-    if (mode === 'ALL' || mode === 'IDS_ONLY') {
-      if (idsToStrip && idsToStrip.has(value)) {
-        return true;
-      }
-    }
-
-    // Check 1: Is it a pseudo-ref? (Only if mode is ALL or PSEUDO_ONLY)
-    if (mode === 'ALL' || mode === 'PSEUDO_ONLY') {
-      if (value.startsWith('@/')) {
-        const targetPath = value.substring(2);
-
-        // If it points to an added file, STRIP IT.
-        // (Normalize check: targetPath matching addedPaths)
-        if (addedPaths.has(targetPath) || addedPaths.has('/' + targetPath)) {
-          return true;
-        }
-
-        // If it points to a file that DOES NOT EXIST in FileIndex, STRIP IT.
-        const { folderPath: folder, filename } = parsePath(targetPath);
-
-        const recordId = await this.fileIndexService.getRecordId(workbookId, folder, filename);
-        if (!recordId) {
-          return true; // Strip unresolvable
-        }
-      }
-    }
-
-    return false;
   }
 }
