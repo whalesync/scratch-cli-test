@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Service, WorkbookId } from '@spinner/shared-types';
+import { isScratchPendingPublishId, Service, WorkbookId } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
@@ -397,7 +397,7 @@ export class PublishRunService {
         const content = { ...(e.operation as Record<string, unknown>) };
         // Strip temporary ID
         const idValue = content[idField];
-        if (typeof idValue === 'string' && idValue.startsWith('sppi_')) {
+        if (isScratchPendingPublishId(idValue)) {
           delete content[idField];
         }
         return content;

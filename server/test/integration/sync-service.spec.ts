@@ -11,6 +11,7 @@ import {
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { FileIndexService } from 'src/publish-pipeline/file-index.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
@@ -49,7 +50,14 @@ describe('SyncService - fillSyncCaches', () => {
     scratchGitService = {} as unknown as ScratchGitService;
 
     // Create SyncService instance (workbookService not needed for these tests)
-    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
+    syncService = new SyncService(
+      dbService,
+      dataFolderService,
+      {} as PostHogService,
+      scratchGitService,
+      {} as never,
+      { upsertBatch: jest.fn() } as unknown as FileIndexService,
+    );
 
     // Create test organization
     const org = await prisma.organization.create({
@@ -347,13 +355,13 @@ describe('SyncService - syncTableMapping', () => {
         if (cursor) {
           return { files: [], nextCursor: undefined };
         }
-        const files = await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
+        const files = ((await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
           wbId,
           folderId,
           actorArg,
           branch,
-        );
-        return { files: files ?? [], nextCursor: undefined };
+        )) ?? []) as { folderId: DataFolderId; path: string; content: string }[];
+        return { files, nextCursor: undefined };
       },
     );
 
@@ -366,7 +374,14 @@ describe('SyncService - syncTableMapping', () => {
         }),
     } as unknown as ScratchGitService;
 
-    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
+    syncService = new SyncService(
+      dbService,
+      dataFolderService,
+      {} as PostHogService,
+      scratchGitService,
+      {} as never,
+      { upsertBatch: jest.fn() } as unknown as FileIndexService,
+    );
 
     // Create test organization
     const org = await prisma.organization.create({
@@ -1446,13 +1461,13 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         if (cursor) {
           return { files: [], nextCursor: undefined };
         }
-        const files = await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
+        const files = ((await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
           wbId,
           folderId,
           actorArg,
           branch,
-        );
-        return { files: files ?? [], nextCursor: undefined };
+        )) ?? []) as { folderId: DataFolderId; path: string; content: string }[];
+        return { files, nextCursor: undefined };
       },
     );
 
@@ -1465,7 +1480,14 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         }),
     } as unknown as ScratchGitService;
 
-    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
+    syncService = new SyncService(
+      dbService,
+      dataFolderService,
+      {} as PostHogService,
+      scratchGitService,
+      {} as never,
+      { upsertBatch: jest.fn() } as unknown as FileIndexService,
+    );
 
     // Create test organization
     const org = await prisma.organization.create({
@@ -2078,13 +2100,11 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     // Get the temp IDs
     const authorFiles = writtenFilesByCall[0];
     const authorContent = JSON.parse(authorFiles[0].content) as Record<string, unknown>;
-    const authorTempId = authorContent.id as string;
     // FK field is skipped in DATA phase (not written at all)
     expect(authorContent.latest_post_id).toBeUndefined();
 
     const postFiles = writtenFilesByCall[1];
     const postContent = JSON.parse(postFiles[0].content) as Record<string, unknown>;
-    const postTempId = postContent.id as string;
     // FK field is skipped in DATA phase (not written at all)
     expect(postContent.author_id).toBeUndefined();
 
@@ -2185,13 +2205,13 @@ describe('SyncService - lookup_field transformer', () => {
         if (cursor) {
           return { files: [], nextCursor: undefined };
         }
-        const files = await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
+        const files = ((await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
           wbId,
           folderId,
           actorArg,
           branch,
-        );
-        return { files: files ?? [], nextCursor: undefined };
+        )) ?? []) as { folderId: DataFolderId; path: string; content: string }[];
+        return { files, nextCursor: undefined };
       },
     );
 
@@ -2204,7 +2224,14 @@ describe('SyncService - lookup_field transformer', () => {
         }),
     } as unknown as ScratchGitService;
 
-    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
+    syncService = new SyncService(
+      dbService,
+      dataFolderService,
+      {} as PostHogService,
+      scratchGitService,
+      {} as never,
+      { upsertBatch: jest.fn() } as unknown as FileIndexService,
+    );
 
     // Create test organization
     const org = await prisma.organization.create({

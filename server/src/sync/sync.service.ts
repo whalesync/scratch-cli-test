@@ -21,6 +21,8 @@ import zipObjectDeep from 'lodash/zipObjectDeep';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { FileIndexService } from 'src/publish-pipeline/file-index.service';
+import { parsePath } from 'src/publish-pipeline/utils';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
@@ -67,6 +69,7 @@ export class SyncService {
     private readonly posthogService: PostHogService,
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookService: WorkbookService,
+    private readonly fileIndexService: FileIndexService,
   ) {}
 
   /**
@@ -633,6 +636,30 @@ export class SyncService {
         result.recordsCreated = 0;
         result.recordsUpdated = 0;
         return result;
+      }
+
+      const fileIndexEntries = filesToWrite
+        .map((file) => {
+          let recordId: string | undefined;
+          try {
+            const parsed = JSON.parse(file.content) as Record<string, unknown>;
+            const idValue = get(parsed, destIdColumn);
+            if (typeof idValue === 'string' && idValue) {
+              recordId = idValue;
+            } else if (typeof idValue === 'number') {
+              recordId = String(idValue);
+            }
+          } catch {
+            // Not valid JSON — skip indexing
+          }
+          if (!recordId) return null;
+          const { folderPath, filename } = parsePath(file.path);
+          return { workbookId, folderPath, filename, recordId };
+        })
+        .filter(Boolean) as { workbookId: string; folderPath: string; filename: string; recordId: string }[];
+
+      if (fileIndexEntries.length > 0) {
+        await this.fileIndexService.upsertBatch(fileIndexEntries);
       }
     }
 

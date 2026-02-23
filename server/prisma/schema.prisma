@@ -570,7 +570,6 @@ model SyncTablePair {
 }
 
 model SyncMatchKeys {
-  // TODO: double check cuid IDs
   id String @id @default(cuid())
 
   // Intentionally without FKs here, because we only need this table as a dumb unique index
@@ -587,7 +586,6 @@ model SyncMatchKeys {
 /// Caches JSON data of records referenced by foreign keys in source records.
 /// For example, if a Post has category_id: "cat_123", this stores the Category record data.
 model SyncForeignKeyRecord {
-  // TODO: double check cuid IDs
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
