@@ -32,6 +32,9 @@ module "eu_test" {
 
   # Services
   force_reload_services = var.force_reload_services
+  api_service_min_instance_count = 2
+  api_service_max_instance_count = 2
+  worker_concurrency    = 10
 }
 
 variable "as_gitlab" {

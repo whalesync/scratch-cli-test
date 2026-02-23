@@ -119,6 +119,10 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable<string>('REDIS_PASSWORD');
   }
 
+  getWorkerConcurrency(): number {
+    return this.getOptionalNumberVariable('WORKER_CONCURRENCY', 2);
+  }
+
   getUseJobs(): boolean {
     return this.getOptionalFlagVariable('USE_JOBS', false);
   }

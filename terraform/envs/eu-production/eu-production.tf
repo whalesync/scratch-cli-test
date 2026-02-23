@@ -28,6 +28,9 @@ module "eu_production" {
 
   # Services
   force_reload_services = var.force_reload_services
+  api_service_min_instance_count = 4
+  api_service_max_instance_count = 4
+  worker_concurrency    = 10
 }
 
 variable "as_gitlab" {

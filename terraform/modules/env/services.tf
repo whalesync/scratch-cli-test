@@ -189,6 +189,7 @@ resource "google_cloud_run_v2_service" "api_service" {
             "SLACK_NOTIFICATION_ENABLED" : "true",
             "TRIAL_REQUIRE_PAYMENT_METHOD" : "false",
             "USE_JOBS" : "true",
+            "WORKER_CONCURRENCY" : tostring(var.worker_concurrency),
           },
           var.enable_scratch_git ? {
             "SCRATCH_GIT_API_URL" : "http://${module.scratch_git_gce[0].lb_ip}:3100",

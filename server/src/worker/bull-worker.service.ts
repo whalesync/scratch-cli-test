@@ -50,7 +50,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     // Create the worker to process jobs
     this.worker = new Worker('worker-queue', async (job: Job) => this.processJob(job), {
       connection: this.getRedis(),
-      concurrency: 2, // Process up to 2 jobs concurrently
+      concurrency: this.configService.getWorkerConcurrency(),
     });
 
     // Set up event listeners

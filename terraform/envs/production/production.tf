@@ -29,6 +29,7 @@ module "production" {
 
   # Services
   force_reload_services = var.force_reload_services
+  worker_concurrency    = 10
 }
 
 variable "as_gitlab" {

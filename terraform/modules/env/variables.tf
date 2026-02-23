@@ -227,6 +227,12 @@ variable "api_domain" {
   description = "Domain name for the api service (e.g., 'api.scratch.md')."
 }
 
+variable "worker_concurrency" {
+  type        = number
+  default     = 5
+  description = "Number of jobs each worker instance processes concurrently."
+}
+
 variable "enable_scratch_git" {
   type        = bool
   default     = false
