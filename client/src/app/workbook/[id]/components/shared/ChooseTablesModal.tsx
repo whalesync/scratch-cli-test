@@ -10,7 +10,7 @@ import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
-import { TableList, TablePreview, TableSearchResult } from '@/types/server-entities/table-list';
+import { TableList, TablePreview, TableSchemaPreview, TableSearchResult } from '@/types/server-entities/table-list';
 import {
   Alert,
   Box,
@@ -23,6 +23,7 @@ import {
   Modal,
   Pill,
   ScrollArea,
+  Select,
   Stack,
   Text,
   Textarea,
@@ -37,6 +38,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
 const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE]);
+const FIELD_SELECTION_SERVICES = new Set([Service.SUPABASE]);
 
 const DISABLED_MESSAGES: Partial<Record<Service, string>> = {
   [Service.SUPABASE]: "This table doesn't have a unique value column (primary key).",
@@ -98,6 +100,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const [dirtyFileCount, setDirtyFileCount] = useState(0);
 
   const supportsFilter = FILTER_SUPPORTED_SERVICES.has(connectorAccount.service);
+  const supportsFieldSelection = FIELD_SELECTION_SERVICES.has(connectorAccount.service);
+  const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
+    new Map(),
+  );
+  const [loadedTableSchemas, setLoadedTableSchemas] = useState<Map<string, TableSchemaPreview>>(new Map());
+  const [schemasLoading, setSchemasLoading] = useState<Set<string>>(new Set());
 
   // Get currently linked data folders for this connector account
   const linkedFolders = useMemo(() => {
@@ -162,6 +170,9 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       });
       setSelectedTableMap(initialMap);
       setFilterValues(initialFilters);
+      setFieldSelections(new Map());
+      setLoadedTableSchemas(new Map());
+      setSchemasLoading(new Set());
       setSearchTerm('');
       setStep(1);
       setShowConfirmation(false);
@@ -227,6 +238,61 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         return selectedTableIds.has(tableKey) && !currentlyLinkedKeys.has(tableKey);
       }),
     [allKnownTables, selectedTableIds, currentlyLinkedKeys],
+  );
+
+  // Fetch table schema when entering step 2 for newly selected tables from field-selection connectors
+  useEffect(() => {
+    if (step !== 2 || !supportsFieldSelection) return;
+
+    for (const table of tablesToAdd) {
+      const tableKey = table.id.remoteId.join('/');
+      if (loadedTableSchemas.has(tableKey) || schemasLoading.has(tableKey)) continue;
+
+      setSchemasLoading((prev) => new Set(prev).add(tableKey));
+
+      connectorAccountsApi
+        .getTableSchema(workbookId, connectorAccount.id, table.id.remoteId.join(','))
+        .then((result) => {
+          setLoadedTableSchemas((prev) => new Map(prev).set(tableKey, result));
+          // Pre-populate selections with detected defaults if not already set
+          setFieldSelections((prev) => {
+            if (prev.has(tableKey)) return prev;
+            const next = new Map(prev);
+            const detectedNameField =
+              result.titleColumnRemoteId && result.titleColumnRemoteId.length > 0
+                ? result.titleColumnRemoteId[0]
+                : null;
+            next.set(tableKey, {
+              idField: result.idColumnRemoteId,
+              nameField: detectedNameField,
+            });
+            return next;
+          });
+        })
+        .catch((error) => {
+          console.debug('Failed to fetch table schema', tableKey, error);
+        })
+        .finally(() => {
+          setSchemasLoading((prev) => {
+            const next = new Set(prev);
+            next.delete(tableKey);
+            return next;
+          });
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, supportsFieldSelection, tablesToAdd, workbookId, connectorAccount.id]);
+
+  const handleFieldSelectionChange = useCallback(
+    (tableKey: string, field: 'idField' | 'nameField', value: string | null) => {
+      setFieldSelections((prev) => {
+        const next = new Map(prev);
+        const current = next.get(tableKey) ?? { idField: '', nameField: null };
+        next.set(tableKey, { ...current, [field]: value });
+        return next;
+      });
+    },
+    [],
   );
 
   const pendingFoldersToRemove = useMemo(
@@ -295,11 +361,21 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
     setIsSaving(true);
     try {
-      // Add new tables (with optional filter)
+      // Add new tables (with optional filter and field overrides)
       for (const table of tablesToAdd) {
         const tableKey = table.id.remoteId.join('/');
         const filter = filterValues.get(tableKey)?.trim() || undefined;
-        await addLinkedDataFolder(table.id.remoteId, table.displayName, connectorAccount.id, filter);
+        const fields = fieldSelections.get(tableKey);
+        const idFieldOverride = fields?.idField || undefined;
+        const nameFieldOverride = fields?.nameField || undefined;
+        await addLinkedDataFolder(
+          table.id.remoteId,
+          table.displayName,
+          connectorAccount.id,
+          filter,
+          idFieldOverride,
+          nameFieldOverride,
+        );
       }
 
       // Update filters on existing tables that changed
@@ -556,53 +632,110 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   );
 
   // Step 2: Configure table settings
-  const renderStep2 = () => (
-    <Stack gap="md">
-      <Group justify="space-between" align="center">
-        <Text13Regular c="dimmed">
-          {supportsFilter ? 'Configure settings for selected tables.' : 'Review selected tables.'}
-        </Text13Regular>
-        <Text12Regular c="dimmed">Step 2 of 2</Text12Regular>
-      </Group>
+  const renderStep2 = () => {
+    const hasConfigurableOptions = supportsFilter || supportsFieldSelection;
+    return (
+      <Stack gap="md">
+        <Group justify="space-between" align="center">
+          <Text13Regular c="dimmed">
+            {hasConfigurableOptions ? 'Configure settings for selected tables.' : 'Review selected tables.'}
+          </Text13Regular>
+          <Text12Regular c="dimmed">Step 2 of 2</Text12Regular>
+        </Group>
 
-      <ScrollArea.Autosize mah={400}>
-        <Stack gap="sm">
-          {selectedTablesForStep2.map((entry, index) => (
-            <Box key={entry.tableKey}>
-              {index > 0 && <Divider mb="sm" />}
-              <Stack gap="xs">
-                <Group gap="xs" align="center">
-                  <Text13Medium c={entry.isRemoved ? 'dimmed' : undefined}>{entry.displayName}</Text13Medium>
-                  {entry.isRemoved && <Badge color="red">Will be removed</Badge>}
-                  {entry.isNew && <Badge color="green">New</Badge>}
-                </Group>
+        <ScrollArea.Autosize mah={400}>
+          <Stack gap="sm">
+            {selectedTablesForStep2.map((entry, index) => {
+              const tableSchema = loadedTableSchemas.get(entry.tableKey);
+              const isLoadingSchema = schemasLoading.has(entry.tableKey);
+              const currentSelection = fieldSelections.get(entry.tableKey);
+              const showFieldSelectors = supportsFieldSelection && entry.isNew && !entry.isRemoved;
 
-                {!entry.isRemoved && supportsFilter && (
-                  <Textarea
-                    label="Filter (optional)"
-                    description="Leave blank to pull all records, or enter a filter expression to limit which records are pulled."
-                    placeholder="Enter filter expression..."
-                    value={filterValues.get(entry.tableKey) ?? ''}
-                    onChange={(e) => handleFilterChange(entry.tableKey, e.currentTarget.value)}
-                    autosize
-                    minRows={2}
-                    maxRows={4}
-                  />
-                )}
-              </Stack>
-            </Box>
-          ))}
-        </Stack>
-      </ScrollArea.Autosize>
+              // Extract field names/types from schema properties
+              const schemaFields = tableSchema
+                ? Object.entries((tableSchema.schema?.properties as Record<string, Record<string, unknown>>) ?? {}).map(
+                    ([name, prop]) => ({
+                      name,
+                      type: (prop?.['x-scratch-connector-data-type'] as string) ?? (prop?.type as string) ?? 'unknown',
+                    }),
+                  )
+                : [];
 
-      <Group justify="flex-end" gap="sm" mt="md">
-        <ButtonSecondaryOutline onClick={handleBack}>Back</ButtonSecondaryOutline>
-        <ButtonPrimaryLight onClick={handleSave} loading={isSaving}>
-          Save
-        </ButtonPrimaryLight>
-      </Group>
-    </Stack>
-  );
+              return (
+                <Box key={entry.tableKey}>
+                  {index > 0 && <Divider mb="sm" />}
+                  <Stack gap="xs">
+                    <Group gap="xs" align="center">
+                      <Text13Medium c={entry.isRemoved ? 'dimmed' : undefined}>{entry.displayName}</Text13Medium>
+                      {entry.isRemoved && <Badge color="red">Will be removed</Badge>}
+                      {entry.isNew && <Badge color="green">New</Badge>}
+                    </Group>
+
+                    {showFieldSelectors && isLoadingSchema && (
+                      <Group gap="xs" py="xs">
+                        <Loader size="xs" />
+                        <Text12Regular c="dimmed">Loading table schema...</Text12Regular>
+                      </Group>
+                    )}
+
+                    {showFieldSelectors && tableSchema && (
+                      <>
+                        <Select
+                          label="ID field"
+                          description="Column used to uniquely identify each record"
+                          data={schemaFields.map((f) => ({
+                            value: f.name,
+                            label: `${f.name} (${f.type})`,
+                          }))}
+                          value={currentSelection?.idField ?? tableSchema.idColumnRemoteId}
+                          onChange={(value) => handleFieldSelectionChange(entry.tableKey, 'idField', value)}
+                          allowDeselect={false}
+                          size="xs"
+                        />
+                        <Select
+                          label="Name field (optional)"
+                          description="Column used for filenames. Leave empty to use the ID."
+                          data={schemaFields.map((f) => ({
+                            value: f.name,
+                            label: `${f.name} (${f.type})`,
+                          }))}
+                          value={currentSelection?.nameField ?? null}
+                          onChange={(value) => handleFieldSelectionChange(entry.tableKey, 'nameField', value)}
+                          placeholder="None (use ID for filenames)"
+                          clearable
+                          size="xs"
+                        />
+                      </>
+                    )}
+
+                    {!entry.isRemoved && supportsFilter && (
+                      <Textarea
+                        label="Filter (optional)"
+                        description="Leave blank to pull all records, or enter a filter expression to limit which records are pulled."
+                        placeholder="Enter filter expression..."
+                        value={filterValues.get(entry.tableKey) ?? ''}
+                        onChange={(e) => handleFilterChange(entry.tableKey, e.currentTarget.value)}
+                        autosize
+                        minRows={2}
+                        maxRows={4}
+                      />
+                    )}
+                  </Stack>
+                </Box>
+              );
+            })}
+          </Stack>
+        </ScrollArea.Autosize>
+
+        <Group justify="flex-end" gap="sm" mt="md">
+          <ButtonSecondaryOutline onClick={handleBack}>Back</ButtonSecondaryOutline>
+          <ButtonPrimaryLight onClick={handleSave} loading={isSaving}>
+            Save
+          </ButtonPrimaryLight>
+        </Group>
+      </Stack>
+    );
+  };
 
   // Confirmation step (removal with dirty files)
   const renderConfirmation = () => (

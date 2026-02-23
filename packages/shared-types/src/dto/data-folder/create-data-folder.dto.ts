@@ -30,7 +30,18 @@ export class CreateDataFolderDto {
   @IsOptional()
   @IsObject()
   options?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  idFieldOverride?: string;
+
+  @IsOptional()
+  @IsString()
+  nameFieldOverride?: string;
 }
 
 export type ValidatedCreateDataFolderDto = Required<Pick<CreateDataFolderDto, 'name' | 'workbookId'>> &
-  Pick<CreateDataFolderDto, 'connectorAccountId' | 'tableId' | 'parentFolderId' | 'filter' | 'options'>;
+  Pick<
+    CreateDataFolderDto,
+    'connectorAccountId' | 'tableId' | 'parentFolderId' | 'filter' | 'options' | 'idFieldOverride' | 'nameFieldOverride'
+  >;

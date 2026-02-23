@@ -28,6 +28,8 @@ export interface UseWorkbookReturn {
     folderName: string,
     connectorAccountId: string,
     filter?: string,
+    idFieldOverride?: string,
+    nameFieldOverride?: string,
   ) => Promise<DataFolder>;
   pullFolders: (dataFolderIds?: DataFolderId[]) => Promise<void>;
   publishFolders: (dataFolderIds: DataFolderId[]) => Promise<void>;
@@ -71,12 +73,27 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
   );
 
   const addLinkedDataFolder = useCallback(
-    async (tableId: string[], folderName: string, connectorAccountId: string, filter?: string): Promise<DataFolder> => {
+    async (
+      tableId: string[],
+      folderName: string,
+      connectorAccountId: string,
+      filter?: string,
+      idFieldOverride?: string,
+      nameFieldOverride?: string,
+    ): Promise<DataFolder> => {
       if (!id) {
         throw new Error('Workbook not found');
       }
 
-      const dto: CreateDataFolderDto = { tableId, workbookId: id, name: folderName, connectorAccountId, filter };
+      const dto: CreateDataFolderDto = {
+        tableId,
+        workbookId: id,
+        name: folderName,
+        connectorAccountId,
+        filter,
+        idFieldOverride,
+        nameFieldOverride,
+      };
       const dataFolder = await dataFolderApi.create(dto);
       await mutate();
       return dataFolder;

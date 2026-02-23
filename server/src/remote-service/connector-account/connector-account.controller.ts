@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ClassSerializerInterceptor,
   Controller,
@@ -25,6 +26,7 @@ import { userToActor } from '../../users/types';
 import { ConnectorAccountService } from './connector-account.service';
 import { ConnectorAccount } from './entities/connector-account.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
+import { TableSchemaPreview } from './entities/table-schema-preview.entity';
 import { TestConnectionResponse } from './entities/test-connection.entity';
 
 @Controller('workbooks/:workbookId/connections')
@@ -73,6 +75,25 @@ export class ConnectorAccountController {
     @Req() req: RequestWithUser,
   ): Promise<TableSearchResult> {
     return this.service.searchTables(connectorAccountId, searchTerm, userToActor(req.user));
+  }
+
+  @Get(':connectorAccountId/tables/schema')
+  async getTableSchema(
+    @Param('workbookId') workbookId: string,
+    @Param('connectorAccountId') connectorAccountId: string,
+    @Query('tableRemoteId') tableRemoteId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<TableSchemaPreview> {
+    if (!tableRemoteId?.trim()) {
+      throw new BadRequestException('tableRemoteId is required');
+    }
+    const remoteIdParts = tableRemoteId.split(',');
+    return this.service.getTableSchema(
+      workbookId as WorkbookId,
+      connectorAccountId,
+      remoteIdParts,
+      userToActor(req.user),
+    );
   }
 
   @Post(':id/test')

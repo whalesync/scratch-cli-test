@@ -16,3 +16,14 @@ export interface TableSearchResult {
   tables: TablePreview[];
   hasMore: boolean;
 }
+
+export interface TableSchemaPreview {
+  id: EntityId;
+  slug: string;
+  name: string;
+  schema: Record<string, unknown>;
+  idColumnRemoteId: string;
+  titleColumnRemoteId?: string[];
+  mainContentColumnRemoteId?: string[];
+  slugColumnRemoteId?: string;
+}

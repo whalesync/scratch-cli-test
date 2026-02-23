@@ -292,6 +292,26 @@ export class DataFolderService {
         throw exceptionForConnectorError(error, connector);
       }
 
+      // Apply user field overrides to the schema
+      const { idFieldOverride, nameFieldOverride } = dto;
+      if (idFieldOverride || nameFieldOverride) {
+        const schemaProps = (tableSpec.schema as Record<string, unknown>)?.properties as
+          | Record<string, unknown>
+          | undefined;
+        if (idFieldOverride) {
+          if (!schemaProps?.[idFieldOverride]) {
+            throw new BadRequestException(`ID field "${idFieldOverride}" does not exist in the table schema`);
+          }
+          tableSpec.idColumnRemoteId = idFieldOverride;
+        }
+        if (nameFieldOverride) {
+          if (!schemaProps?.[nameFieldOverride]) {
+            throw new BadRequestException(`Name field "${nameFieldOverride}" does not exist in the table schema`);
+          }
+          tableSpec.titleColumnRemoteId = [nameFieldOverride];
+        }
+      }
+
       // Create the DataFolder
       const createdDataFolder = await this.db.client.dataFolder.create({
         data: {
@@ -307,7 +327,12 @@ export class DataFolderService {
           lastSchemaRefreshAt: new Date(),
           version: 1,
           tableId: dto.tableId,
-          options: { ...(dto.options ?? {}), ...(filter ? { filter } : {}) } as Record<string, any>,
+          options: {
+            ...(dto.options ?? {}),
+            ...(filter ? { filter } : {}),
+            ...(idFieldOverride ? { idFieldOverride } : {}),
+            ...(nameFieldOverride ? { nameFieldOverride } : {}),
+          } as Record<string, any>,
         },
         include: DataFolderCluster._validator.include,
       });
@@ -357,6 +382,8 @@ export class DataFolderService {
           connectorAccountId,
           service,
           tableSpec: tableSpec?.name,
+          ...(idFieldOverride ? { idFieldOverride } : {}),
+          ...(nameFieldOverride ? { nameFieldOverride } : {}),
         },
       });
 
@@ -825,10 +852,30 @@ export class DataFolderService {
     });
 
     try {
-      return await connector.fetchJsonTableSpec({
+      const tableSpec = await connector.fetchJsonTableSpec({
         wsId: folder.tableId[0],
         remoteId: folder.tableId,
       });
+
+      // Re-apply user field overrides from options
+      const options =
+        folder.options && typeof folder.options === 'object' && !Array.isArray(folder.options) ? folder.options : {};
+      const idOverride = 'idFieldOverride' in options ? options.idFieldOverride : undefined;
+      const nameOverride = 'nameFieldOverride' in options ? options.nameFieldOverride : undefined;
+      if (typeof idOverride === 'string') {
+        tableSpec.idColumnRemoteId = idOverride;
+      }
+      if (typeof nameOverride === 'string') {
+        tableSpec.titleColumnRemoteId = [nameOverride];
+      }
+
+      // Persist refreshed schema with overrides
+      await this.db.client.dataFolder.update({
+        where: { id },
+        data: { schema: tableSpec, lastSchemaRefreshAt: new Date() },
+      });
+
+      return tableSpec;
     } catch (error) {
       WSLogger.error({
         source: 'DataFolderService.fetchSchemaSpec',

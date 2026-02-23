@@ -31,6 +31,7 @@ import { getServiceDisplayName } from '../connectors/display-names';
 import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
 import { TablePreview } from '../connectors/types';
 import { TableSearchResult } from './entities/table-list.entity';
+import { TableSchemaPreview } from './entities/table-schema-preview.entity';
 import { TestConnectionResponse } from './entities/test-connection.entity';
 import { DecryptedCredentials } from './types/encrypted-credentials.interface';
 
@@ -324,6 +325,38 @@ export class ConnectorAccountService {
 
     try {
       return await connector.searchTables(searchTerm);
+    } catch (error) {
+      throw exceptionForConnectorError(error, connector);
+    }
+  }
+
+  async getTableSchema(
+    workbookId: WorkbookId,
+    connectorAccountId: string,
+    tableRemoteId: string[],
+    actor: Actor,
+  ): Promise<TableSchemaPreview> {
+    const account = await this.findOne(workbookId, connectorAccountId, actor);
+
+    let connector: Connector<Service, any>;
+    try {
+      connector = await this.connectorsService.getConnector({
+        service: account.service as Service,
+        connectorAccount: account,
+        decryptedCredentials: account,
+        userId: actor.userId,
+      });
+    } catch (error) {
+      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
+        cause: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+
+    try {
+      return await connector.fetchJsonTableSpec({
+        wsId: tableRemoteId[0],
+        remoteId: tableRemoteId,
+      });
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }

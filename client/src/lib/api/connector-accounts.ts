@@ -1,6 +1,6 @@
 import { TestConnectionResponse } from '@/types/server-entities/connector-accounts';
 import { ConnectorAccount, CreateConnectorAccountDto, UpdateConnectorAccountDto } from '@spinner/shared-types';
-import { TableList, TableSearchResult } from '../../types/server-entities/table-list';
+import { TableList, TableSchemaPreview, TableSearchResult } from '../../types/server-entities/table-list';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -84,6 +84,24 @@ export const connectorAccountsApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to search tables');
+    }
+  },
+
+  // GET table schema for a specific table
+  getTableSchema: async (
+    workbookId: string,
+    connectorAccountId: string,
+    tableRemoteId: string,
+  ): Promise<TableSchemaPreview> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<TableSchemaPreview>(
+        `/workbooks/${workbookId}/connections/${connectorAccountId}/tables/schema`,
+        { params: { tableRemoteId } },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch table schema');
     }
   },
 
