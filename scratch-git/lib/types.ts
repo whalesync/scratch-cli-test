@@ -21,6 +21,7 @@ export interface GitFile {
 export interface DirtyFile {
   path: string;
   status: 'added' | 'modified' | 'deleted';
+  oid?: string;
 }
 
 export interface TreeEntry {

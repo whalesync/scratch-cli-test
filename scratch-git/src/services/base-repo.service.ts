@@ -47,8 +47,8 @@ export class BaseRepoService {
 
     for (const [path, oid] of filesB) {
       const hashA = filesA.get(path);
-      if (!hashA) dirty.push({ path, status: 'added' });
-      else if (hashA !== oid) dirty.push({ path, status: 'modified' });
+      if (!hashA) dirty.push({ path, status: 'added', oid });
+      else if (hashA !== oid) dirty.push({ path, status: 'modified', oid });
     }
     for (const [path] of filesA) {
       if (!filesB.has(path)) dirty.push({ path, status: 'deleted' });

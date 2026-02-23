@@ -99,10 +99,11 @@ export class PublishPlanService {
 
     const wkbId = workbookId as WorkbookId;
 
-    // 2. Get diff between main and dirty
+    // 2. Get diff between main and dirty (includes blob OIDs for added/modified files)
     let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{
       path: string;
       status: FileDiffStatus;
+      oid?: string;
     }>;
 
     await onProgress?.(`Diffing branches (${changes.length} changes found)`);
@@ -125,6 +126,12 @@ export class PublishPlanService {
         // No folders? Then no changes for this connector.
         changes = [];
       }
+    }
+
+    // Build path→oid map from diff results (available for added/modified files)
+    const oidMap = new Map<string, string>();
+    for (const c of changes) {
+      if (c.oid) oidMap.set(c.path, c.oid);
     }
 
     const modifiedFiles = changes.filter((c) => c.status === 'modified');
@@ -218,9 +225,34 @@ export class PublishPlanService {
     };
 
     for (const editBatch of chunk(Array.from(filesToProcessInEditPhase), 100)) {
-      // Bulk fetch from dirty; fall back to main for any missing paths
-      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', editBatch);
-      const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
+      // Split batch: files with OIDs (from diff) use fast blob reads, others use tree walk
+      const withOid: Array<{ path: string; oid: string }> = [];
+      const withoutOid: string[] = [];
+      for (const p of editBatch) {
+        const oid = oidMap.get(p);
+        if (oid) withOid.push({ path: p, oid });
+        else withoutOid.push(p);
+      }
+
+      const dirtyMap = new Map<string, string | null>();
+
+      // Fast path: read blobs by OID (O(1) per blob, no tree walk)
+      if (withOid.length > 0) {
+        const blobResults = await this.scratchGitService.readBlobsByOid(
+          wkbId,
+          withOid.map((f) => f.oid),
+        );
+        const oidContentMap = new Map(blobResults.map((r) => [r.oid, r.content]));
+        for (const f of withOid) {
+          dirtyMap.set(f.path, oidContentMap.get(f.oid) ?? null);
+        }
+      }
+
+      // Slow path: files only in ref-clearing set (not in diff), read via tree walk
+      if (withoutOid.length > 0) {
+        const treeResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', withoutOid);
+        for (const r of treeResults) dirtyMap.set(r.path, r.content);
+      }
 
       const missingPaths = editBatch.filter((p) => !dirtyMap.get(p));
       const mainMap = new Map<string, string | null>();
@@ -231,7 +263,7 @@ export class PublishPlanService {
 
       for (const filePath of editBatch) {
         editPhaseProcessed++;
-        if (editPhaseProcessed === 1 || editPhaseProcessed % 50 === 0 || editPhaseProcessed === editPhaseTotal) {
+        if (editPhaseProcessed === 1 || editPhaseProcessed % 500 === 0 || editPhaseProcessed === editPhaseTotal) {
           await onProgress?.(`Processing edits (${editPhaseProcessed}/${editPhaseTotal})`);
         }
 
@@ -240,12 +272,6 @@ export class PublishPlanService {
           WSLogger.warn({
             source: 'PublishPlanService.buildPipeline',
             message: `File not found in dirty branch, falling back to main: ${filePath}`,
-            workbookId,
-          });
-        } else {
-          WSLogger.info({
-            source: 'PublishPlanService.buildPipeline',
-            message: `Processing file in edit phase: ${filePath}`,
             workbookId,
           });
         }
@@ -324,20 +350,44 @@ export class PublishPlanService {
     }
 
     // --- Phase 2: [create] ---
+    // All added files have OIDs from the diff — use readBlobsByOid for O(1) reads.
     let createCount = 0;
     let createPhaseProcessed = 0;
     const createPhaseTotal = addedFiles.length;
 
-    for (const createBatch of chunk(addedFiles, 100)) {
-      const batchPaths = createBatch.map((f) => f.path);
-      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', batchPaths);
-      const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
+    for (const createBatch of chunk(addedFiles, 1000)) {
+      // Collect OIDs for this batch; fall back to tree walk for any without OIDs
+      const withOid: Array<{ path: string; oid: string }> = [];
+      const withoutOidPaths: string[] = [];
+      for (const f of createBatch) {
+        const oid = oidMap.get(f.path);
+        if (oid) withOid.push({ path: f.path, oid });
+        else withoutOidPaths.push(f.path);
+      }
+
+      const dirtyMap = new Map<string, string | null>();
+
+      if (withOid.length > 0) {
+        const blobResults = await this.scratchGitService.readBlobsByOid(
+          wkbId,
+          withOid.map((f) => f.oid),
+        );
+        const oidContentMap = new Map(blobResults.map((r) => [r.oid, r.content]));
+        for (const f of withOid) {
+          dirtyMap.set(f.path, oidContentMap.get(f.oid) ?? null);
+        }
+      }
+
+      if (withoutOidPaths.length > 0) {
+        const treeResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', withoutOidPaths);
+        for (const r of treeResults) dirtyMap.set(r.path, r.content);
+      }
 
       for (const add of createBatch) {
         createPhaseProcessed++;
         if (
           createPhaseProcessed === 1 ||
-          createPhaseProcessed % 50 === 0 ||
+          createPhaseProcessed % 500 === 0 ||
           createPhaseProcessed === createPhaseTotal
         ) {
           await onProgress?.(`Processing creates (${createPhaseProcessed}/${createPhaseTotal})`);
@@ -407,7 +457,7 @@ export class PublishPlanService {
 
     for (const del of deletedFiles) {
       deletePhaseProcessed++;
-      if (deletePhaseProcessed === 1 || deletePhaseProcessed % 50 === 0 || deletePhaseProcessed === deletePhaseTotal) {
+      if (deletePhaseProcessed === 1 || deletePhaseProcessed % 500 === 0 || deletePhaseProcessed === deletePhaseTotal) {
         await onProgress?.(`Processing deletes (${deletePhaseProcessed}/${deletePhaseTotal})`);
       }
       // recordId was already looked up above when building deletedRecordIds

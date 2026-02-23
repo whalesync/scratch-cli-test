@@ -98,6 +98,20 @@ repoReadRouter.get('/files-paginated', async (req, res) => {
   }
 });
 
+repoReadRouter.post('/blobs-by-oid', async (req, res) => {
+  try {
+    const { id } = req.params as { id: string };
+    const { oids } = req.body as { oids: string[] };
+    if (!oids || !Array.isArray(oids)) throw new Error('Body param oids must be an array');
+
+    const gitService = new RepoReadService(id);
+    const results = await gitService.readBlobsByOid(oids);
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Endpoints moved to repo-diff.ts and repo-debug.ts
 
 repoReadRouter.get('/archive', async (req, res) => {

@@ -159,6 +159,21 @@ export class RepoReadService extends BaseRepoService {
     };
   }
 
+  async readBlobsByOid(oids: string[]): Promise<Array<{ oid: string; content: string | null }>> {
+    if (oids.length === 0) return [];
+    const dir = this.getRepoPath();
+    return Promise.all(
+      oids.map(async (oid) => {
+        try {
+          const { blob } = await git.readBlob({ fs, dir, gitdir: dir, oid });
+          return { oid, content: new TextDecoder().decode(blob) };
+        } catch {
+          return { oid, content: null };
+        }
+      }),
+    );
+  }
+
   async createArchive(branch: string): Promise<Readable> {
     const dir = this.getRepoPath();
     const commitOid = await this.resolveRef(branch);

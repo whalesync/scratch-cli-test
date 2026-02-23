@@ -150,6 +150,12 @@ export class ScratchGitClient {
     }>;
   }
 
+  async readBlobsByOid(repoId: string, oids: string[]): Promise<Array<{ oid: string; content: string | null }>> {
+    return this.callGitApi(`/api/repo/read/${repoId}/blobs-by-oid`, 'POST', { oids }) as Promise<
+      Array<{ oid: string; content: string | null }>
+    >;
+  }
+
   async getStatus(repoId: string): Promise<any> {
     return this.callGitApi(`/api/repo/diff/${repoId}/status`, 'GET');
   }

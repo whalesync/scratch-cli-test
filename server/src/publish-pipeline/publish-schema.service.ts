@@ -67,10 +67,12 @@ export class PublishSchemaService {
   async getDataFolderInfo(
     workbookId: string,
     folderPath: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     cache?: Map<string, { id: string; spec: BaseJsonTableSpec } | null>,
   ): Promise<{ id: string; spec: BaseJsonTableSpec } | null> {
-    // TODO: We could cache this result too if needed
+    if (cache && cache.has(folderPath)) {
+      return cache.get(folderPath) ?? null;
+    }
+
     try {
       const dataFolder = await this.db.client.dataFolder.findFirst({
         where: {
@@ -80,12 +82,24 @@ export class PublishSchemaService {
         select: { id: true, schema: true },
       });
 
-      if (!dataFolder) return null;
+      if (!dataFolder) {
+        if (cache) {
+          cache.set(folderPath, null);
+        }
+        return null;
+      }
 
       const spec = (dataFolder.schema as unknown as BaseJsonTableSpec) || null;
-      return { id: dataFolder.id, spec };
+      const result = { id: dataFolder.id, spec };
+      if (cache) {
+        cache.set(folderPath, result);
+      }
+      return result;
     } catch (error) {
       console.error(`Error fetching data folder info for: ${folderPath}`, error);
+      if (cache) {
+        cache.set(folderPath, null);
+      }
       return null;
     }
   }

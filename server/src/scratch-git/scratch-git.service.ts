@@ -129,6 +129,13 @@ export class ScratchGitService {
     return groups.flat();
   }
 
+  async readBlobsByOid(
+    workbookId: WorkbookId,
+    oids: string[],
+  ): Promise<Array<{ oid: string; content: string | null }>> {
+    return this.scratchGitClient.readBlobsByOid(workbookId, oids);
+  }
+
   async commitFile(workbookId: WorkbookId, path: string, content: string, message: string): Promise<void> {
     await this.scratchGitClient.commitFiles(workbookId, 'dirty', [{ path, content }], message);
   }

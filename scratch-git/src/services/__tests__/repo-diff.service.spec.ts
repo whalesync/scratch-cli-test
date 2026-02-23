@@ -39,7 +39,7 @@ describe('getDirtyStatus', () => {
 
     const diff = new RepoDiffService(repoId);
     const status = await diff.getDirtyStatus();
-    expect(status).toEqual([{ path: 'new.md', status: 'added' }]);
+    expect(status).toEqual([expect.objectContaining({ path: 'new.md', status: 'added' })]);
   });
 
   it('detects modified files', async () => {
@@ -50,7 +50,7 @@ describe('getDirtyStatus', () => {
 
     const diff = new RepoDiffService(repoId);
     const status = await diff.getDirtyStatus();
-    expect(status).toEqual([{ path: 'f.md', status: 'modified' }]);
+    expect(status).toEqual([expect.objectContaining({ path: 'f.md', status: 'modified' })]);
   });
 
   it('detects deleted files', async () => {
@@ -90,9 +90,9 @@ describe('getDirtyStatus', () => {
     const status = await diff.getDirtyStatus();
     const sorted = status.sort((a, b) => a.path.localeCompare(b.path));
     expect(sorted).toEqual([
-      { path: 'added.md', status: 'added' },
+      expect.objectContaining({ path: 'added.md', status: 'added' }),
       { path: 'delete.md', status: 'deleted' },
-      { path: 'modify.md', status: 'modified' },
+      expect.objectContaining({ path: 'modify.md', status: 'modified' }),
     ]);
   });
 });
@@ -130,7 +130,7 @@ describe('getFolderDirtyStatus', () => {
 
     const diff = new RepoDiffService(repoId);
     const status = await diff.getFolderDirtyStatus('target');
-    expect(status).toEqual([{ path: 'target/a.md', status: 'modified' }]);
+    expect(status).toEqual([expect.objectContaining({ path: 'target/a.md', status: 'modified' })]);
   });
 
   it('strips leading / from folder path', async () => {
@@ -141,7 +141,7 @@ describe('getFolderDirtyStatus', () => {
 
     const diff = new RepoDiffService(repoId);
     const status = await diff.getFolderDirtyStatus('/dir');
-    expect(status).toEqual([{ path: 'dir/f.md', status: 'modified' }]);
+    expect(status).toEqual([expect.objectContaining({ path: 'dir/f.md', status: 'modified' })]);
   });
 
   it('includes nested changes within folder', async () => {
@@ -152,7 +152,7 @@ describe('getFolderDirtyStatus', () => {
 
     const diff = new RepoDiffService(repoId);
     const status = await diff.getFolderDirtyStatus('dir');
-    expect(status).toEqual([{ path: 'dir/sub/deep.md', status: 'modified' }]);
+    expect(status).toEqual([expect.objectContaining({ path: 'dir/sub/deep.md', status: 'modified' })]);
   });
 
   it('returns empty when no changes match folder', async () => {
