@@ -207,6 +207,8 @@ resource "google_cloud_run_v2_service" "api_service" {
       # Inject the following secrets into the container as env vars
       dynamic "env" {
         for_each = [
+          "AIRTABLE_CLIENT_ID",
+          "AIRTABLE_CLIENT_SECRET",
           "CLERK_PUBLISHABLE_KEY",
           "CLERK_SECRET_KEY",
           "DATABASE_URL",
