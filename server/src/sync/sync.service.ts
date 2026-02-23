@@ -87,17 +87,19 @@ export class SyncService {
     }
 
     // Validate mappings — skip gracefully when schemas are absent
-    for (const tableMapping of body.mappings.tableMappings) {
-      const sourceId = tableMapping.sourceDataFolderId;
-      const destId = tableMapping.destinationDataFolderId;
+    if (body.validateMappings) {
+      for (const tableMapping of body.mappings.tableMappings) {
+        const sourceId = tableMapping.sourceDataFolderId;
+        const destId = tableMapping.destinationDataFolderId;
 
-      const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
-      const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
+        const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
+        const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
 
-      if (sourceFolder?.schema && destFolder?.schema) {
-        const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
-        if (errors.length > 0) {
-          throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
+        if (sourceFolder?.schema && destFolder?.schema) {
+          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
+          if (errors.length > 0) {
+            throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
+          }
         }
       }
     }
@@ -151,18 +153,20 @@ export class SyncService {
       throw new NotFoundException('Sync not found');
     }
 
-    // Validate mappings — skip gracefully when schemas are absent
-    for (const tableMapping of body.mappings.tableMappings) {
-      const sourceId = tableMapping.sourceDataFolderId;
-      const destId = tableMapping.destinationDataFolderId;
+    if (body.validateMappings) {
+      // Validate mappings — skip gracefully when schemas are absent
+      for (const tableMapping of body.mappings.tableMappings) {
+        const sourceId = tableMapping.sourceDataFolderId;
+        const destId = tableMapping.destinationDataFolderId;
 
-      const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
-      const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
+        const sourceFolder = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
+        const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
 
-      if (sourceFolder?.schema && destFolder?.schema) {
-        const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
-        if (errors.length > 0) {
-          throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
+        if (sourceFolder?.schema && destFolder?.schema) {
+          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
+          if (errors.length > 0) {
+            throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
+          }
         }
       }
     }

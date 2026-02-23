@@ -150,7 +150,7 @@ describe('SyncService', () => {
       validateSchemaMapping.mockReturnValue([]);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
-      const body = makeSaveSyncBody();
+      const body = makeSaveSyncBody({ validateMappings: true });
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledTimes(2);
@@ -189,7 +189,7 @@ describe('SyncService', () => {
       dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
       validateSchemaMapping.mockReturnValue(['Type mismatch for field X']);
 
-      const body = makeSaveSyncBody();
+      const body = makeSaveSyncBody({ validateMappings: true });
 
       await expect(service.createSync(WORKBOOK_ID, body, ACTOR)).rejects.toThrow(BadRequestException);
     });
@@ -435,7 +435,7 @@ describe('SyncService', () => {
       validateSchemaMapping.mockReturnValue([]);
       (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
 
-      const body = makeSaveSyncBody();
+      const body = makeSaveSyncBody({ validateMappings: true });
       await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
 
       expect(dataFolderService.fetchSchemaSpec).toHaveBeenCalledTimes(2);

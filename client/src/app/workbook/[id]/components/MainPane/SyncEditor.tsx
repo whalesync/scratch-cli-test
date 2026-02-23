@@ -35,7 +35,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { DataFolderId, SyncId, SyncMapping, TransformerConfig, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, SaveSyncBody, SyncId, SyncMapping, TransformerConfig, WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   ArrowRight,
@@ -408,9 +408,10 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         mappings = folderPairsToSyncMapping(folderPairs);
       }
 
-      const payload = {
+      const payload: SaveSyncBody = {
         displayName: syncName || 'Untitled Sync',
         mappings,
+        validateMappings: enableValidation,
       };
 
       if (isNew) {

@@ -68,6 +68,7 @@ export const saveSyncBodySchema = z
   .object({
     displayName: z.string().min(1),
     mappings: syncMappingSchema,
+    validateMappings: z.boolean().optional(),
   })
   .strict();
 

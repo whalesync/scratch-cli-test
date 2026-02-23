@@ -4,6 +4,7 @@ import type { ColumnMapping, SyncMapping, TransformerType } from '../../sync-map
 export interface SaveSyncBody {
   displayName: string;
   mappings: SyncMapping;
+  validateMappings: boolean;
 }
 
 /** POST body for preview-record endpoint */
