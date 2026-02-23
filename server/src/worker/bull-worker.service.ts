@@ -152,6 +152,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         const newProgress = { ...progress, timestamp: Date.now() };
         latestProgress = newProgress;
         await job.updateProgress(newProgress);
+        await this.jobService.updateJobProgress(dbJob.id, newProgress);
+        WSLogger.debug({
+          source: 'QueueService.checkpoint',
+          message: 'Progress persisted to DB',
+          jobId,
+          dbJobId: dbJob.id,
+        });
       }
       // Check if job was cancelled
       if (abortController.signal.aborted) {

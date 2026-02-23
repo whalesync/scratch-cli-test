@@ -37,7 +37,22 @@ export class PublishRunService {
     private readonly refResolverService: PublishRefResolverService,
   ) {}
 
-  async runPipeline(pipelineId: string, phase?: string): Promise<PublishPlanInfo> {
+  async runPipeline(
+    pipelineId: string,
+    phase?: string,
+    abortSignal?: AbortSignal,
+    onProgress?: (counts: {
+      edits: number;
+      creates: number;
+      deletes: number;
+      backfills: number;
+      totalEdits: number;
+      totalCreates: number;
+      totalDeletes: number;
+      totalBackfills: number;
+      currentPhase: string;
+    }) => Promise<void>,
+  ): Promise<PublishPlanInfo> {
     const plan = await this.db.client.publishPlan.findUnique({ where: { id: pipelineId } });
     if (!plan) {
       throw new Error('Pipeline plan not found');
@@ -55,7 +70,35 @@ export class PublishRunService {
       const allPhases = ['edit', 'create', 'delete', 'backfill'] as const;
       const phasesToRun = phase ? [phase] : [...allPhases];
 
+      // Pre-count total pending entries per phase (for accurate progress denominator)
+      const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
+      for (const p of phasesToRun) {
+        const count = await this.db.client.publishPlanEntry.count({
+          where: { planId: pipelineId, phase: p, status: 'pending' },
+        });
+        (totalByPhase as Record<string, number>)[p] = count;
+      }
+      // Running completed counts per phase
+      const completedByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
+
+      const reportRunProgress = async (currentPhase: string) => {
+        await onProgress?.({
+          edits: completedByPhase.edit,
+          creates: completedByPhase.create,
+          deletes: completedByPhase.delete,
+          backfills: completedByPhase.backfill,
+          totalEdits: totalByPhase.edit,
+          totalCreates: totalByPhase.create,
+          totalDeletes: totalByPhase.delete,
+          totalBackfills: totalByPhase.backfill,
+          currentPhase,
+        });
+      };
+
       for (const currentPhase of phasesToRun) {
+        // Check for cancellation before starting each phase
+        abortSignal?.throwIfAborted();
+
         // Set status to {phase}s-running (e.g. "edits-running", "creates-running")
         const phasePrefix = currentPhase + 's';
         await this.db.client.publishPlan.update({
@@ -91,6 +134,9 @@ export class PublishRunService {
 
         for (const { dataFolderId } of distinctFolders) {
           if (!dataFolderId) continue;
+
+          // Check for cancellation between folders
+          abortSignal?.throwIfAborted();
 
           // Fetch all entries for this table
           const entries = await this.db.client.publishPlanEntry.findMany({
@@ -131,8 +177,14 @@ export class PublishRunService {
 
           // Chunk entries
           for (let i = 0; i < entries.length; i += batchSize) {
+            // Check for cancellation between batches
+            abortSignal?.throwIfAborted();
+
             const batch = entries.slice(i, i + batchSize);
             await this.processBatch(currentPhase, batch, connector, tableSpec, plan.workbookId, plan.id);
+            (completedByPhase as Record<string, number>)[currentPhase] =
+              ((completedByPhase as Record<string, number>)[currentPhase] ?? 0) + batch.length;
+            await reportRunProgress(currentPhase);
           }
         }
 
@@ -156,6 +208,9 @@ export class PublishRunService {
           // Let's iterate individually but verify spec from cache.
 
           for (const entry of failedEntries) {
+            // Check for cancellation during retry loop
+            abortSignal?.throwIfAborted();
+
             let tableSpec: BaseJsonTableSpec | null = null;
             if (entry.dataFolderId) {
               tableSpec = await this.schemaService.getTableSpecById(entry.dataFolderId, dataFolderSpecCache);
@@ -179,18 +234,30 @@ export class PublishRunService {
         });
       }
 
-      // Query final entry counts to determine accurate status
-      const counts = await this.db.client.publishPlanEntry.groupBy({
-        by: ['status'],
+      // Query final entry counts per phase to determine accurate status
+      const countRows = await this.db.client.publishPlanEntry.groupBy({
+        by: ['status', 'phase'],
         where: { planId: pipelineId },
         _count: true,
       });
 
-      const successCount = counts.find((c) => c.status === 'success')?._count ?? 0;
-      const failedCount = counts.find((c) => c.status === 'failed-batch')?._count ?? 0;
+      const successByPhase: Record<string, number> = {};
+      const finalTotalByPhase: Record<string, number> = {};
+      let successCount = 0;
+      let failedCount = 0;
+      for (const row of countRows) {
+        finalTotalByPhase[row.phase] = (finalTotalByPhase[row.phase] ?? 0) + row._count;
+        if (row.status === 'success') {
+          successByPhase[row.phase] = (successByPhase[row.phase] ?? 0) + row._count;
+          successCount += row._count;
+        } else if (row.status === 'failed-batch') {
+          failedCount += row._count;
+        }
+      }
+
       const finalStatus = failedCount > 0 ? 'completed-with-errors' : phase ? `${phase}s-completed` : 'completed';
 
-      // Store status + result in DB
+      // Store status + result in DB — keep activeJobId as a trace of which job completed this
       await this.db.client.publishPlan.update({
         where: { id: pipelineId },
         data: {
@@ -217,14 +284,32 @@ export class PublishRunService {
         status: finalStatus,
         successCount,
         failedCount,
+        successByPhase,
+        totalByPhase: finalTotalByPhase,
       };
     } catch (err) {
+      // Check if cancellation was requested — mark as canceled (resumable) rather than failed
+      if (abortSignal?.aborted) {
+        WSLogger.warn({
+          source: 'PublishRunService.runPipeline',
+          message: 'Pipeline canceled',
+          data: { pipelineId },
+        });
+        // Keep activeJobId so the canceled job can still be inspected
+        await this.db.client.publishPlan.update({
+          where: { id: pipelineId },
+          data: { status: 'canceled' },
+        });
+        throw err;
+      }
+
       WSLogger.error({
         source: 'PublishRunService.runPipeline',
         message: 'Pipeline failed',
         error: err,
         data: { pipelineId },
       });
+      // Keep activeJobId so the failed job can still be inspected
       await this.db.client.publishPlan.update({
         where: { id: pipelineId },
         data: { status: 'failed' },

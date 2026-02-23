@@ -112,21 +112,32 @@ export class FileIndexService {
   ): Promise<Map<string, string>> {
     if (lookups.length === 0) return new Map();
 
-    const resultEntries: Array<{ folderPath: string; filename: string; recordId: string }> = [];
-    const chunks = chunk(lookups, 10000);
-
-    for (const c of chunks) {
-      const entries = await this.db.client.fileIndex.findMany({
-        where: { workbookId, OR: c },
-        select: { folderPath: true, filename: true, recordId: true },
-      });
-      resultEntries.push(...entries);
+    // Group by folderPath so we can query with `filename IN (...)` per folder
+    // instead of a giant OR with thousands of conditions.
+    const byFolder = new Map<string, string[]>();
+    for (const { folderPath, filename } of lookups) {
+      const existing = byFolder.get(folderPath);
+      if (existing) {
+        existing.push(filename);
+      } else {
+        byFolder.set(folderPath, [filename]);
+      }
     }
 
     const map = new Map<string, string>();
-    for (const e of resultEntries) {
-      map.set(`${e.folderPath}:${e.filename}`, e.recordId);
+
+    for (const [folderPath, filenames] of byFolder) {
+      for (const filenameChunk of chunk(filenames, 1000)) {
+        const entries = await this.db.client.fileIndex.findMany({
+          where: { workbookId, folderPath, filename: { in: filenameChunk } },
+          select: { folderPath: true, filename: true, recordId: true },
+        });
+        for (const e of entries) {
+          map.set(`${e.folderPath}:${e.filename}`, e.recordId);
+        }
+      }
     }
+
     return map;
   }
 

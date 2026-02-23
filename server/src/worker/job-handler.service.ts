@@ -80,7 +80,10 @@ export class JobHandlerService {
         ) as JobHandler<JobDefinition>;
 
       case 'publish-plan':
-        return new PublishPlanJobHandler(this.pipelinePlanService) as JobHandler<JobDefinition>;
+        return new PublishPlanJobHandler(
+          this.pipelinePlanService,
+          this.bullEnqueuerService,
+        ) as JobHandler<JobDefinition>;
 
       case 'publish-run':
         return new PublishRunJobHandler(this.pipelineRunService) as JobHandler<JobDefinition>;

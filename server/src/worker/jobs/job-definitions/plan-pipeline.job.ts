@@ -69,15 +69,21 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       connectorProgress: {},
     });
 
-    const onProgress = async (step: string) => {
+    const onProgress = async (counts: {
+      edits: number;
+      creates: number;
+      deletes: number;
+      backfills: number;
+      step?: string;
+    }) => {
       await checkpoint({
         publicProgress: {
           status: 'planning',
-          step,
-          edits: 0,
-          creates: 0,
-          deletes: 0,
-          backfills: 0,
+          step: counts.step,
+          edits: counts.edits,
+          creates: counts.creates,
+          deletes: counts.deletes,
+          backfills: counts.backfills,
         },
         jobProgress: {},
         connectorProgress: {},

@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class PlanPublishV2Dto {
   @IsString()
@@ -8,6 +8,10 @@ export class PlanPublishV2Dto {
   @IsString()
   @IsOptional()
   connectorAccountId?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  runAfterPlan?: boolean;
 }
 
 export class RunPublishV2Dto {

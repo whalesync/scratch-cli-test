@@ -134,6 +134,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     actor: Actor,
     pipelineId: string,
     connectorAccountId?: string,
+    runAfterPlan?: boolean,
   ): Promise<Job> {
     const id = `publish-plan-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PublishPlanJobDefinition['data'] = {
@@ -142,6 +143,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       pipelineId,
       type: 'publish-plan',
       ...(connectorAccountId && { connectorAccountId }),
+      ...(runAfterPlan && { runAfterPlan }),
     };
     await this.jobService.createJob({
       userId: actor.userId,

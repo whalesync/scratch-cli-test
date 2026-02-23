@@ -117,12 +117,12 @@ export class FileReferenceService {
         // expect object with key `map`
         if (typeof item === 'object' && item !== null && item[map] !== undefined) {
           const val = item[map];
-          if (typeof val === 'string') ids.push(val);
+          if (typeof val === 'string' || typeof val === 'number') ids.push(String(val));
         }
       } else {
-        // use item directly if string
-        if (typeof item === 'string') {
-          ids.push(item);
+        // use item directly if string or number
+        if (typeof item === 'string' || typeof item === 'number') {
+          ids.push(String(item));
         }
       }
     }

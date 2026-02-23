@@ -313,6 +313,7 @@ export const workbookApi = {
   planPublishV2: async (
     workbookId: WorkbookId,
     connectorAccountId?: string,
+    runAfterPlan?: boolean,
   ): Promise<{ jobId: string; pipelineId: string }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
@@ -321,6 +322,7 @@ export const workbookApi = {
         {
           userId: 'current',
           connectorAccountId,
+          runAfterPlan,
         },
       );
       return res.data;

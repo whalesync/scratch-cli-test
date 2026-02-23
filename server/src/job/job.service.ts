@@ -52,6 +52,13 @@ export class JobService {
     return job;
   }
 
+  async updateJobProgress(id: string, progress: Progress): Promise<void> {
+    await this.db.client.dbJob.update({
+      where: { id },
+      data: { progress },
+    });
+  }
+
   async updateJobStatus(params: {
     id: string;
     status: DbJobStatus;

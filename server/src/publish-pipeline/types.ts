@@ -6,6 +6,8 @@ export interface PipelinePhase {
   commitHash?: string;
 }
 
+export type PhaseCountMap = Partial<Record<PublishPlanPhase, number>>;
+
 export interface PublishPlanInfo {
   pipelineId: string;
   workbookId: string;
@@ -16,4 +18,6 @@ export interface PublishPlanInfo {
   status: string;
   successCount?: number;
   failedCount?: number;
+  successByPhase?: PhaseCountMap;
+  totalByPhase?: PhaseCountMap;
 }

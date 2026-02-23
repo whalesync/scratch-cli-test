@@ -52,6 +52,26 @@ export class PublishPlanService {
     return { pipelineId, branchName };
   }
 
+  async setActiveJob(pipelineId: string, bullJobId: string): Promise<void> {
+    await this.db.client.publishPlan.update({
+      where: { id: pipelineId },
+      data: { activeJobId: bullJobId },
+    });
+  }
+
+  /**
+   * Cancels a pipeline that was being planned.
+   * Planning is treated as atomic — partial entries are kept for inspection but the status
+   * is set to 'canceled' so the pipeline can be re-planned from scratch.
+   * activeJobId is preserved so the canceled job can still be inspected.
+   */
+  async cancelPipeline(pipelineId: string): Promise<void> {
+    await this.db.client.publishPlan.update({
+      where: { id: pipelineId },
+      data: { status: 'canceled', phases: [] },
+    });
+  }
+
   async hasDiffs(workbookId: string, connectorAccountId?: string): Promise<boolean> {
     const wkbId = workbookId as WorkbookId;
     const changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{ path: string; status: string }>;
@@ -79,7 +99,13 @@ export class PublishPlanService {
     userId: string,
     connectorAccountId?: string,
     existingPipelineId?: string,
-    onProgress?: (step: string) => Promise<void>,
+    onProgress?: (counts: {
+      edits: number;
+      creates: number;
+      deletes: number;
+      backfills: number;
+      step?: string;
+    }) => Promise<void>,
   ): Promise<PublishPlanInfo> {
     let pipelineId: string;
     let branchName: string;
@@ -99,14 +125,19 @@ export class PublishPlanService {
 
     const wkbId = workbookId as WorkbookId;
 
-    // 2. Get diff between main and dirty (includes blob OIDs for added/modified files)
+    // Running counts — updated as each entry is planned and passed to onProgress
+    const liveCounts = { edits: 0, creates: 0, deletes: 0, backfills: 0 };
+    const reportProgress = async (step?: string) => {
+      await onProgress?.({ ...liveCounts, step });
+    };
+
+    // 2. Get diff between main and dirty
     let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{
       path: string;
       status: FileDiffStatus;
-      oid?: string;
     }>;
 
-    await onProgress?.(`Diffing branches (${changes.length} changes found)`);
+    await reportProgress(`Diffing branches (${changes.length} changes found)`);
 
     if (connectorAccountId) {
       // Find all data folders for this connector in this workbook
@@ -128,12 +159,6 @@ export class PublishPlanService {
       }
     }
 
-    // Build path→oid map from diff results (available for added/modified files)
-    const oidMap = new Map<string, string>();
-    for (const c of changes) {
-      if (c.oid) oidMap.set(c.path, c.oid);
-    }
-
     const modifiedFiles = changes.filter((c) => c.status === 'modified');
     const addedFiles = changes.filter((c) => c.status === 'added');
     const deletedFiles = changes.filter((c) => c.status === 'deleted');
@@ -151,13 +176,19 @@ export class PublishPlanService {
     // --- Prepare for "Delete Ref Clearing" ---
     // 1. Identify Deleted Record IDs (bulk lookup)
 
-    await onProgress?.(`Resolving deleted record IDs (${deletedFiles.length} files)`);
+    await reportProgress(`Resolving deleted record IDs (${deletedFiles.length} files)`);
 
     const deletedLookups = deletedFiles.map((del) => {
       const { folderPath, filename: fileName } = parsePath(del.path);
       return { folderPath, filename: fileName };
     });
-    const recordIdMap = await this.fileIndexService.getRecordIds(workbookId, deletedLookups);
+    let recordIdMap: Map<string, string> = new Map();
+    try {
+      recordIdMap = await this.fileIndexService.getRecordIds(workbookId, deletedLookups);
+    } catch (e: unknown) {
+      console.log(e);
+      throw e;
+    }
 
     const deletedRecordIds = new Set<string>();
     const deletedFileRecordIds = new Map<string, string | null>();
@@ -179,13 +210,10 @@ export class PublishPlanService {
       workbookId,
       targetsForRefCheck,
       searchBranches,
-      onProgress,
+      (step) => reportProgress(step),
     );
 
-    // Identify files that need editing because they reference a deleted file.
-    // This includes files that are themselves being deleted — their FK references
-    // must still be cleared in the edit phase before the delete phase runs,
-    // since delete ordering is not guaranteed.
+    // Identify files that need editing because they reference a deleted file
     const filesReferringToDeletedFiles = new Set<string>();
     for (const ref of inboundRefs) {
       filesReferringToDeletedFiles.add(ref.sourceFilePath);
@@ -225,34 +253,9 @@ export class PublishPlanService {
     };
 
     for (const editBatch of chunk(Array.from(filesToProcessInEditPhase), 100)) {
-      // Split batch: files with OIDs (from diff) use fast blob reads, others use tree walk
-      const withOid: Array<{ path: string; oid: string }> = [];
-      const withoutOid: string[] = [];
-      for (const p of editBatch) {
-        const oid = oidMap.get(p);
-        if (oid) withOid.push({ path: p, oid });
-        else withoutOid.push(p);
-      }
-
-      const dirtyMap = new Map<string, string | null>();
-
-      // Fast path: read blobs by OID (O(1) per blob, no tree walk)
-      if (withOid.length > 0) {
-        const blobResults = await this.scratchGitService.readBlobsByOid(
-          wkbId,
-          withOid.map((f) => f.oid),
-        );
-        const oidContentMap = new Map(blobResults.map((r) => [r.oid, r.content]));
-        for (const f of withOid) {
-          dirtyMap.set(f.path, oidContentMap.get(f.oid) ?? null);
-        }
-      }
-
-      // Slow path: files only in ref-clearing set (not in diff), read via tree walk
-      if (withoutOid.length > 0) {
-        const treeResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', withoutOid);
-        for (const r of treeResults) dirtyMap.set(r.path, r.content);
-      }
+      // Bulk fetch from dirty; fall back to main for any missing paths
+      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', editBatch);
+      const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
 
       const missingPaths = editBatch.filter((p) => !dirtyMap.get(p));
       const mainMap = new Map<string, string | null>();
@@ -263,8 +266,8 @@ export class PublishPlanService {
 
       for (const filePath of editBatch) {
         editPhaseProcessed++;
-        if (editPhaseProcessed === 1 || editPhaseProcessed % 500 === 0 || editPhaseProcessed === editPhaseTotal) {
-          await onProgress?.(`Processing edits (${editPhaseProcessed}/${editPhaseTotal})`);
+        if (editPhaseProcessed === 1 || editPhaseProcessed % 50 === 0 || editPhaseProcessed === editPhaseTotal) {
+          await reportProgress(`Processing edits (${editPhaseProcessed}/${editPhaseTotal})`);
         }
 
         const rawContent = dirtyMap.get(filePath) ?? mainMap.get(filePath);
@@ -272,6 +275,12 @@ export class PublishPlanService {
           WSLogger.warn({
             source: 'PublishPlanService.buildPipeline',
             message: `File not found in dirty branch, falling back to main: ${filePath}`,
+            workbookId,
+          });
+        } else {
+          WSLogger.info({
+            source: 'PublishPlanService.buildPipeline',
+            message: `Processing file in edit phase: ${filePath}`,
             workbookId,
           });
         }
@@ -294,6 +303,7 @@ export class PublishPlanService {
                 status: 'pending',
               });
               editCount++;
+              liveCounts.edits++;
             }
             continue;
           }
@@ -309,7 +319,7 @@ export class PublishPlanService {
           const pass1ContentObj = this.refCleanerService.stripDeletedRecordRefs(contentObj, schema, deletedRecordIds);
           const pass1ContentStr = JSON.stringify(pass1ContentObj, null, 2);
 
-          // Pass 2: Strip all pseudo-refs (@/ references) unconditionally.
+          // Pass 2: Strip references to NEW records (Pseudo-refs).
           const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
           const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
 
@@ -328,6 +338,7 @@ export class PublishPlanService {
               status: 'pending',
             });
             editCount++;
+            liveCounts.edits++;
 
             // Backfill Logic
             if (pass2ContentStr !== pass1ContentStr) {
@@ -338,6 +349,7 @@ export class PublishPlanService {
                 dataFolderId: dataFolderId || null,
                 status: 'pending',
               });
+              liveCounts.backfills++;
             }
           }
         }
@@ -350,47 +362,23 @@ export class PublishPlanService {
     }
 
     // --- Phase 2: [create] ---
-    // All added files have OIDs from the diff — use readBlobsByOid for O(1) reads.
     let createCount = 0;
     let createPhaseProcessed = 0;
     const createPhaseTotal = addedFiles.length;
 
-    for (const createBatch of chunk(addedFiles, 1000)) {
-      // Collect OIDs for this batch; fall back to tree walk for any without OIDs
-      const withOid: Array<{ path: string; oid: string }> = [];
-      const withoutOidPaths: string[] = [];
-      for (const f of createBatch) {
-        const oid = oidMap.get(f.path);
-        if (oid) withOid.push({ path: f.path, oid });
-        else withoutOidPaths.push(f.path);
-      }
-
-      const dirtyMap = new Map<string, string | null>();
-
-      if (withOid.length > 0) {
-        const blobResults = await this.scratchGitService.readBlobsByOid(
-          wkbId,
-          withOid.map((f) => f.oid),
-        );
-        const oidContentMap = new Map(blobResults.map((r) => [r.oid, r.content]));
-        for (const f of withOid) {
-          dirtyMap.set(f.path, oidContentMap.get(f.oid) ?? null);
-        }
-      }
-
-      if (withoutOidPaths.length > 0) {
-        const treeResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', withoutOidPaths);
-        for (const r of treeResults) dirtyMap.set(r.path, r.content);
-      }
+    for (const createBatch of chunk(addedFiles, 100)) {
+      const batchPaths = createBatch.map((f) => f.path);
+      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', batchPaths);
+      const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
 
       for (const add of createBatch) {
         createPhaseProcessed++;
         if (
           createPhaseProcessed === 1 ||
-          createPhaseProcessed % 500 === 0 ||
+          createPhaseProcessed % 50 === 0 ||
           createPhaseProcessed === createPhaseTotal
         ) {
-          await onProgress?.(`Processing creates (${createPhaseProcessed}/${createPhaseTotal})`);
+          await reportProgress(`Processing creates (${createPhaseProcessed}/${createPhaseTotal})`);
         }
 
         const rawContent = dirtyMap.get(add.path);
@@ -410,17 +398,18 @@ export class PublishPlanService {
               status: 'pending',
             });
             createCount++;
+            liveCounts.creates++;
             continue;
           }
 
           const schema = info?.spec?.schema as Schema;
           const dataFolderId = info?.id;
 
-          // Pass 1: Strip references to DELETED records.
+          // Pass 1: Strip Deleted
           const pass1ContentObj = this.refCleanerService.stripDeletedRecordRefs(contentObj, schema, deletedRecordIds);
           const pass1ContentStr = JSON.stringify(pass1ContentObj, null, 2);
 
-          // Pass 2: Strip all pseudo-refs (@/ references) unconditionally.
+          // Pass 2: Strip Pseudo
           const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
           const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
 
@@ -432,6 +421,7 @@ export class PublishPlanService {
             status: 'pending',
           });
           createCount++;
+          liveCounts.creates++;
 
           if (pass2ContentStr !== pass1ContentStr) {
             planEntries.push({
@@ -441,6 +431,7 @@ export class PublishPlanService {
               dataFolderId: dataFolderId || null,
               status: 'pending',
             });
+            liveCounts.backfills++;
           }
         }
       }
@@ -457,8 +448,8 @@ export class PublishPlanService {
 
     for (const del of deletedFiles) {
       deletePhaseProcessed++;
-      if (deletePhaseProcessed === 1 || deletePhaseProcessed % 500 === 0 || deletePhaseProcessed === deletePhaseTotal) {
-        await onProgress?.(`Processing deletes (${deletePhaseProcessed}/${deletePhaseTotal})`);
+      if (deletePhaseProcessed === 1 || deletePhaseProcessed % 50 === 0 || deletePhaseProcessed === deletePhaseTotal) {
+        await reportProgress(`Processing deletes (${deletePhaseProcessed}/${deletePhaseTotal})`);
       }
       // recordId was already looked up above when building deletedRecordIds
       const recordId = deletedFileRecordIds.get(del.path);
@@ -473,13 +464,14 @@ export class PublishPlanService {
         dataFolderId: info?.id || null,
         status: 'pending',
       });
+      liveCounts.deletes++;
     }
 
     if (deletedFiles.length > 0) {
       phases.push({ type: 'delete', recordCount: deletedFiles.length });
     }
 
-    await onProgress?.('Saving plan entries');
+    await reportProgress('Saving plan entries');
     await savePlanEntries();
 
     // Mark as planned (ready to run)

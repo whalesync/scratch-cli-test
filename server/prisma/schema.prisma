@@ -493,6 +493,8 @@ model PublishPlan {
   phases Json // Stored as JSON
   result Json?
 
+  activeJobId String? // BullMQ job ID of the currently active plan or run job
+
   connectorAccount   ConnectorAccount? @relation(fields: [connectorAccountId], references: [id])
   connectorAccountId String?
 

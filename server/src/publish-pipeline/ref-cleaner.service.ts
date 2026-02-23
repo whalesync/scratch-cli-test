@@ -15,7 +15,11 @@ export class RefCleanerService {
     const fkPaths = this.extractForeignKeyPaths(schema);
 
     for (const fk of fkPaths) {
-      this.stripAtNodes(result, fk.path, (value) => typeof value === 'string' && idsToStrip.has(value));
+      this.stripAtNodes(
+        result,
+        fk.path,
+        (value) => (typeof value === 'string' || typeof value === 'number') && idsToStrip.has(String(value)),
+      );
     }
 
     return result;
@@ -32,7 +36,11 @@ export class RefCleanerService {
     const fkPaths = this.extractForeignKeyPaths(schema);
 
     for (const fk of fkPaths) {
-      this.stripAtNodes(result, fk.path, (value) => typeof value === 'string' && value.startsWith('@/'));
+      this.stripAtNodes(
+        result,
+        fk.path,
+        (value) => (typeof value === 'string' || typeof value === 'number') && String(value).startsWith('@/'),
+      );
     }
 
     return result;

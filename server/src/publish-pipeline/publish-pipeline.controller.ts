@@ -55,7 +55,9 @@ export class PublishPipelineController {
       { userId: req.user.id, organizationId: req.user.organization?.id ?? '' },
       pipelineId,
       body.connectorAccountId,
+      body.runAfterPlan,
     );
+    await this.publishPlanService.setActiveJob(pipelineId, job.id!.toString());
     return { jobId: job.id, pipelineId };
   }
 
@@ -71,6 +73,7 @@ export class PublishPipelineController {
       body.pipelineId,
       body.phase,
     );
+    await this.publishPlanService.setActiveJob(body.pipelineId, job.id!.toString());
     return { jobId: job.id };
   }
 

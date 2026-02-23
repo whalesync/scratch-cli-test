@@ -1,6 +1,8 @@
 import type { WorkbookId } from '@spinner/shared-types';
 import type { PublishPlanService } from 'src/publish-pipeline/publish-plan.service';
+import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
+import { JobCanceledError } from '../../bull-worker.service';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 
 // ── Public Progress (UI-facing) ──────────────────────────────────────
@@ -23,6 +25,7 @@ export type PublishPlanJobDefinition = JobDefinitionBuilder<
     userId: string;
     pipelineId: string;
     connectorAccountId?: string;
+    runAfterPlan?: boolean;
   },
   PublishPlanPublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -33,7 +36,10 @@ export type PublishPlanJobDefinition = JobDefinitionBuilder<
 // ── Handler ──────────────────────────────────────────────────────────
 
 export class PublishPlanJobHandler implements JobHandlerBuilder<PublishPlanJobDefinition> {
-  constructor(private readonly publishPlanService: PublishPlanService) {}
+  constructor(
+    private readonly publishPlanService: PublishPlanService,
+    private readonly bullEnqueuerService?: BullEnqueuerService,
+  ) {}
 
   async run(params: {
     jobId: string;
@@ -47,7 +53,7 @@ export class PublishPlanJobHandler implements JobHandlerBuilder<PublishPlanJobDe
       >,
     ) => Promise<void>;
   }) {
-    const { jobId, data, checkpoint } = params;
+    const { jobId, data, checkpoint, abortSignal } = params;
 
     WSLogger.info({
       source: 'PublishPlanJob',
@@ -69,15 +75,21 @@ export class PublishPlanJobHandler implements JobHandlerBuilder<PublishPlanJobDe
       connectorProgress: {},
     });
 
-    const onProgress = async (step: string) => {
+    const onProgress = async (counts: {
+      edits: number;
+      creates: number;
+      deletes: number;
+      backfills: number;
+      step?: string;
+    }) => {
       await checkpoint({
         publicProgress: {
           status: 'planning',
-          step,
-          edits: 0,
-          creates: 0,
-          deletes: 0,
-          backfills: 0,
+          step: counts.step,
+          edits: counts.edits,
+          creates: counts.creates,
+          deletes: counts.deletes,
+          backfills: counts.backfills,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -106,6 +118,23 @@ export class PublishPlanJobHandler implements JobHandlerBuilder<PublishPlanJobDe
         connectorProgress: {},
       });
 
+      if (data.runAfterPlan && this.bullEnqueuerService) {
+        WSLogger.info({
+          source: 'PublishPlanJob',
+          message: 'runAfterPlan=true, enqueueing run job',
+          workbookId: data.workbookId,
+          jobId,
+          pipelineId,
+        });
+        const runJob = await this.bullEnqueuerService.enqueueRunPipelineJob(
+          data.workbookId,
+          { userId: data.userId, organizationId: '' },
+          pipelineId,
+        );
+        // Track the new run job as the active job on the plan
+        await this.publishPlanService.setActiveJob(pipelineId, runJob.id!.toString());
+      }
+
       WSLogger.info({
         source: 'PublishPlanJob',
         message: 'Publish plan job completed',
@@ -114,25 +143,39 @@ export class PublishPlanJobHandler implements JobHandlerBuilder<PublishPlanJobDe
         pipelineId,
       });
     } catch (error) {
-      await checkpoint({
-        publicProgress: {
-          status: 'failed',
-          edits: 0,
-          creates: 0,
-          deletes: 0,
-          backfills: 0,
-        },
-        jobProgress: {},
-        connectorProgress: {},
-      });
+      const isCanceled = error instanceof JobCanceledError || abortSignal.aborted;
 
-      WSLogger.error({
-        source: 'PublishPlanJob',
-        message: 'Publish plan job failed',
-        workbookId: data.workbookId,
-        jobId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      if (isCanceled) {
+        // Planning is atomic — cancel means delete partial entries and mark as canceled
+        // so a re-plan can start fresh.
+        // Don't call checkpoint here: the signal is already aborted so checkpoint would throw again.
+        await this.publishPlanService.cancelPipeline(data.pipelineId);
+        WSLogger.warn({
+          source: 'PublishPlanJob',
+          message: 'Publish plan job canceled',
+          workbookId: data.workbookId,
+          jobId,
+        });
+      } else {
+        await checkpoint({
+          publicProgress: {
+            status: 'failed',
+            edits: 0,
+            creates: 0,
+            deletes: 0,
+            backfills: 0,
+          },
+          jobProgress: {},
+          connectorProgress: {},
+        });
+        WSLogger.error({
+          source: 'PublishPlanJob',
+          message: 'Publish plan job failed',
+          workbookId: data.workbookId,
+          jobId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
 
       throw error;
     }
