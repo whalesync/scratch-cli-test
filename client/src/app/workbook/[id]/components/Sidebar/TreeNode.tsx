@@ -163,10 +163,11 @@ export function ConnectionNode({
     }
   };
 
-  // Pull handler
+  // Pull handler - pull only the tables belonging to this connection
+  const connectionFolderIds = useMemo(() => group.dataFolders.map((f) => f.id), [group.dataFolders]);
   const handlePullAll = useCallback(async () => {
-    await pullFolders();
-  }, [pullFolders]);
+    await pullFolders(connectionFolderIds);
+  }, [pullFolders, connectionFolderIds]);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
