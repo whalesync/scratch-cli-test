@@ -1,5 +1,7 @@
-import { ClassSerializerInterceptor, Controller, Get, UseInterceptors } from '@nestjs/common';
+import { ClassSerializerInterceptor, Controller, Get, Header, StreamableFile, UseInterceptors } from '@nestjs/common';
+import { createReadStream } from 'fs';
 import IORedis from 'ioredis';
+import { join } from 'path';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { BUILD_VERSION } from 'src/version';
 
@@ -27,6 +29,14 @@ interface ConnectionTestResponse {
 export class HealthController {
   constructor(private readonly configService: ScratchConfigService) {}
 
+  @Get('favicon.ico')
+  @Header('Content-Type', 'image/x-icon')
+  @Header('Cache-Control', 'public, max-age=86400')
+  getFavicon(): StreamableFile {
+    const file = createReadStream(join(__dirname, '..', 'assets', 'favicon.ico'));
+    return new StreamableFile(file);
+  }
+
   @Get()
   getRoot() {
     return {
@@ -44,7 +54,7 @@ export class HealthController {
       build_version: BUILD_VERSION,
       in_cloud: ScratchConfigService.isRunningInCloudRun(),
       app_url: ScratchConfigService.getClientBaseUrl(),
-      apptype: ScratchConfigService.getScratchpadServiceType(),
+      apptype: ScratchConfigService.getServiceTypes(),
     };
   }
 

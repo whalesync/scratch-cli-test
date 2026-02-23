@@ -27,14 +27,14 @@ export enum MicroserviceType {
 export class ScratchConfigService {
   private readonly databaseUrl: string;
   private readonly environment: ScratchEnvironment;
-  private readonly serviceType: MicroserviceType;
+  private readonly serviceTypes: MicroserviceType[];
   private readonly runningInCloudRun: boolean;
 
   constructor(private readonly configService: ConfigService) {
     this.databaseUrl = this.getEnvVariable('DATABASE_URL');
     this.runningInCloudRun = this.getOptionalFlagVariable('RUNNING_IN_CLOUD', false);
     this.environment = ScratchConfigService.getScratchEnvironment();
-    this.serviceType = ScratchConfigService.getScratchpadServiceType();
+    this.serviceTypes = ScratchConfigService.getServiceTypes();
 
     if (process.env.LOG_LEVEL) {
       WSLogger.info({
@@ -54,8 +54,8 @@ export class ScratchConfigService {
     return this.environment === 'production';
   }
 
-  getServiceType(): MicroserviceType {
-    return this.serviceType;
+  getServiceTypes(): MicroserviceType[] {
+    return this.serviceTypes;
   }
 
   getDatabaseUrl(): string {
@@ -213,33 +213,50 @@ export class ScratchConfigService {
     return `https://${env}.scratch.md`;
   }
 
-  public static getScratchpadServiceType(): MicroserviceType {
-    return checkIsString(process.env.SERVICE_TYPE, 'SERVICE_TYPE', [
-      MicroserviceType.FRONTEND,
-      MicroserviceType.WORKER,
-      MicroserviceType.CRON,
-      MicroserviceType.MONOLITH,
-    ]) as MicroserviceType;
+  public static getServiceTypes(): MicroserviceType[] {
+    const raw = process.env.SERVICE_TYPE;
+    if (!raw || raw.length === 0) {
+      throw new Error('env var SERVICE_TYPE must be set, but was empty');
+    }
+
+    const validTypes = Object.values(MicroserviceType);
+    const types = raw.split(',').map((s) => s.trim()) as MicroserviceType[];
+
+    for (const type of types) {
+      if (!validTypes.includes(type)) {
+        throw new Error(
+          `env var SERVICE_TYPE contains invalid value '${type}'. Must be one of: ${validTypes.join(', ')}`,
+        );
+      }
+    }
+
+    if (types.includes(MicroserviceType.MONOLITH) && types.length > 1) {
+      throw new Error(
+        `env var SERVICE_TYPE contains 'monolith' combined with other types (${raw}). 'monolith' must be used alone`,
+      );
+    }
+
+    return [...new Set(types)];
   }
 
   public static isAPIService(): boolean {
-    const type = process.env.SERVICE_TYPE;
-    return type === MicroserviceType.FRONTEND || type === MicroserviceType.MONOLITH;
+    const types = ScratchConfigService.getServiceTypes();
+    return types.includes(MicroserviceType.FRONTEND) || types.includes(MicroserviceType.MONOLITH);
   }
 
   public static isTaskWorkerService(): boolean {
-    const type = process.env.SERVICE_TYPE;
-    return type === MicroserviceType.WORKER || type === MicroserviceType.MONOLITH;
+    const types = ScratchConfigService.getServiceTypes();
+    return types.includes(MicroserviceType.WORKER) || types.includes(MicroserviceType.MONOLITH);
   }
 
   public static isCronService(): boolean {
-    const type = process.env.SERVICE_TYPE;
-    return type === MicroserviceType.CRON || type === MicroserviceType.MONOLITH;
+    const types = ScratchConfigService.getServiceTypes();
+    return types.includes(MicroserviceType.CRON) || types.includes(MicroserviceType.MONOLITH);
   }
 
   public static isMonolithService(): boolean {
-    const type = process.env.SERVICE_TYPE;
-    return type === MicroserviceType.MONOLITH;
+    const types = ScratchConfigService.getServiceTypes();
+    return types.includes(MicroserviceType.MONOLITH);
   }
 }
 
