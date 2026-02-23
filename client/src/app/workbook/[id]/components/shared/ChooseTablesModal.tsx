@@ -21,6 +21,7 @@ import {
   List,
   Loader,
   Modal,
+  Pill,
   ScrollArea,
   Stack,
   Text,
@@ -89,6 +90,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedTableIds, setSelectedTableIds] = useState<Set<string>>(new Set());
+  const [selectedTableMap, setSelectedTableMap] = useState<Map<string, TablePreview>>(new Map());
   const [filterValues, setFilterValues] = useState<Map<string, string>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -153,12 +155,18 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         }
       });
       setSelectedTableIds(linked);
+      const initialMap = new Map<string, TablePreview>();
+      linkedTablePreviews.forEach((t) => {
+        const key = t.id.remoteId.join('/');
+        if (linked.has(key)) initialMap.set(key, t);
+      });
+      setSelectedTableMap(initialMap);
       setFilterValues(initialFilters);
       setSearchTerm('');
       setStep(1);
       setShowConfirmation(false);
     }
-  }, [opened, linkedFolders, disabledTableKeys]);
+  }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys]);
 
   const handleToggleTable = (table: TablePreview) => {
     if (table.disabled) return;
@@ -169,6 +177,15 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         next.delete(tableKey);
       } else {
         next.add(tableKey);
+      }
+      return next;
+    });
+    setSelectedTableMap((prev) => {
+      const next = new Map(prev);
+      if (next.has(tableKey)) {
+        next.delete(tableKey);
+      } else {
+        next.set(tableKey, table);
       }
       return next;
     });
@@ -187,12 +204,21 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   }, []);
 
   // Compute tables to add and remove (used in step 2 display and save)
-  const allKnownTables = useMemo(
-    () => (isSearchMode ? [...linkedTablePreviews, ...searchResultTables] : availableTables),
-    [isSearchMode, linkedTablePreviews, searchResultTables, availableTables],
-  );
+  const allKnownTables = useMemo(() => {
+    if (!isSearchMode) return availableTables;
+    const map = new Map<string, TablePreview>();
+    for (const t of linkedTablePreviews) map.set(t.id.remoteId.join('/'), t);
+    for (const t of searchResultTables) map.set(t.id.remoteId.join('/'), t);
+    for (const [key, t] of selectedTableMap) map.set(key, t);
+    return Array.from(map.values());
+  }, [isSearchMode, linkedTablePreviews, searchResultTables, selectedTableMap, availableTables]);
 
   const currentlyLinkedKeys = useMemo(() => new Set(linkedFolders.map((f) => f.tableId.join('/'))), [linkedFolders]);
+
+  const newlySelectedTables = useMemo(
+    () => Array.from(selectedTableMap.values()).filter((t) => !currentlyLinkedKeys.has(t.id.remoteId.join('/'))),
+    [selectedTableMap, currentlyLinkedKeys],
+  );
 
   const tablesToAdd = useMemo(
     () =>
@@ -434,6 +460,22 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
             onChange={(e) => setSearchTerm(e.currentTarget.value)}
             autoFocus
           />
+
+          {newlySelectedTables.length > 0 && (
+            <Group gap={6} wrap="wrap">
+              <Text12Regular c="dimmed">Selected:</Text12Regular>
+              {newlySelectedTables.map((table) => (
+                <Pill
+                  key={table.id.remoteId.join('/')}
+                  withRemoveButton
+                  onRemove={() => handleToggleTable(table)}
+                  size="sm"
+                >
+                  {table.displayName}
+                </Pill>
+              ))}
+            </Group>
+          )}
 
           {searchLoading && debouncedSearchTerm ? (
             <Group justify="center" py="md">
