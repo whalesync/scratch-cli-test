@@ -137,17 +137,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const tableSpec = dataFolder.schema as BaseJsonTableSpec;
 
-    const pullOptions = {
-      filter: dataFolder.filter ?? undefined,
-      ...((dataFolder.options as ConnectorPullOptions) ?? {}),
-    };
+    const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
 
     const publicProgress: PullLinkedFolderFilesPublicProgress = {
       totalFiles: 0,
       folderId: dataFolder.id,
       folderName: dataFolder.name,
       connector: dataFolder.connectorService,
-      filter: dataFolder.filter ?? null,
+      filter: pullOptions.filter ?? null,
       status: 'active',
       createdPaths: [],
       updatedPaths: [],

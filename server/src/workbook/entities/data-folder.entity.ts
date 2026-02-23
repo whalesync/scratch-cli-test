@@ -44,10 +44,11 @@ export class DataFolderEntity implements DataFolder {
     this.lastSyncTime = dataFolder.lastSyncTime ? dataFolder.lastSyncTime.toISOString() : null;
     this.version = dataFolder.version;
     this.tableId = dataFolder.tableId;
-    this.filter = dataFolder.filter ?? null;
-    this.options = dataFolder.options
+    const normalizedOptions = dataFolder.options
       ? normalizeJsonObject(dataFolder.options as Prisma.JsonValue | null | undefined)
       : {};
+    this.filter = (normalizedOptions?.filter as string) ?? null;
+    this.options = normalizedOptions;
     this.schema = {};
   }
 }

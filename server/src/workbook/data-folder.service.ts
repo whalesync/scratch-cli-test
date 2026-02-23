@@ -307,7 +307,7 @@ export class DataFolderService {
           lastSchemaRefreshAt: new Date(),
           version: 1,
           tableId: dto.tableId,
-          filter: filter ?? undefined,
+          options: { ...(dto.options ?? {}), ...(filter ? { filter } : {}) } as Record<string, any>,
         },
         include: DataFolderCluster._validator.include,
       });
@@ -365,7 +365,7 @@ export class DataFolderService {
           path: folderPath,
           lastSchemaRefreshAt: new Date(),
           version: 1,
-          filter: filter ?? null,
+          options: { ...(dto.options ?? {}), ...(filter ? { filter } : {}) } as Record<string, any>,
         },
         include: DataFolderCluster._validator.include,
       });
@@ -599,11 +599,15 @@ export class DataFolderService {
       }
     }
 
+    const mergedOptions = {
+      ...(dto.options ?? (dataFolder.options as Record<string, unknown>) ?? {}),
+      ...(dto.filter !== undefined ? { filter: dto.filter?.trim() || undefined } : {}),
+    };
+
     const updatedDataFolder = await this.db.client.dataFolder.update({
       where: { id },
       data: {
-        filter: dto.filter ?? null,
-        ...(dto.options !== undefined && { options: (dto.options as Record<string, any>) ?? {} }),
+        options: mergedOptions as Record<string, any>,
       },
       include: DataFolderCluster._validator.include,
     });
