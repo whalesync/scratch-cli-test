@@ -35,12 +35,20 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { DataFolderId, SaveSyncBody, SyncId, SyncMapping, TransformerConfig, WorkbookId } from '@spinner/shared-types';
+import type {
+  DataFolderId,
+  SaveSyncBody,
+  SyncId,
+  SyncMapping,
+  TransformerConfig,
+  WorkbookId,
+} from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   ArrowRight,
   ChevronDown,
   ChevronUp,
+  ClipboardCopy,
   Database,
   PlayIcon,
   Plus,
@@ -219,6 +227,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [enableValidation, setEnableValidation] = useState(false);
 
   const [saving, setSaving] = useState(false);
+  const [aiContextCopying, setAiContextCopying] = useState(false);
   const [errorBanner, setErrorBanner] = useState<{ title: string; body: string } | null>(null);
   const [schemaCache, setSchemaCache] = useState<
     Record<string, { path: string; type: string; suggestedTransformer?: TransformerConfig }[]>
@@ -482,6 +491,21 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   };
 
+  const hasLinkedFolders = allFolders.some((f) => f.connectorAccountId);
+
+  const handleCopyAiContext = async () => {
+    setAiContextCopying(true);
+    try {
+      const { markdown } = await syncApi.getAiContext(workbookId);
+      await navigator.clipboard.writeText(markdown);
+      notifications.show({ message: 'Copied AI context to clipboard', color: 'green' });
+    } catch {
+      notifications.show({ message: 'Failed to copy AI context', color: 'red' });
+    } finally {
+      setAiContextCopying(false);
+    }
+  };
+
   // -- Pair Logic -- //
   const updatePair = (index: number, changes: Partial<FolderPair>) => {
     const next = [...folderPairs];
@@ -587,6 +611,28 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           />
         </Group>
         <Group gap="xs">
+          {editorMode === 'json' && (
+            <Tooltip
+              label={
+                hasLinkedFolders
+                  ? 'Copy workbook context for an AI agent'
+                  : 'Link at least one folder before using AI assist'
+              }
+            >
+              <Box>
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  leftSection={<ClipboardCopy size={12} />}
+                  disabled={!hasLinkedFolders}
+                  loading={aiContextCopying}
+                  onClick={handleCopyAiContext}
+                >
+                  Copy for AI
+                </Button>
+              </Box>
+            </Tooltip>
+          )}
           {!isNew && (
             <>
               <Button

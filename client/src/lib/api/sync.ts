@@ -1,4 +1,12 @@
-import { ColumnMapping, PreviewRecordResponse, SaveSyncBody, Sync, SyncId, WorkbookId } from '@spinner/shared-types';
+import {
+  AiContextResponse,
+  ColumnMapping,
+  PreviewRecordResponse,
+  SaveSyncBody,
+  Sync,
+  SyncId,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -65,6 +73,16 @@ export const syncApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to preview record');
+    }
+  },
+
+  getAiContext: async (workbookId: WorkbookId): Promise<AiContextResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<AiContextResponse>(`/workbooks/${workbookId}/syncs/ai-context`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to get AI context');
     }
   },
 

@@ -13,6 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type {
+  AiContextResponse,
   DataFolderId,
   PreviewRecordBody,
   PreviewRecordResponse,
@@ -61,6 +62,14 @@ export class SyncController {
   @Get()
   async listSyncs(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<unknown> {
     return await this.syncService.findAllForWorkbook(workbookId, userToActor(req.user));
+  }
+
+  @Get('ai-context')
+  async getAiContext(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Req() req: RequestWithUser,
+  ): Promise<AiContextResponse> {
+    return this.syncService.generateAiContext(workbookId, userToActor(req.user));
   }
 
   @Get(':syncId')

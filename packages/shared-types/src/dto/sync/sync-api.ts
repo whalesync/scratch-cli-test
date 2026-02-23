@@ -34,3 +34,8 @@ export interface PreviewRecordResponse {
   recordId: string;
   fields: PreviewFieldResult[];
 }
+
+/** Response from the AI context endpoint */
+export interface AiContextResponse {
+  markdown: string;
+}
