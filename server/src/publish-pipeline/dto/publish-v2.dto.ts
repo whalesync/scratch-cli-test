@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class PlanPublishV2Dto {
   @IsString()
@@ -19,8 +19,7 @@ export class RunPublishV2Dto {
   @IsNotEmpty()
   pipelineId!: string;
 
-  @IsString()
-  @IsIn(['edit', 'create', 'delete', 'backfill'])
+  @IsBoolean()
   @IsOptional()
-  phase?: string;
+  executeSinglePhase?: boolean;
 }

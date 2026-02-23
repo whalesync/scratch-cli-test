@@ -13,7 +13,7 @@ import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { PublishRefResolverService } from './publish-ref-resolver.service';
 import { PublishSchemaService } from './publish-schema.service';
-import { PipelinePhase, PublishPlanInfo } from './types';
+import { PublishPlanInfo } from './types';
 import { parsePath } from './utils';
 
 type PublishEntry = {
@@ -39,7 +39,7 @@ export class PublishRunService {
 
   async runPipeline(
     pipelineId: string,
-    phase?: string,
+    executeSinglePhase?: boolean,
     abortSignal?: AbortSignal,
     onProgress?: (counts: {
       editsExecuted: number;
@@ -68,18 +68,52 @@ export class PublishRunService {
 
     try {
       const allPhases = ['edit', 'create', 'delete', 'backfill'] as const;
-      const phasesToRun = phase ? [phase] : [...allPhases];
 
-      // Pre-count total pending entries per phase (for accurate progress denominator)
-      const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
-      for (const p of phasesToRun) {
-        const count = await this.db.client.publishPlanEntry.count({
-          where: { planId: pipelineId, phase: p, status: 'pending' },
-        });
-        (totalByPhase as Record<string, number>)[p] = count;
+      // Determine starting index based on status.
+      // *-running means the phase was interrupted — restart it from the beginning (pending entries only).
+      // *-completed means the phase finished — move to the next phase.
+      const startIndex: number = (() => {
+        switch (plan.status) {
+          case 'planned':
+          case 'edits-running':
+            return 0;
+          case 'edits-completed':
+          case 'creates-running':
+            return 1;
+          case 'creates-completed':
+          case 'deletes-running':
+            return 2;
+          case 'deletes-completed':
+          case 'backfills-running':
+            return 3;
+          case 'completed':
+          case 'completed-with-errors':
+            return 4; // nothing left to run
+          default:
+            throw new Error(`Cannot run pipeline in status: ${plan.status}`);
+        }
+      })();
+
+      let phasesToRun = allPhases.slice(startIndex);
+      if (executeSinglePhase) {
+        phasesToRun = phasesToRun.slice(0, 1);
       }
-      // Running completed counts per phase
+
+      // Pre-count total entries per phase across all statuses (for stable progress denominator)
+      const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
+      for (const p of ['edit', 'create', 'delete', 'backfill'] as const) {
+        const count = await this.db.client.publishPlanEntry.count({
+          where: { planId: pipelineId, phase: p },
+        });
+        totalByPhase[p] = count;
+      }
+      // Seed completed counts from DB so previously-executed phases don't drop to 0 on resume
       const completedByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
+      for (const p of ['edit', 'create', 'delete', 'backfill'] as const) {
+        completedByPhase[p] = await this.db.client.publishPlanEntry.count({
+          where: { planId: pipelineId, phase: p, status: 'success' },
+        });
+      }
 
       const reportRunProgress = async (currentPhase: string) => {
         await onProgress?.({
@@ -226,8 +260,7 @@ export class PublishRunService {
           }
         }
 
-        // Set completed status: backfill-completed → "completed", others → "{phase}s-completed"
-        const completedStatus = currentPhase === 'backfill' && !phase ? 'completed' : `${phasePrefix}-completed`;
+        const completedStatus = currentPhase === 'backfill' ? 'completed' : `${phasePrefix}-completed`;
         await this.db.client.publishPlan.update({
           where: { id: pipelineId },
           data: { status: completedStatus },
@@ -255,7 +288,15 @@ export class PublishRunService {
         }
       }
 
-      const finalStatus = failedCount > 0 ? 'completed-with-errors' : phase ? `${phase}s-completed` : 'completed';
+      // If we exit early intentionally because of single-phase execution, retain the completed suffix.
+      // Otherwise, the entire pipeline is done.
+      const lastPhaseRun = phasesToRun[phasesToRun.length - 1];
+      const finalStatus =
+        failedCount > 0
+          ? 'completed-with-errors'
+          : executeSinglePhase && lastPhaseRun && lastPhaseRun !== 'backfill'
+            ? `${lastPhaseRun}s-completed`
+            : 'completed';
 
       // Store status + result in DB — keep activeJobId as a trace of which job completed this
       await this.db.client.publishPlan.update({
@@ -278,7 +319,6 @@ export class PublishRunService {
         pipelineId: plan.id,
         workbookId: plan.workbookId,
         userId: plan.userId,
-        phases: plan.phases as never as PipelinePhase[],
         branchName: plan.branchName,
         createdAt: plan.createdAt,
         status: finalStatus,

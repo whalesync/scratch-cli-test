@@ -490,7 +490,6 @@ model PublishPlan {
   status     String // "planned", "building", "ready", "failed", "running", "completed"
   branchName String
 
-  phases Json // Stored as JSON
   result Json?
 
   activeJobId String? // BullMQ job ID of the currently active plan or run job

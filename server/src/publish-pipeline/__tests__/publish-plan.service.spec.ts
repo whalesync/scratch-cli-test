@@ -95,7 +95,6 @@ describe('PublishPlanService', () => {
 
       expect(result.pipelineId).toBe(PIPELINE_ID);
       expect(result.status).toBe('planned');
-      expect(result.phases).toEqual([]);
       expect(db.client.publishPlan.update).toHaveBeenCalledWith({
         where: { id: PIPELINE_ID },
         data: { status: 'planned' },

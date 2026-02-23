@@ -1,0 +1,1 @@
+ALTER TABLE "PublishPlan" DROP COLUMN IF EXISTS "phases";

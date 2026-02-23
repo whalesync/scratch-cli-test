@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { FileIndexService } from 'src/publish-pipeline/file-index.service';
 import { FileReferenceService } from 'src/publish-pipeline/file-reference.service';
@@ -36,6 +37,7 @@ export class JobHandlerService {
     private readonly fileReferenceService: FileReferenceService,
     private readonly pipelinePlanService: PublishPlanService,
     private readonly pipelineRunService: PublishRunService,
+    private readonly dbService: DbService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -82,6 +84,7 @@ export class JobHandlerService {
         return new PublishJobHandler(
           this.pipelinePlanService,
           this.pipelineRunService,
+          this.dbService,
           this.bullEnqueuerService,
         ) as JobHandler<JobDefinition>;
 

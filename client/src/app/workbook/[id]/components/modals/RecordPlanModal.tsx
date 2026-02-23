@@ -56,7 +56,7 @@ function jsonDiff(left: string, right: string): Change[] {
   } catch {
     // not valid JSON on one or both sides
   }
-  return diffLines(left, right);
+  return diffLines(left ?? '', right ?? '');
 }
 
 function computeDiffLines(left: string, right: string, useJsonDiff = true): DiffLine[] {
@@ -322,7 +322,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, fileP
         // last operation → backfill
         // Priority: create > edit > dirty
         const lastOp = createJson ?? editJson ?? dirtyJson;
-        return { left: lastOp, right: backfillJson ?? '' };
+        return { left: lastOp ?? '', right: backfillJson ?? '' };
       }
 
       default:

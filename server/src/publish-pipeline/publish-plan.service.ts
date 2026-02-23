@@ -11,7 +11,7 @@ import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { PublishSchemaService } from './publish-schema.service';
 import { RefCleanerService } from './ref-cleaner.service';
-import { PipelinePhase, PublishPlanInfo, PublishPlanPhase } from './types';
+import { PublishPlanInfo, PublishPlanPhase } from './types';
 import { parsePath } from './utils';
 
 @Injectable()
@@ -44,7 +44,6 @@ export class PublishPlanService {
         userId,
         status: 'planning',
         branchName,
-        phases: [],
         connectorAccountId: connectorAccountId || null,
       },
     });
@@ -68,7 +67,7 @@ export class PublishPlanService {
   async cancelPipeline(pipelineId: string): Promise<void> {
     await this.db.client.publishPlan.update({
       where: { id: pipelineId },
-      data: { status: 'canceled', phases: [] },
+      data: { status: 'canceled' },
     });
   }
 
@@ -162,8 +161,6 @@ export class PublishPlanService {
     const modifiedFiles = changes.filter((c) => c.status === 'modified');
     const addedFiles = changes.filter((c) => c.status === 'added');
     const deletedFiles = changes.filter((c) => c.status === 'deleted');
-
-    const phases: PipelinePhase[] = [];
 
     // Cache table specs to avoid repeated reads
     // Cache table specs to avoid repeated reads
@@ -358,7 +355,7 @@ export class PublishPlanService {
     }
 
     if (editCount > 0) {
-      phases.push({ type: 'edit', recordCount: editCount });
+      // Edits processed
     }
 
     // --- Phase 2: [create] ---
@@ -439,7 +436,7 @@ export class PublishPlanService {
     }
 
     if (createCount > 0) {
-      phases.push({ type: 'create', recordCount: createCount });
+      // Creates processed
     }
 
     // --- Phase 3: [delete] ---
@@ -468,7 +465,7 @@ export class PublishPlanService {
     }
 
     if (deletedFiles.length > 0) {
-      phases.push({ type: 'delete', recordCount: deletedFiles.length });
+      // Deletes processed
     }
 
     await reportProgress('Saving plan entries');
@@ -484,7 +481,6 @@ export class PublishPlanService {
       pipelineId,
       workbookId,
       userId,
-      phases,
       branchName,
       createdAt: new Date(),
       status: 'planned',

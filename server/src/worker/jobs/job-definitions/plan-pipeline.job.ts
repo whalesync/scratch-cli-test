@@ -33,7 +33,10 @@ export type PlanPipelineJobDefinition = JobDefinitionBuilder<
 // ── Handler ──────────────────────────────────────────────────────────
 
 export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJobDefinition> {
-  constructor(private readonly pipelinePlanService: PublishPlanService) {}
+  constructor(
+    private readonly pipelinePlanService: PublishPlanService,
+    private readonly db: import('src/db/db.service').DbService,
+  ) {}
 
   async run(params: {
     jobId: string;
@@ -99,18 +102,22 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
         onProgress,
       );
 
+      const pipelineId = plan.pipelineId;
+
       // Count entries by phase from the returned plan
       // We need to query DB for entry counts since buildPipeline returns PublishPlanInfo
-      const pipelineId = plan.pipelineId;
-      // The plan is now created in DB — the UI can query entries via the admin endpoints.
-      // For progress, we just report completed with the phase counts from the plan.
+      const getPhaseCount = async (phase: string) =>
+        this.db.client.publishPlanEntry.count({
+          where: { planId: pipelineId, phase },
+        });
+
       await checkpoint({
         publicProgress: {
           status: 'completed',
-          editsPlanned: plan.phases?.find((p) => p.type === 'edit')?.recordCount ?? 0,
-          createsPlanned: plan.phases?.find((p) => p.type === 'create')?.recordCount ?? 0,
-          deletesPlanned: plan.phases?.find((p) => p.type === 'delete')?.recordCount ?? 0,
-          backfillsPlanned: plan.phases?.find((p) => p.type === 'backfill')?.recordCount ?? 0,
+          editsPlanned: await getPhaseCount('edit'),
+          createsPlanned: await getPhaseCount('create'),
+          deletesPlanned: await getPhaseCount('delete'),
+          backfillsPlanned: await getPhaseCount('backfill'),
         },
         jobProgress: {},
         connectorProgress: {},

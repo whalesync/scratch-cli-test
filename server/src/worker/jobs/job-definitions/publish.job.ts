@@ -3,7 +3,7 @@ import type { PublishPlanService } from 'src/publish-pipeline/publish-plan.servi
 import type { PublishRunService } from 'src/publish-pipeline/publish-run.service';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
-import { JobCanceledError } from '../../bull-worker.service';
+import { JobCanceledError } from '../../job-errors';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 
 // ── Public Progress (UI-facing) ──────────────────────────────────────
@@ -32,7 +32,7 @@ export type PublishJobDefinition = JobDefinitionBuilder<
     pipelineId: string;
     connectorAccountId?: string;
     runAfterPlan?: boolean;
-    phase?: string; // If resuming a specific phase
+    executeSinglePhase?: boolean; // If only executing a single stage
   },
   PublishPublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -48,6 +48,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
   constructor(
     private readonly publishPlanService: PublishPlanService,
     private readonly publishRunService: PublishRunService,
+    private readonly db: import('src/db/db.service').DbService,
     private readonly bullEnqueuerService?: BullEnqueuerService,
   ) {}
 
@@ -82,16 +83,6 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       deletesPlanned: 0,
       backfillsPlanned: 0,
     };
-
-    // Report initial progress
-    await checkpoint({
-      publicProgress: {
-        status: 'planning',
-        ...zeroCounts,
-      },
-      jobProgress: {},
-      connectorProgress: {},
-    });
 
     const onPlanProgress = async (counts: {
       editsPlanned: number;
@@ -134,20 +125,36 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     };
 
     try {
-      const plan = await this.publishPlanService.buildPipeline(
-        data.workbookId,
-        data.userId,
-        data.connectorAccountId,
-        data.pipelineId,
-        onPlanProgress,
-      );
+      const getPhaseCount = async (pipelineId: string, phase: string) =>
+        this.db.client.publishPlanEntry.count({ where: { planId: pipelineId, phase } });
 
-      const pipelineId = plan.pipelineId;
+      let pipelineId: string;
+
+      // If the pipeline is already planned/partially-run, skip replanning to avoid duplicate entries.
+      const existingPlan = data.pipelineId
+        ? await this.db.client.publishPlan.findUnique({ where: { id: data.pipelineId } })
+        : null;
+      // Skip replanning if the pipeline has already been planned (any status except 'planning').
+      const isAlreadyPlanned = existingPlan && existingPlan.status !== 'planning';
+
+      if (isAlreadyPlanned) {
+        pipelineId = existingPlan.id;
+      } else {
+        const plan = await this.publishPlanService.buildPipeline(
+          data.workbookId,
+          data.userId,
+          data.connectorAccountId,
+          data.pipelineId,
+          onPlanProgress,
+        );
+        pipelineId = plan.pipelineId;
+      }
+
       const plannedTotals = {
-        editsPlanned: plan.phases?.find((p) => p.type === 'edit')?.recordCount ?? 0,
-        createsPlanned: plan.phases?.find((p) => p.type === 'create')?.recordCount ?? 0,
-        deletesPlanned: plan.phases?.find((p) => p.type === 'delete')?.recordCount ?? 0,
-        backfillsPlanned: plan.phases?.find((p) => p.type === 'backfill')?.recordCount ?? 0,
+        editsPlanned: await getPhaseCount(pipelineId, 'edit'),
+        createsPlanned: await getPhaseCount(pipelineId, 'create'),
+        deletesPlanned: await getPhaseCount(pipelineId, 'delete'),
+        backfillsPlanned: await getPhaseCount(pipelineId, 'backfill'),
       };
 
       if (!data.runAfterPlan) {
@@ -175,23 +182,26 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         return;
       }
 
-      // Proceed into the RUN phase immediately within the same job context
+      // Proceed into the RUN phase
       WSLogger.info({
         source: 'PublishJob',
-        message: 'runAfterPlan=true, transitioning to run phase',
+        message: 'Transitioning to run phase',
         workbookId: data.workbookId,
         jobId,
         pipelineId,
       });
 
+      const getSuccessCount = async (phase: string) =>
+        this.db.client.publishPlanEntry.count({ where: { planId: pipelineId, phase, status: 'success' } });
+
       await checkpoint({
         publicProgress: {
           status: 'running',
           currentPhase: 'starting',
-          editsExecuted: 0,
-          createsExecuted: 0,
-          deletesExecuted: 0,
-          backfillsExecuted: 0,
+          editsExecuted: await getSuccessCount('edit'),
+          createsExecuted: await getSuccessCount('create'),
+          deletesExecuted: await getSuccessCount('delete'),
+          backfillsExecuted: await getSuccessCount('backfill'),
           ...plannedTotals,
         },
         jobProgress: {},
@@ -199,7 +209,12 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       });
 
       // Run it
-      const runResult = await this.publishRunService.runPipeline(pipelineId, data.phase, abortSignal, onRunProgress);
+      const runResult = await this.publishRunService.runPipeline(
+        pipelineId,
+        data.executeSinglePhase,
+        abortSignal,
+        onRunProgress,
+      );
 
       await checkpoint({
         publicProgress: {

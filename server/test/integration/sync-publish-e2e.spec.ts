@@ -689,14 +689,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
 
     expect(buildResult.status).toBe('planned');
 
-    // Should have phases for edit, create, and potentially backfill
-    const phaseTypes = buildResult.phases.map((p) => p.type);
-
-    // We expect edit (updated records) and create (new records)
-    // We may also get backfill (for files with pseudo-refs stripped)
-    expect(phaseTypes).toContain('edit');
-    expect(phaseTypes).toContain('create');
-
     // Verify plan entries in DB
     const planEntries = await prisma.publishPlanEntry.findMany({
       where: { planId: buildResult.pipelineId },

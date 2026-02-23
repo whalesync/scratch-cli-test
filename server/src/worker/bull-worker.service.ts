@@ -4,6 +4,7 @@ import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 import { JobService } from '../job/job.service';
+import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
 import { JobResult, Progress } from './jobs/base-types';
 import { JobData } from './jobs/union-types';
@@ -249,9 +250,4 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-export class JobCanceledError extends Error {
-  constructor(jobId: string) {
-    super(`Job ${jobId} was cancelled`);
-    this.name = 'JobCanceledError';
-  }
-}
+export { JobCanceledError };

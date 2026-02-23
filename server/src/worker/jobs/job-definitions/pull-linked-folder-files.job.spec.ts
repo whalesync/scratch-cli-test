@@ -10,8 +10,7 @@ import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
-import { AnyJsonTableSpec } from '../../../remote-service/connectors/library/custom-spec-registry';
-import { ConnectorFile } from '../../../remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from './pull-linked-folder-files.job';
 
@@ -22,6 +21,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
   let mockSnapshotEventService: jest.Mocked<WorkbookEventService>;
   let mockScratchGitService: jest.Mocked<ScratchGitService>;
+  let mockFileIndexService: jest.Mocked<any>;
+  let mockFileReferenceService: jest.Mocked<any>;
 
   beforeEach(() => {
     mockPrisma = {
@@ -50,17 +51,22 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       deleteFilesFromBranch: jest.fn(),
     } as unknown as jest.Mocked<ScratchGitService>;
 
+    mockFileIndexService = {} as any;
+    mockFileReferenceService = {} as any;
+
     handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
       mockConnectorService,
       mockConnectorAccountService,
       mockSnapshotEventService,
       mockScratchGitService,
+      mockFileIndexService,
+      mockFileReferenceService,
     );
   });
 
   describe('buildGitFilesFromConnectorFiles', () => {
-    const createMockTableSpec = (overrides?: Partial<AnyJsonTableSpec>): AnyJsonTableSpec => ({
+    const createMockTableSpec = (overrides?: Partial<BaseJsonTableSpec>): BaseJsonTableSpec => ({
       idColumnRemoteId: 'id',
       slugColumnRemoteId: 'slug',
       titleColumnRemoteId: ['title'],
@@ -394,7 +400,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         idColumnRemoteId: 'id',
         slugColumnRemoteId: 'slug',
         titleColumnRemoteId: ['title'],
-      } as AnyJsonTableSpec,
+      } as BaseJsonTableSpec,
       ...overrides,
     });
 

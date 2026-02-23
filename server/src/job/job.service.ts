@@ -36,6 +36,7 @@ export class JobService {
     bullJobId?: string;
     workbookId?: string;
     dataFolderId?: string;
+    progress?: Progress;
   }): Promise<DbJob> {
     const job = await this.db.client.dbJob.create({
       data: {
@@ -46,6 +47,7 @@ export class JobService {
         type: params.type,
         data: params.data as any,
         bullJobId: params.bullJobId,
+        progress: params.progress ?? undefined,
         status: 'created',
       },
     });

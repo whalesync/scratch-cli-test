@@ -51,7 +51,6 @@ async function main() {
         userId: userId,
         status: 'planned',
         branchName: 'main',
-        phases: [],
       },
     });
 

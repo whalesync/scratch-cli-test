@@ -332,12 +332,16 @@ export const workbookApi = {
     }
   },
 
-  runPublishV2: async (workbookId: WorkbookId, pipelineId: string, phase?: string): Promise<{ jobId: string }> => {
+  runPublishV2: async (
+    workbookId: WorkbookId,
+    pipelineId: string,
+    executeSinglePhase?: boolean,
+  ): Promise<{ jobId: string }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<{ jobId: string }>(`/workbook/${workbookId}/publish-v2/run-job`, {
         pipelineId,
-        phase,
+        executeSinglePhase,
       });
       return res.data;
     } catch (error) {

@@ -44,6 +44,11 @@ export class BullEnqueuerService implements OnModuleDestroy {
     await this.redis?.quit();
   }
 
+  async getJob(jobId: string): Promise<Job | undefined> {
+    if (!this.queue) return undefined;
+    return await this.queue.getJob(jobId);
+  }
+
   private async enqueueJobWithId(data: JobData, id: string): Promise<Job> {
     return await this.getQueue().add(data.type, data, { jobId: id });
   }
@@ -134,6 +139,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     pipelineId: string,
     connectorAccountId?: string,
     runAfterPlan?: boolean,
+    initialProgress?: import('src/types/progress').Progress,
   ): Promise<Job> {
     const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
@@ -150,11 +156,18 @@ export class BullEnqueuerService implements OnModuleDestroy {
       data,
       bullJobId: id,
       workbookId,
+      progress: initialProgress,
     });
     return await this.enqueueJobWithId(data, id);
   }
 
-  async enqueueRunPipelineJob(workbookId: WorkbookId, actor: Actor, pipelineId: string, phase?: string): Promise<Job> {
+  async enqueueRunPipelineJob(
+    workbookId: WorkbookId,
+    actor: Actor,
+    pipelineId: string,
+    executeSinglePhase?: boolean,
+    initialProgress?: import('src/types/progress').Progress,
+  ): Promise<Job> {
     const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
       pipelineId,
@@ -163,7 +176,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'publish',
       // We are enqueuing a run explicitly
       runAfterPlan: true,
-      ...(phase && { phase }),
+      ...(executeSinglePhase && { executeSinglePhase }),
     };
     await this.jobService.createJob({
       userId: actor.userId,
@@ -171,6 +184,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       data,
       bullJobId: id,
       workbookId,
+      progress: initialProgress,
     });
     return await this.enqueueJobWithId(data, id);
   }

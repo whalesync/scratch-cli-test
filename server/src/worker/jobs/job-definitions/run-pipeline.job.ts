@@ -21,7 +21,7 @@ export type RunPipelineJobDefinition = JobDefinitionBuilder<
     pipelineId: string;
     workbookId: WorkbookId;
     userId: string;
-    phase?: string;
+    executeSinglePhase?: boolean;
   },
   RunPipelinePublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -71,8 +71,7 @@ export class RunPipelineJobHandler implements JobHandlerBuilder<RunPipelineJobDe
 
     try {
       // runPipeline is already resumable — it fetches only 'pending' entries per phase.
-      // If this job is retried after a crash, it picks up from where it left off.
-      await this.publishRunService.runPipeline(data.pipelineId, data.phase);
+      await this.publishRunService.runPipeline(data.pipelineId, data.executeSinglePhase);
 
       await checkpoint({
         publicProgress: {

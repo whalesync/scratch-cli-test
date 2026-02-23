@@ -16,10 +16,13 @@ import {
   Table,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
+import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
 import {
   ChevronDownIcon,
   FilePenLineIcon,
@@ -36,6 +39,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { PlanEntriesModal } from './PlanEntriesModal';
+
+dayjs.extend(relativeTime);
 
 interface TestPublishV2ModalProps {
   opened: boolean;
@@ -57,10 +62,10 @@ interface PublishPipeline {
   connectorAccountId?: string;
   activeJobId?: string | null;
   job?: PipelineJob | null;
+  dbJob?: PipelineJob | null;
+  bullJob?: PipelineJob | null;
   _count?: { entries: number };
 }
-
-const PHASES = ['edit', 'create', 'delete', 'backfill'] as const;
 
 const JOB_ACTIVE_STATUSES = new Set(['created', 'active', 'waiting']);
 
@@ -70,6 +75,13 @@ function jobStatusBadgeColor(status: string): string {
   if (status === 'failed') return 'red';
   if (status === 'canceled') return 'grape';
   return 'gray';
+}
+
+function formatCount(count: number): string {
+  if (count >= 10000) {
+    return (count / 1000).toFixed(1) + 'K';
+  }
+  return count.toString();
 }
 
 export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV2ModalProps) {
@@ -120,18 +132,26 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
     setIsPlanning(true);
     try {
       const accounts = connectorAccounts ?? [];
+      let anyChanges = false;
       if (accounts.length === 0) {
-        await workbookApi.planPublishV2(workbookId, undefined, runAfterPlan);
+        const res = await workbookApi.planPublishV2(workbookId, undefined, runAfterPlan);
+        if (res.jobId) anyChanges = true;
       } else {
         for (const ca of accounts) {
-          await workbookApi.planPublishV2(workbookId, ca.id, runAfterPlan);
+          const res = await workbookApi.planPublishV2(workbookId, ca.id, runAfterPlan);
+          if (res.jobId) anyChanges = true;
         }
       }
-      const message = runAfterPlan
-        ? 'Planning and run started for all connections'
-        : 'Planning started for all connections';
-      notifications.show({ title: 'Success', message, color: 'green' });
-      fetchPipelines();
+
+      if (!anyChanges) {
+        notifications.show({ title: 'Notice', message: 'No changes detected', color: 'yellow' });
+      } else {
+        const message = runAfterPlan
+          ? 'Planning and run started for all connections'
+          : 'Planning started for all connections';
+        notifications.show({ title: 'Success', message, color: 'green' });
+        fetchPipelines();
+      }
     } catch (error) {
       console.error(error);
       notifications.show({ title: 'Error', message: 'Failed to plan publish', color: 'red' });
@@ -143,11 +163,15 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
   const handlePlanOne = async (connectorAccountId: string, runAfterPlan: boolean) => {
     setIsPlanning(true);
     try {
-      await workbookApi.planPublishV2(workbookId, connectorAccountId, runAfterPlan);
-      const name = connectorMap.get(connectorAccountId)?.displayName ?? connectorAccountId;
-      const message = runAfterPlan ? `Planning and run started for ${name}` : `Planning started for ${name}`;
-      notifications.show({ title: 'Success', message, color: 'green' });
-      fetchPipelines();
+      const res = await workbookApi.planPublishV2(workbookId, connectorAccountId, runAfterPlan);
+      if (!res.jobId) {
+        notifications.show({ title: 'Notice', message: 'No changes detected', color: 'yellow' });
+      } else {
+        const name = connectorMap.get(connectorAccountId)?.displayName ?? connectorAccountId;
+        const message = runAfterPlan ? `Planning and run started for ${name}` : `Planning started for ${name}`;
+        notifications.show({ title: 'Success', message, color: 'green' });
+        fetchPipelines();
+      }
     } catch (error) {
       console.error(error);
       notifications.show({ title: 'Error', message: 'Failed to plan publish', color: 'red' });
@@ -156,13 +180,13 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
     }
   };
 
-  const handleRun = async (pipelineId: string, phase?: string) => {
+  const handleRun = async (pipelineId: string, executeSinglePhase?: boolean) => {
     setRunningId(pipelineId);
     try {
-      await workbookApi.runPublishV2(workbookId, pipelineId, phase);
+      await workbookApi.runPublishV2(workbookId, pipelineId, executeSinglePhase);
       notifications.show({
         title: 'Success',
-        message: phase ? `Running ${phase} phase` : 'Running all phases',
+        message: executeSinglePhase ? `Running 1 phase` : 'Running all phases',
         color: 'green',
       });
       setTimeout(fetchPipelines, 1000);
@@ -242,52 +266,50 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                   loading={isPlanning}
                   onClick={() => handlePlanAll(true)}
                   style={{
-                    borderTopRightRadius: adminMode ? 0 : undefined,
-                    borderBottomRightRadius: adminMode ? 0 : undefined,
+                    borderTopRightRadius: 0,
+                    borderBottomRightRadius: 0,
                   }}
                 >
                   Plan and Run Publish
                 </Button>
-                {adminMode && (
-                  <Menu position="bottom-end" withinPortal>
-                    <Menu.Target>
-                      <Button
-                        size="xs"
-                        px={6}
-                        disabled={isPlanning}
-                        style={{
-                          borderTopLeftRadius: 0,
-                          borderBottomLeftRadius: 0,
-                          borderLeft: '1px solid var(--mantine-color-blue-light-hover)',
-                        }}
-                      >
-                        <ChevronDownIcon size={12} />
-                      </Button>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Label>Admin actions</Menu.Label>
-                      <Menu.Item onClick={() => handlePlanAll(false)}>Plan Only (all connections)</Menu.Item>
-                      {accounts.length > 0 && (
-                        <>
-                          <Menu.Divider />
-                          <Menu.Label>Plan and run single connection</Menu.Label>
-                          {accounts.map((ca) => (
-                            <Menu.Item key={`run-${ca.id}`} onClick={() => handlePlanOne(ca.id, true)}>
-                              {ca.displayName}
-                            </Menu.Item>
-                          ))}
-                          <Menu.Divider />
-                          <Menu.Label>Plan only single connection</Menu.Label>
-                          {accounts.map((ca) => (
-                            <Menu.Item key={`plan-${ca.id}`} onClick={() => handlePlanOne(ca.id, false)}>
-                              {ca.displayName}
-                            </Menu.Item>
-                          ))}
-                        </>
-                      )}
-                    </Menu.Dropdown>
-                  </Menu>
-                )}
+                <Menu position="bottom-end" withinPortal>
+                  <Menu.Target>
+                    <Button
+                      size="xs"
+                      px={6}
+                      disabled={isPlanning}
+                      style={{
+                        borderTopLeftRadius: 0,
+                        borderBottomLeftRadius: 0,
+                        borderLeft: '1px solid var(--mantine-color-blue-light-hover)',
+                      }}
+                    >
+                      <ChevronDownIcon size={12} />
+                    </Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Label>Publish Actions</Menu.Label>
+                    <Menu.Item onClick={() => handlePlanAll(false)}>Plan Only (all connections)</Menu.Item>
+                    {accounts.length > 0 && (
+                      <>
+                        <Menu.Divider />
+                        <Menu.Label>Plan and run single connection</Menu.Label>
+                        {accounts.map((ca) => (
+                          <Menu.Item key={`run-${ca.id}`} onClick={() => handlePlanOne(ca.id, true)}>
+                            {ca.displayName}
+                          </Menu.Item>
+                        ))}
+                        <Menu.Divider />
+                        <Menu.Label>Plan only single connection</Menu.Label>
+                        {accounts.map((ca) => (
+                          <Menu.Item key={`plan-${ca.id}`} onClick={() => handlePlanOne(ca.id, false)}>
+                            {ca.displayName}
+                          </Menu.Item>
+                        ))}
+                      </>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
               </Group>
             </Group>
           </Group>
@@ -296,11 +318,10 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
             <Table stickyHeader>
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th>State</Table.Th>
                   <Table.Th>ID</Table.Th>
                   <Table.Th>Connection</Table.Th>
-                  <Table.Th>Created At</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Job</Table.Th>
+                  <Table.Th>Phase</Table.Th>
                   <Table.Th>
                     <Group gap={4} wrap="nowrap">
                       <FilePenLineIcon size={12} />
@@ -325,6 +346,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                       Backfills
                     </Group>
                   </Table.Th>
+                  <Table.Th>Created At</Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
@@ -343,6 +365,70 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                     return (
                       <Table.Tr key={p.id}>
                         <Table.Td>
+                          {p.job ? (
+                            <Group gap={4} wrap="nowrap">
+                              <Badge color={jobStatusBadgeColor(p.job.status)} size="sm" variant="outline">
+                                {p.job.status}
+                              </Badge>
+                              {p.job.type === 'publish-plan' &&
+                                (p.job.progress as { publicProgress?: { step?: string } })?.publicProgress?.step && (
+                                  <Text
+                                    size="xs"
+                                    c="dimmed"
+                                    style={{
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      maxWidth: '200px',
+                                    }}
+                                  >
+                                    {(p.job.progress as { publicProgress?: { step?: string } }).publicProgress!.step}
+                                  </Text>
+                                )}
+                              {adminMode && p.bullJob && (
+                                <Popover position="bottom-start" withinPortal shadow="md" width={340}>
+                                  <Popover.Target>
+                                    <Tooltip label="BullMQ Job Data" position="top">
+                                      <Button size="compact-xs" variant="subtle" color="gray" px={2}>
+                                        <InfoIcon size={12} />
+                                      </Button>
+                                    </Tooltip>
+                                  </Popover.Target>
+                                  <Popover.Dropdown>
+                                    <ScrollArea h={200}>
+                                      <Code block style={{ fontSize: 11 }}>
+                                        {JSON.stringify(p.bullJob, null, 2)}
+                                      </Code>
+                                    </ScrollArea>
+                                  </Popover.Dropdown>
+                                </Popover>
+                              )}
+                              {adminMode && p.dbJob && (
+                                <Popover position="bottom-start" withinPortal shadow="md" width={340}>
+                                  <Popover.Target>
+                                    <Tooltip label="DB Job Data" position="top">
+                                      <Button size="compact-xs" variant="subtle" color="blue" px={2}>
+                                        <InfoIcon size={12} />
+                                      </Button>
+                                    </Tooltip>
+                                  </Popover.Target>
+                                  <Popover.Dropdown>
+                                    <ScrollArea h={200}>
+                                      <Code block style={{ fontSize: 11 }}>
+                                        {JSON.stringify(p.dbJob, null, 2)}
+                                      </Code>
+                                    </ScrollArea>
+                                  </Popover.Dropdown>
+                                </Popover>
+                              )}
+                            </Group>
+                          ) : (
+                            <Text size="xs" c="dimmed">
+                              —
+                            </Text>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
                           <Text size="xs" ff="monospace">
                             {p.id.substring(0, 8)}...
                           </Text>
@@ -354,9 +440,6 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                 p.connectorAccountId.substring(0, 8) + '…')
                               : 'All'}
                           </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="xs">{new Date(p.createdAt).toLocaleString()}</Text>
                         </Table.Td>
                         <Table.Td>
                           <Badge
@@ -382,48 +465,6 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                             {p.status}
                           </Badge>
                         </Table.Td>
-                        <Table.Td>
-                          {p.job ? (
-                            <Group gap={4} wrap="nowrap">
-                              <Badge color={jobStatusBadgeColor(p.job.status)} size="sm" variant="outline">
-                                {p.job.type === 'publish-plan' ? 'planning' : 'running'} · {p.job.status}
-                              </Badge>
-                              {p.job.type === 'publish-plan' &&
-                                (p.job.progress as { publicProgress?: { step?: string } })?.publicProgress?.step && (
-                                  <Text
-                                    size="xs"
-                                    c="dimmed"
-                                    style={{
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      maxWidth: '200px',
-                                    }}
-                                  >
-                                    {(p.job.progress as { publicProgress?: { step?: string } }).publicProgress!.step}
-                                  </Text>
-                                )}
-                              <Popover position="bottom-start" withinPortal shadow="md" width={340}>
-                                <Popover.Target>
-                                  <Button size="compact-xs" variant="subtle" color="gray" px={2}>
-                                    <InfoIcon size={12} />
-                                  </Button>
-                                </Popover.Target>
-                                <Popover.Dropdown>
-                                  <ScrollArea h={200}>
-                                    <Code block style={{ fontSize: 11 }}>
-                                      {JSON.stringify(p.job, null, 2)}
-                                    </Code>
-                                  </ScrollArea>
-                                </Popover.Dropdown>
-                              </Popover>
-                            </Group>
-                          ) : (
-                            <Text size="xs" c="dimmed">
-                              —
-                            </Text>
-                          )}
-                        </Table.Td>
                         {(['edits', 'creates', 'deletes', 'backfills'] as const).map((phaseKey) => {
                           const executedKey = `${phaseKey}Executed` as
                             | 'editsExecuted'
@@ -442,11 +483,11 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                             <Table.Td key={phaseKey}>
                               {total > 0 ? (
                                 <Text size="xs" c={completed < total ? 'blue' : completed > 0 ? 'green' : undefined}>
-                                  {completed}/{total}
+                                  {formatCount(completed)}/{formatCount(total)}
                                 </Text>
                               ) : completed > 0 ? (
                                 <Text size="xs" c="green">
-                                  {completed}
+                                  {formatCount(completed)}
                                 </Text>
                               ) : (
                                 <Text size="xs" c="dimmed">
@@ -457,83 +498,92 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                           );
                         })}
                         <Table.Td>
-                          <Group gap="xs">
-                            <Button
-                              size="xs"
-                              variant="light"
-                              leftSection={<ListIcon size={12} />}
-                              onClick={() => setEntriesModalPipelineId(p.id)}
-                            >
-                              View Entries
-                            </Button>
+                          <Tooltip label={dayjs(p.createdAt).format('MMMM D, YYYY h:mm A')} withArrow>
+                            <Text size="xs" style={{ cursor: 'help' }}>
+                              {dayjs(p.createdAt).fromNow()}
+                            </Text>
+                          </Tooltip>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap={6} wrap="nowrap">
+                            <Tooltip label="View Entries" position="top" withArrow>
+                              <Button size="xs" variant="light" px={6} onClick={() => setEntriesModalPipelineId(p.id)}>
+                                <ListIcon size={14} />
+                              </Button>
+                            </Tooltip>
 
                             {/* Cancel button — shown to all users when a job is active */}
                             {hasActiveJob && (
-                              <Button
-                                size="xs"
-                                variant="light"
-                                color="red"
-                                leftSection={<XIcon size={12} />}
-                                loading={cancelingId === p.id}
-                                onClick={() => handleCancel(p)}
-                                disabled={cancelingId !== null && cancelingId !== p.id}
-                              >
-                                Cancel
-                              </Button>
+                              <Tooltip label="Cancel" position="top" withArrow>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color="red"
+                                  px={6}
+                                  loading={cancelingId === p.id}
+                                  onClick={() => handleCancel(p)}
+                                  disabled={cancelingId !== null && cancelingId !== p.id}
+                                >
+                                  <XIcon size={14} />
+                                </Button>
+                              </Tooltip>
                             )}
 
                             {/* Resume button — visible to all users for canceled pipelines with no active job.
                                 If entries exist it was a canceled run (resumable); if no entries it was a
                                 canceled plan (re-plan using the existing connector scope). */}
                             {p.status === 'canceled' && !hasActiveJob && (
-                              <Button
-                                size="xs"
-                                variant="light"
-                                color="grape"
-                                leftSection={<PlayIcon size={12} />}
-                                loading={runningId === p.id || isPlanning}
-                                onClick={() => {
-                                  if ((p._count?.entries ?? 0) > 0) {
-                                    // Canceled run — resume from where it left off
-                                    void handleRun(p.id);
-                                  } else {
-                                    // Canceled plan — re-plan (entries were wiped, start fresh)
-                                    void handlePlanOne(p.connectorAccountId ?? '', true);
-                                  }
-                                }}
-                                disabled={isPlanning || (runningId !== null && runningId !== p.id)}
-                              >
-                                Resume
-                              </Button>
+                              <Tooltip label="Resume" position="top" withArrow>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color="grape"
+                                  px={6}
+                                  loading={runningId === p.id || isPlanning}
+                                  onClick={() => {
+                                    if ((p._count?.entries ?? 0) > 0) {
+                                      // Canceled run — resume from where it left off
+                                      void handleRun(p.id);
+                                    } else {
+                                      // Canceled plan — re-plan (entries were wiped, start fresh)
+                                      void handlePlanOne(p.connectorAccountId ?? '', true);
+                                    }
+                                  }}
+                                  disabled={isPlanning || (runningId !== null && runningId !== p.id)}
+                                >
+                                  <PlayIcon size={14} />
+                                </Button>
+                              </Tooltip>
                             )}
 
-                            {/* Run button group — admin only, for non-canceled non-completed pipelines */}
-                            {adminMode &&
-                              !hasActiveJob &&
+                            {/* Run button group — for non-canceled non-completed pipelines */}
+                            {!hasActiveJob &&
                               p.status !== 'completed' &&
                               p.status !== 'completed-with-errors' &&
                               p.status !== 'canceled' &&
                               !p.status.endsWith('-running') && (
-                                <Group gap={0}>
-                                  <Button
-                                    size="xs"
-                                    variant="light"
-                                    color="green"
-                                    leftSection={<PlayIcon size={12} />}
-                                    loading={runningId === p.id}
-                                    onClick={() => handleRun(p.id)}
-                                    disabled={isPlanning || (runningId !== null && runningId !== p.id)}
-                                    style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
-                                  >
-                                    Run All
-                                  </Button>
+                                <Group gap={0} wrap="nowrap">
+                                  <Tooltip label="Run All" position="top" withArrow>
+                                    <Button
+                                      size="xs"
+                                      variant="light"
+                                      color="green"
+                                      px={6}
+                                      loading={runningId === p.id}
+                                      onClick={() => handleRun(p.id)}
+                                      disabled={isPlanning || (runningId !== null && runningId !== p.id)}
+                                      style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                                    >
+                                      <PlayIcon size={14} />
+                                    </Button>
+                                  </Tooltip>
                                   <Menu position="bottom-end" withinPortal>
                                     <Menu.Target>
                                       <Button
                                         size="xs"
                                         variant="light"
                                         color="green"
-                                        px={6}
+                                        px={4}
                                         disabled={isPlanning || (runningId !== null && runningId !== p.id)}
                                         style={{
                                           borderTopLeftRadius: 0,
@@ -545,35 +595,34 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                       </Button>
                                     </Menu.Target>
                                     <Menu.Dropdown>
-                                      <Menu.Label>Run single phase</Menu.Label>
-                                      {PHASES.map((phase) => (
-                                        <Menu.Item
-                                          key={phase}
-                                          onClick={() => handleRun(p.id, phase)}
-                                          leftSection={<PlayIcon size={12} />}
-                                        >
-                                          {phase.charAt(0).toUpperCase() + phase.slice(1)}
-                                        </Menu.Item>
-                                      ))}
+                                      <Menu.Label>Run options</Menu.Label>
+                                      <Menu.Item
+                                        onClick={() => handleRun(p.id, true)}
+                                        leftSection={<PlayIcon size={12} />}
+                                      >
+                                        Execute 1 Phase
+                                      </Menu.Item>
                                     </Menu.Dropdown>
                                   </Menu>
                                 </Group>
                               )}
 
-                            <Button
-                              size="xs"
-                              variant="subtle"
-                              color="red"
-                              leftSection={<Trash2Icon size={12} />}
-                              onClick={async () => {
-                                if (confirm('Are you sure you want to delete this pipeline?')) {
-                                  await workbookApi.deletePublishV2Pipeline(workbookId, p.id);
-                                  fetchPipelines();
-                                }
-                              }}
-                            >
-                              Delete
-                            </Button>
+                            <Tooltip label="Delete Pipeline" position="top" withArrow>
+                              <Button
+                                size="xs"
+                                variant="subtle"
+                                color="red"
+                                px={6}
+                                onClick={async () => {
+                                  if (confirm('Are you sure you want to delete this pipeline?')) {
+                                    await workbookApi.deletePublishV2Pipeline(workbookId, p.id);
+                                    fetchPipelines();
+                                  }
+                                }}
+                              >
+                                <Trash2Icon size={14} />
+                              </Button>
+                            </Tooltip>
                           </Group>
                         </Table.Td>
                       </Table.Tr>

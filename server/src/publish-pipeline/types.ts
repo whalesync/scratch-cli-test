@@ -12,7 +12,6 @@ export interface PublishPlanInfo {
   pipelineId: string;
   workbookId: string;
   userId: string;
-  phases: PipelinePhase[];
   branchName: string;
   createdAt: Date;
   status: string;

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
+import { DbModule } from 'src/db/db.module';
 import { PublishPipelineModule } from 'src/publish-pipeline/publish-pipeline.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from 'src/remote-service/connectors/connectors.module';
@@ -18,6 +19,7 @@ import { WorkersController } from './test/workers.controller';
 @Module({
   imports: [
     ScratchConfigModule,
+    DbModule,
     WorkerEnqueuerModule,
     ConnectorsModule,
     WorkbookModule,

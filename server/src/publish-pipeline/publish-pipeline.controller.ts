@@ -1,7 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
+import { Progress } from 'src/types/progress';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
+import { DbService } from '../db/db.service';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { PlanPublishV2Dto, RunPublishV2Dto } from './dto/publish-v2.dto';
 import { PublishAdminService } from './publish-admin.service';
@@ -16,19 +18,8 @@ export class PublishPipelineController {
     private readonly publishRunService: PublishRunService,
     private readonly publishAdminService: PublishAdminService,
     private readonly bullEnqueuerService: BullEnqueuerService,
+    private readonly db: DbService,
   ) {}
-
-  // ── Direct API (synchronous) ─────────────────────────────────────
-
-  @Post('plan')
-  async plan(@Param('workbookId') workbookId: WorkbookId, @Body() body: PlanPublishV2Dto, @Req() req: RequestWithUser) {
-    return this.publishPlanService.buildPipeline(workbookId, req.user.id, body.connectorAccountId);
-  }
-
-  @Post('run')
-  async run(@Param('workbookId') workbookId: WorkbookId, @Body() body: RunPublishV2Dto) {
-    return this.publishRunService.runPipeline(body.pipelineId, body.phase);
-  }
 
   // ── Job API (asynchronous, resumable) ────────────────────────────
 
@@ -50,12 +41,22 @@ export class PublishPipelineController {
       body.connectorAccountId,
     );
 
+    let initialProgress: Progress | undefined;
+    const existingPlan = await this.db.client.publishPlan.findUnique({ where: { id: pipelineId } });
+    if (existingPlan?.activeJobId) {
+      const dbJob = await this.db.client.dbJob.findFirst({ where: { bullJobId: existingPlan.activeJobId } });
+      if (dbJob?.progress) {
+        initialProgress = dbJob.progress as Progress;
+      }
+    }
+
     const job = await this.bullEnqueuerService.enqueuePlanPipelineJob(
       workbookId,
       { userId: req.user.id, organizationId: req.user.organization?.id ?? '' },
       pipelineId,
       body.connectorAccountId,
       body.runAfterPlan,
+      initialProgress,
     );
     await this.publishPlanService.setActiveJob(pipelineId, job.id!.toString());
     return { jobId: job.id, pipelineId };
@@ -67,11 +68,21 @@ export class PublishPipelineController {
     @Body() body: RunPublishV2Dto,
     @Req() req: RequestWithUser,
   ) {
+    let initialProgress: Progress | undefined;
+    const existingPlan = await this.db.client.publishPlan.findUnique({ where: { id: body.pipelineId } });
+    if (existingPlan?.activeJobId) {
+      const dbJob = await this.db.client.dbJob.findFirst({ where: { bullJobId: existingPlan.activeJobId } });
+      if (dbJob?.progress) {
+        initialProgress = dbJob.progress as Progress;
+      }
+    }
+
     const job = await this.bullEnqueuerService.enqueueRunPipelineJob(
       workbookId,
       { userId: req.user.id, organizationId: req.user.organization?.id ?? '' },
       body.pipelineId,
-      body.phase,
+      body.executeSinglePhase,
+      initialProgress,
     );
     await this.publishPlanService.setActiveJob(body.pipelineId, job.id!.toString());
     return { jobId: job.id };
