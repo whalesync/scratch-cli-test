@@ -1,17 +1,13 @@
 import {
-  Body,
   ClassSerializerInterceptor,
   Controller,
   Get,
   HttpException,
   HttpStatus,
   Param,
-  Post,
   UseInterceptors,
 } from '@nestjs/common';
 import { BullEnqueuerService } from '../../worker-enqueuer/bull-enqueuer.service';
-import { AddThreeNumbersJobDefinition } from '../jobs/job-definitions/add-three-numbers.job';
-import { AddTwoNumbersJobDefinition } from '../jobs/job-definitions/add-two-numbers.job';
 import { QueueTestService } from './queue-test.service';
 
 @Controller('workers')
@@ -21,48 +17,6 @@ export class WorkersController {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly queueTestService: QueueTestService,
   ) {}
-
-  @Post('jobs/add-two-numbers')
-  async addTwoNumbersJob(@Body() data: AddTwoNumbersJobDefinition['data']) {
-    try {
-      const job = await this.bullEnqueuerService.enqueueJob(data);
-      return {
-        success: true,
-        jobId: job.id,
-        message: 'Job queued successfully',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Failed to queue job',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  @Post('jobs/add-three-numbers')
-  async addThreeNumbersJob(@Body() data: AddThreeNumbersJobDefinition['data']) {
-    try {
-      const job = await this.bullEnqueuerService.enqueueJob(data);
-      return {
-        success: true,
-        jobId: job.id,
-        message: 'Job queued successfully',
-      };
-    } catch (error) {
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Failed to queue job',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
 
   @Get('jobs/:jobId')
   async getJobStatus(@Param('jobId') jobId: string) {

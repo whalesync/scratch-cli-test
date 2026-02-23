@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
+import { userToActor } from '../users/types';
 import { dbJobToJobEntity, JobEntity } from './entities/job.entity';
 import { JobService } from './job.service';
 
@@ -52,8 +53,12 @@ export class JobController {
   }
 
   @Post(':jobId/cancel')
-  async cancelJob(@Param('jobId') jobId: string): Promise<{ success: boolean; message: string }> {
-    return await this.jobService.cancelJob(jobId);
+  async cancelJob(
+    @Param('jobId') jobId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<{ success: boolean; message: string }> {
+    const actor = userToActor(req.user);
+    return await this.jobService.cancelJob(jobId, actor);
   }
 
   @Post('bulk-status')

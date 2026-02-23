@@ -21,8 +21,11 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { BriefcaseIcon, Check, ChevronLeft, ChevronRight, Circle, Code, Dot, X } from 'lucide-react';
+import { notifications } from '@mantine/notifications';
+import { BriefcaseIcon, Check, ChevronLeft, ChevronRight, Circle, Code, Dot, SquareIcon, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+
+const CANCELABLE_STATES = new Set(['created', 'active']);
 
 const getStatusIcon = (status: string) => {
   switch (status) {
@@ -85,19 +88,34 @@ export default function JobsDevPage() {
   const [offset, setOffset] = useState(0);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [userIdFilter, setUserIdFilter] = useState('');
-  const { jobs, total, isLoading, error } = useJobsDevTools({
+  const { jobs, total, isLoading, error, mutate } = useJobsDevTools({
     limit: PAGE_SIZE,
     offset,
     statuses: selectedStatuses.length > 0 ? selectedStatuses : undefined,
     userId: userIdFilter.trim().length > 4 && userIdFilter.trim().startsWith('usr_') ? userIdFilter.trim() : undefined,
     autoRefresh: true,
   });
+  const [cancelingJobIds, setCancelingJobIds] = useState<Set<string>>(new Set());
 
   const toggleStatus = (status: string) => {
     setOffset(0);
     setSelectedStatuses((prev) => (prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]));
   };
   const [viewRawJobId, setViewRawJobId] = useState<string | null>(null);
+
+  const handleCancelJob = async (bullJobId: string) => {
+    setCancelingJobIds((prev) => new Set(prev).add(bullJobId));
+    try {
+      await jobApi.cancelJob(bullJobId);
+      await mutate();
+    } catch {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to cancel job',
+        color: 'red',
+      });
+    }
+  };
 
   if (isUserLoading) {
     return (
@@ -315,15 +333,29 @@ export default function JobsDevPage() {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      <Tooltip label="View Raw JSON">
-                        <ActionIcon
-                          variant="subtle"
-                          color="gray"
-                          onClick={() => setViewRawJobId(job.bullJobId || job.dbJobId || null)}
-                        >
-                          <Code size={16} />
-                        </ActionIcon>
-                      </Tooltip>
+                      <Group gap="xs" wrap="nowrap">
+                        <Tooltip label="View Raw JSON">
+                          <ActionIcon
+                            variant="subtle"
+                            color="gray"
+                            onClick={() => setViewRawJobId(job.bullJobId || job.dbJobId || null)}
+                          >
+                            <Code size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        {CANCELABLE_STATES.has(job.state) && job.bullJobId && (
+                          <Tooltip label="Cancel Job">
+                            <ActionIcon
+                              variant="subtle"
+                              color="red"
+                              disabled={cancelingJobIds.has(job.bullJobId)}
+                              onClick={() => handleCancelJob(job.bullJobId!)}
+                            >
+                              <SquareIcon size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </Group>
                     </Table.Td>
                   </Table.Tr>
                 );

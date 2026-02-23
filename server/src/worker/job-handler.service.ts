@@ -14,8 +14,6 @@ import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
-import { AddThreeNumbersJobHandler } from './jobs/job-definitions/add-three-numbers.job';
-import { AddTwoNumbersJobHandler } from './jobs/job-definitions/add-two-numbers.job';
 import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
@@ -48,10 +46,6 @@ export class JobHandlerService {
     });
 
     switch (data.type) {
-      case 'add-two-numbers':
-        return AddTwoNumbersJobHandler as JobHandler<JobDefinition>;
-      case 'add-three-numbers':
-        return new AddThreeNumbersJobHandler(prisma) as JobHandler<JobDefinition>;
       case 'pull-linked-folder-files':
         return new PullLinkedFolderFilesJobHandler(
           prisma,

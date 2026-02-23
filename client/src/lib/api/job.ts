@@ -48,4 +48,14 @@ export const jobApi = {
       throw error;
     }
   },
+
+  cancelJob: async (jobId: string): Promise<void> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.post(`/jobs/${jobId}/cancel`);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to cancel job');
+      throw error;
+    }
+  },
 };

@@ -48,6 +48,7 @@ describe('User Type Utilities', () => {
         userId: 'user_123',
         organizationId: 'org_789',
         authSource: 'user',
+        isAdmin: false,
         subscriptionStatus: {
           planType: 'FREE_PLAN',
           status: 'active',
@@ -131,6 +132,14 @@ describe('User Type Utilities', () => {
 
       expect(actor.userId).toBe('user_123');
       expect(actor.organizationId).toBe('org_789');
+    });
+
+    it('should set isAdmin to true when user has ADMIN role', () => {
+      const user: UserCluster.User = { ...testUser, role: UserRole.ADMIN };
+
+      const actor = userToActor(user);
+
+      expect(actor.isAdmin).toBe(true);
     });
 
     it('should not include any user metadata in actor', () => {

@@ -1,3 +1,5 @@
+import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
+import { useCallback } from 'react';
 import useSWR from 'swr';
 import { jobApi } from '../lib/api/job';
 import { JobEntity } from '../types/server-entities/job';
@@ -13,10 +15,20 @@ export const useJobs = (limit?: number, offset?: number, workbookId?: string) =>
     },
   );
 
+  const cancelJob = useCallback(
+    async (jobId: string) => {
+      await jobApi.cancelJob(jobId);
+      await mutate();
+      ScratchpadNotifications.success({ message: 'Cancel request sent' });
+    },
+    [mutate],
+  );
+
   return {
     jobs: data || [],
     error,
     isLoading,
     mutate,
+    cancelJob,
   };
 };

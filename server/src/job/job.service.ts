@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbJob } from '@prisma/client';
 import { createJobId } from '@spinner/shared-types';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { Progress } from 'src/types/progress';
 import { DbService } from '../db/db.service';
+import { Actor } from '../users/types';
 import { DbJobStatus, dbJobToJobEntity, JobEntity } from './entities/job.entity';
 
 @Injectable()
@@ -254,8 +255,31 @@ export class JobService {
     return dbJob;
   }
 
-  async cancelJob(jobId: string): Promise<{ success: boolean; message: string }> {
-    // Get the job from the queue to verify it exists
+  private async verifyJobAccess(dbJob: DbJob, actor: Actor): Promise<void> {
+    if (actor.isAdmin) return;
+    if (!dbJob.workbookId) return;
+
+    const workbook = await this.db.client.workbook.findFirst({
+      where: { id: dbJob.workbookId, organizationId: actor.organizationId },
+    });
+    if (!workbook) {
+      throw new ForbiddenException('You do not have access to this job');
+    }
+  }
+
+  async cancelJob(jobId: string, actor: Actor): Promise<{ success: boolean; message: string }> {
+    // Load the job from the database and verify the actor has access
+    const dbJob = await this.db.client.dbJob.findFirst({
+      where: { bullJobId: jobId },
+    });
+
+    if (!dbJob) {
+      throw new NotFoundException(`Job with id ${jobId} not found`);
+    }
+
+    await this.verifyJobAccess(dbJob, actor);
+
+    // Get the job from the queue
     const queue = new (await import('bullmq')).Queue('worker-queue', {
       connection: this.getRedis(),
     });
@@ -263,7 +287,7 @@ export class JobService {
     const job = await queue.getJob(jobId);
 
     if (!job) {
-      throw new NotFoundException(`Job with id ${jobId} not found`);
+      throw new NotFoundException(`Job with id ${jobId} not found in queue`);
     }
 
     const state = await job.getState();

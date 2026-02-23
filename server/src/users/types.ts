@@ -1,3 +1,4 @@
+import { UserRole } from '@prisma/client';
 import { ScratchPlanType, SubscriptionId } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
@@ -25,6 +26,7 @@ export interface Actor {
   organizationId: string;
   subscriptionStatus?: SubscriptionStatus;
   authSource?: AuthSource;
+  isAdmin?: boolean;
 }
 
 export function userToActor(user: UserCluster.User): Actor {
@@ -77,6 +79,7 @@ export function userToActor(user: UserCluster.User): Actor {
     organizationId: user.organizationId ?? '<empty org id>',
     subscriptionStatus,
     authSource,
+    isAdmin: user.role === UserRole.ADMIN,
   };
 }
 

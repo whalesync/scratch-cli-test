@@ -12,6 +12,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useJobs } from '@/hooks/use-jobs';
 import { jobApi } from '@/lib/api/job';
+import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { JobEntity } from '@/types/server-entities/job';
 import { timeAgo } from '@/utils/helpers';
 import { getJobDescription, getJobType, getTypeLabel, JobType } from '@/utils/job-helpers';
@@ -41,6 +42,7 @@ import {
   ClockIcon,
   CopyIcon,
   RefreshCwIcon,
+  SquareIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
@@ -135,8 +137,10 @@ export function RunsView() {
   const params = useParams<{ id: string }>();
   const workbookId = params.id as WorkbookId;
   const searchParams = useSearchParams();
-  const { jobs, error, isLoading, mutate } = useJobs(50, 0, workbookId);
+  const { jobs, error, isLoading, mutate, cancelJob } = useJobs(50, 0, workbookId);
   const { isDevToolsEnabled } = useDevTools();
+  const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
+  const [cancelingJobIds, setCancelingJobIds] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(() => {
     const jobId = searchParams.get('jobId');
     return jobId ? new Set([jobId]) : new Set();
@@ -153,6 +157,21 @@ export function RunsView() {
       return next;
     });
   }, []);
+
+  const handleCancelJob = useCallback(
+    async (jobId: string) => {
+      setCancelingJobIds((prev) => new Set(prev).add(jobId));
+      try {
+        await cancelJob(jobId);
+      } catch {
+        setWorkbookError({
+          scope: 'runs',
+          description: 'Failed to cancel job. Please try again.',
+        });
+      }
+    },
+    [cancelJob, setWorkbookError],
+  );
 
   if (isLoading && jobs.length === 0) {
     return (
@@ -229,6 +248,8 @@ export function RunsView() {
                     isExpanded={expandedJobs.has(getJobKey(job))}
                     onToggle={() => toggleExpanded(getJobKey(job))}
                     isDevToolsEnabled={isDevToolsEnabled}
+                    isCanceling={job.bullJobId ? cancelingJobIds.has(job.bullJobId) : false}
+                    onCancel={job.bullJobId ? () => handleCancelJob(job.bullJobId!) : undefined}
                   />
                 ))}
               </Table.Tbody>
@@ -253,6 +274,7 @@ export function RunsView() {
                     isExpanded={expandedJobs.has(getJobKey(job))}
                     onToggle={() => toggleExpanded(getJobKey(job))}
                     isDevToolsEnabled={isDevToolsEnabled}
+                    isCanceling={false}
                   />
                 ))}
               </Table.Tbody>
@@ -270,12 +292,16 @@ function JobRow({
   isExpanded,
   onToggle,
   isDevToolsEnabled,
+  isCanceling,
+  onCancel,
 }: {
   job: JobEntity;
   isActive: boolean;
   isExpanded: boolean;
   onToggle: () => void;
   isDevToolsEnabled: boolean;
+  isCanceling: boolean;
+  onCancel?: () => void;
 }) {
   const jobType = getJobType(job.type);
   const typeColor = getTypeColor(jobType);
@@ -358,6 +384,22 @@ function JobRow({
             <Text size="sm" style={{ color: statusColor }}>
               {getStatusLabel(effectiveState)}
             </Text>
+            {isActive && onCancel && (
+              <Tooltip label="Cancel run">
+                <ActionIcon
+                  variant="subtle"
+                  size="xs"
+                  color="red"
+                  disabled={isCanceling}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCancel();
+                  }}
+                >
+                  <SquareIcon size={12} />
+                </ActionIcon>
+              </Tooltip>
+            )}
           </Group>
         </Table.Td>
       </Table.Tr>
