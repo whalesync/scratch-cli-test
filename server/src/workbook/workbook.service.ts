@@ -18,6 +18,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { WorkbookEventService } from './workbook-event.service';
 
+import { ConnectorPullOptions } from 'src/remote-service/connectors/types';
 import { FileIndexService } from '../publish-pipeline/file-index.service';
 import { FileReferenceService } from '../publish-pipeline/file-reference.service';
 
@@ -325,7 +326,7 @@ export class WorkbookService {
         folderId: folder.id,
         folderName: folder.name,
         connector: folder.connectorService ?? 'unknown',
-        filter: folder.filter ?? null,
+        filter: (folder.options as unknown as ConnectorPullOptions)?.filter ?? null,
         status: 'pending',
         createdPaths: [],
         updatedPaths: [],

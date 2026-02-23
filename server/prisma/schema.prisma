@@ -366,9 +366,6 @@ model DataFolder {
   // Empty array for scratch folders, populated for linked folders
   tableId String[] @default([])
 
-  // A filter expression for the data folder, specific to the connector and table
-  filter String?
-
   // Additional options for interacting with the connector
   // Will be an object matching any of the Connector options interfaces such as ConnectorPullOptions.
   options Json? @default("{}")

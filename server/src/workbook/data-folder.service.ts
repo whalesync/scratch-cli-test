@@ -23,7 +23,7 @@ import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorPullOptions } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
 import { FilesService } from './files.service';
@@ -319,7 +319,17 @@ export class DataFolderService {
 
       // Trigger pull job
       try {
-        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, dataFolderId);
+        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, dataFolderId, {
+          totalFiles: 0,
+          folderId: dataFolderId,
+          folderName: createdDataFolder.name,
+          connector: createdDataFolder.connectorService ?? 'unknown',
+          filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+          status: 'pending',
+          createdPaths: [],
+          updatedPaths: [],
+          deletedPaths: [],
+        });
         WSLogger.info({
           source: 'DataFolderService.createFolder',
           message: 'Started pulling files for newly created data folder',
