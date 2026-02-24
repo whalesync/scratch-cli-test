@@ -9,7 +9,6 @@ import {
   Code,
   Group,
   Menu,
-  Modal,
   Popover,
   ScrollArea,
   Stack,
@@ -18,6 +17,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { useInterval } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { ConnectorAccount, PublishPlanEntity, WorkbookId } from '@spinner/shared-types';
@@ -28,6 +28,7 @@ import {
   FilePenLineIcon,
   InfoIcon,
   ListIcon,
+  MoveIcon,
   PlayIcon,
   PlusCircleIcon,
   PlusIcon,
@@ -42,13 +43,11 @@ import { PlanEntriesModal } from './PlanEntriesModal';
 
 dayjs.extend(relativeTime);
 
-interface TestPublishV2ModalProps {
+interface PublishPlansModalProps {
   opened: boolean;
   onClose: () => void;
   workbookId: WorkbookId;
 }
-
-type PublishPipeline = PublishPlanEntity;
 
 const JOB_ACTIVE_STATUSES = new Set(['created', 'active', 'waiting']);
 
@@ -67,13 +66,13 @@ function formatCount(count: number): string {
   return count.toString();
 }
 
-export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV2ModalProps) {
-  const [pipelines, setPipelines] = useState<PublishPipeline[]>([]);
+export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansModalProps) {
+  const [publishPlans, setPublishPlans] = useState<PublishPlanEntity[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
-  const [entriesModalPipelineId, setEntriesModalPipelineId] = useState<string | null>(null);
+  const [operationsModalPublishPlanId, setOperationsModalPublishPlanId] = useState<string | null>(null);
   const [showAdminUI, setShowAdminUI] = useState(false);
 
   const { isAdmin } = useScratchPadUser();
@@ -82,16 +81,16 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
 
   const connectorMap = new Map<string, ConnectorAccount>((connectorAccounts ?? []).map((ca) => [ca.id, ca]));
 
-  const fetchPipelines = useCallback(async () => {
+  const fetchPublishPlans = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await workbookApi.listPublishPlans(workbookId);
-      setPipelines(data);
+      setPublishPlans(data);
     } catch (error) {
       console.error(error);
       notifications.show({
         title: 'Error',
-        message: 'Failed to list pipelines',
+        message: 'Failed to list publish plans',
         color: 'red',
       });
     } finally {
@@ -99,17 +98,17 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
     }
   }, [workbookId]);
 
-  const { start, stop } = useInterval(fetchPipelines, 2000);
+  const { start, stop } = useInterval(fetchPublishPlans, 2000);
 
   useEffect(() => {
     if (opened) {
-      fetchPipelines();
+      fetchPublishPlans();
       start();
     } else {
       stop();
     }
     return stop;
-  }, [opened, fetchPipelines, start, stop]);
+  }, [opened, fetchPublishPlans, start, stop]);
 
   const handlePlanAll = async (runAfterPlan: boolean) => {
     setIsPlanning(true);
@@ -133,7 +132,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
           ? 'Planning and run started for all connections'
           : 'Planning started for all connections';
         notifications.show({ title: 'Success', message, color: 'green' });
-        fetchPipelines();
+        fetchPublishPlans();
       }
     } catch (error) {
       console.error(error);
@@ -153,7 +152,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
         const name = connectorMap.get(connectorAccountId)?.displayName ?? connectorAccountId;
         const message = runAfterPlan ? `Planning and run started for ${name}` : `Planning started for ${name}`;
         notifications.show({ title: 'Success', message, color: 'green' });
-        fetchPipelines();
+        fetchPublishPlans();
       }
     } catch (error) {
       console.error(error);
@@ -163,16 +162,16 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
     }
   };
 
-  const handleRun = async (pipelineId: string, executeSinglePhase?: boolean) => {
-    setRunningId(pipelineId);
+  const handleRun = async (publishPlanId: string, executeSinglePhase?: boolean) => {
+    setRunningId(publishPlanId);
     try {
-      await workbookApi.runPublishV2(workbookId, pipelineId, executeSinglePhase);
+      await workbookApi.runPublishV2(workbookId, publishPlanId, executeSinglePhase);
       notifications.show({
         title: 'Success',
         message: executeSinglePhase ? `Running 1 phase` : 'Running all phases',
         color: 'green',
       });
-      setTimeout(fetchPipelines, 1000);
+      setTimeout(fetchPublishPlans, 1000);
     } catch (error) {
       console.error(error);
       notifications.show({ title: 'Error', message: 'Failed to run publish', color: 'red' });
@@ -181,14 +180,14 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
     }
   };
 
-  const handleCancel = async (pipeline: PublishPipeline) => {
-    if (!pipeline.activeJobId) return;
-    setCancelingId(pipeline.id);
+  const handleCancel = async (publishPlan: PublishPlanEntity) => {
+    if (!publishPlan.activeJobId) return;
+    setCancelingId(publishPlan.id);
     try {
-      const result = await progressApi.cancelJob(pipeline.activeJobId);
+      const result = await progressApi.cancelJob(publishPlan.activeJobId);
       if (result.success) {
         notifications.show({ title: 'Canceled', message: 'Cancellation signal sent', color: 'orange' });
-        setTimeout(fetchPipelines, 1000);
+        setTimeout(fetchPublishPlans, 1000);
       } else {
         notifications.show({ title: 'Warning', message: result.message, color: 'yellow' });
       }
@@ -204,30 +203,29 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
 
   return (
     <>
-      <Modal
+      <ModalWrapper
         opened={opened}
         onClose={onClose}
-        closeOnEscape={!entriesModalPipelineId}
+        closeOnEscape={!operationsModalPublishPlanId}
         title={
           <Group gap="xs">
             <RocketIcon size={20} />
-            <Title order={4}>Publish Pipelines</Title>
+            <Title order={4}>Publish Plans</Title>
           </Group>
         }
         size="90%"
+        customProps={{ footer: null, noBodyPadding: true }}
       >
-        <Stack>
+        <Stack p="md">
           <Group justify="space-between">
-            <Text size="sm" c="dimmed">
-              Manage publish pipelines (DB-backed V2)
-            </Text>
+            <Text size="sm" c="dimmed"></Text>
             <Group>
               <Button
                 variant="default"
                 size="xs"
                 leftSection={<RefreshCwIcon size={14} />}
                 loading={isLoading}
-                onClick={fetchPipelines}
+                onClick={fetchPublishPlans}
               >
                 Refresh
               </Button>
@@ -329,21 +327,27 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                       Backfills
                     </Group>
                   </Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
+                      <MoveIcon size={12} />
+                      Renames
+                    </Group>
+                  </Table.Th>
                   <Table.Th>Created At</Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {pipelines.length === 0 ? (
+                {publishPlans.length === 0 ? (
                   <Table.Tr>
-                    <Table.Td colSpan={10}>
+                    <Table.Td colSpan={11}>
                       <Text size="sm" c="dimmed" ta="center" py="md">
-                        No pipelines found. Click Plan and Run Publish to start one.
+                        No publish plans found. Click Plan and Run Publish to start one.
                       </Text>
                     </Table.Td>
                   </Table.Tr>
                 ) : (
-                  pipelines.map((p) => {
+                  publishPlans.map((p) => {
                     const hasActiveJob = !!p.activeJobId && !!p.job && JOB_ACTIVE_STATUSES.has(p.job.status);
                     return (
                       <Table.Tr key={p.id}>
@@ -448,17 +452,19 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                             {p.status}
                           </Badge>
                         </Table.Td>
-                        {(['edits', 'creates', 'deletes', 'backfills'] as const).map((phaseKey) => {
+                        {(['edits', 'creates', 'deletes', 'backfills', 'renameFiles'] as const).map((phaseKey) => {
                           const executedKey = `${phaseKey}Executed` as
                             | 'editsExecuted'
                             | 'createsExecuted'
                             | 'deletesExecuted'
-                            | 'backfillsExecuted';
+                            | 'backfillsExecuted'
+                            | 'renameFilesExecuted';
                           const plannedKey = `${phaseKey}Planned` as
                             | 'editsPlanned'
                             | 'createsPlanned'
                             | 'deletesPlanned'
-                            | 'backfillsPlanned';
+                            | 'backfillsPlanned'
+                            | 'renameFilesPlanned';
                           const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;
                           const completed = pub?.publicProgress?.[executedKey] ?? 0;
                           const total = pub?.publicProgress?.[plannedKey] ?? 0;
@@ -489,8 +495,13 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                         </Table.Td>
                         <Table.Td>
                           <Group gap={6} wrap="nowrap">
-                            <Tooltip label="View Entries" position="top" withArrow>
-                              <Button size="xs" variant="light" px={6} onClick={() => setEntriesModalPipelineId(p.id)}>
+                            <Tooltip label="View Operations" position="top" withArrow>
+                              <Button
+                                size="xs"
+                                variant="light"
+                                px={6}
+                                onClick={() => setOperationsModalPublishPlanId(p.id)}
+                              >
                                 <ListIcon size={14} />
                               </Button>
                             </Tooltip>
@@ -512,8 +523,8 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                               </Tooltip>
                             )}
 
-                            {/* Resume button — visible to all users for canceled pipelines with no active job.
-                                If entries exist it was a canceled run (resumable); if no entries it was a
+                            {/* Resume button — visible to all users for canceled publish plans with no active job.
+                                If operations exist it was a canceled run (resumable); if no operations it was a
                                 canceled plan (re-plan using the existing connector scope). */}
                             {p.status === 'canceled' && !hasActiveJob && (
                               <Tooltip label="Resume" position="top" withArrow>
@@ -528,7 +539,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                       // Canceled run — resume from where it left off
                                       void handleRun(p.id);
                                     } else {
-                                      // Canceled plan — re-plan (entries were wiped, start fresh)
+                                      // Canceled plan — re-plan (operations were wiped, start fresh)
                                       void handlePlanOne(p.connectorAccountId ?? '', true);
                                     }
                                   }}
@@ -539,7 +550,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                               </Tooltip>
                             )}
 
-                            {/* Run button group — for non-canceled non-completed pipelines */}
+                            {/* Run button group — for non-canceled non-completed publish plans */}
                             {!hasActiveJob &&
                               p.status !== 'completed' &&
                               p.status !== 'completed-with-errors' &&
@@ -590,16 +601,16 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                 </Group>
                               )}
 
-                            <Tooltip label="Delete Pipeline" position="top" withArrow>
+                            <Tooltip label="Delete Publish Plan" position="top" withArrow>
                               <Button
                                 size="xs"
                                 variant="subtle"
                                 color="red"
                                 px={6}
                                 onClick={async () => {
-                                  if (confirm('Are you sure you want to delete this pipeline?')) {
+                                  if (confirm('Are you sure you want to delete this publish plan?')) {
                                     await workbookApi.deletePublishPlan(workbookId, p.id);
-                                    fetchPipelines();
+                                    fetchPublishPlans();
                                   }
                                 }}
                               >
@@ -616,14 +627,14 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
             </Table>
           </ScrollArea>
         </Stack>
-      </Modal>
+      </ModalWrapper>
 
-      {entriesModalPipelineId && (
+      {operationsModalPublishPlanId && (
         <PlanEntriesModal
-          opened={!!entriesModalPipelineId}
-          onClose={() => setEntriesModalPipelineId(null)}
+          opened={!!operationsModalPublishPlanId}
+          onClose={() => setOperationsModalPublishPlanId(null)}
           workbookId={workbookId}
-          pipelineId={entriesModalPipelineId}
+          publishPlanId={operationsModalPublishPlanId}
         />
       )}
     </>

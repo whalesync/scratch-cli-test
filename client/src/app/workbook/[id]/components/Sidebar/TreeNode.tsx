@@ -44,7 +44,7 @@ import {
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState, type MouseEvent } from 'react';
-import { TestPublishV2Modal } from '../modals/TestPublishV2Modal';
+import { PublishPlansModal } from '../modals/PublishPlansModal';
 import { TestTransformerModal } from '../modals/TestTransformerModal';
 import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsModal';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
@@ -377,7 +377,7 @@ export function ConnectionNode({
 
       {/* Test Publish V2 Modal */}
       {connectorAccount && (
-        <TestPublishV2Modal opened={publishV2ModalOpened} onClose={closePublishV2Modal} workbookId={workbookId} />
+        <PublishPlansModal opened={publishV2ModalOpened} onClose={closePublishV2Modal} workbookId={workbookId} />
       )}
 
       {/* Update Connection Modal */}

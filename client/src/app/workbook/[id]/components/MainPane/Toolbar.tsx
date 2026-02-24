@@ -36,7 +36,7 @@ import {
 import Link from 'next/link';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { TestPublishV2Modal } from '../modals/TestPublishV2Modal';
+import { PublishPlansModal } from '../modals/PublishPlansModal';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { ConnectToCLIModal } from '../shared/ConnectToCLIModal';
 import { CreateConnectionModal } from '../shared/CreateConnectionModal';
@@ -344,7 +344,7 @@ export function Toolbar({ workbook }: ToolbarProps) {
       {/* CLI Modal */}
       <ConnectToCLIModal opened={cliModalOpened} onClose={closeCLIModal} workbookId={workbook.id} />
 
-      <TestPublishV2Modal
+      <PublishPlansModal
         opened={publishV2ModalOpened}
         onClose={closePublishV2Modal}
         workbookId={workbook.id as WorkbookId}

@@ -25,7 +25,7 @@ interface RecordPlanModalProps {
   opened: boolean;
   onClose: () => void;
   workbookId: WorkbookId;
-  pipelineId: string;
+  publishPlanId: string;
   filePath: string;
 }
 
@@ -212,7 +212,7 @@ const TAB_META: Record<DiffTab, { label: string; color: string }> = {
    Main Component
    ================================================================ */
 
-export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, filePath }: RecordPlanModalProps) {
+export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, filePath }: RecordPlanModalProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<DiffTab>('userEdit');
   const [layout, setLayout] = useState<DiffLayout>('inline');
@@ -230,7 +230,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, fileP
       const [masterRes, dirtyRes, allEntries] = await Promise.allSettled([
         workbookApi.getRepoFile(workbookId, filePath, 'main'),
         workbookApi.getRepoFile(workbookId, filePath, 'dirty'),
-        workbookApi.listPublishPlanOperations(workbookId, pipelineId),
+        workbookApi.listPublishPlanOperations(workbookId, publishPlanId),
       ]);
 
       setMasterJson(masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '');
@@ -244,7 +244,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, fileP
     } finally {
       setIsLoading(false);
     }
-  }, [workbookId, pipelineId, filePath]);
+  }, [workbookId, publishPlanId, filePath]);
 
   useEffect(() => {
     if (opened) {

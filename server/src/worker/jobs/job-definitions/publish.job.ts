@@ -16,10 +16,12 @@ export type PublishPublicProgress = {
   createsExecuted: number;
   deletesExecuted: number;
   backfillsExecuted: number;
+  renameFilesExecuted: number;
   editsPlanned: number;
   createsPlanned: number;
   deletesPlanned: number;
   backfillsPlanned: number;
+  renameFilesPlanned: number;
 };
 
 // ── Job Definition ───────────────────────────────────────────────────
@@ -78,10 +80,12 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       createsExecuted: 0,
       deletesExecuted: 0,
       backfillsExecuted: 0,
+      renameFilesExecuted: 0,
       editsPlanned: 0,
       createsPlanned: 0,
       deletesPlanned: 0,
       backfillsPlanned: 0,
+      renameFilesPlanned: 0,
     };
 
     const onPlanProgress = async (counts: {
@@ -89,6 +93,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       createsPlanned: number;
       deletesPlanned: number;
       backfillsPlanned: number;
+      renameFilesPlanned: number;
       step?: string;
     }) => {
       await checkpoint({
@@ -100,6 +105,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           createsPlanned: counts.createsPlanned,
           deletesPlanned: counts.deletesPlanned,
           backfillsPlanned: counts.backfillsPlanned,
+          renameFilesPlanned: counts.renameFilesPlanned,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -111,10 +117,12 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       createsExecuted: number;
       deletesExecuted: number;
       backfillsExecuted: number;
+      renameFilesExecuted: number;
       editsPlanned: number;
       createsPlanned: number;
       deletesPlanned: number;
       backfillsPlanned: number;
+      renameFilesPlanned: number;
       currentPhase: string;
     }) => {
       await checkpoint({
@@ -155,6 +163,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         createsPlanned: await getPhaseCount(pipelineId, 'create'),
         deletesPlanned: await getPhaseCount(pipelineId, 'delete'),
         backfillsPlanned: await getPhaseCount(pipelineId, 'backfill'),
+        renameFilesPlanned: await getPhaseCount(pipelineId, 'rename-files'),
       };
 
       if (!data.runAfterPlan) {
@@ -166,6 +175,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
             createsExecuted: 0,
             deletesExecuted: 0,
             backfillsExecuted: 0,
+            renameFilesExecuted: 0,
             ...plannedTotals,
           },
           jobProgress: {},
@@ -202,6 +212,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           createsExecuted: await getSuccessCount('create'),
           deletesExecuted: await getSuccessCount('delete'),
           backfillsExecuted: await getSuccessCount('backfill'),
+          renameFilesExecuted: await getSuccessCount('rename-files'),
           ...plannedTotals,
         },
         jobProgress: {},
@@ -224,10 +235,12 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           createsExecuted: runResult.successByPhase?.create ?? 0,
           deletesExecuted: runResult.successByPhase?.delete ?? 0,
           backfillsExecuted: runResult.successByPhase?.backfill ?? 0,
+          renameFilesExecuted: runResult.successByPhase?.['rename-files'] ?? 0,
           editsPlanned: runResult.totalByPhase?.edit ?? 0,
           createsPlanned: runResult.totalByPhase?.create ?? 0,
           deletesPlanned: runResult.totalByPhase?.delete ?? 0,
           backfillsPlanned: runResult.totalByPhase?.backfill ?? 0,
+          renameFilesPlanned: runResult.totalByPhase?.['rename-files'] ?? 0,
         },
         jobProgress: {},
         connectorProgress: {},

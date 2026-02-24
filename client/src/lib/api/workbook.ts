@@ -318,11 +318,11 @@ export const workbookApi = {
     workbookId: WorkbookId,
     connectorAccountId?: string,
     runAfterPlan?: boolean,
-  ): Promise<{ jobId: string; pipelineId: string }> => {
+  ): Promise<{ jobId: string; publishPlanId: string }> => {
     const body: PublishPlanBuildDto = { connectorAccountId, runAfterPlan };
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<{ jobId: string; pipelineId: string }>(
+      const res = await axios.post<{ jobId: string; publishPlanId: string }>(
         `/workbook/${workbookId}/publish-v2/plan-job`,
         body,
       );
@@ -335,10 +335,10 @@ export const workbookApi = {
 
   runPublishV2: async (
     workbookId: WorkbookId,
-    pipelineId: string,
+    publishPlanId: string,
     executeSinglePhase?: boolean,
   ): Promise<{ jobId: string }> => {
-    const body: PublishPlanRunDto = { pipelineId, executeSinglePhase };
+    const body: PublishPlanRunDto = { pipelineId: publishPlanId, executeSinglePhase };
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<{ jobId: string }>(`/workbook/${workbookId}/publish-v2/run-job`, body);
@@ -357,7 +357,7 @@ export const workbookApi = {
       });
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to list pipelines');
+      handleAxiosError(error, 'Failed to list publish plans');
       throw error;
     }
   },
@@ -384,23 +384,23 @@ export const workbookApi = {
     }
   },
 
-  listPublishPlanOperations: async (workbookId: WorkbookId, pipelineId: string): Promise<PublishPlanOperationEntity[]> => {
+  listPublishPlanOperations: async (workbookId: WorkbookId, publishPlanId: string): Promise<PublishPlanOperationEntity[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<PublishPlanOperationEntity[]>(`/workbook/${workbookId}/publish-v2/${pipelineId}/operations`);
+      const res = await axios.get<PublishPlanOperationEntity[]>(`/workbook/${workbookId}/publish-v2/${publishPlanId}/operations`);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to list pipeline entries');
+      handleAxiosError(error, 'Failed to list publish plan operations');
       throw error;
     }
   },
 
-  deletePublishPlan: async (workbookId: WorkbookId, pipelineId: string): Promise<void> => {
+  deletePublishPlan: async (workbookId: WorkbookId, publishPlanId: string): Promise<void> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      await axios.delete(`/workbook/${workbookId}/publish-v2/${pipelineId}`);
+      await axios.delete(`/workbook/${workbookId}/publish-v2/${publishPlanId}`);
     } catch (error) {
-      handleAxiosError(error, 'Failed to delete pipeline');
+      handleAxiosError(error, 'Failed to delete publish plan');
       throw error;
     }
   },

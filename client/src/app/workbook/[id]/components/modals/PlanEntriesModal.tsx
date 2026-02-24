@@ -21,31 +21,32 @@ import { AlertTriangleIcon, CodeIcon, ListIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RecordPlanModal } from './RecordPlanModal';
 
-type PlanEntry = PublishPlanOperationEntity;
+type PlanOperation = PublishPlanOperationEntity;
 
 type SortField = 'phase' | 'filePath';
 type SortDir = 'asc' | 'desc';
 
-const PHASE_ORDER: Record<string, number> = { edit: 0, create: 1, delete: 2, backfill: 3 };
+const PHASE_ORDER: Record<string, number> = { edit: 0, create: 1, delete: 2, backfill: 3, 'rename-files': 4 };
 
 const PHASE_COLOR: Record<string, string> = {
   create: 'green',
   edit: 'blue',
   delete: 'red',
   backfill: 'orange',
+  'rename-files': 'violet',
 };
 
 interface PlanEntriesModalProps {
   opened: boolean;
   onClose: () => void;
   workbookId: WorkbookId;
-  pipelineId: string;
+  publishPlanId: string;
 }
 
-function JsonViewerModal({ entry, onClose }: { entry: PlanEntry; onClose: () => void }) {
+function JsonViewerModal({ operation, onClose }: { operation: PlanOperation; onClose: () => void }) {
   const { colorScheme } = useMantineColorScheme();
   const extensions = useMemo(() => [json(), EditorView.lineWrapping, EditorView.editable.of(false)], []);
-  const content = JSON.stringify(entry.content, null, 2);
+  const content = JSON.stringify(operation.content, null, 2);
 
   return (
     <Modal
@@ -55,11 +56,11 @@ function JsonViewerModal({ entry, onClose }: { entry: PlanEntry; onClose: () => 
         <Group gap="xs">
           <CodeIcon size={18} />
           <Title order={5}>Operation JSON</Title>
-          <Badge color={PHASE_COLOR[entry.phase] ?? 'gray'} size="sm">
-            {entry.phase}
+          <Badge color={PHASE_COLOR[operation.phase] ?? 'gray'} size="sm">
+            {operation.phase}
           </Badge>
           <Text size="xs" c="dimmed" ff="monospace">
-            {entry.filePath}
+            {operation.filePath}
           </Text>
         </Group>
       }
@@ -77,32 +78,32 @@ function JsonViewerModal({ entry, onClose }: { entry: PlanEntry; onClose: () => 
   );
 }
 
-export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: PlanEntriesModalProps) {
-  const [entries, setEntries] = useState<PlanEntry[]>([]);
+export function PlanEntriesModal({ opened, onClose, workbookId, publishPlanId }: PlanEntriesModalProps) {
+  const [operations, setOperations] = useState<PlanOperation[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sortField, setSortField] = useState<SortField>('phase');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [viewingEntry, setViewingEntry] = useState<PlanEntry | null>(null);
+  const [viewingOperation, setViewingOperation] = useState<PlanOperation | null>(null);
   const [viewingError, setViewingError] = useState<string | null>(null);
   const [viewingRecordPath, setViewingRecordPath] = useState<string | null>(null);
 
-  const fetchEntries = useCallback(async () => {
+  const fetchOperations = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await workbookApi.listPublishPlanOperations(workbookId, pipelineId);
-      setEntries(data);
+      const data = await workbookApi.listPublishPlanOperations(workbookId, publishPlanId);
+      setOperations(data);
     } catch (error) {
       console.error(error);
     } finally {
       setIsLoading(false);
     }
-  }, [workbookId, pipelineId]);
+  }, [workbookId, publishPlanId]);
 
   useEffect(() => {
     if (opened) {
-      fetchEntries();
+      fetchOperations();
     }
-  }, [opened, fetchEntries]);
+  }, [opened, fetchOperations]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -113,7 +114,7 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
     }
   };
 
-  const sorted = [...entries].sort((a, b) => {
+  const sorted = [...operations].sort((a, b) => {
     let cmp = 0;
     if (sortField === 'phase') {
       cmp = (PHASE_ORDER[a.phase] ?? 99) - (PHASE_ORDER[b.phase] ?? 99);
@@ -133,13 +134,13 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
       <Modal
         opened={opened}
         onClose={onClose}
-        closeOnEscape={!viewingEntry && !viewingError && !viewingRecordPath}
+        closeOnEscape={!viewingOperation && !viewingError && !viewingRecordPath}
         title={
           <Group gap="xs">
             <ListIcon size={20} />
-            <Title order={4}>Plan Entries</Title>
+            <Title order={4}>Plan Operations</Title>
             <Text size="sm" c="dimmed" ff="monospace">
-              {pipelineId.substring(0, 8)}...
+              {publishPlanId.substring(0, 8)}...
             </Text>
           </Group>
         }
@@ -175,16 +176,16 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
                     <Table.Tr>
                       <Table.Td colSpan={5}>
                         <Text size="sm" c="dimmed" ta="center" py="md">
-                          No entries found.
+                          No operations found.
                         </Text>
                       </Table.Td>
                     </Table.Tr>
                   ) : (
-                    sorted.map((entry) => (
-                      <Table.Tr key={entry.id}>
+                    sorted.map((operation) => (
+                      <Table.Tr key={operation.id}>
                         <Table.Td>
-                          <Badge color={PHASE_COLOR[entry.phase] ?? 'gray'} size="sm">
-                            {entry.phase}
+                          <Badge color={PHASE_COLOR[operation.phase] ?? 'gray'} size="sm">
+                            {operation.phase}
                           </Badge>
                         </Table.Td>
                         <Table.Td>
@@ -193,28 +194,34 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
                             ff="monospace"
                             c="blue"
                             style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                            onClick={() => setViewingRecordPath(entry.filePath)}
+                            onClick={() => setViewingRecordPath(operation.filePath)}
                           >
-                            {entry.filePath}
+                            {operation.filePath}
                           </Text>
                         </Table.Td>
                         <Table.Td>
                           <Badge
-                            color={entry.status === 'success' ? 'green' : entry.status === 'failed' ? 'red' : 'gray'}
+                            color={
+                              operation.status === 'success'
+                                ? 'green'
+                                : operation.status === 'failed'
+                                  ? 'red'
+                                  : 'gray'
+                            }
                             variant="outline"
                             size="sm"
                           >
-                            {entry.status}
+                            {operation.status}
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          {entry.error && (
+                          {operation.error && (
                             <Button
                               size="xs"
                               variant="subtle"
                               color="red"
                               leftSection={<AlertTriangleIcon size={12} />}
-                              onClick={() => setViewingError(entry.error!)}
+                              onClick={() => setViewingError(operation.error!)}
                             >
                               View Error
                             </Button>
@@ -225,7 +232,7 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
                             size="xs"
                             variant="subtle"
                             leftSection={<CodeIcon size={12} />}
-                            onClick={() => setViewingEntry(entry)}
+                            onClick={() => setViewingOperation(operation)}
                           >
                             View JSON
                           </Button>
@@ -240,7 +247,7 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
         </Stack>
       </Modal>
 
-      {viewingEntry && <JsonViewerModal entry={viewingEntry} onClose={() => setViewingEntry(null)} />}
+      {viewingOperation && <JsonViewerModal operation={viewingOperation} onClose={() => setViewingOperation(null)} />}
 
       {viewingError && (
         <Modal
@@ -270,7 +277,7 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
           opened
           onClose={() => setViewingRecordPath(null)}
           workbookId={workbookId}
-          pipelineId={pipelineId}
+          publishPlanId={publishPlanId}
           filePath={viewingRecordPath}
         />
       )}

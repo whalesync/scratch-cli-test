@@ -103,6 +103,7 @@ export class PublishPlanBuildService {
       createsPlanned: number;
       deletesPlanned: number;
       backfillsPlanned: number;
+      renameFilesPlanned: number;
       step?: string;
     }) => Promise<void>,
   ): Promise<PublishPlanInfo> {
@@ -125,7 +126,13 @@ export class PublishPlanBuildService {
     const wkbId = workbookId as WorkbookId;
 
     // Running counts — updated as each entry is planned and passed to onProgress
-    const liveCounts = { editsPlanned: 0, createsPlanned: 0, deletesPlanned: 0, backfillsPlanned: 0 };
+    const liveCounts = {
+      editsPlanned: 0,
+      createsPlanned: 0,
+      deletesPlanned: 0,
+      backfillsPlanned: 0,
+      renameFilesPlanned: 0,
+    };
     const reportProgress = async (step?: string) => {
       await onProgress?.({ ...liveCounts, step });
     };
@@ -380,7 +387,7 @@ export class PublishPlanBuildService {
 
         const rawContent = dirtyMap.get(add.path);
         if (rawContent) {
-          const { folderPath } = parsePath(add.path);
+          const { folderPath, filename } = parsePath(add.path);
           const info = await getDataFolderInfo(folderPath);
 
           let contentObj: ParsedContent;
@@ -396,6 +403,16 @@ export class PublishPlanBuildService {
             });
             createCount++;
             liveCounts.createsPlanned++;
+            if (filename.startsWith('scratch_pending_publish_')) {
+              planOperations.push({
+                filePath: add.path,
+                phase: 'rename-files',
+                content: {},
+                dataFolderId: info?.id || null,
+                status: 'pending',
+              });
+              liveCounts.renameFilesPlanned++;
+            }
             continue;
           }
 
@@ -419,6 +436,17 @@ export class PublishPlanBuildService {
           });
           createCount++;
           liveCounts.createsPlanned++;
+
+          if (filename.startsWith('scratch_pending_publish_')) {
+            planOperations.push({
+              filePath: add.path,
+              phase: 'rename-files',
+              content: {},
+              dataFolderId: dataFolderId || null,
+              status: 'pending',
+            });
+            liveCounts.renameFilesPlanned++;
+          }
 
           if (pass2ContentStr !== pass1ContentStr) {
             planOperations.push({

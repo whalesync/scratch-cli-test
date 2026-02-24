@@ -1,4 +1,4 @@
-export type PublishPlanPhase = 'edit' | 'create' | 'delete' | 'backfill';
+export type PublishPlanPhase = 'edit' | 'create' | 'delete' | 'backfill' | 'rename-files';
 
 export interface PipelinePhase {
   type: PublishPlanPhase;

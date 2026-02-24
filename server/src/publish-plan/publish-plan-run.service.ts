@@ -46,10 +46,12 @@ export class PublishPlanRunService {
       createsExecuted: number;
       deletesExecuted: number;
       backfillsExecuted: number;
+      renameFilesExecuted: number;
       editsPlanned: number;
       createsPlanned: number;
       deletesPlanned: number;
       backfillsPlanned: number;
+      renameFilesPlanned: number;
       currentPhase: string;
     }) => Promise<void>,
   ): Promise<PublishPlanInfo> {
@@ -67,7 +69,7 @@ export class PublishPlanRunService {
     const dataFolderSpecCache = new Map<string, BaseJsonTableSpec | null>();
 
     try {
-      const allPhases = ['edit', 'create', 'delete', 'backfill'] as const;
+      const allPhases = ['edit', 'create', 'delete', 'backfill', 'rename-files'] as const;
 
       // Determine starting index based on status.
       // *-running means the phase was interrupted — restart it from the beginning (pending entries only).
@@ -86,9 +88,12 @@ export class PublishPlanRunService {
           case 'deletes-completed':
           case 'backfills-running':
             return 3;
+          case 'backfills-completed':
+          case 'rename-files-running':
+            return 4;
           case 'completed':
           case 'completed-with-errors':
-            return 4; // nothing left to run
+            return 5; // nothing left to run
           default:
             throw new Error(`Cannot run pipeline in status: ${plan.status}`);
         }
@@ -100,16 +105,16 @@ export class PublishPlanRunService {
       }
 
       // Pre-count total entries per phase across all statuses (for stable progress denominator)
-      const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
-      for (const p of ['edit', 'create', 'delete', 'backfill'] as const) {
+      const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
+      for (const p of ['edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
         const count = await this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase: p },
         });
         totalByPhase[p] = count;
       }
       // Seed completed counts from DB so previously-executed phases don't drop to 0 on resume
-      const completedByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
-      for (const p of ['edit', 'create', 'delete', 'backfill'] as const) {
+      const completedByPhase = { edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
+      for (const p of ['edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
         completedByPhase[p] = await this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase: p, status: 'success' },
         });
@@ -121,10 +126,12 @@ export class PublishPlanRunService {
           createsExecuted: completedByPhase.create,
           deletesExecuted: completedByPhase.delete,
           backfillsExecuted: completedByPhase.backfill,
+          renameFilesExecuted: completedByPhase['rename-files'],
           editsPlanned: totalByPhase.edit,
           createsPlanned: totalByPhase.create,
           deletesPlanned: totalByPhase.delete,
           backfillsPlanned: totalByPhase.backfill,
+          renameFilesPlanned: totalByPhase['rename-files'],
           currentPhase,
         });
       };
@@ -133,8 +140,8 @@ export class PublishPlanRunService {
         // Check for cancellation before starting each phase
         abortSignal?.throwIfAborted();
 
-        // Set status to {phase}s-running (e.g. "edits-running", "creates-running")
-        const phasePrefix = currentPhase + 's';
+        // Set status to {phase}s-running (e.g. "edits-running", "creates-running", "rename-files-running")
+        const phasePrefix = currentPhase === 'rename-files' ? 'rename-files' : currentPhase + 's';
         await this.db.client.publishPlan.update({
           where: { id: pipelineId },
           data: { status: `${phasePrefix}-running` },
@@ -267,7 +274,7 @@ export class PublishPlanRunService {
           }
         }
 
-        const completedStatus = currentPhase === 'backfill' ? 'completed' : `${phasePrefix}-completed`;
+        const completedStatus = currentPhase === 'rename-files' ? 'completed' : `${phasePrefix}-completed`;
         await this.db.client.publishPlan.update({
           where: { id: pipelineId },
           data: { status: completedStatus },
@@ -430,6 +437,9 @@ export class PublishPlanRunService {
           break;
         case 'delete':
           await this.dispatchDeleteBatch(entries, connector, tableSpec, workbookId, planId);
+          break;
+        case 'rename-files':
+          // Stub: rename execution not yet implemented — operations are marked success immediately
           break;
         default:
           throw new Error(`Unknown phase: ${phase}`);

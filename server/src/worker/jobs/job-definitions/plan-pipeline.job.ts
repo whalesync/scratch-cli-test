@@ -12,6 +12,7 @@ export type PlanPipelinePublicProgress = {
   createsPlanned: number;
   deletesPlanned: number;
   backfillsPlanned: number;
+  renameFilesPlanned: number;
 };
 
 // ── Job Definition ───────────────────────────────────────────────────
@@ -67,6 +68,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
         createsPlanned: 0,
         deletesPlanned: 0,
         backfillsPlanned: 0,
+        renameFilesPlanned: 0,
       },
       jobProgress: {},
       connectorProgress: {},
@@ -77,6 +79,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       createsPlanned: number;
       deletesPlanned: number;
       backfillsPlanned: number;
+      renameFilesPlanned: number;
       step?: string;
     }) => {
       await checkpoint({
@@ -87,6 +90,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
           createsPlanned: counts.createsPlanned,
           deletesPlanned: counts.deletesPlanned,
           backfillsPlanned: counts.backfillsPlanned,
+          renameFilesPlanned: counts.renameFilesPlanned,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -118,6 +122,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
           createsPlanned: await getPhaseCount('create'),
           deletesPlanned: await getPhaseCount('delete'),
           backfillsPlanned: await getPhaseCount('backfill'),
+          renameFilesPlanned: await getPhaseCount('rename-files'),
         },
         jobProgress: {},
         connectorProgress: {},
@@ -138,6 +143,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
           createsPlanned: 0,
           deletesPlanned: 0,
           backfillsPlanned: 0,
+          renameFilesPlanned: 0,
         },
         jobProgress: {},
         connectorProgress: {},
