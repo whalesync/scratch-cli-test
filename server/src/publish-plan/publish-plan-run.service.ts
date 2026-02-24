@@ -19,7 +19,7 @@ import { parsePath } from './utils';
 type PublishEntry = {
   id: string;
   filePath: string;
-  operation: any;
+  content: ParsedContent;
   remoteRecordId?: string | null;
   dataFolderId?: string | null;
 };
@@ -173,7 +173,7 @@ export class PublishPlanRunService {
           abortSignal?.throwIfAborted();
 
           // Fetch all entries for this table
-          const entries = await this.db.client.publishPlanEntry.findMany({
+          const entries = (await this.db.client.publishPlanEntry.findMany({
             where: {
               planId: pipelineId,
               phase: currentPhase,
@@ -181,7 +181,7 @@ export class PublishPlanRunService {
               dataFolderId,
             },
             orderBy: { id: 'asc' }, // Ensure deterministic order
-          });
+          })) as PublishEntry[];
 
           if (entries.length === 0) continue;
 
@@ -224,9 +224,9 @@ export class PublishPlanRunService {
 
         // --- RETRY LOGIC ---
         // Fetch failed-batch entries for this phase (across all tables)
-        const failedEntries = await this.db.client.publishPlanEntry.findMany({
+        const failedEntries = (await this.db.client.publishPlanEntry.findMany({
           where: { planId: pipelineId, phase: currentPhase, status: 'failed-batch' },
-        });
+        })) as PublishEntry[];
 
         if (failedEntries.length > 0) {
           WSLogger.warn({
@@ -462,16 +462,16 @@ export class PublishPlanRunService {
     planId: string,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
-    const rawOps = entries.map((e) => e.operation as Record<string, unknown>).filter(Boolean);
-    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
+    const rawContents = entries.map((e) => e.content).filter(Boolean);
+    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
 
-    const operations: ParsedContent[] = [];
-    const entriesWithOps: { entry: PublishEntry; resolvedOp: ParsedContent }[] = [];
+    const contents: ParsedContent[] = [];
+    const entriesWithOps: { entry: PublishEntry; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
     for (const entry of entries) {
-      if (!entry.operation) continue;
-      let resolvedOp = resolvedOps[opIndex++] as ParsedContent;
+      if (!entry.content) continue;
+      let resolvedContent = resolvedContents[opIndex++] as ParsedContent;
 
       // Use the entry's stored remoteRecordId if present (edits).
       // If absent (backfill for a newly-created record), look up the real ID from the file index.
@@ -483,20 +483,23 @@ export class PublishPlanRunService {
       if (!remoteId) {
         throw new Error(`Could not resolve remote ID for entry: ${entry.filePath}`);
       }
-      resolvedOp = { ...(resolvedOp as Record<string, unknown>), [idField]: remoteId } as ParsedContent;
+      resolvedContent = {
+        ...resolvedContent,
+        [idField]: remoteId,
+      } as ParsedContent;
 
-      operations.push(resolvedOp);
-      entriesWithOps.push({ entry, resolvedOp });
+      contents.push(resolvedContent);
+      entriesWithOps.push({ entry, resolvedContent: resolvedContent });
     }
 
-    if (operations.length === 0) return;
+    if (contents.length === 0) return;
 
     // Bulk update
-    await connector.updateRecords(tableSpec, operations);
+    await connector.updateRecords(tableSpec, contents);
 
     // Update Refs & Git
     // We can do this in parallel or sequentially. Sequential for safety.
-    const refUpdates = entriesWithOps.map(({ entry, resolvedOp }) => ({
+    const refUpdates = entriesWithOps.map(({ entry, resolvedContent: resolvedOp }) => ({
       path: entry.filePath,
       content: resolvedOp,
     }));
@@ -513,7 +516,7 @@ export class PublishPlanRunService {
     );
 
     // Git Commit (Dirty) - checking if final
-    const dirtySyncBatch = entriesWithOps.map(({ entry, resolvedOp }) => ({
+    const dirtySyncBatch = entriesWithOps.map(({ entry, resolvedContent: resolvedOp }) => ({
       filePath: entry.filePath,
       content: JSON.stringify(resolvedOp, null, 2),
     }));
@@ -532,16 +535,16 @@ export class PublishPlanRunService {
 
     const rawOps = entries
       .map((e) => {
-        if (!e.operation) return null;
-        const content = { ...(e.operation as Record<string, unknown>) };
+        if (!e.content) return null;
+        const entryContent = { ...(e.content as Record<string, unknown>) };
         // Strip temporary ID
-        const idValue = content[idField];
+        const idValue = entryContent[idField];
         if (isScratchPendingPublishId(idValue)) {
-          delete content[idField];
+          delete entryContent[idField];
         }
-        return content;
+        return entryContent;
       })
-      .filter(Boolean) as Record<string, unknown>[];
+      .filter(Boolean) as ParsedContent[];
 
     const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
 
@@ -550,7 +553,7 @@ export class PublishPlanRunService {
 
     let opIndex = 0;
     for (const entry of entries) {
-      if (!entry.operation) continue;
+      if (!entry.content) continue;
       const resolvedOp = resolvedOps[opIndex++];
       operations.push(resolvedOp);
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment

@@ -5,7 +5,7 @@ import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { Badge, Group, Loader, Modal, ScrollArea, SegmentedControl, Stack, Text, Title } from '@mantine/core';
-import { WorkbookId } from '@spinner/shared-types';
+import { PublishPlanEntryEntity, WorkbookId } from '@spinner/shared-types';
 import { Change, diffJson, diffLines } from 'diff';
 import { GitCompareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,15 +15,7 @@ import { MergeEditor } from '../shared/MergeEditor';
    Types
    ================================================================ */
 
-interface PlanEntry {
-  id: string;
-  planId: string;
-  filePath: string;
-  phase: string;
-  operation: unknown;
-  status: string;
-  error?: string | null;
-}
+type PlanEntry = PublishPlanEntryEntity;
 
 type DiffTab = 'userEdit' | 'edit' | 'delete' | 'create' | 'backfill';
 type DiffLayout = 'inline' | 'sideBySide';
@@ -238,7 +230,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, fileP
       const [masterRes, dirtyRes, allEntries] = await Promise.allSettled([
         workbookApi.getRepoFile(workbookId, filePath, 'main'),
         workbookApi.getRepoFile(workbookId, filePath, 'dirty'),
-        workbookApi.listPublishV2PipelineEntries(workbookId, pipelineId),
+        workbookApi.listPublishPlanEntries(workbookId, pipelineId),
       ]);
 
       setMasterJson(masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '');
@@ -264,8 +256,8 @@ export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, fileP
   const getPhaseJson = useCallback(
     (phase: string): string | null => {
       const entry = entries.find((e) => e.phase === phase);
-      if (!entry?.operation) return null;
-      return formatJson(JSON.stringify(entry.operation));
+      if (!entry?.content) return null;
+      return formatJson(JSON.stringify(entry.content));
     },
     [entries],
   );

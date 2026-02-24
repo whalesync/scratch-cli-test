@@ -9,7 +9,7 @@ export class PublishPlanCrudService {
     private readonly bullEnqueuerService: BullEnqueuerService,
   ) {}
 
-  async listPipelines(workbookId: string, connectorAccountId?: string) {
+  async listPublishPlans(workbookId: string, connectorAccountId?: string) {
     const pipelines = await this.db.client.publishPlan.findMany({
       where: {
         workbookId,
@@ -91,14 +91,14 @@ export class PublishPlanCrudService {
     });
   }
 
-  async listPipelineEntries(pipelineId: string) {
+  async listPublishPlanEntries(pipelineId: string) {
     return await this.db.client.publishPlanEntry.findMany({
       where: { planId: pipelineId },
       orderBy: [{ phase: 'asc' }, { filePath: 'asc' }],
     });
   }
 
-  async deletePipeline(pipelineId: string) {
+  async deletePublishPlan(pipelineId: string) {
     return await this.db.client.publishPlan.delete({
       where: { id: pipelineId },
     });

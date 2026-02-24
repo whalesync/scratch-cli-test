@@ -160,8 +160,8 @@ async function bootstrap() {
       console.log('Found edit entry:', editEntry.filePath);
 
       // Check Edit Operation (Should be stripped)
-      if (editEntry.operation) {
-        const json = editEntry.operation as any;
+      if (editEntry.content) {
+        const json = editEntry.content as any;
         if (editEntry.dataFolderId !== dfId) {
           console.error(`FAILURE: dataFolderId mismatch. Expected ${dfId}, got ${editEntry.dataFolderId}`);
         } else {
@@ -182,8 +182,8 @@ async function bootstrap() {
     const backfillEntry = entries.find((e) => e.filePath === existingPath && e.phase === 'backfill');
     if (backfillEntry) {
       // Check Backfill Operation (Should exist and have ref)
-      if (backfillEntry.operation) {
-        const json = backfillEntry.operation as any;
+      if (backfillEntry.content) {
+        const json = backfillEntry.content as any;
         if (json.ref === '@/folder/new.json') {
           console.log('SUCCESS: Backfill has Ref!');
         } else {

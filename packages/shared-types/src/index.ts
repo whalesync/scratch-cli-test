@@ -41,6 +41,7 @@ export * from './dto/workbook/list-files.dto';
 export * from './dto/workbook/pull-files.dto';
 export * from './dto/workbook/update-workbook.dto';
 
+export * from './dto/publish-plan/publish-plan.dto';
 export * from './dto/schedule/create-schedule.dto';
 export * from './dto/schedule/update-schedule.dto';
 export * from './dto/sync/sync-api';

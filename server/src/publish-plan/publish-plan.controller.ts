@@ -5,7 +5,7 @@ import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
-import { PlanPublishV2Dto, RunPublishV2Dto } from './dto/publish-v2.dto';
+import { PublishPlanBuildDto, PublishPlanRunDto } from './dto/publish-v2.dto';
 import { PublishPlanBuildService } from './publish-plan-build.service';
 import { PublishPlanCrudService } from './publish-plan-crud.service';
 import { PublishPlanRunService } from './publish-plan-run.service';
@@ -26,7 +26,7 @@ export class PublishPlanController {
   @Post('plan-job')
   async planAsJob(
     @Param('workbookId') workbookId: WorkbookId,
-    @Body() body: PlanPublishV2Dto,
+    @Body() body: PublishPlanBuildDto,
     @Req() req: RequestWithUser,
   ) {
     const hasDiffs = await this.publishPlanService.hasDiffs(workbookId, body.connectorAccountId);
@@ -65,7 +65,7 @@ export class PublishPlanController {
   @Post('run-job')
   async runAsJob(
     @Param('workbookId') workbookId: WorkbookId,
-    @Body() body: RunPublishV2Dto,
+    @Body() body: PublishPlanRunDto,
     @Req() req: RequestWithUser,
   ) {
     let initialProgress: Progress | undefined;
@@ -91,27 +91,27 @@ export class PublishPlanController {
   // ── Admin / Query ────────────────────────────────────────────────
 
   @Get()
-  async list(@Param('workbookId') workbookId: WorkbookId, @Query('connectorAccountId') connectorAccountId?: string) {
-    return this.publishAdminService.listPipelines(workbookId, connectorAccountId);
+  list(@Param('workbookId') workbookId: WorkbookId, @Query('connectorAccountId') connectorAccountId?: string) {
+    return this.publishAdminService.listPublishPlans(workbookId, connectorAccountId);
   }
 
   @Get(':pipelineId/entries')
-  async entries(@Param('pipelineId') pipelineId: string) {
-    return this.publishAdminService.listPipelineEntries(pipelineId);
+  entries(@Param('pipelineId') pipelineId: string) {
+    return this.publishAdminService.listPublishPlanEntries(pipelineId);
   }
 
   @Get('index/files')
-  async fileIndex(@Param('workbookId') workbookId: WorkbookId) {
+  fileIndex(@Param('workbookId') workbookId: WorkbookId) {
     return this.publishAdminService.listFileIndex(workbookId);
   }
 
   @Get('index/refs')
-  async refIndex(@Param('workbookId') workbookId: WorkbookId) {
+  refIndex(@Param('workbookId') workbookId: WorkbookId) {
     return this.publishAdminService.listRefIndex(workbookId);
   }
 
   @Delete(':pipelineId')
-  async delete(@Param('pipelineId') pipelineId: string) {
-    return this.publishAdminService.deletePipeline(pipelineId);
+  delete(@Param('pipelineId') pipelineId: string) {
+    return this.publishAdminService.deletePublishPlan(pipelineId);
   }
 }

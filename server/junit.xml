@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="44" failures="0" errors="0" time="2.597">
+  <testsuite name="Smoke Tests" errors="0" failures="0" skipped="8" timestamp="2026-02-24T13:30:52" time="0.099" tests="8">
+    <testcase classname="Smoke Tests should authenticate and return current user" name="Smoke Tests should authenticate and return current user" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should obtain agent credentials for the current user" name="Smoke Tests should obtain agent credentials for the current user" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should fetch workbooks and get the first workbook ID" name="Smoke Tests should fetch workbooks and get the first workbook ID" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should fetch table records" name="Smoke Tests should fetch table records" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should create a new session for the workbook using agent JWT" name="Smoke Tests should create a new session for the workbook using agent JWT" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should establish websocket connection and exchange messages" name="Smoke Tests should establish websocket connection and exchange messages" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should accept all suggestions for the table" name="Smoke Tests should accept all suggestions for the table" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Smoke Tests should fetch table records after accepting suggestions and confirm that changes were made" name="Smoke Tests should fetch table records after accepting suggestions and confirm that changes were made" time="0">
+      <skipped/>
+    </testcase>
+  </testsuite>
+  <testsuite name="Service Health" errors="0" failures="0" skipped="2" timestamp="2026-02-24T13:30:52" time="0.017" tests="2">
+    <testcase classname="Service Health Health Endpoint: https://test.scratch.md/api/health - should return 200 status" name="Service Health Health Endpoint: https://test.scratch.md/api/health - should return 200 status" time="0">
+      <skipped/>
+    </testcase>
+    <testcase classname="Service Health Health Endpoint: https://test-api.scratch.md/health - should return 200 status" name="Service Health Health Endpoint: https://test-api.scratch.md/health - should return 200 status" time="0">
+      <skipped/>
+    </testcase>
+  </testsuite>
+  <testsuite name="Sync + Publish E2E Pipeline (Airtable → WordPress)" errors="0" failures="0" skipped="0" timestamp="2026-02-24T13:30:52" time="1.531" tests="1">
+    <testcase classname="Sync + Publish E2E Pipeline (Airtable → WordPress) should sync tags, sync posts with FKs, build publish pipeline, and run publish pipeline" name="Sync + Publish E2E Pipeline (Airtable → WordPress) should sync tags, sync posts with FKs, build publish pipeline, and run publish pipeline" time="0.355">
+    </testcase>
+  </testsuite>
+  <testsuite name="SyncService - fillSyncCaches" errors="0" failures="0" skipped="0" timestamp="2026-02-24T13:30:53" time="0.905" tests="33">
+    <testcase classname="SyncService - fillSyncCaches should populate SyncMatchKeys and SyncRemoteIdMapping for matching records" name="SyncService - fillSyncCaches should populate SyncMatchKeys and SyncRemoteIdMapping for matching records" time="0.056">
+    </testcase>
+    <testcase classname="SyncService - fillSyncCaches should handle empty record lists" name="SyncService - fillSyncCaches should handle empty record lists" time="0.009">
+    </testcase>
+    <testcase classname="SyncService - fillSyncCaches should handle records without matching column values" name="SyncService - fillSyncCaches should handle records without matching column values" time="0.007">
+    </testcase>
+    <testcase classname="SyncService - fillSyncCaches should populate SyncMatchKeys using dot-separated paths for nested fields" name="SyncService - fillSyncCaches should populate SyncMatchKeys using dot-separated paths for nested fields" time="0.014">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should create new records in destination when none exist" name="SyncService - syncTableMapping should create new records in destination when none exist" time="0.064">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should update existing records when they match, merging with existing destination fields" name="SyncService - syncTableMapping should update existing records when they match, merging with existing destination fields" time="0.017">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should handle mixed create and update scenarios" name="SyncService - syncTableMapping should handle mixed create and update scenarios" time="0.02">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should apply column mappings correctly (rename fields)" name="SyncService - syncTableMapping should apply column mappings correctly (rename fields)" time="0.014">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should return error when batch write fails" name="SyncService - syncTableMapping should return error when batch write fails" time="0.013">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should return error when source record is missing match key field" name="SyncService - syncTableMapping should return error when source record is missing match key field" time="0.016">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should return errors for source records with falsy match key values (empty string, null) and skip them" name="SyncService - syncTableMapping should return errors for source records with falsy match key values (empty string, null) and skip them" time="0.013">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should preserve explicitly mapped ID column instead of generating a temp ID" name="SyncService - syncTableMapping should preserve explicitly mapped ID column instead of generating a temp ID" time="0.014">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should format JSON content with Prettier formatting (newlines and proper structure)" name="SyncService - syncTableMapping should format JSON content with Prettier formatting (newlines and proper structure)" time="0.012">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should maintain Prettier formatting consistency across multiple records" name="SyncService - syncTableMapping should maintain Prettier formatting consistency across multiple records" time="0.014">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should create records with dot-separated source column paths (nested source fields)" name="SyncService - syncTableMapping should create records with dot-separated source column paths (nested source fields)" time="0.011">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should create records with dot-separated destination column paths (nested destination fields)" name="SyncService - syncTableMapping should create records with dot-separated destination column paths (nested destination fields)" time="0.012">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should match and update records using dot-separated record matching paths" name="SyncService - syncTableMapping should match and update records using dot-separated record matching paths" time="0.013">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should report error when source record is missing a dot-separated match key field" name="SyncService - syncTableMapping should report error when source record is missing a dot-separated match key field" time="0.008">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should handle dot-separated idColumnRemoteId when parsing records" name="SyncService - syncTableMapping should handle dot-separated idColumnRemoteId when parsing records" time="0.011">
+    </testcase>
+    <testcase classname="SyncService - syncTableMapping should apply string_to_number transformer to convert string values to numbers" name="SyncService - syncTableMapping should apply string_to_number transformer to convert string values to numbers" time="0.014">
+    </testcase>
+    <testcase classname="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve FK to an existing destination record after two-phase sync" name="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve FK to an existing destination record after two-phase sync" time="0.085">
+    </testcase>
+    <testcase classname="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve FK to a newly created record (cross-table)" name="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve FK to a newly created record (cross-table)" time="0.022">
+    </testcase>
+    <testcase classname="SyncService - source_fk_to_dest_fk transformer (two-phase) should handle FK with null value (no error)" name="SyncService - source_fk_to_dest_fk transformer (two-phase) should handle FK with null value (no error)" time="0.015">
+    </testcase>
+    <testcase classname="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve FK with array value" name="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve FK with array value" time="0.023">
+    </testcase>
+    <testcase classname="SyncService - source_fk_to_dest_fk transformer (two-phase) should return error when FK references a non-existent record" name="SyncService - source_fk_to_dest_fk transformer (two-phase) should return error when FK references a non-existent record" time="0.015">
+    </testcase>
+    <testcase classname="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve circular FK references (authors reference posts, posts reference authors)" name="SyncService - source_fk_to_dest_fk transformer (two-phase) should resolve circular FK references (authors reference posts, posts reference authors)" time="0.02">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should resolve a scalar FK to a field value from the referenced record" name="SyncService - lookup_field transformer should resolve a scalar FK to a field value from the referenced record" time="0.068">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should handle null FK value without error" name="SyncService - lookup_field transformer should handle null FK value without error" time="0.015">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should return error when FK references a non-existent record" name="SyncService - lookup_field transformer should return error when FK references a non-existent record" time="0.013">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should resolve a nested field path from the referenced record" name="SyncService - lookup_field transformer should resolve a nested field path from the referenced record" time="0.015">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should resolve array FK values to an array of looked-up field values" name="SyncService - lookup_field transformer should resolve array FK values to an array of looked-up field values" time="0.017">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should resolve a scalar FK from a dot-separated source column path" name="SyncService - lookup_field transformer should resolve a scalar FK from a dot-separated source column path" time="0.016">
+    </testcase>
+    <testcase classname="SyncService - lookup_field transformer should skip in FOREIGN_KEY_MAPPING phase" name="SyncService - lookup_field transformer should skip in FOREIGN_KEY_MAPPING phase" time="0.015">
+    </testcase>
+  </testsuite>
+</testsuites>

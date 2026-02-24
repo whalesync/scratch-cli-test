@@ -219,8 +219,8 @@ async function bootstrap() {
     console.log(`Entries found: ${entries.length}`);
     entries.forEach((e) => {
       console.log(`- ${e.filePath} [${e.phase.toUpperCase()}]`);
-      if (e.phase === 'edit' && e.operation) {
-        const json = e.operation as any;
+      if (e.phase === 'edit' && e.content) {
+        const json = e.content as any;
         console.log('  Content:', JSON.stringify(json));
       }
     });

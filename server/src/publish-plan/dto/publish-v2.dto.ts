@@ -1,10 +1,10 @@
+import type {
+  PublishPlanBuildDto as IPublishPlanBuildDto,
+  PublishPlanRunDto as IPublishPlanRunDto,
+} from '@spinner/shared-types';
 import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
-export class PlanPublishV2Dto {
-  @IsString()
-  @IsNotEmpty()
-  userId!: string;
-
+export class PublishPlanBuildDto implements IPublishPlanBuildDto {
   @IsString()
   @IsOptional()
   connectorAccountId?: string;
@@ -14,7 +14,7 @@ export class PlanPublishV2Dto {
   runAfterPlan?: boolean;
 }
 
-export class RunPublishV2Dto {
+export class PublishPlanRunDto implements IPublishPlanRunDto {
   @IsString()
   @IsNotEmpty()
   pipelineId!: string;

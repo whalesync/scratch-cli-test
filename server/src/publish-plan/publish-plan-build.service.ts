@@ -227,7 +227,7 @@ export class PublishPlanBuildService {
     const planEntries: Array<{
       filePath: string;
       phase: PublishPlanPhase;
-      operation: ParsedContent;
+      content: ParsedContent;
       remoteRecordId?: string | null;
       dataFolderId?: string | null;
       status: string;
@@ -240,7 +240,7 @@ export class PublishPlanBuildService {
           planId: pipelineId,
           filePath: e.filePath,
           phase: e.phase,
-          operation: e.operation,
+          content: e.content,
           remoteRecordId: e.remoteRecordId ?? null,
           dataFolderId: e.dataFolderId ?? null,
           status: e.status,
@@ -295,7 +295,7 @@ export class PublishPlanBuildService {
               planEntries.push({
                 filePath,
                 phase: 'edit',
-                operation: JSON.parse(rawContent) as ParsedContent,
+                content: JSON.parse(rawContent) as ParsedContent,
                 dataFolderId: info?.id,
                 status: 'pending',
               });
@@ -330,7 +330,7 @@ export class PublishPlanBuildService {
             planEntries.push({
               filePath,
               phase: 'edit',
-              operation: pass2ContentObj,
+              content: pass2ContentObj,
               dataFolderId: dataFolderId || null,
               status: 'pending',
             });
@@ -342,7 +342,7 @@ export class PublishPlanBuildService {
               planEntries.push({
                 filePath,
                 phase: 'backfill',
-                operation: pass1ContentObj,
+                content: pass1ContentObj,
                 dataFolderId: dataFolderId || null,
                 status: 'pending',
               });
@@ -390,7 +390,7 @@ export class PublishPlanBuildService {
             planEntries.push({
               filePath: add.path,
               phase: 'create',
-              operation: JSON.parse(rawContent) as ParsedContent,
+              content: JSON.parse(rawContent) as ParsedContent,
               dataFolderId: info?.id || null,
               status: 'pending',
             });
@@ -413,7 +413,7 @@ export class PublishPlanBuildService {
           planEntries.push({
             filePath: add.path,
             phase: 'create',
-            operation: pass2ContentObj,
+            content: pass2ContentObj,
             dataFolderId: dataFolderId || null,
             status: 'pending',
           });
@@ -424,7 +424,7 @@ export class PublishPlanBuildService {
             planEntries.push({
               filePath: add.path,
               phase: 'backfill',
-              operation: pass1ContentObj,
+              content: pass1ContentObj,
               dataFolderId: dataFolderId || null,
               status: 'pending',
             });
@@ -456,7 +456,7 @@ export class PublishPlanBuildService {
       planEntries.push({
         filePath: del.path,
         phase: 'delete',
-        operation: {},
+        content: {},
         remoteRecordId: recordId || null,
         dataFolderId: info?.id || null,
         status: 'pending',

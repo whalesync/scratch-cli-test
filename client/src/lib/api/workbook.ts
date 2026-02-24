@@ -3,6 +3,10 @@ import {
   CreateWorkbookDto,
   DataFolderGroup,
   DataFolderPublishStatus,
+  PublishPlanBuildDto,
+  PublishPlanEntity,
+  PublishPlanEntryEntity,
+  PublishPlanRunDto,
   TestTransformerDto,
   TestTransformerResponse,
   TransformerConfig,
@@ -315,15 +319,12 @@ export const workbookApi = {
     connectorAccountId?: string,
     runAfterPlan?: boolean,
   ): Promise<{ jobId: string; pipelineId: string }> => {
+    const body: PublishPlanBuildDto = { connectorAccountId, runAfterPlan };
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<{ jobId: string; pipelineId: string }>(
         `/workbook/${workbookId}/publish-v2/plan-job`,
-        {
-          userId: 'current',
-          connectorAccountId,
-          runAfterPlan,
-        },
+        body,
       );
       return res.data;
     } catch (error) {
@@ -337,12 +338,10 @@ export const workbookApi = {
     pipelineId: string,
     executeSinglePhase?: boolean,
   ): Promise<{ jobId: string }> => {
+    const body: PublishPlanRunDto = { pipelineId, executeSinglePhase };
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<{ jobId: string }>(`/workbook/${workbookId}/publish-v2/run-job`, {
-        pipelineId,
-        executeSinglePhase,
-      });
+      const res = await axios.post<{ jobId: string }>(`/workbook/${workbookId}/publish-v2/run-job`, body);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to start run job');
@@ -350,12 +349,10 @@ export const workbookApi = {
     }
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  listPublishV2Pipelines: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<any[]> => {
+  listPublishPlans: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<PublishPlanEntity[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const res = await axios.get<any[]>(`/workbook/${workbookId}/publish-v2`, {
+      const res = await axios.get<PublishPlanEntity[]>(`/workbook/${workbookId}/publish-v2`, {
         params: { connectorAccountId },
       });
       return res.data;
@@ -365,12 +362,10 @@ export const workbookApi = {
     }
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  listFileIndex: async (workbookId: WorkbookId): Promise<any[]> => {
+  listFileIndex: async (workbookId: WorkbookId): Promise<unknown[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const res = await axios.get<any[]>(`/workbook/${workbookId}/publish-v2/index/files`);
+      const res = await axios.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/files`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list file index');
@@ -378,12 +373,10 @@ export const workbookApi = {
     }
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  listRefIndex: async (workbookId: WorkbookId): Promise<any[]> => {
+  listRefIndex: async (workbookId: WorkbookId): Promise<unknown[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const res = await axios.get<any[]>(`/workbook/${workbookId}/publish-v2/index/refs`);
+      const res = await axios.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/refs`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list ref index');
@@ -391,12 +384,10 @@ export const workbookApi = {
     }
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  listPublishV2PipelineEntries: async (workbookId: WorkbookId, pipelineId: string): Promise<any[]> => {
+  listPublishPlanEntries: async (workbookId: WorkbookId, pipelineId: string): Promise<PublishPlanEntryEntity[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const res = await axios.get<any[]>(`/workbook/${workbookId}/publish-v2/${pipelineId}/entries`);
+      const res = await axios.get<PublishPlanEntryEntity[]>(`/workbook/${workbookId}/publish-v2/${pipelineId}/entries`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list pipeline entries');
@@ -404,7 +395,7 @@ export const workbookApi = {
     }
   },
 
-  deletePublishV2Pipeline: async (workbookId: WorkbookId, pipelineId: string): Promise<void> => {
+  deletePublishPlan: async (workbookId: WorkbookId, pipelineId: string): Promise<void> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       await axios.delete(`/workbook/${workbookId}/publish-v2/${pipelineId}`);

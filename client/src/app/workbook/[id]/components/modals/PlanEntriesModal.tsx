@@ -15,21 +15,13 @@ import {
   Title,
   useMantineColorScheme,
 } from '@mantine/core';
-import { WorkbookId } from '@spinner/shared-types';
+import { PublishPlanEntryEntity, WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { AlertTriangleIcon, CodeIcon, ListIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RecordPlanModal } from './RecordPlanModal';
 
-interface PlanEntry {
-  id: string;
-  planId: string;
-  filePath: string;
-  phase: string;
-  operation: unknown;
-  status: string;
-  error?: string | null;
-}
+type PlanEntry = PublishPlanEntryEntity;
 
 type SortField = 'phase' | 'filePath';
 type SortDir = 'asc' | 'desc';
@@ -53,7 +45,7 @@ interface PlanEntriesModalProps {
 function JsonViewerModal({ entry, onClose }: { entry: PlanEntry; onClose: () => void }) {
   const { colorScheme } = useMantineColorScheme();
   const extensions = useMemo(() => [json(), EditorView.lineWrapping, EditorView.editable.of(false)], []);
-  const content = JSON.stringify(entry.operation, null, 2);
+  const content = JSON.stringify(entry.content, null, 2);
 
   return (
     <Modal
@@ -97,8 +89,8 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
   const fetchEntries = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await workbookApi.listPublishV2PipelineEntries(workbookId, pipelineId);
-      setEntries(data as PlanEntry[]);
+      const data = await workbookApi.listPublishPlanEntries(workbookId, pipelineId);
+      setEntries(data);
     } catch (error) {
       console.error(error);
     } finally {

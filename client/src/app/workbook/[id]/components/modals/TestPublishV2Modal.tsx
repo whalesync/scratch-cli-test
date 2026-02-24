@@ -20,7 +20,7 @@ import {
 } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
+import { ConnectorAccount, PublishPlanEntity, WorkbookId } from '@spinner/shared-types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import {
@@ -48,24 +48,7 @@ interface TestPublishV2ModalProps {
   workbookId: WorkbookId;
 }
 
-interface PipelineJob {
-  status: string;
-  type: string;
-  progress?: unknown;
-}
-
-// Define interface locally for now as it matches server return
-interface PublishPipeline {
-  id: string;
-  status: string;
-  createdAt: string;
-  connectorAccountId?: string;
-  activeJobId?: string | null;
-  job?: PipelineJob | null;
-  dbJob?: PipelineJob | null;
-  bullJob?: PipelineJob | null;
-  _count?: { entries: number };
-}
+type PublishPipeline = PublishPlanEntity;
 
 const JOB_ACTIVE_STATUSES = new Set(['created', 'active', 'waiting']);
 
@@ -102,7 +85,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
   const fetchPipelines = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await workbookApi.listPublishV2Pipelines(workbookId);
+      const data = await workbookApi.listPublishPlans(workbookId);
       setPipelines(data);
     } catch (error) {
       console.error(error);
@@ -615,7 +598,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                 px={6}
                                 onClick={async () => {
                                   if (confirm('Are you sure you want to delete this pipeline?')) {
-                                    await workbookApi.deletePublishV2Pipeline(workbookId, p.id);
+                                    await workbookApi.deletePublishPlan(workbookId, p.id);
                                     fetchPipelines();
                                   }
                                 }}
