@@ -11,7 +11,6 @@ import {
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
@@ -50,14 +49,7 @@ describe('SyncService - fillSyncCaches', () => {
     scratchGitService = {} as unknown as ScratchGitService;
 
     // Create SyncService instance (workbookService not needed for these tests)
-    syncService = new SyncService(
-      dbService,
-      dataFolderService,
-      {} as PostHogService,
-      scratchGitService,
-      {} as never,
-      { upsertBatch: jest.fn() } as unknown as FileIndexService,
-    );
+    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
 
     // Create test organization
     const org = await prisma.organization.create({
@@ -374,14 +366,7 @@ describe('SyncService - syncTableMapping', () => {
         }),
     } as unknown as ScratchGitService;
 
-    syncService = new SyncService(
-      dbService,
-      dataFolderService,
-      {} as PostHogService,
-      scratchGitService,
-      {} as never,
-      { upsertBatch: jest.fn() } as unknown as FileIndexService,
-    );
+    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
 
     // Create test organization
     const org = await prisma.organization.create({
@@ -1480,14 +1465,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         }),
     } as unknown as ScratchGitService;
 
-    syncService = new SyncService(
-      dbService,
-      dataFolderService,
-      {} as PostHogService,
-      scratchGitService,
-      {} as never,
-      { upsertBatch: jest.fn() } as unknown as FileIndexService,
-    );
+    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
 
     // Create test organization
     const org = await prisma.organization.create({
@@ -2224,14 +2202,7 @@ describe('SyncService - lookup_field transformer', () => {
         }),
     } as unknown as ScratchGitService;
 
-    syncService = new SyncService(
-      dbService,
-      dataFolderService,
-      {} as PostHogService,
-      scratchGitService,
-      {} as never,
-      { upsertBatch: jest.fn() } as unknown as FileIndexService,
-    );
+    syncService = new SyncService(dbService, dataFolderService, {} as PostHogService, scratchGitService, {} as never);
 
     // Create test organization
     const org = await prisma.organization.create({

@@ -602,6 +602,16 @@ export class PublishPlanRunService {
           filename,
           recordId: String(realId),
         });
+      } else if (realId) {
+        WSLogger.error({
+          source: 'PublishRunService.dispatchCreateBatch',
+          message: 'Unexpected ID type in publish create batch',
+          workbookId,
+          filePath: entry.filePath,
+          idField,
+          idType: typeof realId,
+          id: `${realId}`,
+        });
       }
 
       // Update Refs

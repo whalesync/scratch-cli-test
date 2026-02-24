@@ -24,8 +24,6 @@ import zipObjectDeep from 'lodash/zipObjectDeep';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { FileIndexService } from 'src/publish-plan/file-index.service';
-import { parsePath } from 'src/publish-plan/utils';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
@@ -73,7 +71,6 @@ export class SyncService {
     private readonly posthogService: PostHogService,
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookService: WorkbookService,
-    private readonly fileIndexService: FileIndexService,
   ) {}
 
   /**
@@ -645,30 +642,6 @@ export class SyncService {
         result.recordsUpdated = 0;
         return result;
       }
-
-      const fileIndexEntries = filesToWrite
-        .map((file) => {
-          let recordId: string | undefined;
-          try {
-            const parsed = JSON.parse(file.content) as Record<string, unknown>;
-            const idValue = get(parsed, destIdColumn);
-            if (typeof idValue === 'string' && idValue) {
-              recordId = idValue;
-            } else if (typeof idValue === 'number') {
-              recordId = String(idValue);
-            }
-          } catch {
-            // Not valid JSON — skip indexing
-          }
-          if (!recordId) return null;
-          const { folderPath, filename } = parsePath(file.path);
-          return { workbookId, folderPath, filename, recordId };
-        })
-        .filter(Boolean) as { workbookId: string; folderPath: string; filename: string; recordId: string }[];
-
-      if (fileIndexEntries.length > 0) {
-        await this.fileIndexService.upsertBatch(fileIndexEntries);
-      }
     }
 
     return result;
@@ -1074,16 +1047,6 @@ export class SyncService {
   }
 
   /**
-   * Clears all match keys for a sync.
-   * Call this before re-populating match keys for a fresh sync.
-   */
-  private async clearMatchKeys(syncId: SyncId): Promise<void> {
-    await this.db.client.syncMatchKeys.deleteMany({
-      where: { syncId },
-    });
-  }
-
-  /**
    * Clears match keys for a specific sync and DataFolder combination.
    */
   private async clearMatchKeysForDataFolder(syncId: SyncId, dataFolderId: DataFolderId): Promise<void> {
@@ -1099,46 +1062,6 @@ export class SyncService {
     await this.db.client.syncRemoteIdMapping.deleteMany({
       where: { syncId, dataFolderId },
     });
-  }
-
-  /**
-   * Finds match IDs that exist in both source and destination DataFolders.
-   * Returns the set of matchIds that have records on both sides.
-   */
-  private async findMatchingIds(syncId: SyncId, tableMapping: TableMapping): Promise<Set<string>> {
-    // Use raw SQL for the self-join query
-    const results = await this.db.client.$queryRaw<{ matchId: string }[]>`
-      SELECT DISTINCT src."matchId"
-      FROM "SyncMatchKeys" src
-      INNER JOIN "SyncMatchKeys" dest
-        ON src."syncId" = dest."syncId"
-        AND src."matchId" = dest."matchId"
-      WHERE src."syncId" = ${syncId}
-        AND src."dataFolderId" = ${tableMapping.sourceDataFolderId}
-        AND dest."dataFolderId" = ${tableMapping.destinationDataFolderId}
-    `;
-
-    return new Set(results.map((r) => r.matchId));
-  }
-
-  /**
-   * Finds match IDs that exist in source but NOT in destination.
-   * These represent new records that need to be created in the destination.
-   */
-  private async findUnmatchedSourceIds(syncId: SyncId, tableMapping: TableMapping): Promise<Set<string>> {
-    const results = await this.db.client.$queryRaw<{ matchId: string }[]>`
-      SELECT src."matchId"
-      FROM "SyncMatchKeys" src
-      LEFT JOIN "SyncMatchKeys" dest
-        ON src."syncId" = dest."syncId"
-        AND src."matchId" = dest."matchId"
-        AND dest."dataFolderId" = ${tableMapping.destinationDataFolderId}
-      WHERE src."syncId" = ${syncId}
-        AND src."dataFolderId" = ${tableMapping.sourceDataFolderId}
-        AND dest."matchId" IS NULL
-    `;
-
-    return new Set(results.map((r) => r.matchId));
   }
 
   /**

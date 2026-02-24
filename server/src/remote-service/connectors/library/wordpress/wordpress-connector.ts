@@ -128,7 +128,7 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     }));
 
     const batchResponse = await this.client.batchRequest(requests);
-    this.assertBatchValidation(batchResponse);
+    this.assertBatchValidation(batchResponse, requests);
 
     return batchResponse.responses.map((r) => r.body as unknown as ConnectorFile);
   }
@@ -148,7 +148,7 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     }));
 
     const batchResponse = await this.client.batchRequest(requests);
-    this.assertBatchValidation(batchResponse);
+    this.assertBatchValidation(batchResponse, requests);
   }
 
   /**
@@ -165,7 +165,7 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     }));
 
     const batchResponse = await this.client.batchRequest(requests);
-    this.assertBatchValidation(batchResponse);
+    this.assertBatchValidation(batchResponse, requests);
   }
 
   /**
@@ -174,13 +174,15 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
    * check the "failed" field manually. With "require-all-validate", WordPress validates
    * all requests upfront and refuses to execute any if validation fails.
    */
-  private assertBatchValidation(response: WordPressBatchResponse): void {
+  private assertBatchValidation(response: WordPressBatchResponse, requests: WordPressBatchRequestItem[]): void {
     if (response.failed === 'validation') {
       const errors = response.responses
-        .filter((r) => r.status >= 400)
-        .map((r) => {
+        .map((r, i) => ({ r, path: requests[i]?.path }))
+        .filter(({ r }) => r !== null && r?.status >= 400)
+        .map(({ r, path }) => {
           const body = r.body as { message?: string };
-          return body.message || `HTTP ${r.status}`;
+          const msg = body.message || `HTTP ${r.status}`;
+          return path ? `${path}: ${msg}` : msg;
         });
       throw new Error(`WordPress batch failed validation: ${errors.join('; ')}`);
     }
