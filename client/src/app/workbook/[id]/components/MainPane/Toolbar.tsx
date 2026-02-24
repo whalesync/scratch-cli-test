@@ -1,11 +1,6 @@
 'use client';
 
-import {
-  ButtonCompactDanger,
-  ButtonCompactPrimary,
-  ButtonCompactSecondary,
-  IconButtonToolbar,
-} from '@/app/components/base/buttons';
+import { ButtonCompactDanger, ButtonCompactSecondary, IconButtonToolbar } from '@/app/components/base/buttons';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
@@ -16,7 +11,7 @@ import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { trackToggleDisplayMode } from '@/lib/posthog';
 import { useLayoutManagerStore } from '@/stores/layout-manager-store';
-import { getDirtyDataFolderIds } from '@/utils/data-folder-helpers';
+import { useWorkbookEditorUIStore, WorkbookModals } from '@/stores/workbook-editor-store';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Breadcrumbs, Group, Tooltip, useMantineColorScheme } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -50,10 +45,13 @@ export function Toolbar({ workbook }: ToolbarProps) {
   const params = useParams<{ id: string; path?: string[] }>();
   const pathname = usePathname();
   const router = useRouter();
-  const { publishFolders, discardAllChanges, pullFolders } = useActiveWorkbook();
+  const { discardAllChanges, pullFolders } = useActiveWorkbook();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const { user } = useScratchPadUser();
   const openReportABugModal = useLayoutManagerStore((state) => state.openReportABugModal);
+  const activeModal = useWorkbookEditorUIStore((state) => state.activeModal);
+  const showModal = useWorkbookEditorUIStore((state) => state.showModal);
+  const dismissModal = useWorkbookEditorUIStore((state) => state.dismissModal);
   const { dataFolderGroups } = useDataFolders(workbook.id);
 
   const searchParams = useSearchParams();
@@ -84,7 +82,9 @@ export function Toolbar({ workbook }: ToolbarProps) {
   const [cliModalOpened, { open: openCLIModal, close: closeCLIModal }] = useDisclosure(false);
 
   // Publish V2 modal state
-  const [publishV2ModalOpened, { open: openPublishV2Modal, close: closePublishV2Modal }] = useDisclosure(false);
+  const publishV2ModalOpened = activeModal?.type === WorkbookModals.PUBLISH_PLANS;
+  const openPublishV2Modal = () => showModal({ type: WorkbookModals.PUBLISH_PLANS });
+  const closePublishV2Modal = () => dismissModal(WorkbookModals.PUBLISH_PLANS);
 
   // Open table picker after OAuth connection redirect
   useEffect(() => {
@@ -101,7 +101,6 @@ export function Toolbar({ workbook }: ToolbarProps) {
 
   // Action states
   const [isPulling, setIsPulling] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
   const [isDiscarding, setIsDiscarding] = useState(false);
 
   // Dirty files for review mode
@@ -115,31 +114,6 @@ export function Toolbar({ workbook }: ToolbarProps) {
     await pullFolders();
     setIsPulling(false);
   }, [pullFolders]);
-
-  const handlePublishAll = useCallback(() => {
-    openConfirmDialog({
-      title: 'Publish All Changes',
-      message: 'Are you sure you want to publish all changes?',
-      confirmLabel: 'Publish',
-      variant: 'primary',
-      onConfirm: async () => {
-        setIsPublishing(true);
-        try {
-          const dataFolderIds = getDirtyDataFolderIds(dirtyFiles, dataFolderGroups);
-
-          if (dataFolderIds.length !== 0) {
-            await publishFolders(dataFolderIds);
-          } else {
-            console.debug('No dirty data folders found to publish');
-          }
-        } catch (error) {
-          console.debug('Failed to publish changes:', error);
-        } finally {
-          setIsPublishing(false);
-        }
-      },
-    });
-  }, [dirtyFiles, dataFolderGroups, openConfirmDialog, publishFolders]);
 
   const handleDiscardAll = useCallback(() => {
     openConfirmDialog({
@@ -279,15 +253,15 @@ export function Toolbar({ workbook }: ToolbarProps) {
         {/* Review mode buttons */}
         {isReviewPage && dirtyFiles.length > 0 && (
           <>
-            <ButtonCompactPrimary
+            {/* <ButtonCompactPrimary
               leftSection={<CloudUploadIcon size={12} />}
               onClick={handlePublishAll}
               loading={isPublishing}
             >
               Publish all
-            </ButtonCompactPrimary>
+            </ButtonCompactPrimary> */}
             <ButtonCompactSecondary onClick={openPublishV2Modal} leftSection={<CloudUploadIcon size={12} />}>
-              Publish V2 (beta)
+              Publish all
             </ButtonCompactSecondary>
             <ButtonCompactDanger
               leftSection={<RotateCcwIcon size={12} />}

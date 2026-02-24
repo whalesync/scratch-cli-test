@@ -24,6 +24,8 @@ export type PlanPipelineJobDefinition = JobDefinitionBuilder<
     userId: string;
     pipelineId: string;
     connectorAccountId?: string;
+    folderPath?: string;
+    filePath?: string;
   },
   PlanPipelinePublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -103,6 +105,8 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
         data.userId,
         data.connectorAccountId,
         data.pipelineId,
+        data.folderPath,
+        data.filePath,
         onProgress,
       );
 

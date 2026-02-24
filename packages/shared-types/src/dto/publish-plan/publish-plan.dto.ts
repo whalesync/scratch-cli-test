@@ -3,6 +3,8 @@
 export interface PublishPlanBuildDto {
   connectorAccountId?: string;
   runAfterPlan?: boolean;
+  folderPath?: string;
+  filePath?: string;
 }
 
 export interface PublishPlanRunDto {

@@ -33,6 +33,11 @@ export function getDirtyDataFolderIds(dirtyFiles: DirtyFile[], dataFolderGroups:
 /** Finds the DataFolder that a file belongs to by matching its parent path. */
 export function findDataFolderForFile(folders: DataFolder[], filePath: string): DataFolder | undefined {
   const lastIndex = filePath.lastIndexOf('/');
-  const folderPath = filePath.substring(0, lastIndex);
-  return folders.find((f) => f.path === folderPath);
+  const folderPath = lastIndex === -1 ? '' : filePath.substring(0, lastIndex);
+  const normalizedFolderPath = folderPath.startsWith('/') ? folderPath.substring(1) : folderPath;
+
+  return folders.find((f) => {
+    const fPath = f.path && f.path.startsWith('/') ? f.path.substring(1) : f.path;
+    return fPath === normalizedFolderPath;
+  });
 }

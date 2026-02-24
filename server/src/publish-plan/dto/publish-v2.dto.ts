@@ -12,6 +12,14 @@ export class PublishPlanBuildDto implements IPublishPlanBuildDto {
   @IsBoolean()
   @IsOptional()
   runAfterPlan?: boolean;
+
+  @IsString()
+  @IsOptional()
+  folderPath?: string;
+
+  @IsString()
+  @IsOptional()
+  filePath?: string;
 }
 
 export class PublishPlanRunDto implements IPublishPlanRunDto {

@@ -2,10 +2,12 @@
 
 import { ButtonCompactDanger, ButtonCompactPrimary, ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
-import { useActiveWorkbook } from '@/hooks/use-active-workbook';
+import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useFileByPath } from '@/hooks/use-file-path';
 import { workbookApi } from '@/lib/api/workbook';
+import { useActiveJobsStore } from '@/stores/active-jobs-store';
+import { useWorkbookEditorUIStore, WorkbookModals } from '@/stores/workbook-editor-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
@@ -27,7 +29,6 @@ interface ReviewFileViewerProps {
 export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps) {
   const router = useRouter();
   const { file: fileResponse, isLoading, updateFile, refreshFile } = useFileByPath(workbookId, filePath);
-  const { publishFolders } = useActiveWorkbook();
   const { folders } = useDataFolders(workbookId);
   const { colorScheme } = useMantineColorScheme();
 
@@ -44,6 +45,7 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
 
   // Confirm dialog
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
+  const showModal = useWorkbookEditorUIStore((state) => state.showModal);
 
   const originalContent = fileResponse?.file?.originalContent ?? '';
 
@@ -117,24 +119,33 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
     try {
       const folder = findDataFolderForFile(folders, filePath);
 
-      if (!folder) {
-        console.debug('Could not find data folder for file:', filePath);
+      if (!folder || !folder.connectorAccountId) {
+        console.debug('Could not find data folder or connector account for file:', filePath);
+        ScratchpadNotifications.error({ message: 'Could not resolve connection for this file' });
         return;
       }
 
-      // Publish via the data folder API which creates a job
-      await publishFolders([folder.id]);
+      // Publish just this file directly using planPublishV2 with runAfterPlan=true and filePath properly set
+      const result = await workbookApi.planPublishV2(workbookId, folder.connectorAccountId, true, undefined, filePath);
+
+      if (result?.jobId) {
+        useActiveJobsStore.getState().trackJobIds([result.jobId]);
+        ScratchpadNotifications.info({ message: 'Initiated publish job for this file' });
+      }
 
       // Refresh the file data
       await refreshFile();
-      // Navigate back to review page since this file is now published
+      // Navigate back to review page since this file is now publishing
       router.push(`/workbook/${workbookId}/review`);
+
+      // Open the publish modal immediately
+      showModal({ type: WorkbookModals.PUBLISH_PLANS });
     } catch (error) {
       console.debug('Failed to publish file:', error);
     } finally {
       setIsPublishing(false);
     }
-  }, [filePath, workbookId, refreshFile, router, folders, publishFolders]);
+  }, [filePath, workbookId, refreshFile, router, showModal, folders]);
 
   // Keyboard shortcut: Cmd+S / Ctrl+S to save
   useEffect(() => {

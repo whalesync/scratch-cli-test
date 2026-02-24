@@ -1,3 +1,4 @@
+import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { progressApi } from '@/lib/api/progress';
@@ -17,7 +18,6 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { useInterval } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { ConnectorAccount, PublishPlanEntity, WorkbookId } from '@spinner/shared-types';
@@ -421,12 +421,25 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
                           </Text>
                         </Table.Td>
                         <Table.Td>
-                          <Text size="xs" c={p.connectorAccountId ? undefined : 'dimmed'}>
-                            {p.connectorAccountId
-                              ? (connectorMap.get(p.connectorAccountId)?.displayName ??
-                                p.connectorAccountId.substring(0, 8) + '…')
-                              : 'All'}
-                          </Text>
+                          <Group gap="xs" wrap="nowrap">
+                            {/* {p.connectorAccount?.service ? getServiceIcon(p.connectorAccount.service, 14) : null} */}
+                            <Text size="xs" c={p.connectorAccountId ? undefined : 'dimmed'}>
+                              {p.connectorAccountId
+                                ? (connectorMap.get(p.connectorAccountId)?.displayName ??
+                                  p.connectorAccountId.substring(0, 8) + '…')
+                                : 'All'}
+                            </Text>
+
+                            {/* {p.filePath ? (
+                              <Tooltip label={`Scoped to file: ${p.filePath}`} position="top" withArrow>
+                                <FileIcon size={14} color="gray" />
+                              </Tooltip>
+                            ) : p.folderPath ? (
+                              <Tooltip label={`Scoped to folder: ${p.folderPath}`} position="top" withArrow>
+                                <FolderIcon size={14} color="gray" />
+                              </Tooltip>
+                            ) : null} */}
+                          </Group>
                         </Table.Td>
                         <Table.Td>
                           <Badge

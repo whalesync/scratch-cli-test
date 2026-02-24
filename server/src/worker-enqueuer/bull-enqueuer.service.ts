@@ -139,6 +139,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
     pipelineId: string,
     connectorAccountId?: string,
     runAfterPlan?: boolean,
+    folderPath?: string,
+    filePath?: string,
     initialProgress?: import('src/types/progress').Progress,
   ): Promise<Job> {
     const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
@@ -149,6 +151,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'publish',
       ...(connectorAccountId && { connectorAccountId }),
       ...(runAfterPlan && { runAfterPlan }),
+      ...(folderPath && { folderPath }),
+      ...(filePath && { filePath }),
     };
     await this.jobService.createJob({
       userId: actor.userId,

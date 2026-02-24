@@ -6,6 +6,7 @@ import { create } from 'zustand';
 export enum WorkbookModals {
   RENAME_WORKBOOK = 'rename_workbook',
   CONFIRM_DELETE = 'confirm-delete',
+  PUBLISH_PLANS = 'publish_plans',
 }
 
 export type WorkbookModalParams =
@@ -13,7 +14,8 @@ export type WorkbookModalParams =
   | {
       type: WorkbookModals.CONFIRM_DELETE;
       workbookId: WorkbookId /** Provide explicitly to be safe from race conditions */;
-    };
+    }
+  | { type: WorkbookModals.PUBLISH_PLANS };
 
 export interface WorkbookError {
   // Limit the scope of the error to a specific area of the UI. If not provided it will display on all workbook views

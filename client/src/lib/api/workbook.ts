@@ -318,8 +318,10 @@ export const workbookApi = {
     workbookId: WorkbookId,
     connectorAccountId?: string,
     runAfterPlan?: boolean,
+    folderPath?: string,
+    filePath?: string,
   ): Promise<{ jobId: string; publishPlanId: string }> => {
-    const body: PublishPlanBuildDto = { connectorAccountId, runAfterPlan };
+    const body: PublishPlanBuildDto = { connectorAccountId, runAfterPlan, folderPath, filePath };
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<{ jobId: string; publishPlanId: string }>(
@@ -384,10 +386,15 @@ export const workbookApi = {
     }
   },
 
-  listPublishPlanOperations: async (workbookId: WorkbookId, publishPlanId: string): Promise<PublishPlanOperationEntity[]> => {
+  listPublishPlanOperations: async (
+    workbookId: WorkbookId,
+    publishPlanId: string,
+  ): Promise<PublishPlanOperationEntity[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<PublishPlanOperationEntity[]>(`/workbook/${workbookId}/publish-v2/${publishPlanId}/operations`);
+      const res = await axios.get<PublishPlanOperationEntity[]>(
+        `/workbook/${workbookId}/publish-v2/${publishPlanId}/operations`,
+      );
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list publish plan operations');

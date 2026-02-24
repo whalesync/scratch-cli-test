@@ -34,6 +34,8 @@ export type PublishJobDefinition = JobDefinitionBuilder<
     pipelineId: string;
     connectorAccountId?: string;
     runAfterPlan?: boolean;
+    folderPath?: string;
+    filePath?: string;
     executeSinglePhase?: boolean; // If only executing a single stage
   },
   PublishPublicProgress,
@@ -74,6 +76,9 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       workbookId: data.workbookId,
       jobId,
     });
+    console.log(
+      `[DEBUG Worker] PublishJobHandler running with filePath: ${data.filePath}, folderPath: ${data.folderPath}`,
+    );
 
     const zeroCounts = {
       editsExecuted: 0,
@@ -153,6 +158,8 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           data.userId,
           data.connectorAccountId,
           data.pipelineId,
+          data.folderPath,
+          data.filePath,
           onPlanProgress,
         );
         pipelineId = plan.pipelineId;

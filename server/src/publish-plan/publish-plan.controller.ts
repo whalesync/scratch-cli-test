@@ -29,7 +29,15 @@ export class PublishPlanController {
     @Body() body: PublishPlanBuildDto,
     @Req() req: RequestWithUser,
   ) {
-    const hasDiffs = await this.publishPlanService.hasDiffs(workbookId, body.connectorAccountId);
+    console.log(
+      `[DEBUG Controller] /plan-job called. body.filePath: ${body.filePath}, body.folderPath: ${body.folderPath}`,
+    );
+    const hasDiffs = await this.publishPlanService.hasDiffs(
+      workbookId,
+      body.connectorAccountId,
+      body.folderPath,
+      body.filePath,
+    );
     if (!hasDiffs) {
       return { jobId: null, pipelineId: null };
     }
@@ -39,6 +47,8 @@ export class PublishPlanController {
       workbookId,
       req.user.id,
       body.connectorAccountId,
+      // body.folderPath,
+      // body.filePath,
     );
 
     let initialProgress: Progress | undefined;
@@ -56,6 +66,8 @@ export class PublishPlanController {
       pipelineId,
       body.connectorAccountId,
       body.runAfterPlan,
+      body.folderPath,
+      body.filePath,
       initialProgress,
     );
     await this.publishPlanService.setActiveJob(pipelineId, job.id!.toString());

@@ -33,6 +33,8 @@ export class PublishPlanBuildService {
     workbookId: string,
     userId: string,
     connectorAccountId?: string,
+    // folderPath?: string,
+    // filePath?: string,
   ): Promise<{ pipelineId: string; branchName: string }> {
     const pipelineId = randomUUID();
     const branchName = `publish/${userId}/${pipelineId}`;
@@ -71,9 +73,24 @@ export class PublishPlanBuildService {
     });
   }
 
-  async hasDiffs(workbookId: string, connectorAccountId?: string): Promise<boolean> {
+  async hasDiffs(
+    workbookId: string,
+    connectorAccountId?: string,
+    folderPath?: string,
+    filePath?: string,
+  ): Promise<boolean> {
     const wkbId = workbookId as WorkbookId;
-    const changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{ path: string; status: string }>;
+    let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{ path: string; status: string }>;
+    if (changes.length === 0) return false;
+
+    if (filePath) {
+      changes = changes.filter((c) => c.path === filePath);
+    } else if (folderPath) {
+      const normalizedFolder = folderPath.startsWith('/') ? folderPath.substring(1) : folderPath;
+      const prefix = normalizedFolder.endsWith('/') ? normalizedFolder : normalizedFolder + '/';
+      changes = changes.filter((c) => c.path.startsWith(prefix));
+    }
+
     if (changes.length === 0) return false;
     if (!connectorAccountId) return true;
 
@@ -98,6 +115,8 @@ export class PublishPlanBuildService {
     userId: string,
     connectorAccountId?: string,
     existingPipelineId?: string,
+    folderPath?: string,
+    filePath?: string,
     onProgress?: (counts: {
       editsPlanned: number;
       createsPlanned: number;
@@ -125,6 +144,8 @@ export class PublishPlanBuildService {
 
     const wkbId = workbookId as WorkbookId;
 
+    console.log(`[DEBUG] buildPipeline called with folderPath: ${folderPath}, filePath: ${filePath}`);
+
     // Running counts — updated as each entry is planned and passed to onProgress
     const liveCounts = {
       editsPlanned: 0,
@@ -137,13 +158,20 @@ export class PublishPlanBuildService {
       await onProgress?.({ ...liveCounts, step });
     };
 
-    // 2. Get diff between main and dirty
     let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{
       path: string;
       status: FileDiffStatus;
     }>;
 
     await reportProgress(`Diffing branches (${changes.length} changes found)`);
+
+    if (filePath) {
+      changes = changes.filter((c) => c.path === filePath);
+    } else if (folderPath) {
+      const normalizedFolder = folderPath.startsWith('/') ? folderPath.substring(1) : folderPath;
+      const prefix = normalizedFolder.endsWith('/') ? normalizedFolder : normalizedFolder + '/';
+      changes = changes.filter((c) => c.path.startsWith(prefix));
+    }
 
     if (connectorAccountId) {
       // Find all data folders for this connector in this workbook
