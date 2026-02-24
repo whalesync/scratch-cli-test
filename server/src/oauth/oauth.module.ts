@@ -6,6 +6,7 @@ import { UserModule } from 'src/users/users.module';
 import { DbModule } from '../db/db.module';
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
+import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
@@ -18,6 +19,7 @@ import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
   controllers: [OAuthController],
   providers: [
     OAuthService,
+    AirtableOAuthProvider,
     NotionOAuthProvider,
     ShopifyOAuthProvider,
     SupabaseOAuthProvider,

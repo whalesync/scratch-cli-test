@@ -75,6 +75,7 @@ export const ServiceNamingConventions: Record<Service, ServiceNamingConvention> 
     records: 'records',
     bases: 'bases',
     logo: 'airtable.svg',
+    oauthLabel: 'OAuth',
     pushOperationName: 'Publish',
     pullOperationName: 'Download',
   },
