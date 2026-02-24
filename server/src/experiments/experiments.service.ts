@@ -46,6 +46,14 @@ const IN_MEMORY_FLAGS = {
     disabled: false,
     defaultVariant: 'off',
   },
+  [UserFlag.ENABLE_AIRTABLE_OAUTH]: {
+    variants: {
+      on: true,
+      off: false,
+    },
+    disabled: false,
+    defaultVariant: 'on',
+  },
   [UserFlag.ENABLE_WEBFLOW_OAUTH]: {
     variants: {
       on: true,

@@ -25,6 +25,7 @@ export interface UserExperimentFlags {
   DEV_TOOLBOX: boolean;
   CONNECTOR_LIST: string[];
   ENABLE_TOKEN_LIMIT_WARNINGS: boolean;
+  ENABLE_AIRTABLE_OAUTH: boolean;
   ENABLE_WEBFLOW_OAUTH: boolean;
   ENABLE_SHOPIFY_OAUTH: boolean;
   ENABLE_CREATE_BUG_REPORT: boolean;

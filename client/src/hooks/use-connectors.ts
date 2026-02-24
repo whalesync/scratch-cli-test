@@ -14,14 +14,11 @@ export const useConnectors = () => {
   const getDefaultAuthMethod = useCallback(
     (service: Service): AuthMethod => {
       // Services that support OAuth
-      const oauthSupportedServices = [
-        Service.NOTION,
-        Service.AIRTABLE,
-        Service.YOUTUBE,
-        Service.WIX_BLOG,
-        Service.SUPABASE,
-      ];
+      const oauthSupportedServices = [Service.NOTION, Service.YOUTUBE, Service.WIX_BLOG, Service.SUPABASE];
 
+      if (service === Service.AIRTABLE && user?.experimentalFlags?.ENABLE_AIRTABLE_OAUTH) {
+        oauthSupportedServices.push(Service.AIRTABLE);
+      }
       if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
         oauthSupportedServices.push(Service.WEBFLOW);
       }
@@ -49,19 +46,20 @@ export const useConnectors = () => {
         return 'oauth'; // Default fallback
       }
     },
-    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH],
+    [
+      user?.experimentalFlags?.ENABLE_AIRTABLE_OAUTH,
+      user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH,
+      user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH,
+    ],
   );
 
   const getSupportedAuthMethods = useCallback(
     (service: Service): AuthMethod[] => {
-      const oauthSupportedServices = [
-        Service.NOTION,
-        Service.AIRTABLE,
-        Service.YOUTUBE,
-        Service.WIX_BLOG,
-        Service.SUPABASE,
-      ];
+      const oauthSupportedServices = [Service.NOTION, Service.YOUTUBE, Service.WIX_BLOG, Service.SUPABASE];
 
+      if (service === Service.AIRTABLE && user?.experimentalFlags?.ENABLE_AIRTABLE_OAUTH) {
+        oauthSupportedServices.push(Service.AIRTABLE);
+      }
       if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
         oauthSupportedServices.push(Service.WEBFLOW);
       }
@@ -93,7 +91,11 @@ export const useConnectors = () => {
       }
       return methods;
     },
-    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH],
+    [
+      user?.experimentalFlags?.ENABLE_AIRTABLE_OAUTH,
+      user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH,
+      user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH,
+    ],
   );
 
   // For admins show all services. Dedupe in case of overlap between flags and internal services.
