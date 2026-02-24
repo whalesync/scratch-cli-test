@@ -847,7 +847,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                       <>
                         <Checkbox
                           label="Exclude page content"
-                          description="Skip downloading the body content of Notion pages. This will increase download speed."
+                          description="Skip pulling the body content of Notion pages. This will increase pulling speed."
                           checked={notionOptions.get(entry.tableKey)?.excludePageContent ?? false}
                           onChange={(e) =>
                             handleNotionOptionChange(entry.tableKey, 'excludePageContent', e.currentTarget.checked)
@@ -881,9 +881,9 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         </ScrollArea.Autosize>
 
         <Group justify="space-between" mt="md">
-          <Tooltip label="Immediately start downloading files for the new tables after saving">
+          <Tooltip label="Immediately start pulling files for the new tables after saving">
             <Switch
-              label="Download files"
+              label="Pull files"
               checked={triggerPull}
               onChange={(e) => setTriggerPull(e.currentTarget.checked)}
               size="xs"
