@@ -3,7 +3,7 @@ import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
-import { Alert, Group, ModalProps, Stack, TextInput } from '@mantine/core';
+import { Alert, Group, ModalProps, PasswordInput, Stack, TextInput } from '@mantine/core';
 import { AuthType, ConnectorAccount, Service } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
@@ -127,12 +127,11 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
                 value={updatedUsername}
                 onChange={(e) => setUpdatedUsername(e.currentTarget.value)}
               />
-              <TextInput
+              <PasswordInput
                 label="Application password"
                 placeholder="Enter your application password here"
                 value={updatedPassword}
                 onChange={(e) => setUpdatedPassword(e.currentTarget.value)}
-                type="password"
               />
             </Group>
             <TextInput
@@ -153,13 +152,12 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
               value={updatedShopDomain}
               onChange={(e) => setUpdatedShopDomain(e.currentTarget.value)}
             />
-            <TextInput
+            <PasswordInput
               label="Admin API Access Token"
               placeholder="shpat_..."
               description="Create a custom app in Settings > Apps > Develop apps to get an access token"
               value={updatedApiKey}
               onChange={(e) => setUpdatedApiKey(e.currentTarget.value)}
-              type="password"
             />
           </Stack>
         )}
@@ -173,35 +171,32 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
               value={updatedDomain}
               onChange={(e) => setUpdatedDomain(e.currentTarget.value)}
             />
-            <TextInput
+            <PasswordInput
               label="API Key"
               placeholder="Enter your Moco API key"
               description="Generate an API key in your Moco account under Integrations"
               value={updatedApiKey}
               onChange={(e) => setUpdatedApiKey(e.currentTarget.value)}
-              type="password"
             />
           </Stack>
         )}
 
         {isUserProvidedParams && connectorAccount?.service === Service.POSTGRES && (
-          <TextInput
+          <PasswordInput
             label="Connection String"
             placeholder="postgres://user:password@host:5432/database"
             value={updatedConnectionString}
             onChange={(e) => setUpdatedConnectionString(e.currentTarget.value)}
-            type="password"
           />
         )}
 
         {isUserProvidedParams && connectorAccount?.service === Service.SUPABASE && (
-          <TextInput
+          <PasswordInput
             label="Connection String"
             placeholder="postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
             description="Find this in your Supabase project under Settings > Database > Connection string"
             value={updatedConnectionString}
             onChange={(e) => setUpdatedConnectionString(e.currentTarget.value)}
-            type="password"
           />
         )}
 
@@ -211,7 +206,7 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
           connectorAccount?.service !== Service.MOCO &&
           connectorAccount?.service !== Service.POSTGRES &&
           connectorAccount?.service !== Service.SUPABASE && (
-            <TextInput
+            <PasswordInput
               label="API Key"
               value={updatedApiKey}
               placeholder="Enter your new API key, secret or token"

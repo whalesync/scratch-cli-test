@@ -12,6 +12,7 @@ import {
   Group,
   Text as MantineText,
   ModalProps,
+  PasswordInput,
   Radio,
   SimpleGrid,
   Stack,
@@ -314,12 +315,11 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                 value={customClientId}
                 onChange={(e) => setCustomClientId(e.currentTarget.value)}
               />
-              <TextInput
+              <PasswordInput
                 label="OAuth Client Secret"
                 placeholder="Enter your app's client secret"
                 value={customClientSecret}
                 onChange={(e) => setCustomClientSecret(e.currentTarget.value)}
-                type="password"
               />
             </>
           )}
@@ -341,13 +341,12 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                 value={shopDomain}
                 onChange={(e) => setShopDomain(e.currentTarget.value)}
               />
-              <TextInput
+              <PasswordInput
                 label="Admin API Access Token"
                 placeholder="shpat_..."
                 description="Create a custom app in Settings > Apps > Develop apps to get an access token"
                 value={newApiKey}
                 onChange={(e) => setNewApiKey(e.currentTarget.value)}
-                type="password"
               />
             </Stack>
           )}
@@ -360,12 +359,11 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                   value={username}
                   onChange={(e) => setUsername(e.currentTarget.value)}
                 />
-                <TextInput
+                <PasswordInput
                   label="Application password"
                   placeholder="Enter your application password here"
                   value={password}
                   onChange={(e) => setPassword(e.currentTarget.value)}
-                  type="password"
                 />
               </Group>
               <TextInput
@@ -385,33 +383,30 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                 value={domain}
                 onChange={(e) => setDomain(e.currentTarget.value)}
               />
-              <TextInput
+              <PasswordInput
                 label="API Key"
                 placeholder="Enter your Moco API key"
                 description="Generate an API key in your Moco account under Integrations"
                 value={newApiKey}
                 onChange={(e) => setNewApiKey(e.currentTarget.value)}
-                type="password"
               />
             </Stack>
           )}
           {authMethod === 'user_provided_params' && newService === Service.POSTGRES && (
-            <TextInput
+            <PasswordInput
               label="Connection String"
               placeholder="postgres://user:password@host:5432/database"
               value={connectionString}
               onChange={(e) => setConnectionString(e.currentTarget.value)}
-              type="password"
             />
           )}
           {authMethod === 'user_provided_params' && newService === Service.SUPABASE && (
-            <TextInput
+            <PasswordInput
               label="Connection String"
               placeholder="postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
               description="Find this in your Supabase project under Settings > Database > Connection string"
               value={connectionString}
               onChange={(e) => setConnectionString(e.currentTarget.value)}
-              type="password"
             />
           )}
           {newService &&
@@ -422,12 +417,11 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
             newService !== Service.SUPABASE &&
             getSupportedAuthMethods(newService).includes('user_provided_params') &&
             authMethod === 'user_provided_params' && (
-              <TextInput
+              <PasswordInput
                 label="API Key"
                 placeholder="Enter API Key"
                 value={newApiKey}
                 onChange={(e) => setNewApiKey(e.currentTarget.value)}
-                type="password"
               />
             )}
         </Stack>
