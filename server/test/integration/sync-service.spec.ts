@@ -1402,6 +1402,62 @@ describe('SyncService - syncTableMapping', () => {
     expect(file2Content.price_cents).toBe(99.99);
     expect(file2Content.qty).toBe(7);
   });
+
+  it('should skip writing file and not count as updated when no fields actually changed', async () => {
+    // Source and destination have identical mapped field values
+    const sourceFiles = [
+      {
+        folderId: sourceFolderId,
+        path: 'src/file1.json',
+        content: '{"id": "rec1", "email": "john@example.com", "name": "John"}',
+      },
+    ];
+
+    // Destination already has the same values for the mapped fields (plus extra unmapped fields)
+    const destFiles = [
+      {
+        folderId: destFolderId,
+        path: 'dest/item1.json',
+        content: '{"id": "dest1", "email": "john@example.com", "name": "John", "phone": "555-1234"}',
+      },
+    ];
+
+    (dataFolderService.getAllFileContentsByFolderId as jest.Mock).mockImplementation((_workbookIdArg, folderIdArg) => {
+      if (folderIdArg === sourceFolderId) {
+        return Promise.resolve(sourceFiles);
+      } else if (folderIdArg === destFolderId) {
+        return Promise.resolve(destFiles);
+      }
+      return Promise.resolve([]);
+    });
+
+    const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'email', destinationColumnId: 'email' },
+      { sourceColumnId: 'name', destinationColumnId: 'name' },
+    ];
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings,
+      recordMatching: {
+        sourceColumnId: 'email',
+        destinationColumnId: 'email',
+      },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    // No actual data changed, so it should not be counted as an update
+    expect(result.recordsCreated).toBe(0);
+    expect(result.recordsUpdated).toBe(0);
+    expect(result.errors).toHaveLength(0);
+
+    // No files should have been written
+    expect(writtenFiles).toHaveLength(0);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(scratchGitService.commitFilesToBranch).not.toHaveBeenCalled();
+  });
 });
 
 describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
@@ -2738,13 +2794,11 @@ describe('SyncService - lookup_field transformer', () => {
 
     const fkResult = await syncService.syncTableMapping(syncId, postsMapping, workbookId, actor, 'FOREIGN_KEY_MAPPING');
 
-    // Should succeed — lookup_field skipped, no errors
+    // Should succeed — lookup_field skipped, no actual changes, so no file written
     expect(fkResult.errors).toHaveLength(0);
-    expect(fkResult.recordsUpdated).toBe(1);
+    expect(fkResult.recordsUpdated).toBe(0);
 
-    // The category_name should be preserved from the existing destination record
-    const phase2Files = writtenFiles.slice(1); // Files from the FK_MAPPING phase
-    const phase2Content = JSON.parse(phase2Files[0].content) as Record<string, unknown>;
-    expect(phase2Content.category_name).toBe('Technology');
+    // No additional files should have been written since nothing changed
+    expect(writtenFiles).toHaveLength(1); // Only the file from the DATA phase
   });
 });

@@ -1,7 +1,7 @@
 import { DataFolderId, SyncId } from '@spinner/shared-types';
 import get from 'lodash/get';
 import { DbService } from 'src/db/db.service';
-import { LookupTools } from './transformer.types';
+import { FkMappingResult, LookupTools } from './transformer.types';
 
 /**
  * Factory function to create LookupTools for a specific sync context.
@@ -11,23 +11,30 @@ import { LookupTools } from './transformer.types';
  */
 export function createLookupTools(db: DbService, syncId: SyncId): LookupTools {
   return {
-    async getDestinationPathForSourceFk(
+    async getDestinationMappingForSourceFk(
       sourceFkValue: string,
       referencedDataFolderId: DataFolderId,
-    ): Promise<string | null> {
-      // Look up the destination file path for the source FK value.
+    ): Promise<FkMappingResult | null> {
+      // Look up the destination file path and remote ID for the source FK value.
       // The FK value is a remote ID from the source system, and we need to find
-      // the corresponding destination file path using SyncRemoteIdMapping.
+      // the corresponding destination mapping using SyncRemoteIdMapping.
       const mapping = await db.client.syncRemoteIdMapping.findFirst({
         where: {
           syncId,
           dataFolderId: referencedDataFolderId,
           sourceRemoteId: sourceFkValue,
         },
-        select: { destinationFilePath: true },
+        select: { destinationFilePath: true, destinationRemoteId: true },
       });
 
-      return mapping?.destinationFilePath ?? null;
+      if (!mapping?.destinationFilePath) {
+        return null;
+      }
+
+      return {
+        destinationFilePath: mapping.destinationFilePath,
+        destinationRemoteId: mapping.destinationRemoteId ?? null,
+      };
     },
 
     async lookupFieldFromFkRecord(

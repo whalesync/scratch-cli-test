@@ -1,14 +1,27 @@
 import { SourceFkToDestFkOptions } from '@spinner/shared-types';
 import { sourceFkToDestFkTransformer } from '../implementations/source-fk-to-dest-fk.transformer';
-import { LookupTools, SyncRecord, TransformContext } from '../transformer.types';
+import { FkMappingResult, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
 
 const REFERENCED_FOLDER = 'dfd_dest_authors' as const;
 
-function createLookupTools(mapping: Record<string, string> = {}): LookupTools {
+function createLookupTools(
+  mapping: Record<string, { destinationFilePath: string; destinationRemoteId: string | null }> = {},
+): LookupTools {
   return {
-    getDestinationPathForSourceFk: jest.fn((fk: string) => Promise.resolve(mapping[fk] ?? null)),
+    getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
+      return Promise.resolve(mapping[fk] ?? null);
+    }),
     lookupFieldFromFkRecord: jest.fn(),
   };
+}
+
+/** Shorthand: creates lookup tools from a simple fk→filePath mapping (destinationRemoteId defaults to null) */
+function createSimpleLookupTools(mapping: Record<string, string> = {}): LookupTools {
+  const full: Record<string, { destinationFilePath: string; destinationRemoteId: string | null }> = {};
+  for (const [key, value] of Object.entries(mapping)) {
+    full[key] = { destinationFilePath: value, destinationRemoteId: null };
+  }
+  return createLookupTools(full);
 }
 
 function createContext(
@@ -16,9 +29,10 @@ function createContext(
   lookupTools: LookupTools,
   options: SourceFkToDestFkOptions = { referencedDataFolderId: REFERENCED_FOLDER },
   phase: 'DATA' | 'FOREIGN_KEY_MAPPING' = 'FOREIGN_KEY_MAPPING',
+  destinationValue?: unknown,
 ): TransformContext {
   const sourceRecord: SyncRecord = { id: 'test', filePath: '/test.json', fields: { fk: sourceValue } };
-  return { sourceRecord, sourceFieldPath: 'fk', sourceValue, lookupTools, options, phase };
+  return { sourceRecord, sourceFieldPath: 'fk', sourceValue, lookupTools, destinationValue, options, phase };
 }
 
 describe('sourceFkToDestFkTransformer', () => {
@@ -28,38 +42,38 @@ describe('sourceFkToDestFkTransformer', () => {
 
   it('should skip during DATA phase', async () => {
     const result = await sourceFkToDestFkTransformer.transform(
-      createContext('src_1', createLookupTools(), undefined, 'DATA'),
+      createContext('src_1', createSimpleLookupTools(), undefined, 'DATA'),
     );
     expect(result).toEqual({ success: true, skip: true });
   });
 
   describe('null/undefined handling', () => {
     it('should return null for null input', async () => {
-      const result = await sourceFkToDestFkTransformer.transform(createContext(null, createLookupTools()));
+      const result = await sourceFkToDestFkTransformer.transform(createContext(null, createSimpleLookupTools()));
       expect(result).toEqual({ success: true, value: null });
     });
 
     it('should return null for undefined input', async () => {
-      const result = await sourceFkToDestFkTransformer.transform(createContext(undefined, createLookupTools()));
+      const result = await sourceFkToDestFkTransformer.transform(createContext(undefined, createSimpleLookupTools()));
       expect(result).toEqual({ success: true, value: null });
     });
   });
 
   describe('scalar resolution', () => {
     it('should resolve a string FK', async () => {
-      const lookup = createLookupTools({ src_1: 'dest-authors/alice.json' });
+      const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
       expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
     });
 
     it('should resolve a numeric FK', async () => {
-      const lookup = createLookupTools({ '42': 'dest-authors/bob.json' });
+      const lookup = createSimpleLookupTools({ '42': 'dest-authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(42, lookup));
       expect(result).toEqual({ success: true, value: '@/dest-authors/bob.json' });
     });
 
     it('should fail when FK cannot be resolved', async () => {
-      const result = await sourceFkToDestFkTransformer.transform(createContext('missing', createLookupTools()));
+      const result = await sourceFkToDestFkTransformer.transform(createContext('missing', createSimpleLookupTools()));
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain('Could not resolve foreign key "missing"');
@@ -69,19 +83,19 @@ describe('sourceFkToDestFkTransformer', () => {
 
   describe('array resolution', () => {
     it('should resolve an array of FKs', async () => {
-      const lookup = createLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup));
       expect(result).toEqual({ success: true, value: ['@/authors/alice.json', '@/authors/bob.json'] });
     });
 
     it('should skip null/undefined elements in arrays', async () => {
-      const lookup = createLookupTools({ src_1: 'authors/alice.json' });
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', null, undefined], lookup));
       expect(result).toEqual({ success: true, value: ['@/authors/alice.json'] });
     });
 
     it('should fail if any array element cannot be resolved', async () => {
-      const lookup = createLookupTools({ src_1: 'authors/alice.json' });
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'missing'], lookup));
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -90,7 +104,7 @@ describe('sourceFkToDestFkTransformer', () => {
     });
 
     it('should fail for non-string/number array elements', async () => {
-      const lookup = createLookupTools();
+      const lookup = createSimpleLookupTools();
       const result = await sourceFkToDestFkTransformer.transform(createContext([{ id: 1 }], lookup));
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -101,7 +115,7 @@ describe('sourceFkToDestFkTransformer', () => {
 
   describe('error cases', () => {
     it('should fail for object input', async () => {
-      const result = await sourceFkToDestFkTransformer.transform(createContext({ id: 1 }, createLookupTools()));
+      const result = await sourceFkToDestFkTransformer.transform(createContext({ id: 1 }, createSimpleLookupTools()));
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain('Expected string, number, or array');
@@ -109,11 +123,104 @@ describe('sourceFkToDestFkTransformer', () => {
     });
 
     it('should fail for boolean input', async () => {
-      const result = await sourceFkToDestFkTransformer.transform(createContext(true, createLookupTools()));
+      const result = await sourceFkToDestFkTransformer.transform(createContext(true, createSimpleLookupTools()));
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain('Expected string, number, or array');
       }
+    });
+  });
+
+  describe('skip when destination value is unchanged', () => {
+    it('should skip when destination already has the @/path reference (scalar)', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/dest-authors/alice.json'),
+      );
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should skip when destination has raw destination record ID (scalar)', async () => {
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: '99' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '99'),
+      );
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should skip for numeric FK with numeric destination value', async () => {
+      const lookup = createLookupTools({
+        '42': { destinationFilePath: 'dest-authors/bob.json', destinationRemoteId: '100' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(42, lookup, undefined, 'FOREIGN_KEY_MAPPING', 100),
+      );
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should skip for arrays where all elements match @/path', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
+          '@/authors/alice.json',
+          '@/authors/bob.json',
+        ]),
+      );
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should skip for arrays where all elements match destination remote IDs', async () => {
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'authors/alice.json', destinationRemoteId: '10' },
+        src_2: { destinationFilePath: 'authors/bob.json', destinationRemoteId: '20' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['10', '20']),
+      );
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should NOT skip when value differs', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', '@/dest-authors/bob.json'),
+      );
+      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+    });
+
+    it('should NOT skip when destinationValue is undefined (new record)', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'dest-authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', undefined),
+      );
+      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+    });
+
+    it('should NOT skip when array lengths differ', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', ['@/authors/alice.json']),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: ['@/authors/alice.json', '@/authors/bob.json'],
+      });
+    });
+
+    it('should NOT skip when only some array elements match', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['src_1', 'src_2'], lookup, undefined, 'FOREIGN_KEY_MAPPING', [
+          '@/authors/alice.json',
+          '@/authors/WRONG.json',
+        ]),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: ['@/authors/alice.json', '@/authors/bob.json'],
+      });
     });
   });
 });

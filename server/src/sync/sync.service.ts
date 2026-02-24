@@ -19,6 +19,7 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
+import isEqual from 'lodash/isEqual';
 import set from 'lodash/set';
 import zipObjectDeep from 'lodash/zipObjectDeep';
 import { DbService } from 'src/db/db.service';
@@ -590,6 +591,12 @@ export class SyncService {
               existingRecord?.fields,
             );
 
+            // Skip writing if the transformed fields are identical to the existing record —
+            // this avoids unnecessary file writes that produce only whitespace changes.
+            if (existingRecord && isEqual(transformedFields, existingRecord.fields)) {
+              continue;
+            }
+
             result.recordsUpdated++;
             result.updatedPaths.push(destinationPath);
           }
@@ -1102,7 +1109,7 @@ export class SyncService {
     // Stub lookup tools — FK lookups are not available in preview
     const notAvailableInPreviewError = new Error('Lookup is not available in preview');
     const previewLookupTools: LookupTools = {
-      getDestinationPathForSourceFk: () => Promise.reject(notAvailableInPreviewError),
+      getDestinationMappingForSourceFk: () => Promise.reject(notAvailableInPreviewError),
       lookupFieldFromFkRecord: () => Promise.reject(notAvailableInPreviewError),
     };
 
@@ -1574,9 +1581,10 @@ export async function transformRecordAsync(
           sourceFieldPath: mapping.sourceColumnId,
           sourceValue,
           lookupTools: lookupTools ?? {
-            getDestinationPathForSourceFk: () => Promise.resolve(null),
+            getDestinationMappingForSourceFk: () => Promise.resolve(null),
             lookupFieldFromFkRecord: () => Promise.resolve(null),
           },
+          destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
           options: mapping.transformer.options ?? {},
           phase,
         };

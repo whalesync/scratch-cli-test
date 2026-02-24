@@ -442,7 +442,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       expect(updatedFile).toBeDefined();
       const parsed = JSON.parse(updatedFile!) as ParsedRecord;
       expect(parsed.id).toBe(100 + i); // Original destination ID preserved
-      expect(parsed.name).toBe(`Tag Match ${i}`);
+      expect(parsed.name).toBe(`Tag Match ${i} Updated`);
       expect(parsed.slug).toBe(`tag-match-${i}`);
     }
 
@@ -737,12 +737,13 @@ function generateTagData(): {
   const destTags: { path: string; content: string }[] = [];
 
   // Matched tags (exist in both source and destination)
+  // Source name differs from dest name so the sync produces a real update
   for (let i = 0; i < MATCH_COUNT; i++) {
     sourceTags.push({
       path: `src-tags/rec_tag_match_${i}.json`,
       content: JSON.stringify({
         id: `rec_tag_match_${i}`,
-        fields: { Name: `Tag Match ${i}`, Slug: `tag-match-${i}` },
+        fields: { Name: `Tag Match ${i} Updated`, Slug: `tag-match-${i}` },
       }),
     });
     destTags.push({
@@ -786,6 +787,7 @@ function generatePostData(): {
   const allSourceTagIds = [...matchedTagIds, ...createdTagIds];
 
   // Matched posts
+  // Source title differs from dest title so the sync produces a real update
   for (let i = 0; i < MATCH_COUNT; i++) {
     const tagRefs = [allSourceTagIds[i % allSourceTagIds.length]];
     if (allSourceTagIds.length > 1) {
@@ -795,7 +797,7 @@ function generatePostData(): {
       path: `src-posts/rec_post_match_${i}.json`,
       content: JSON.stringify({
         id: `rec_post_match_${i}`,
-        fields: { Title: `Post Match ${i}`, Slug: `post-match-${i}`, Tags: tagRefs },
+        fields: { Title: `Post Match ${i} Updated`, Slug: `post-match-${i}`, Tags: tagRefs },
       }),
     });
     destPosts.push({

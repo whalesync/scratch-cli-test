@@ -162,22 +162,27 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
   }
 
   /**
-   * Throws if WordPress rejected the entire batch at validation time.
+   * Throws if any request in the batch returned an error status.
    * The batch endpoint always returns HTTP 207 (axios won't throw), so we must
-   * check the "failed" field manually. With "require-all-validate", WordPress validates
-   * all requests upfront and refuses to execute any if validation fails.
+   * check response statuses manually. With "require-all-validate", WordPress validates
+   * all requests upfront and refuses to execute any if validation fails (failed:"validation").
+   * But even when validation passes (failed:"none"), individual requests can still fail
+   * at execution time (e.g. term_exists for duplicate taxonomy terms).
    */
   private assertBatchValidation(response: WordPressBatchResponse, requests: WordPressBatchRequestItem[]): void {
-    if (response.failed === 'validation') {
-      const errors = response.responses
-        .map((r, i) => ({ r, path: requests[i]?.path }))
-        .filter(({ r }) => r !== null && r?.status >= 400)
-        .map(({ r, path }) => {
-          const body = r.body as { message?: string };
-          const msg = body.message || `HTTP ${r.status}`;
-          return path ? `${path}: ${msg}` : msg;
-        });
-      throw new Error(`WordPress batch failed validation: ${errors.join('; ')}`);
+    const errors = response.responses
+      .map((r, i) => ({ r, path: requests[i]?.path }))
+      .filter(({ r }) => r !== null && r?.status >= 400)
+      .map(({ r, path }) => {
+        const body = r.body as { message?: string };
+        const msg = body.message || `HTTP ${r.status}`;
+        return path ? `${path}: ${msg}` : msg;
+      });
+
+    if (errors.length > 0) {
+      const prefix =
+        response.failed === 'validation' ? 'WordPress batch failed validation' : 'WordPress batch request failed';
+      throw new Error(`${prefix}: ${errors.join('; ')}`);
     }
   }
 

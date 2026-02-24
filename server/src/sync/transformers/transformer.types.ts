@@ -13,19 +13,30 @@ export interface SyncRecord {
 }
 
 /**
+ * Result of resolving a source FK to a destination mapping.
+ */
+export interface FkMappingResult {
+  destinationFilePath: string;
+  destinationRemoteId: string | null;
+}
+
+/**
  * Tools for looking up related records during transformation.
  * These are used by FK-based transformers to resolve relationships.
  */
 export interface LookupTools {
   /**
-   * Gets the destination remote ID for a source foreign key value.
+   * Gets the destination file path and remote ID for a source foreign key value.
    * Uses SyncRemoteIdMapping to find the corresponding destination record.
    *
    * @param sourceFkValue - The foreign key value from the source record
    * @param referencedDataFolderId - The DataFolder that contains the referenced records
-   * @returns The destination remote ID, or null if not found
+   * @returns The destination mapping, or null if not found
    */
-  getDestinationPathForSourceFk(sourceFkValue: string, referencedDataFolderId: DataFolderId): Promise<string | null>;
+  getDestinationMappingForSourceFk(
+    sourceFkValue: string,
+    referencedDataFolderId: DataFolderId,
+  ): Promise<FkMappingResult | null>;
 
   /**
    * Looks up a field value from a record referenced by a foreign key.
@@ -58,6 +69,9 @@ export interface TransformContext {
 
   /** Tools for FK lookups (only available for lookup-based transformers) */
   lookupTools: LookupTools;
+
+  /** The current destination value for the mapped field (if record already exists) */
+  destinationValue?: unknown;
 
   /** Transformer-specific configuration options */
   options: TransformerOptions;

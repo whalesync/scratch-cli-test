@@ -9,7 +9,7 @@ function createContext(sourceValue: unknown, options: StringToNumberOptions = {}
     sourceFieldPath: 'value',
     sourceValue,
     lookupTools: {
-      getDestinationPathForSourceFk: jest.fn(),
+      getDestinationMappingForSourceFk: jest.fn(),
       lookupFieldFromFkRecord: jest.fn(),
     },
     options,
