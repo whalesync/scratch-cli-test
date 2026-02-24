@@ -11,5 +11,6 @@ export type OAuthStatePayload = {
   returnPage?: string;
   connectorAccountId?: string; // used to identify the connector account to reauthorize
   shopDomain?: string;
+  codeVerifier?: string;
   ts: number;
 };

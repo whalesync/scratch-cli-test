@@ -13,7 +13,7 @@ import {
   ValidatedOAuthInitiateOptionsDto,
   WorkbookId,
 } from '@spinner/shared-types';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { capitalize } from 'lodash';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { WSLogger } from 'src/logger';
@@ -91,6 +91,14 @@ export class OAuthService {
     }
 
     // Embed connection method and optional custom client info into state (base64 JSON)
+    // Generate PKCE values for providers that require it (e.g. Airtable)
+    let codeVerifier: string | undefined;
+    let codeChallenge: string | undefined;
+    if (service === 'AIRTABLE') {
+      codeVerifier = randomBytes(96).toString('base64url');
+      codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+    }
+
     const statePayload: OAuthStatePayload = {
       redirectPrefix: options.redirectPrefix,
       userId: actor.userId,
@@ -104,6 +112,7 @@ export class OAuthService {
       returnPage: options.returnPage,
       connectorAccountId: options.connectorAccountId,
       shopDomain: options.shopDomain,
+      codeVerifier,
       ts: Date.now(),
     };
     const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
@@ -111,6 +120,7 @@ export class OAuthService {
     const authUrl = provider.generateAuthUrl(actor.userId, state, {
       clientId: options.connectionMethod === 'OAUTH_CUSTOM' ? options.customClientId : undefined,
       shopDomain: options.shopDomain,
+      codeChallenge,
     });
 
     return { authUrl };
@@ -175,6 +185,7 @@ export class OAuthService {
       clientId: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientId : undefined,
       clientSecret: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientSecret : undefined,
       shopDomain: statePayload.shopDomain,
+      codeVerifier: statePayload.codeVerifier,
     });
 
     if (existingConnectorAccount) {

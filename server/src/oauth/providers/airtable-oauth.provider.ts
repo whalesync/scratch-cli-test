@@ -14,7 +14,11 @@ export class AirtableOAuthProvider implements OAuthProvider {
     this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
   }
 
-  generateAuthUrl(userId: string, state: string): string {
+  generateAuthUrl(
+    userId: string,
+    state: string,
+    overrides?: { clientId?: string; shopDomain?: string; codeChallenge?: string },
+  ): string {
     const authUrl = new URL('https://airtable.com/oauth2/v1/authorize');
     authUrl.searchParams.set('client_id', this.clientId);
     authUrl.searchParams.set('redirect_uri', this.redirectUri);
@@ -22,22 +26,38 @@ export class AirtableOAuthProvider implements OAuthProvider {
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('scope', 'data.records:read data.records:write schema.bases:read');
 
+    if (overrides?.codeChallenge) {
+      authUrl.searchParams.set('code_challenge', overrides.codeChallenge);
+      authUrl.searchParams.set('code_challenge_method', 'S256');
+    }
+
     return authUrl.toString();
   }
 
-  async exchangeCodeForTokens(code: string): Promise<OAuthTokenResponse> {
+  async exchangeCodeForTokens(
+    code: string,
+    overrides?: { clientId?: string; clientSecret?: string; shopDomain?: string; codeVerifier?: string },
+  ): Promise<OAuthTokenResponse> {
+    const params: Record<string, string> = {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: this.redirectUri,
+      client_id: this.clientId,
+    };
+
+    if (overrides?.codeVerifier) {
+      params.code_verifier = overrides.codeVerifier;
+    }
+
+    const encodedCredentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+
     const response = await fetch('https://airtable.com/oauth2/v1/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${encodedCredentials}`,
       },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: this.redirectUri,
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
-      }),
+      body: new URLSearchParams(params),
     });
 
     if (!response.ok) {
@@ -49,16 +69,18 @@ export class AirtableOAuthProvider implements OAuthProvider {
   }
 
   async refreshTokens(refreshToken: string): Promise<OAuthTokenResponse> {
+    const encodedCredentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+
     const response = await fetch('https://airtable.com/oauth2/v1/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${encodedCredentials}`,
       },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: refreshToken,
         client_id: this.clientId,
-        client_secret: this.clientSecret,
       }),
     });
 

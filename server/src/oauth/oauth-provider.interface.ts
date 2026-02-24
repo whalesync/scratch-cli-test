@@ -2,14 +2,18 @@ export interface OAuthProvider {
   /**
    * Generate OAuth authorization URL for the service
    */
-  generateAuthUrl(userId: string, state: string, overrides?: { clientId?: string; shopDomain?: string }): string;
+  generateAuthUrl(
+    userId: string,
+    state: string,
+    overrides?: { clientId?: string; shopDomain?: string; codeChallenge?: string },
+  ): string;
 
   /**
    * Exchange authorization code for access token
    */
   exchangeCodeForTokens(
     code: string,
-    overrides?: { clientId?: string; clientSecret?: string; shopDomain?: string },
+    overrides?: { clientId?: string; clientSecret?: string; shopDomain?: string; codeVerifier?: string },
   ): Promise<OAuthTokenResponse>;
 
   /**

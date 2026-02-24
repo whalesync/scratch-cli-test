@@ -14,5 +14,6 @@ export type OAuthStatePayload = {
   returnPage?: string;
   connectorAccountId?: string;
   shopDomain?: string;
+  codeVerifier?: string;
   ts: number;
 };
