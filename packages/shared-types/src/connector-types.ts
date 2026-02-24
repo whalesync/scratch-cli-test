@@ -17,6 +17,14 @@ export type EntityId = {
   remoteId: string[];
 };
 
+// A set of options that can be passed to the pullRecordFiles method.
+// filter: a connector specific expression that represents the filter to be applied to the records.
+// Any other options are unique to connector implementation.
+export interface ConnectorPullOptions {
+  filter?: string | undefined;
+  [key: string]: unknown;
+}
+
 /** Types of columns we support. Add more if needed. */
 export enum PostgresColumnType {
   TEXT = 'text',

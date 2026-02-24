@@ -6,20 +6,13 @@
  */
 
 import { type TSchema } from '@sinclair/typebox';
-import { Service } from '@spinner/shared-types';
+import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
-import {
-  BaseJsonTableSpec,
-  ConnectorErrorDetails,
-  ConnectorFile,
-  ConnectorPullOptions,
-  EntityId,
-  TablePreview,
-} from '../../types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { ShopifyApiClient, ShopifyError } from './shopify-api-client';
 import { ShopifyCredentials } from './shopify-types';

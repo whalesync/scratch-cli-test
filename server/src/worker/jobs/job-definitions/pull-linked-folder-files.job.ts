@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
-import { DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
+import { type ConnectorPullOptions, DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
-import type { BaseJsonTableSpec, ConnectorFile, ConnectorPullOptions } from '../../../remote-service/connectors/types';
+import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports

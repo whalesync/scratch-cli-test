@@ -33,7 +33,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import type { ConnectorAccount, DataFolderId, WorkbookId } from '@spinner/shared-types';
+import type { ConnectorAccount, ConnectorPullOptions, DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { Service, TableDiscoveryMode } from '@spinner/shared-types';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -126,7 +126,6 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       id: DataFolderId;
       name: string;
       tableId: string[];
-      filter: string | null;
       options: Record<string, unknown> | null;
     }[] = [];
     dataFolderGroups.forEach((group) => {
@@ -136,7 +135,6 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
             id: folder.id,
             name: folder.name,
             tableId: folder.tableId,
-            filter: folder.filter,
             options: folder.options,
           });
         }
@@ -182,8 +180,9 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           if (!disabledTableKeys.has(key)) {
             linked.add(key);
           }
-          if (folder.filter) {
-            initialFilters.set(key, folder.filter);
+          const folderFilter = (folder.options as ConnectorPullOptions)?.filter;
+          if (folderFilter) {
+            initialFilters.set(key, folderFilter);
           }
         }
       });
@@ -487,7 +486,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         const folderKey = folder.tableId.join('/');
         if (!selectedTableIds.has(folderKey)) continue; // being removed
         const newFilter = filterValues.get(folderKey)?.trim() || null;
-        const existingFilter = folder.filter || null;
+        const existingFilter = (folder.options as ConnectorPullOptions)?.filter || null;
         const newOptions = buildOptionsForTable(folderKey);
         const filterChanged = newFilter !== existingFilter;
         const optionsChanged =

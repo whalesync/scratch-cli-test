@@ -1,17 +1,10 @@
-import { Service } from '@spinner/shared-types';
+import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import TurndownService from 'turndown';
 import { Connector } from '../../connector';
 import { extractErrorMessageFromAxiosError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
-import {
-  BaseJsonTableSpec,
-  ConnectorErrorDetails,
-  ConnectorFile,
-  ConnectorPullOptions,
-  EntityId,
-  TablePreview,
-} from '../../types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import {
   WORDPRESS_BATCH_SIZE,
   WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS,

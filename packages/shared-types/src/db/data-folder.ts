@@ -25,7 +25,6 @@ export interface DataFolder {
   lastSyncTime: string | null;
   version: number;
   tableId: string[];
-  filter: string | null;
   options: Record<string, unknown> | null;
   schedules: Schedule[];
 }

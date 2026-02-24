@@ -1,4 +1,4 @@
-import { Service } from '@spinner/shared-types';
+import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import type { DraftPost } from '@wix/auto_sdk_blog_draft-posts';
 import { draftPosts } from '@wix/blog';
 import { members } from '@wix/members';
@@ -6,14 +6,7 @@ import { createClient, OAuthStrategy, TokenRole } from '@wix/sdk';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../../connector';
-import {
-  BaseJsonTableSpec,
-  ConnectorErrorDetails,
-  ConnectorFile,
-  ConnectorPullOptions,
-  EntityId,
-  TablePreview,
-} from '../../../types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../../types';
 import { HtmlToWixConverter } from '../rich-content/html-to-ricos';
 import { createTurndownService } from '../rich-content/markdown-helpers';
 import { WixToHtmlConverter } from '../rich-content/ricos-to-html';

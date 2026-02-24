@@ -6,7 +6,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { Checkbox, NumberInput, Stack, Textarea, TextInput } from '@mantine/core';
-import type { DataFolder } from '@spinner/shared-types';
+import type { ConnectorPullOptions, DataFolder } from '@spinner/shared-types';
 import { Service } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
@@ -37,13 +37,13 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
 
   useEffect(() => {
     if (opened) {
-      setFilter(folder.filter ?? '');
-      const opts = folder.options ?? {};
+      const opts = (folder.options ?? {}) as ConnectorPullOptions;
+      setFilter(opts.filter ?? '');
       setAirtableView((opts.view as string) ?? '');
       setNotionExcludePageContent((opts.excludePageContent as boolean) ?? false);
       setNotionChildContentMaxDepth((opts.childContentMaxDepth as number) ?? '');
     }
-  }, [opened, folder.filter, folder.options]);
+  }, [opened, folder.options]);
 
   const buildOptions = (): Record<string, unknown> | undefined => {
     if (isAirtable) {

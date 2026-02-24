@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConnectorAccount } from '@prisma/client';
 import {
+  ConnectorPullOptions,
   createDataFolderId,
   DataFolderGroup,
   DataFolderId,
@@ -23,7 +24,7 @@ import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, ConnectorPullOptions } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
 import { FilesService } from './files.service';

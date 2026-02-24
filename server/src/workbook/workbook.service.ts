@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  ConnectorPullOptions,
   createWorkbookId,
   DataFolderId,
   PullFilesResponseDto,
@@ -19,7 +20,6 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { WorkbookEventService } from './workbook-event.service';
 
 import { Schedule } from '@prisma/client';
-import { ConnectorPullOptions } from 'src/remote-service/connectors/types';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
 

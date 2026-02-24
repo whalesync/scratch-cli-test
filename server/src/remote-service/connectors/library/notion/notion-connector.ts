@@ -11,19 +11,12 @@ import {
   CreatePageParameters,
   QueryDatabaseParameters,
 } from '@notionhq/client/build/src/api-endpoints';
-import { Service, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
 import { Connector } from '../../connector';
 import { ErrorMessageTemplates } from '../../error';
-import {
-  BaseJsonTableSpec,
-  ConnectorErrorDetails,
-  ConnectorFile,
-  ConnectorPullOptions,
-  EntityId,
-  TablePreview,
-} from '../../types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { createNotionBlockDiff } from './conversion/notion-block-diff';
 import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor';
 import { NotionMarkdownConverter } from './conversion/notion-markdown-converter';

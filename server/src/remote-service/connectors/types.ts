@@ -56,11 +56,3 @@ export type RecordErrorsMetadata = {
   /** Indexed by the WSID of the field */
   byField?: Record<string, { message: string; severity: 'warning' | 'error' }[]>;
 };
-
-// a set of options that can be passed to the pullRecordFiles method
-// filter: a connector specific expression that represents the filter to be applied to the records
-// Any other options are unique to connector implementation.
-export interface ConnectorPullOptions {
-  filter?: string | undefined;
-  [key: string]: unknown;
-}

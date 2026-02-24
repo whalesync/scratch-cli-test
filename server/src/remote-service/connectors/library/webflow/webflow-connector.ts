@@ -1,19 +1,12 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { Service } from '@spinner/shared-types';
+import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Webflow, WebflowClient, WebflowError } from 'webflow-api';
 import { minifyHtml } from '../../../../wrappers/html-minify';
 import { Connector } from '../../connector';
-import {
-  BaseJsonTableSpec,
-  ConnectorErrorDetails,
-  ConnectorFile,
-  ConnectorPullOptions,
-  EntityId,
-  TablePreview,
-} from '../../types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { buildWebflowJsonTableSpec } from './webflow-json-schema';
 import { WebflowSchemaParser } from './webflow-schema-parser';
 import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
