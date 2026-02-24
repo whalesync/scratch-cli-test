@@ -126,7 +126,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
 
     try {
       const getPhaseCount = async (pipelineId: string, phase: string) =>
-        this.db.client.publishPlanEntry.count({ where: { planId: pipelineId, phase } });
+        this.db.client.publishPlanOperation.count({ where: { planId: pipelineId, phase } });
 
       let pipelineId: string;
 
@@ -192,7 +192,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       });
 
       const getSuccessCount = async (phase: string) =>
-        this.db.client.publishPlanEntry.count({ where: { planId: pipelineId, phase, status: 'success' } });
+        this.db.client.publishPlanOperation.count({ where: { planId: pipelineId, phase, status: 'success' } });
 
       await checkpoint({
         publicProgress: {

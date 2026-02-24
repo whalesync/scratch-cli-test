@@ -506,22 +506,22 @@ model PublishPlan {
   connectorAccount   ConnectorAccount? @relation(fields: [connectorAccountId], references: [id])
   connectorAccountId String?
 
-  entries PublishPlanEntry[]
+  operations PublishPlanOperation[]
 
   @@index([workbookId])
   @@index([userId])
   @@index([connectorAccountId])
 }
 
-model PublishPlanEntry {
+model PublishPlanOperation {
   id     String      @id @default(cuid())
   planId String
   plan   PublishPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   filePath String // The logical path of the file
 
-  phase     String // "create", "edit", "delete", "backfill"
-  content Json?
+  phase   String // "create", "edit", "delete", "backfill"
+  content Json? // The content of the file that we will push at this phase
 
   remoteRecordId String? // The remote record ID (set for delete entries)
   remoteTableId  String? // DEPRECATED: usage removed, column to be dropped in future migration

@@ -21,7 +21,7 @@ function makeDbMock() {
         findUnique: jest.fn().mockResolvedValue({ id: PIPELINE_ID, branchName: BRANCH_NAME }),
         update: jest.fn().mockResolvedValue({}),
       },
-      publishPlanEntry: {
+      publishPlanOperation: {
         createMany: jest.fn().mockResolvedValue({}),
       },
       dataFolder: {
@@ -99,7 +99,7 @@ describe('PublishPlanService', () => {
         where: { id: PIPELINE_ID },
         data: { status: 'planned' },
       });
-      expect(db.client.publishPlanEntry.createMany).not.toHaveBeenCalled();
+      expect(db.client.publishPlanOperation.createMany).not.toHaveBeenCalled();
     });
   });
 
@@ -114,7 +114,7 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const saved = db.client.publishPlanEntry.createMany.mock.calls[0][0].data as Array<{ phase: string }>;
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{ phase: string }>;
       expect(saved.some((e) => e.phase === 'edit')).toBe(true);
     });
 
@@ -160,7 +160,7 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const saved = db.client.publishPlanEntry.createMany.mock.calls[0][0].data as Array<{ phase: string }>;
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{ phase: string }>;
       expect(saved.some((e) => e.phase === 'edit')).toBe(true);
       expect(saved.some((e) => e.phase === 'backfill')).toBe(true);
     });
@@ -177,7 +177,7 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const saved = db.client.publishPlanEntry.createMany.mock.calls[0][0].data as Array<{ phase: string }>;
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{ phase: string }>;
       expect(saved.some((e) => e.phase === 'create')).toBe(true);
     });
 
@@ -189,7 +189,7 @@ describe('PublishPlanService', () => {
 
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
-      expect(db.client.publishPlanEntry.createMany).not.toHaveBeenCalled();
+      expect(db.client.publishPlanOperation.createMany).not.toHaveBeenCalled();
     });
   });
 
@@ -204,7 +204,7 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const saved = db.client.publishPlanEntry.createMany.mock.calls[0][0].data as Array<{
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{
         phase: string;
         remoteRecordId: string | null;
       }>;
@@ -252,7 +252,7 @@ describe('PublishPlanService', () => {
 
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
-      expect(db.client.publishPlanEntry.createMany).toHaveBeenCalledTimes(2);
+      expect(db.client.publishPlanOperation.createMany).toHaveBeenCalledTimes(2);
     });
   });
 });

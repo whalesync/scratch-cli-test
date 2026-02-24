@@ -16,7 +16,7 @@ import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo } from './types';
 import { parsePath } from './utils';
 
-type PublishEntry = {
+type PublishOperation = {
   id: string;
   filePath: string;
   content: ParsedContent;
@@ -102,7 +102,7 @@ export class PublishPlanRunService {
       // Pre-count total entries per phase across all statuses (for stable progress denominator)
       const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
       for (const p of ['edit', 'create', 'delete', 'backfill'] as const) {
-        const count = await this.db.client.publishPlanEntry.count({
+        const count = await this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase: p },
         });
         totalByPhase[p] = count;
@@ -110,7 +110,7 @@ export class PublishPlanRunService {
       // Seed completed counts from DB so previously-executed phases don't drop to 0 on resume
       const completedByPhase = { edit: 0, create: 0, delete: 0, backfill: 0 };
       for (const p of ['edit', 'create', 'delete', 'backfill'] as const) {
-        completedByPhase[p] = await this.db.client.publishPlanEntry.count({
+        completedByPhase[p] = await this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase: p, status: 'success' },
         });
       }
@@ -141,7 +141,7 @@ export class PublishPlanRunService {
         });
 
         // Fetch pending entries for this phase
-        const entries = await this.db.client.publishPlanEntry.findMany({
+        const entries = await this.db.client.publishPlanOperation.findMany({
           where: { planId: pipelineId, phase: currentPhase, status: 'pending' },
         });
 
@@ -153,7 +153,7 @@ export class PublishPlanRunService {
         });
 
         // Fetch distinct tables (by dataFolderId) that have pending entries
-        const distinctFolders = await this.db.client.publishPlanEntry.findMany({
+        const distinctFolders = await this.db.client.publishPlanOperation.findMany({
           where: { planId: pipelineId, phase: currentPhase, status: 'pending' },
           select: { dataFolderId: true },
           distinct: ['dataFolderId'],
@@ -173,7 +173,7 @@ export class PublishPlanRunService {
           abortSignal?.throwIfAborted();
 
           // Fetch all entries for this table
-          const entries = (await this.db.client.publishPlanEntry.findMany({
+          const entries = await this.db.client.publishPlanOperation.findMany({
             where: {
               planId: pipelineId,
               phase: currentPhase,
@@ -181,7 +181,7 @@ export class PublishPlanRunService {
               dataFolderId,
             },
             orderBy: { id: 'asc' }, // Ensure deterministic order
-          })) as PublishEntry[];
+          });
 
           if (entries.length === 0) continue;
 
@@ -215,7 +215,14 @@ export class PublishPlanRunService {
             abortSignal?.throwIfAborted();
 
             const batch = entries.slice(i, i + batchSize);
-            await this.processBatch(currentPhase, batch, connector, tableSpec, plan.workbookId, plan.id);
+            await this.processBatch(
+              currentPhase,
+              batch as PublishOperation[],
+              connector,
+              tableSpec,
+              plan.workbookId,
+              plan.id,
+            );
             (completedByPhase as Record<string, number>)[currentPhase] =
               ((completedByPhase as Record<string, number>)[currentPhase] ?? 0) + batch.length;
             await reportRunProgress(currentPhase);
@@ -224,9 +231,9 @@ export class PublishPlanRunService {
 
         // --- RETRY LOGIC ---
         // Fetch failed-batch entries for this phase (across all tables)
-        const failedEntries = (await this.db.client.publishPlanEntry.findMany({
+        const failedEntries = (await this.db.client.publishPlanOperation.findMany({
           where: { planId: pipelineId, phase: currentPhase, status: 'failed-batch' },
-        })) as PublishEntry[];
+        })) as PublishOperation[];
 
         if (failedEntries.length > 0) {
           WSLogger.warn({
@@ -268,7 +275,7 @@ export class PublishPlanRunService {
       }
 
       // Query final entry counts per phase to determine accurate status
-      const countRows = await this.db.client.publishPlanEntry.groupBy({
+      const countRows = await this.db.client.publishPlanOperation.groupBy({
         by: ['status', 'phase'],
         where: { planId: pipelineId },
         _count: true,
@@ -406,7 +413,7 @@ export class PublishPlanRunService {
    */
   private async processBatch(
     phase: string,
-    entries: PublishEntry[], // Type explicitly if possible, but 'any' avoids circular dep issues for now
+    entries: PublishOperation[], // Type explicitly if possible, but 'any' avoids circular dep issues for now
     connector: Connector<Service, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -429,7 +436,7 @@ export class PublishPlanRunService {
       }
 
       // success
-      await this.db.client.publishPlanEntry.updateMany({
+      await this.db.client.publishPlanOperation.updateMany({
         where: { id: { in: entries.map((e) => e.id) } },
         data: { status: 'success', error: null },
       });
@@ -443,7 +450,7 @@ export class PublishPlanRunService {
       });
 
       // failed-batch
-      await this.db.client.publishPlanEntry.updateMany({
+      await this.db.client.publishPlanOperation.updateMany({
         where: { id: { in: entries.map((e) => e.id) } },
         data: {
           status: 'failed-batch',
@@ -455,7 +462,7 @@ export class PublishPlanRunService {
 
   private async dispatchUpdateBatch(
     phase: string,
-    entries: PublishEntry[],
+    entries: PublishOperation[],
     connector: Connector<Service, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -466,7 +473,7 @@ export class PublishPlanRunService {
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
 
     const contents: ParsedContent[] = [];
-    const entriesWithOps: { entry: PublishEntry; resolvedContent: ParsedContent }[] = [];
+    const entriesWithOps: { entry: PublishOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
     for (const entry of entries) {
@@ -525,7 +532,7 @@ export class PublishPlanRunService {
 
   private async dispatchCreateBatch(
     phase: string,
-    entries: PublishEntry[],
+    entries: PublishOperation[],
     connector: Connector<Service, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -549,7 +556,7 @@ export class PublishPlanRunService {
     const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
 
     const operations: any[] = [];
-    const entriesWithOps: { entry: PublishEntry; resolvedOp: ParsedContent }[] = [];
+    const entriesWithOps: { entry: PublishOperation; resolvedOp: ParsedContent }[] = [];
 
     let opIndex = 0;
     for (const entry of entries) {
@@ -619,7 +626,7 @@ export class PublishPlanRunService {
   }
 
   private async dispatchDeleteBatch(
-    entries: PublishEntry[],
+    entries: PublishOperation[],
     connector: Connector<Service, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -627,7 +634,7 @@ export class PublishPlanRunService {
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
     const filters: { [key: string]: string }[] = [];
-    const validEntries: PublishEntry[] = [];
+    const validEntries: PublishOperation[] = [];
 
     for (const entry of entries) {
       if (entry.remoteRecordId) {
@@ -707,7 +714,7 @@ export class PublishPlanRunService {
       const filePaths = items.map((i) => i.filePath);
 
       // Find all later pending phases for any of these files
-      const laterEntries = await this.db.client.publishPlanEntry.groupBy({
+      const laterEntries = await this.db.client.publishPlanOperation.groupBy({
         by: ['filePath'],
         where: {
           planId,

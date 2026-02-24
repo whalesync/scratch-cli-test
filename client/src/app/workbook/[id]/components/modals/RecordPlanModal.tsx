@@ -5,7 +5,7 @@ import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { Badge, Group, Loader, Modal, ScrollArea, SegmentedControl, Stack, Text, Title } from '@mantine/core';
-import { PublishPlanEntryEntity, WorkbookId } from '@spinner/shared-types';
+import { PublishPlanOperationEntity, WorkbookId } from '@spinner/shared-types';
 import { Change, diffJson, diffLines } from 'diff';
 import { GitCompareIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,7 +15,7 @@ import { MergeEditor } from '../shared/MergeEditor';
    Types
    ================================================================ */
 
-type PlanEntry = PublishPlanEntryEntity;
+type PlanEntry = PublishPlanOperationEntity;
 
 type DiffTab = 'userEdit' | 'edit' | 'delete' | 'create' | 'backfill';
 type DiffLayout = 'inline' | 'sideBySide';
@@ -230,7 +230,7 @@ export function RecordPlanModal({ opened, onClose, workbookId, pipelineId, fileP
       const [masterRes, dirtyRes, allEntries] = await Promise.allSettled([
         workbookApi.getRepoFile(workbookId, filePath, 'main'),
         workbookApi.getRepoFile(workbookId, filePath, 'dirty'),
-        workbookApi.listPublishPlanEntries(workbookId, pipelineId),
+        workbookApi.listPublishPlanOperations(workbookId, pipelineId),
       ]);
 
       setMasterJson(masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '');

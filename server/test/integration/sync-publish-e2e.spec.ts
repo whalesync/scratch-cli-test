@@ -525,7 +525,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
 
   afterEach(async () => {
     // Clean up in reverse dependency order
-    await prisma.publishPlanEntry.deleteMany({ where: { plan: { workbookId } } });
+    await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
     await prisma.publishPlan.deleteMany({ where: { workbookId } });
     await prisma.fileIndex.deleteMany({ where: { workbookId } });
     await prisma.fileReference.deleteMany({ where: { workbookId } });
@@ -690,7 +690,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     expect(buildResult.status).toBe('planned');
 
     // Verify plan entries in DB
-    const planEntries = await prisma.publishPlanEntry.findMany({
+    const planEntries = await prisma.publishPlanOperation.findMany({
       where: { planId: buildResult.pipelineId },
     });
     expect(planEntries.length).toBeGreaterThan(0);
@@ -722,7 +722,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     expect(mockConnector.updateRecords).toHaveBeenCalled();
 
     // Check plan entry statuses
-    const finalEntries = await prisma.publishPlanEntry.findMany({
+    const finalEntries = await prisma.publishPlanOperation.findMany({
       where: { planId: buildResult.pipelineId },
     });
 

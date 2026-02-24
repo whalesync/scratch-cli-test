@@ -107,7 +107,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       // Count entries by phase from the returned plan
       // We need to query DB for entry counts since buildPipeline returns PublishPlanInfo
       const getPhaseCount = async (phase: string) =>
-        this.db.client.publishPlanEntry.count({
+        this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase },
         });
 

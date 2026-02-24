@@ -17,7 +17,7 @@ export interface PublishPlanRunDto {
 /// Begin "keep in sync" section
 ///
 
-export interface PublishPlanEntryEntity {
+export interface PublishPlanOperationEntity {
   id: string;
   planId: string;
   filePath: string;
@@ -55,7 +55,7 @@ export interface PublishPlanEntity {
   result: unknown;
   activeJobId: string | null;
   connectorAccountId: string | null;
-  _count: { entries: number };
+  _count: { operations: number };
   dbJob: { status: string; type: string; progress: unknown } | null;
   bullJob: Record<string, unknown> | null;
   job: PublishPlanJobEntity | null;

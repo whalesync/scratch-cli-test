@@ -11,7 +11,7 @@ async function main() {
     console.log('1. Setting up test data...');
 
     // Ensure cleanup first
-    await prisma.publishPlanEntry.deleteMany({ where: { plan: { workbookId } } });
+    await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
     await prisma.publishPlan.deleteMany({ where: { workbookId } });
     await prisma.workbook.deleteMany({ where: { id: workbookId } });
     await prisma.user.deleteMany({ where: { id: userId } });
@@ -87,7 +87,7 @@ async function main() {
     console.error(e);
   } finally {
     // Cleanup
-    await prisma.publishPlanEntry.deleteMany({ where: { plan: { workbookId } } });
+    await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
     await prisma.publishPlan.deleteMany({ where: { workbookId } });
     await prisma.workbook.deleteMany({ where: { id: workbookId } });
     await prisma.user.deleteMany({ where: { id: userId } });

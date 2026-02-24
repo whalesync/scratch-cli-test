@@ -5,7 +5,7 @@ import {
   DataFolderPublishStatus,
   PublishPlanBuildDto,
   PublishPlanEntity,
-  PublishPlanEntryEntity,
+  PublishPlanOperationEntity,
   PublishPlanRunDto,
   TestTransformerDto,
   TestTransformerResponse,
@@ -384,10 +384,10 @@ export const workbookApi = {
     }
   },
 
-  listPublishPlanEntries: async (workbookId: WorkbookId, pipelineId: string): Promise<PublishPlanEntryEntity[]> => {
+  listPublishPlanOperations: async (workbookId: WorkbookId, pipelineId: string): Promise<PublishPlanOperationEntity[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<PublishPlanEntryEntity[]>(`/workbook/${workbookId}/publish-v2/${pipelineId}/entries`);
+      const res = await axios.get<PublishPlanOperationEntity[]>(`/workbook/${workbookId}/publish-v2/${pipelineId}/operations`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list pipeline entries');

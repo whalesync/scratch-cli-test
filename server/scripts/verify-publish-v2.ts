@@ -148,7 +148,7 @@ async function bootstrap() {
     // console.log(`Phases:`, JSON.stringify(plan.phases, null, 2));
 
     // 6. Verify Entries
-    const entries = await dbService.client.publishPlanEntry.findMany({
+    const entries = await dbService.client.publishPlanOperation.findMany({
       where: { planId: plan.pipelineId },
     });
     console.log(`Entries found: ${entries.length}`);

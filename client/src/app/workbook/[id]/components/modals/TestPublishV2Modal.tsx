@@ -524,7 +524,7 @@ export function TestPublishV2Modal({ opened, onClose, workbookId }: TestPublishV
                                   px={6}
                                   loading={runningId === p.id || isPlanning}
                                   onClick={() => {
-                                    if ((p._count?.entries ?? 0) > 0) {
+                                    if ((p._count?.operations ?? 0) > 0) {
                                       // Canceled run — resume from where it left off
                                       void handleRun(p.id);
                                     } else {

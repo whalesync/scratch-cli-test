@@ -95,9 +95,9 @@ export class PublishPlanController {
     return this.publishAdminService.listPublishPlans(workbookId, connectorAccountId);
   }
 
-  @Get(':pipelineId/entries')
-  entries(@Param('pipelineId') pipelineId: string) {
-    return this.publishAdminService.listPublishPlanEntries(pipelineId);
+  @Get(':pipelineId/operations')
+  operations(@Param('pipelineId') pipelineId: string) {
+    return this.publishAdminService.listPublishPlanOperations(pipelineId);
   }
 
   @Get('index/files')

@@ -2,8 +2,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
+
 import { Injectable } from '@nestjs/common';
 import { chunk } from 'lodash';
+import { ParsedContent, Schema } from 'src/utils/objects';
 import { DbService } from '../db/db.service';
 import { RefCleanerService } from './ref-cleaner.service';
 import { SchemaHelperService } from './schema-helper.service';
@@ -29,7 +31,7 @@ export class FileReferenceService {
    * Extract references from a JSON object.
    * - Finds x-scratch-foreign-key references in schema/content.
    */
-  extractReferences(sourceFilePath: string, content: any, schema?: any): ExtractedRef[] {
+  extractReferences(sourceFilePath: string, content: ParsedContent, schema?: Schema): ExtractedRef[] {
     const refs: ExtractedRef[] = [];
 
     // Pass 2: Use schema paths to find x-scratch-foreign-key refs
@@ -138,8 +140,8 @@ export class FileReferenceService {
   async updateRefsForFiles(
     workbookId: string,
     branch: string,
-    files: Array<{ path: string; content: any }>,
-    schema?: any,
+    files: Array<{ path: string; content: ParsedContent }>,
+    schema?: Schema,
   ): Promise<void> {
     // 1. Remove existing refs (batched to avoid bind variable limit)
     const filePaths = files.map((f) => f.path);
@@ -163,7 +165,7 @@ export class FileReferenceService {
       if (!fileSchema) {
         // Determine folder path
         const { folderPath } = parsePath(file.path);
-        fileSchema = await this.schemaService.getJsonSchema(workbookId, folderPath, schemaCache);
+        fileSchema = (await this.schemaService.getJsonSchema(workbookId, folderPath, schemaCache)) ?? undefined;
       }
 
       const refs = this.extractReferences(file.path, file.content, fileSchema);

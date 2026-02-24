@@ -224,7 +224,7 @@ export class PublishPlanBuildService {
     let editCount = 0;
     const editPhaseTotal = filesToProcessInEditPhase.size;
     let editPhaseProcessed = 0;
-    const planEntries: Array<{
+    const planOperations: Array<{
       filePath: string;
       phase: PublishPlanPhase;
       content: ParsedContent;
@@ -233,10 +233,10 @@ export class PublishPlanBuildService {
       status: string;
     }> = [];
 
-    const savePlanEntries = async () => {
-      if (planEntries.length === 0) return;
-      await this.db.client.publishPlanEntry.createMany({
-        data: planEntries.map((e) => ({
+    const savePlanOperations = async () => {
+      if (planOperations.length === 0) return;
+      await this.db.client.publishPlanOperation.createMany({
+        data: planOperations.map((e) => ({
           planId: pipelineId,
           filePath: e.filePath,
           phase: e.phase,
@@ -246,7 +246,7 @@ export class PublishPlanBuildService {
           status: e.status,
         })),
       });
-      planEntries.length = 0;
+      planOperations.length = 0;
     };
 
     for (const editBatch of chunk(Array.from(filesToProcessInEditPhase), 100)) {
@@ -292,7 +292,7 @@ export class PublishPlanBuildService {
               const { folderPath } = parsePath(filePath);
               const info = await getDataFolderInfo(folderPath);
 
-              planEntries.push({
+              planOperations.push({
                 filePath,
                 phase: 'edit',
                 content: JSON.parse(rawContent) as ParsedContent,
@@ -327,7 +327,7 @@ export class PublishPlanBuildService {
           const isPseudoStripped = pass2ContentStr !== pass1ContentStr;
 
           if (isUserModified || isRefCleared || isPseudoStripped) {
-            planEntries.push({
+            planOperations.push({
               filePath,
               phase: 'edit',
               content: pass2ContentObj,
@@ -339,7 +339,7 @@ export class PublishPlanBuildService {
 
             // Backfill Logic
             if (pass2ContentStr !== pass1ContentStr) {
-              planEntries.push({
+              planOperations.push({
                 filePath,
                 phase: 'backfill',
                 content: pass1ContentObj,
@@ -351,7 +351,7 @@ export class PublishPlanBuildService {
           }
         }
       }
-      await savePlanEntries();
+      await savePlanOperations();
     }
 
     if (editCount > 0) {
@@ -387,7 +387,7 @@ export class PublishPlanBuildService {
           try {
             contentObj = JSON.parse(rawContent) as ParsedContent;
           } catch {
-            planEntries.push({
+            planOperations.push({
               filePath: add.path,
               phase: 'create',
               content: JSON.parse(rawContent) as ParsedContent,
@@ -410,7 +410,7 @@ export class PublishPlanBuildService {
           const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
           const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
 
-          planEntries.push({
+          planOperations.push({
             filePath: add.path,
             phase: 'create',
             content: pass2ContentObj,
@@ -421,7 +421,7 @@ export class PublishPlanBuildService {
           liveCounts.createsPlanned++;
 
           if (pass2ContentStr !== pass1ContentStr) {
-            planEntries.push({
+            planOperations.push({
               filePath: add.path,
               phase: 'backfill',
               content: pass1ContentObj,
@@ -432,7 +432,7 @@ export class PublishPlanBuildService {
           }
         }
       }
-      await savePlanEntries();
+      await savePlanOperations();
     }
 
     if (createCount > 0) {
@@ -453,7 +453,7 @@ export class PublishPlanBuildService {
       const { folderPath } = parsePath(del.path);
       const info = await getDataFolderInfo(folderPath);
 
-      planEntries.push({
+      planOperations.push({
         filePath: del.path,
         phase: 'delete',
         content: {},
@@ -469,7 +469,7 @@ export class PublishPlanBuildService {
     }
 
     await reportProgress('Saving plan entries');
-    await savePlanEntries();
+    await savePlanOperations();
 
     // Mark as planned (ready to run)
     await this.db.client.publishPlan.update({

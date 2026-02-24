@@ -19,7 +19,7 @@ export class PublishPlanCrudService {
       take: 10,
       include: {
         _count: {
-          select: { entries: true },
+          select: { operations: true },
         },
       },
     });
@@ -91,8 +91,8 @@ export class PublishPlanCrudService {
     });
   }
 
-  async listPublishPlanEntries(pipelineId: string) {
-    return await this.db.client.publishPlanEntry.findMany({
+  async listPublishPlanOperations(pipelineId: string) {
+    return await this.db.client.publishPlanOperation.findMany({
       where: { planId: pipelineId },
       orderBy: [{ phase: 'asc' }, { filePath: 'asc' }],
     });

@@ -15,13 +15,13 @@ import {
   Title,
   useMantineColorScheme,
 } from '@mantine/core';
-import { PublishPlanEntryEntity, WorkbookId } from '@spinner/shared-types';
+import { PublishPlanOperationEntity, WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { AlertTriangleIcon, CodeIcon, ListIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RecordPlanModal } from './RecordPlanModal';
 
-type PlanEntry = PublishPlanEntryEntity;
+type PlanEntry = PublishPlanOperationEntity;
 
 type SortField = 'phase' | 'filePath';
 type SortDir = 'asc' | 'desc';
@@ -89,7 +89,7 @@ export function PlanEntriesModal({ opened, onClose, workbookId, pipelineId }: Pl
   const fetchEntries = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await workbookApi.listPublishPlanEntries(workbookId, pipelineId);
+      const data = await workbookApi.listPublishPlanOperations(workbookId, pipelineId);
       setEntries(data);
     } catch (error) {
       console.error(error);
