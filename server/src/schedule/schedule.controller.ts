@@ -11,9 +11,9 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { Schedule } from '@prisma/client';
 import type {
   CreateScheduleDto,
+  Schedule,
   UpdateScheduleDto,
   ValidatedCreateScheduleDto,
   WorkbookId,

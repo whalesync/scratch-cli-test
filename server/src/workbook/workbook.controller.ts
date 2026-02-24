@@ -22,6 +22,7 @@ import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
 import { Workbook } from './entities';
 
+import { WorkbookCluster } from 'src/db/cluster-types';
 import { WorkbookService } from './workbook.service';
 
 @Controller('workbook')
@@ -52,13 +53,24 @@ export class WorkbookController {
     @Query('sortOrder') sortOrder: 'asc' | 'desc' | undefined,
     @Req() req: RequestWithUser,
   ): Promise<Workbook[]> {
+    let workbooks: WorkbookCluster.Workbook[] = [];
     if (connectorAccountId) {
-      return (
-        await this.service.findAllForConnectorAccount(connectorAccountId, userToActor(req.user), sortBy, sortOrder)
-      ).map((s) => new Workbook(s));
+      workbooks = await this.service.findAllForConnectorAccount(
+        connectorAccountId,
+        userToActor(req.user),
+        sortBy,
+        sortOrder,
+      );
+    } else {
+      workbooks = await this.service.findAllForUser(userToActor(req.user), sortBy, sortOrder);
     }
 
-    return (await this.service.findAllForUser(userToActor(req.user), sortBy, sortOrder)).map((s) => new Workbook(s));
+    return await Promise.all(
+      workbooks.map(async (s) => {
+        const schedulesByEntityId = await this.service.fetchSchedulesByEntityId(s.id as WorkbookId);
+        return new Workbook(s, schedulesByEntityId);
+      }),
+    );
   }
 
   @Get(':id')
@@ -67,7 +79,8 @@ export class WorkbookController {
     if (!workbook) {
       return null;
     }
-    return new Workbook(workbook);
+    const schedulesByEntityId = await this.service.fetchSchedulesByEntityId(workbook.id as WorkbookId);
+    return new Workbook(workbook, schedulesByEntityId);
   }
 
   @Patch(':id')

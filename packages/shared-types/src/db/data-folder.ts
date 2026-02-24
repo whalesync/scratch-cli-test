@@ -1,5 +1,6 @@
 import { Service } from '../enums/enums';
 import { DataFolderId, WorkbookId } from '../ids';
+import { Schedule } from './schedule';
 
 ///
 /// NOTE: Keep this in sync with server/prisma/schema.prisma DataFolder model
@@ -26,6 +27,7 @@ export interface DataFolder {
   tableId: string[];
   filter: string | null;
   options: Record<string, unknown> | null;
+  schedules: Schedule[];
 }
 
 ///

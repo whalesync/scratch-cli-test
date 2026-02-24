@@ -10,13 +10,14 @@ import { CronExpressionParser } from 'cron-parser';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
+import { ScheduleEntity } from './entities/schedule.entity';
 import { SCHEDULE_MIN_INTERVAL_MINUTES } from './schedule.types';
 
 @Injectable()
 export class ScheduleService {
   constructor(private readonly db: DbService) {}
 
-  async create(workbookId: WorkbookId, dto: ValidatedCreateScheduleDto, actor: Actor): Promise<Schedule> {
+  async create(workbookId: WorkbookId, dto: ValidatedCreateScheduleDto, actor: Actor): Promise<ScheduleEntity> {
     const workbook = await this.db.client.workbook.findFirst({
       where: { id: workbookId, organizationId: actor.organizationId },
     });
@@ -29,7 +30,7 @@ export class ScheduleService {
 
     const nextRunAt = this.computeNextRunAt(dto.cronExpression);
 
-    return this.db.client.schedule.create({
+    const schedule = await this.db.client.schedule.create({
       data: {
         id: createScheduleId(),
         workbookId,
@@ -43,9 +44,10 @@ export class ScheduleService {
         nextRunAt,
       },
     });
+    return new ScheduleEntity(schedule);
   }
 
-  async findAllForWorkbook(workbookId: WorkbookId, actor: Actor): Promise<Schedule[]> {
+  async findAllForWorkbook(workbookId: WorkbookId, actor: Actor): Promise<ScheduleEntity[]> {
     const workbook = await this.db.client.workbook.findFirst({
       where: { id: workbookId, organizationId: actor.organizationId },
     });
@@ -53,13 +55,14 @@ export class ScheduleService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
 
-    return this.db.client.schedule.findMany({
+    const schedules = await this.db.client.schedule.findMany({
       where: { workbookId },
       orderBy: { createdAt: 'desc' },
     });
+    return schedules.map((s) => new ScheduleEntity(s));
   }
 
-  async findOne(workbookId: WorkbookId, scheduleId: string, actor: Actor): Promise<Schedule> {
+  async findOne(workbookId: WorkbookId, scheduleId: string, actor: Actor): Promise<ScheduleEntity> {
     const schedule = await this.db.client.schedule.findFirst({
       where: { id: scheduleId, workbookId },
     });
@@ -74,7 +77,7 @@ export class ScheduleService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
 
-    return schedule;
+    return new ScheduleEntity(schedule);
   }
 
   async update(
@@ -82,7 +85,7 @@ export class ScheduleService {
     scheduleId: string,
     dto: ValidatedUpdateScheduleDto,
     actor: Actor,
-  ): Promise<Schedule> {
+  ): Promise<ScheduleEntity> {
     const existing = await this.findOne(workbookId, scheduleId, actor);
 
     if (dto.cronExpression) {
@@ -100,7 +103,7 @@ export class ScheduleService {
       ? this.computeNextRunAt(dto.cronExpression ?? existing.cronExpression)
       : undefined;
 
-    return this.db.client.schedule.update({
+    const schedule = await this.db.client.schedule.update({
       where: { id: scheduleId },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -110,6 +113,7 @@ export class ScheduleService {
         ...(recomputedNextRunAt && { nextRunAt: recomputedNextRunAt }),
       },
     });
+    return new ScheduleEntity(schedule);
   }
 
   async delete(workbookId: WorkbookId, scheduleId: string, actor: Actor): Promise<void> {

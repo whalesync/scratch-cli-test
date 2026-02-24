@@ -1,6 +1,7 @@
-import { Prisma } from '@prisma/client';
-import { DataFolder, DataFolderGroup, DataFolderId, Service, WorkbookId } from '@spinner/shared-types';
+import { Prisma, Schedule as PrismaSchedule } from '@prisma/client';
+import { DataFolder, DataFolderGroup, DataFolderId, Schedule, Service, WorkbookId } from '@spinner/shared-types';
 import { DataFolderCluster } from '../../db/cluster-types';
+import { ScheduleEntity } from '../../schedule/entities/schedule.entity';
 
 export function normalizeJsonObject(value: Prisma.JsonValue | null | undefined): Record<string, unknown> | null {
   if (value == null) return null;
@@ -27,8 +28,9 @@ export class DataFolderEntity implements DataFolder {
   tableId: string[];
   filter: string | null;
   options: Record<string, unknown> | null;
+  schedules: Schedule[];
 
-  constructor(dataFolder: DataFolderCluster.DataFolder) {
+  constructor(dataFolder: DataFolderCluster.DataFolder, schedules: PrismaSchedule[] = []) {
     this.id = dataFolder.id as DataFolderId;
     this.workbookId = dataFolder.workbookId as WorkbookId;
     this.name = dataFolder.name;
@@ -50,6 +52,7 @@ export class DataFolderEntity implements DataFolder {
     this.filter = (normalizedOptions?.filter as string) ?? null;
     this.options = normalizedOptions;
     this.schema = {};
+    this.schedules = schedules.map((s) => new ScheduleEntity(s));
   }
 }
 

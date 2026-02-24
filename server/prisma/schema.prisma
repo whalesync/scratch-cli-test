@@ -667,7 +667,7 @@ model Schedule {
   /// The operation to perform: PULL, PUBLISH, or SYNC
   action ScheduleAction
 
-  /// Generic reference to the target entity (DataFolderId for PULL/PUBLISH, SyncId for SYNC).
+  /// Polymorphic reference to the target entity (DataFolderId for PULL/PUBLISH, SyncId for SYNC).
   /// No FK constraint — validated at the application level.
   entityId String
 

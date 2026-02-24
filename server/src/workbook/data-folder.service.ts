@@ -63,7 +63,8 @@ export class DataFolderService {
       orderBy: { name: 'asc' },
     });
 
-    return dataFolders.map((f) => new DataFolderEntity(f));
+    const schedulesByEntityId = await this.workbookService.fetchSchedulesByEntityId(workbookId);
+    return dataFolders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? []));
   }
 
   /**
@@ -158,6 +159,8 @@ export class DataFolderService {
       },
     });
 
+    const schedulesByEntityId = await this.workbookService.fetchSchedulesByEntityId(workbookId);
+
     // Group data folders by connector account
     const scratchFolders: DataFolderCluster.DataFolder[] = [];
     const connectorAccountGroups = new Map<
@@ -194,7 +197,7 @@ export class DataFolderService {
         new DataFolderGroupEntity(
           'Scratch',
           null,
-          scratchFolders.map((f) => new DataFolderEntity(f)),
+          scratchFolders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? [])),
         ),
       );
     }
@@ -205,7 +208,7 @@ export class DataFolderService {
         new DataFolderGroupEntity(
           group.name,
           group.connectorAccount,
-          group.folders.map((f) => new DataFolderEntity(f)),
+          group.folders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? [])),
         ),
       );
     }
@@ -229,7 +232,8 @@ export class DataFolderService {
       throw new NotFoundException('Data folder not found');
     }
 
-    return new DataFolderEntity(dataFolder);
+    const schedules = await this.db.client.schedule.findMany({ where: { entityId: id } });
+    return new DataFolderEntity(dataFolder, schedules);
   }
 
   async createFolder(dto: ValidatedCreateDataFolderDto, actor: Actor): Promise<DataFolderEntity> {

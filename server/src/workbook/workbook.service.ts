@@ -18,6 +18,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { WorkbookEventService } from './workbook-event.service';
 
+import { Schedule } from '@prisma/client';
 import { ConnectorPullOptions } from 'src/remote-service/connectors/types';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
@@ -344,5 +345,24 @@ export class WorkbookService {
       jobId: jobs[0].id,
       jobIds: jobs.map((j) => j.id),
     };
+  }
+
+  /**
+   * Fetches all schedules for a workbook and groups them by entityId.
+   */
+  public async fetchSchedulesByEntityId(workbookId: WorkbookId): Promise<Map<string, Schedule[]>> {
+    const schedules = await this.db.client.schedule.findMany({
+      where: { workbookId },
+    });
+    const map = new Map<string, Schedule[]>();
+    for (const schedule of schedules) {
+      const existing = map.get(schedule.entityId);
+      if (existing) {
+        existing.push(schedule);
+      } else {
+        map.set(schedule.entityId, [schedule]);
+      }
+    }
+    return map;
   }
 }
