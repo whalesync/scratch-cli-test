@@ -20,6 +20,7 @@ import { PosthogModule } from './posthog/posthog.module';
 import { PublishPipelineModule } from './publish-pipeline/publish-pipeline.module';
 import { ConnectorAccountModule } from './remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from './remote-service/connectors/connectors.module';
+import { ScheduleModule } from './schedule/schedule.module';
 import { ScratchGitModule } from './scratch-git/scratch-git.module';
 import { SlackNotificationModule } from './slack/slack-notification.module';
 import { SyncModule } from './sync/sync.module';
@@ -51,6 +52,7 @@ import { WorkerModule } from './worker/workers.module';
     WorkerEnqueuerModule,
     JobModule,
     PublishPipelineModule,
+    ScheduleModule,
     ...(ScratchConfigService.isAPIService() ? [DevToolsModule, BugReportModule, CodeMigrationsModule] : []),
     ...(ScratchConfigService.isTaskWorkerService() ? [WorkerModule] : []),
     ...(ScratchConfigService.isCronService() ? [CronModule] : []),

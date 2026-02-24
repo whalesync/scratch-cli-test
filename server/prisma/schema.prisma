@@ -75,6 +75,12 @@ enum SyncState {
   ON
 }
 
+enum ScheduleAction {
+  PULL
+  PUBLISH
+  SYNC
+}
+
 ///
 /// End "keep in sync" section
 ///
@@ -102,6 +108,7 @@ model User {
   jobs                    DbJob[]
   workbooks               Workbook[]
   publishPlans            PublishPlan[]
+  schedules               Schedule[]
 }
 
 model APIToken {
@@ -190,6 +197,7 @@ model Workbook {
   connectorAccounts  ConnectorAccount[]
   usersWithAsDefault User[]             @relation("UserLastWorkbook")
   publishPlans       PublishPlan[]
+  schedules          Schedule[]
 
   @@index([userId])
   @@index([organizationId])
@@ -399,6 +407,7 @@ model Organization {
   subscriptions  Subscription[]
   invoiceResults InvoiceResult[]
   actions        Action[]
+  schedules      Schedule[]
 }
 
 ///
@@ -629,6 +638,55 @@ model SyncRemoteIdMapping {
   @@unique([syncId, dataFolderId, sourceRemoteId])
   @@index([syncId])
   @@index([dataFolderId])
+}
+
+//#endregion
+
+//#region Schedule
+
+/// A user-defined schedule that triggers pull, publish, or sync jobs on a cron expression.
+model Schedule {
+  id        String   @id // type: ScheduleId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  workbookId String
+
+  /// The organization that owns this schedule. Deleting the org cascades to its schedules.
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  /// The user who created this schedule. SetNull on delete so the schedule keeps running.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
+  /// Human-readable label, e.g. "Hourly Airtable pull"
+  name String
+
+  /// The operation to perform: PULL, PUBLISH, or SYNC
+  action ScheduleAction
+
+  /// Generic reference to the target entity (DataFolderId for PULL/PUBLISH, SyncId for SYNC).
+  /// No FK constraint — validated at the application level.
+  entityId String
+
+  /// Cron expression (standard 5-field: minute hour dom month dow)
+  cronExpression String
+
+  /// Whether this schedule is active. Disabled schedules are not evaluated.
+  enabled Boolean @default(true)
+
+  /// The last time this schedule fired (successfully enqueued a job).
+  lastTriggeredAt DateTime?
+
+  /// The next calculated fire time. Updated after each trigger or cron expression change.
+  nextRunAt DateTime?
+
+  @@unique([workbookId, action, entityId])
+  @@index([workbookId])
+  @@index([enabled, nextRunAt])
+  @@index([entityId])
 }
 
 //#endregion

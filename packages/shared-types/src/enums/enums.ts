@@ -55,6 +55,12 @@ export enum SyncState {
   ON = 'ON',
 }
 
+export enum ScheduleAction {
+  PULL = 'PULL',
+  PUBLISH = 'PUBLISH',
+  SYNC = 'SYNC',
+}
+
 export enum TableDiscoveryMode {
   LIST = 'LIST',
   SEARCH = 'SEARCH',

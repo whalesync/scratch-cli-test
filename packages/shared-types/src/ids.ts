@@ -28,6 +28,7 @@ export enum IdPrefixes {
   AUTHORIZATION_CODE = 'aut_', // Authorization code for CLI login
   SYNC = 'syn_', // Sync
   SYNC_TABLE_PAIR = 'stp_', // Pair of source=>destination tables in a Sync
+  SCHEDULE = 'sch_', // Schedule
   SCRATCH_PENDING_PUBLISH = 'scratch_pending_publish_', // Temporary ID for sync-created records before publishing
 }
 
@@ -255,6 +256,17 @@ export function isSyncTablePairId(id: unknown): id is SyncTablePairId {
 
 export function createSyncTablePairId(): SyncTablePairId {
   return createId(IdPrefixes.SYNC_TABLE_PAIR) as SyncTablePairId;
+}
+
+// ------- Schedule -------
+export type ScheduleId = PrefixedId<IdPrefixes.SCHEDULE>;
+
+export function isScheduleId(id: unknown): id is ScheduleId {
+  return isId(id, IdPrefixes.SCHEDULE);
+}
+
+export function createScheduleId(): ScheduleId {
+  return createId(IdPrefixes.SCHEDULE) as ScheduleId;
 }
 
 // ------- Scratch Pending Publish -------
