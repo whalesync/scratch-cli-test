@@ -1,4 +1,4 @@
-import { IsArray, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
 import type { WorkbookId } from '../../ids';
 
 export class CreateDataFolderDto {
@@ -38,10 +38,14 @@ export class CreateDataFolderDto {
   @IsOptional()
   @IsString()
   nameFieldOverride?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  triggerPull?: boolean;
 }
 
 export type ValidatedCreateDataFolderDto = Required<Pick<CreateDataFolderDto, 'name' | 'workbookId'>> &
   Pick<
     CreateDataFolderDto,
-    'connectorAccountId' | 'tableId' | 'parentFolderId' | 'filter' | 'options' | 'idFieldOverride' | 'nameFieldOverride'
+    'connectorAccountId' | 'tableId' | 'parentFolderId' | 'filter' | 'options' | 'idFieldOverride' | 'nameFieldOverride' | 'triggerPull'
   >;

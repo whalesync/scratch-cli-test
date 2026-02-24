@@ -346,30 +346,39 @@ export class DataFolderService {
         data: { source: 'user', entityId: dataFolderId, message: 'Folder created' },
       });
 
-      // Trigger pull job
-      try {
-        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, dataFolderId, {
-          totalFiles: 0,
-          folderId: dataFolderId,
-          folderName: createdDataFolder.name,
-          connector: createdDataFolder.connectorService ?? 'unknown',
-          filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
-          status: 'pending',
-          createdPaths: [],
-          updatedPaths: [],
-          deletedPaths: [],
-        });
+      // Trigger pull job (defaults to true if not specified)
+      if (dto.triggerPull !== false) {
+        try {
+          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, dataFolderId, {
+            totalFiles: 0,
+            folderId: dataFolderId,
+            folderName: createdDataFolder.name,
+            connector: createdDataFolder.connectorService ?? 'unknown',
+            filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+            status: 'pending',
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          });
+          WSLogger.info({
+            source: 'DataFolderService.createFolder',
+            message: 'Started pulling files for newly created data folder',
+            workbookId,
+            dataFolderId,
+          });
+        } catch (error) {
+          WSLogger.error({
+            source: 'DataFolderService.createFolder',
+            message: 'Failed to start pull job for newly created data folder',
+            error,
+            workbookId,
+            dataFolderId,
+          });
+        }
+      } else {
         WSLogger.info({
           source: 'DataFolderService.createFolder',
-          message: 'Started pulling files for newly created data folder',
-          workbookId,
-          dataFolderId,
-        });
-      } catch (error) {
-        WSLogger.error({
-          source: 'DataFolderService.createFolder',
-          message: 'Failed to start pull job for newly created data folder',
-          error,
+          message: 'Skipped pull job for newly created data folder (triggerPull=false)',
           workbookId,
           dataFolderId,
         });

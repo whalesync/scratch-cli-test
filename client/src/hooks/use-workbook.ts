@@ -30,6 +30,8 @@ export interface UseWorkbookReturn {
     filter?: string,
     idFieldOverride?: string,
     nameFieldOverride?: string,
+    options?: Record<string, unknown>,
+    triggerPull?: boolean,
   ) => Promise<DataFolder>;
   pullFolders: (dataFolderIds?: DataFolderId[]) => Promise<void>;
   publishFolders: (dataFolderIds: DataFolderId[]) => Promise<void>;
@@ -80,6 +82,8 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
       filter?: string,
       idFieldOverride?: string,
       nameFieldOverride?: string,
+      options?: Record<string, unknown>,
+      triggerPull?: boolean,
     ): Promise<DataFolder> => {
       if (!id) {
         throw new Error('Workbook not found');
@@ -93,6 +97,8 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
         filter,
         idFieldOverride,
         nameFieldOverride,
+        options,
+        triggerPull,
       };
       const dataFolder = await dataFolderApi.create(dto);
       await mutate();

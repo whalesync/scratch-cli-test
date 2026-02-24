@@ -21,10 +21,12 @@ import {
   List,
   Loader,
   Modal,
+  NumberInput,
   Pill,
   ScrollArea,
   Select,
   Stack,
+  Switch,
   Text,
   Textarea,
   TextInput,
@@ -37,7 +39,7 @@ import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
-const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE]);
+const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE, Service.SUPABASE]);
 const FIELD_SELECTION_SERVICES = new Set([Service.SUPABASE]);
 
 const DISABLED_MESSAGES: Partial<Record<Service, string>> = {
@@ -101,19 +103,42 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   const supportsFilter = FILTER_SUPPORTED_SERVICES.has(connectorAccount.service);
   const supportsFieldSelection = FIELD_SELECTION_SERVICES.has(connectorAccount.service);
+  const isAirtable = connectorAccount.service === Service.AIRTABLE;
+  const isNotion = connectorAccount.service === Service.NOTION;
+  const hasConnectorOptions = isAirtable || isNotion;
   const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
     new Map(),
   );
   const [loadedTableSchemas, setLoadedTableSchemas] = useState<Map<string, TableSchemaPreview>>(new Map());
   const [schemasLoading, setSchemasLoading] = useState<Set<string>>(new Set());
 
+  const [triggerPull, setTriggerPull] = useState(true);
+
+  // Connector-specific options state
+  const [airtableViewValues, setAirtableViewValues] = useState<Map<string, string>>(new Map());
+  const [notionOptions, setNotionOptions] = useState<
+    Map<string, { excludePageContent: boolean; childContentMaxDepth: number | '' }>
+  >(new Map());
+
   // Get currently linked data folders for this connector account
   const linkedFolders = useMemo(() => {
-    const folders: { id: DataFolderId; name: string; tableId: string[]; filter: string | null }[] = [];
+    const folders: {
+      id: DataFolderId;
+      name: string;
+      tableId: string[];
+      filter: string | null;
+      options: Record<string, unknown> | null;
+    }[] = [];
     dataFolderGroups.forEach((group) => {
       group.dataFolders.forEach((folder) => {
         if (folder.connectorAccountId === connectorAccount.id) {
-          folders.push({ id: folder.id, name: folder.name, tableId: folder.tableId, filter: folder.filter });
+          folders.push({
+            id: folder.id,
+            name: folder.name,
+            tableId: folder.tableId,
+            filter: folder.filter,
+            options: folder.options,
+          });
         }
       });
     });
@@ -176,8 +201,33 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       setSearchTerm('');
       setStep(1);
       setShowConfirmation(false);
+
+      // Initialize connector-specific options from existing folders
+      const initialAirtableViews = new Map<string, string>();
+      const initialNotionOptions = new Map<
+        string,
+        { excludePageContent: boolean; childContentMaxDepth: number | '' }
+      >();
+      linkedFolders.forEach((folder) => {
+        if (folder.tableId.length > 0) {
+          const key = folder.tableId.join('/');
+          const opts = folder.options ?? {};
+          if (isAirtable && (opts.view as string)) {
+            initialAirtableViews.set(key, opts.view as string);
+          }
+          if (isNotion) {
+            initialNotionOptions.set(key, {
+              excludePageContent: (opts.excludePageContent as boolean) ?? false,
+              childContentMaxDepth: (opts.childContentMaxDepth as number) ?? '',
+            });
+          }
+        }
+      });
+      setAirtableViewValues(initialAirtableViews);
+      setNotionOptions(initialNotionOptions);
+      setTriggerPull(true);
     }
-  }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys]);
+  }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys, isAirtable, isNotion]);
 
   const handleToggleTable = (table: TablePreview) => {
     if (table.disabled) return;
@@ -213,6 +263,57 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       return next;
     });
   }, []);
+
+  const handleAirtableViewChange = useCallback((tableKey: string, value: string) => {
+    setAirtableViewValues((prev) => {
+      const next = new Map(prev);
+      if (value) {
+        next.set(tableKey, value);
+      } else {
+        next.delete(tableKey);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleNotionOptionChange = useCallback(
+    (tableKey: string, field: 'excludePageContent' | 'childContentMaxDepth', value: boolean | number | '') => {
+      setNotionOptions((prev) => {
+        const next = new Map(prev);
+        const current = next.get(tableKey) ?? { excludePageContent: false, childContentMaxDepth: '' as number | '' };
+        next.set(tableKey, { ...current, [field]: value });
+        return next;
+      });
+    },
+    [],
+  );
+
+  const buildOptionsForTable = useCallback(
+    (tableKey: string): Record<string, unknown> | undefined => {
+      if (isAirtable) {
+        const view = airtableViewValues.get(tableKey)?.trim();
+        if (view) return { view };
+        return {};
+      }
+      if (isNotion) {
+        const opts: Record<string, unknown> = {};
+        const notionOpts = notionOptions.get(tableKey);
+        if (notionOpts?.excludePageContent) {
+          opts.excludePageContent = true;
+        }
+        if (
+          notionOpts?.childContentMaxDepth !== undefined &&
+          notionOpts.childContentMaxDepth !== '' &&
+          notionOpts.childContentMaxDepth >= 0
+        ) {
+          opts.childContentMaxDepth = notionOpts.childContentMaxDepth;
+        }
+        return opts;
+      }
+      return undefined;
+    },
+    [isAirtable, isNotion, airtableViewValues, notionOptions],
+  );
 
   // Compute tables to add and remove (used in step 2 display and save)
   const allKnownTables = useMemo(() => {
@@ -361,13 +462,14 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
     setIsSaving(true);
     try {
-      // Add new tables (with optional filter and field overrides)
+      // Add new tables (with optional filter, field overrides, and connector options)
       for (const table of tablesToAdd) {
         const tableKey = table.id.remoteId.join('/');
         const filter = filterValues.get(tableKey)?.trim() || undefined;
         const fields = fieldSelections.get(tableKey);
         const idFieldOverride = fields?.idField || undefined;
         const nameFieldOverride = fields?.nameField || undefined;
+        const options = buildOptionsForTable(tableKey);
         await addLinkedDataFolder(
           table.id.remoteId,
           table.displayName,
@@ -375,17 +477,26 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           filter,
           idFieldOverride,
           nameFieldOverride,
+          options,
+          triggerPull,
         );
       }
 
-      // Update filters on existing tables that changed
+      // Update filters and connector options on existing tables that changed
       for (const folder of linkedFolders) {
         const folderKey = folder.tableId.join('/');
         if (!selectedTableIds.has(folderKey)) continue; // being removed
         const newFilter = filterValues.get(folderKey)?.trim() || null;
         const existingFilter = folder.filter || null;
-        if (newFilter !== existingFilter) {
-          await dataFolderApi.update(folder.id, { filter: newFilter });
+        const newOptions = buildOptionsForTable(folderKey);
+        const filterChanged = newFilter !== existingFilter;
+        const optionsChanged =
+          hasConnectorOptions && JSON.stringify(newOptions) !== JSON.stringify(folder.options ?? {});
+        if (filterChanged || optionsChanged) {
+          await dataFolderApi.update(folder.id, {
+            filter: newFilter,
+            ...(hasConnectorOptions && { options: newOptions }),
+          });
         }
       }
 
@@ -633,7 +744,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   // Step 2: Configure table settings
   const renderStep2 = () => {
-    const hasConfigurableOptions = supportsFilter || supportsFieldSelection;
+    const hasConfigurableOptions = supportsFilter || supportsFieldSelection || hasConnectorOptions;
     return (
       <Stack gap="md">
         <Group justify="space-between" align="center">
@@ -720,6 +831,48 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                         maxRows={4}
                       />
                     )}
+
+                    {!entry.isRemoved && isAirtable && (
+                      <TextInput
+                        label="View (optional)"
+                        description="Airtable view ID to pull records from. Leave empty to pull all records."
+                        placeholder="Enter view ID..."
+                        value={airtableViewValues.get(entry.tableKey) ?? ''}
+                        onChange={(e) => handleAirtableViewChange(entry.tableKey, e.currentTarget.value)}
+                        size="xs"
+                      />
+                    )}
+
+                    {!entry.isRemoved && isNotion && (
+                      <>
+                        <Checkbox
+                          label="Exclude page content"
+                          description="Skip downloading the body content of Notion pages. This will increase download speed."
+                          checked={notionOptions.get(entry.tableKey)?.excludePageContent ?? false}
+                          onChange={(e) =>
+                            handleNotionOptionChange(entry.tableKey, 'excludePageContent', e.currentTarget.checked)
+                          }
+                          size="xs"
+                        />
+                        <NumberInput
+                          label="Child content max depth (optional)"
+                          description="Maximum depth of nested child blocks to include. Leave empty for default behavior."
+                          placeholder="e.g. 2"
+                          value={notionOptions.get(entry.tableKey)?.childContentMaxDepth ?? ''}
+                          onChange={(val) =>
+                            handleNotionOptionChange(
+                              entry.tableKey,
+                              'childContentMaxDepth',
+                              val === '' ? '' : Number(val),
+                            )
+                          }
+                          min={0}
+                          max={10}
+                          hideControls
+                          size="xs"
+                        />
+                      </>
+                    )}
                   </Stack>
                 </Box>
               );
@@ -727,11 +880,21 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           </Stack>
         </ScrollArea.Autosize>
 
-        <Group justify="flex-end" gap="sm" mt="md">
-          <ButtonSecondaryOutline onClick={handleBack}>Back</ButtonSecondaryOutline>
-          <ButtonPrimaryLight onClick={handleSave} loading={isSaving}>
-            Save
-          </ButtonPrimaryLight>
+        <Group justify="space-between" mt="md">
+          <Tooltip label="Immediately start downloading files for the new tables after saving">
+            <Switch
+              label="Download files"
+              checked={triggerPull}
+              onChange={(e) => setTriggerPull(e.currentTarget.checked)}
+              size="xs"
+            />
+          </Tooltip>
+          <Group gap="sm">
+            <ButtonSecondaryOutline onClick={handleBack}>Back</ButtonSecondaryOutline>
+            <ButtonPrimaryLight onClick={handleSave} loading={isSaving}>
+              Save
+            </ButtonPrimaryLight>
+          </Group>
         </Group>
       </Stack>
     );
@@ -776,7 +939,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title={modalTitle} size="md" centered>
+    <Modal opened={opened} onClose={onClose} title={modalTitle} size="lg" centered>
       {renderContent()}
     </Modal>
   );
