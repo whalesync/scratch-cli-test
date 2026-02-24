@@ -7,36 +7,36 @@ import { FileReferenceService } from './file-reference.service';
 
 import { ScratchGitModule } from '../scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
-import { PublishAdminService } from './publish-admin.service';
-import { PublishPipelineController } from './publish-pipeline.controller';
-import { PublishPlanService } from './publish-plan.service';
-import { PublishRefResolverService } from './publish-ref-resolver.service';
-import { PublishRunService } from './publish-run.service';
-import { PublishSchemaService } from './publish-schema.service';
+import { PublishPlanBuildService } from './publish-plan-build.service';
+import { PublishPlanCrudService } from './publish-plan-crud.service';
+import { PublishPlanRunService } from './publish-plan-run.service';
+import { PublishPlanController } from './publish-plan.controller';
 import { RefCleanerService } from './ref-cleaner.service';
+import { RefResolverService } from './ref-resolver.service';
+import { SchemaHelperService } from './schema-helper.service';
 
 @Module({
   imports: [DbModule, ScratchGitModule, WorkerEnqueuerModule, ConnectorsModule, CredentialEncryptionModule],
-  controllers: [PublishPipelineController],
+  controllers: [PublishPlanController],
   providers: [
     FileIndexService,
     FileReferenceService,
-    PublishAdminService,
-    PublishPlanService,
-    PublishRefResolverService,
-    PublishRunService,
+    PublishPlanCrudService,
+    PublishPlanBuildService,
+    RefResolverService,
+    PublishPlanRunService,
     RefCleanerService,
-    PublishSchemaService,
+    SchemaHelperService,
   ],
   exports: [
     FileIndexService,
     FileReferenceService,
-    PublishAdminService,
-    PublishPlanService,
-    PublishRefResolverService,
-    PublishRunService,
+    PublishPlanCrudService,
+    PublishPlanBuildService,
+    RefResolverService,
+    PublishPlanRunService,
     RefCleanerService,
-    PublishSchemaService,
+    SchemaHelperService,
   ],
 })
-export class PublishPipelineModule {}
+export class PublishPlanModule {}

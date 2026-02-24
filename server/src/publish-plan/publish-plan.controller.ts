@@ -6,17 +6,17 @@ import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { PlanPublishV2Dto, RunPublishV2Dto } from './dto/publish-v2.dto';
-import { PublishAdminService } from './publish-admin.service';
-import { PublishPlanService } from './publish-plan.service';
-import { PublishRunService } from './publish-run.service';
+import { PublishPlanBuildService } from './publish-plan-build.service';
+import { PublishPlanCrudService } from './publish-plan-crud.service';
+import { PublishPlanRunService } from './publish-plan-run.service';
 
 @Controller('workbook/:workbookId/publish-v2')
 @UseGuards(ScratchAuthGuard)
-export class PublishPipelineController {
+export class PublishPlanController {
   constructor(
-    private readonly publishPlanService: PublishPlanService,
-    private readonly publishRunService: PublishRunService,
-    private readonly publishAdminService: PublishAdminService,
+    private readonly publishPlanService: PublishPlanBuildService,
+    private readonly publishRunService: PublishPlanRunService,
+    private readonly publishAdminService: PublishPlanCrudService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly db: DbService,
   ) {}

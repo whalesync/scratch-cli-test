@@ -2,10 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
-import { FileIndexService } from 'src/publish-pipeline/file-index.service';
-import { FileReferenceService } from 'src/publish-pipeline/file-reference.service';
-import { PublishPlanService } from 'src/publish-pipeline/publish-plan.service';
-import { PublishRunService } from 'src/publish-pipeline/publish-run.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { FileReferenceService } from 'src/publish-plan/file-reference.service';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { SyncService } from 'src/sync/sync.service';
@@ -33,8 +33,8 @@ export class JobHandlerService {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
-    private readonly pipelinePlanService: PublishPlanService,
-    private readonly pipelineRunService: PublishRunService,
+    private readonly pipelinePlanService: PublishPlanBuildService,
+    private readonly pipelineRunService: PublishPlanRunService,
     private readonly dbService: DbService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });

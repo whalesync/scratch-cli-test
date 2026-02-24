@@ -17,7 +17,7 @@ import { JsonBodyMiddleware, RawBodyMiddleware } from './middleware';
 import { OAuthModule } from './oauth/oauth.module';
 import { PaymentModule } from './payment/payment.module';
 import { PosthogModule } from './posthog/posthog.module';
-import { PublishPipelineModule } from './publish-pipeline/publish-pipeline.module';
+import { PublishPlanModule } from './publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from './remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from './remote-service/connectors/connectors.module';
 import { ScheduleModule } from './schedule/schedule.module';
@@ -51,7 +51,7 @@ import { WorkerModule } from './worker/workers.module';
     SlackNotificationModule,
     WorkerEnqueuerModule,
     JobModule,
-    PublishPipelineModule,
+    PublishPlanModule,
     ScheduleModule,
     ...(ScratchConfigService.isAPIService() ? [DevToolsModule, BugReportModule, CodeMigrationsModule] : []),
     ...(ScratchConfigService.isTaskWorkerService() ? [WorkerModule] : []),

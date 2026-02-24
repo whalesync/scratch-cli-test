@@ -3,7 +3,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { DbService } from '../db/db.service';
 
 @Injectable()
-export class PublishAdminService {
+export class PublishPlanCrudService {
   constructor(
     private readonly db: DbService,
     private readonly bullEnqueuerService: BullEnqueuerService,

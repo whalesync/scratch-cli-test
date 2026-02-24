@@ -1,9 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { FileIndexService } from './file-index.service';
-import { PublishRefResolverService } from './publish-ref-resolver.service';
+import { FileIndexService } from '../file-index.service';
+import { RefResolverService } from '../ref-resolver.service';
 
 describe('PublishRefResolverService', () => {
-  let service: PublishRefResolverService;
+  let service: RefResolverService;
   let fileIndexService: jest.Mocked<FileIndexService>;
 
   beforeEach(async () => {
@@ -14,7 +14,7 @@ describe('PublishRefResolverService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PublishRefResolverService,
+        RefResolverService,
         {
           provide: FileIndexService,
           useValue: fileIndexService,
@@ -22,7 +22,7 @@ describe('PublishRefResolverService', () => {
       ],
     }).compile();
 
-    service = module.get<PublishRefResolverService>(PublishRefResolverService);
+    service = module.get<RefResolverService>(RefResolverService);
   });
 
   it('should be defined', () => {

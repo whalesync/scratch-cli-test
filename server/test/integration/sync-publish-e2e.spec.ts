@@ -13,16 +13,16 @@ import {
   TableMapping,
   WorkbookId,
 } from '@spinner/shared-types';
+import { SchemaHelperService } from 'server/src/publish-plan/schema-helper.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { FileIndexService } from 'src/publish-pipeline/file-index.service';
-import { FileReferenceService } from 'src/publish-pipeline/file-reference.service';
-import { PublishPlanService } from 'src/publish-pipeline/publish-plan.service';
-import { PublishRefResolverService } from 'src/publish-pipeline/publish-ref-resolver.service';
-import { PublishRunService } from 'src/publish-pipeline/publish-run.service';
-import { PublishSchemaService } from 'src/publish-pipeline/publish-schema.service';
-import { RefCleanerService } from 'src/publish-pipeline/ref-cleaner.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { FileReferenceService } from 'src/publish-plan/file-reference.service';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
+import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from 'src/remote-service/connectors/types';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -249,10 +249,10 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
   let dbService: DbService;
   let syncService: SyncService;
   let fileIndexService: FileIndexService;
-  let publishPlanService: PublishPlanService;
-  let publishRunService: PublishRunService;
-  let publishSchemaService: PublishSchemaService;
-  let publishRefResolverService: PublishRefResolverService;
+  let publishPlanService: PublishPlanBuildService;
+  let publishRunService: PublishPlanRunService;
+  let publishSchemaService: SchemaHelperService;
+  let publishRefResolverService: RefResolverService;
   let refCleanerService: RefCleanerService;
   let fileReferenceService: FileReferenceService;
 
@@ -297,9 +297,9 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
 
     // ---- Real services ----
     fileIndexService = new FileIndexService(dbService);
-    publishSchemaService = new PublishSchemaService(dbService);
+    publishSchemaService = new SchemaHelperService(dbService);
     refCleanerService = new RefCleanerService();
-    publishRefResolverService = new PublishRefResolverService(fileIndexService);
+    publishRefResolverService = new RefResolverService(fileIndexService);
     fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Mock: ScratchGitService ----
@@ -394,7 +394,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     );
 
     // ---- Instantiate Publish services (real, with mocked I/O) ----
-    publishPlanService = new PublishPlanService(
+    publishPlanService = new PublishPlanBuildService(
       dbService,
       scratchGitService,
       fileIndexService,
@@ -403,7 +403,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       publishSchemaService,
     );
 
-    publishRunService = new PublishRunService(
+    publishRunService = new PublishPlanRunService(
       dbService,
       connectorsService,
       credentialEncryptionService,

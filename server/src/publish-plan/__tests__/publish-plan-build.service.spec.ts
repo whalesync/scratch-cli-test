@@ -3,9 +3,9 @@ import { DbService } from '../../db/db.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
-import { PublishPlanService } from '../publish-plan.service';
-import { PublishSchemaService } from '../publish-schema.service';
+import { PublishPlanBuildService } from '../publish-plan-build.service';
 import { RefCleanerService } from '../ref-cleaner.service';
+import { SchemaHelperService } from '../schema-helper.service';
 
 const WORKBOOK_ID = 'wkb_test';
 const USER_ID = 'user_test';
@@ -32,13 +32,13 @@ function makeDbMock() {
 }
 
 describe('PublishPlanService', () => {
-  let service: PublishPlanService;
+  let service: PublishPlanBuildService;
   let db: ReturnType<typeof makeDbMock>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let fileIndexService: jest.Mocked<FileIndexService>;
   let fileReferenceService: jest.Mocked<FileReferenceService>;
   let refCleanerService: jest.Mocked<RefCleanerService>;
-  let schemaService: jest.Mocked<PublishSchemaService>;
+  let schemaService: jest.Mocked<SchemaHelperService>;
 
   beforeEach(async () => {
     db = makeDbMock();
@@ -66,21 +66,21 @@ describe('PublishPlanService', () => {
 
     schemaService = {
       getDataFolderInfo: jest.fn().mockResolvedValue({ id: 'df_1', spec: { schema: {} } }),
-    } as unknown as jest.Mocked<PublishSchemaService>;
+    } as unknown as jest.Mocked<SchemaHelperService>;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        PublishPlanService,
+        PublishPlanBuildService,
         { provide: DbService, useValue: db },
         { provide: ScratchGitService, useValue: scratchGitService },
         { provide: FileIndexService, useValue: fileIndexService },
         { provide: FileReferenceService, useValue: fileReferenceService },
         { provide: RefCleanerService, useValue: refCleanerService },
-        { provide: PublishSchemaService, useValue: schemaService },
+        { provide: SchemaHelperService, useValue: schemaService },
       ],
     }).compile();
 
-    service = module.get<PublishPlanService>(PublishPlanService);
+    service = module.get<PublishPlanBuildService>(PublishPlanBuildService);
   });
 
   it('should be defined', () => {

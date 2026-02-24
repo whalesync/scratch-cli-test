@@ -5,8 +5,8 @@
 import { Injectable } from '@nestjs/common';
 import { chunk } from 'lodash';
 import { DbService } from '../db/db.service';
-import { PublishSchemaService } from './publish-schema.service';
 import { RefCleanerService } from './ref-cleaner.service';
+import { SchemaHelperService } from './schema-helper.service';
 import { parsePath } from './utils';
 
 export interface ExtractedRef {
@@ -22,7 +22,7 @@ export class FileReferenceService {
   constructor(
     private readonly db: DbService,
     private readonly refCleanerService: RefCleanerService,
-    private readonly schemaService: PublishSchemaService,
+    private readonly schemaService: SchemaHelperService,
   ) {}
 
   /**

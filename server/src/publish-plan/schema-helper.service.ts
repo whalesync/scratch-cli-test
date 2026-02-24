@@ -10,7 +10,7 @@ import { Schema } from 'src/utils/objects';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 
 @Injectable()
-export class PublishSchemaService {
+export class SchemaHelperService {
   constructor(private readonly db: DbService) {}
 
   /**

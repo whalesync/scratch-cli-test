@@ -3,7 +3,7 @@ import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
-import { PublishPipelineModule } from 'src/publish-pipeline/publish-pipeline.module';
+import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
@@ -20,7 +20,7 @@ import { TransformerController } from './transformers/transformer.controller';
     WorkbookModule,
     ScratchConfigModule,
     WorkerEnqueuerModule,
-    PublishPipelineModule,
+    PublishPlanModule,
   ],
   controllers: [SyncController, TransformerController],
   providers: [SyncService],

@@ -9,20 +9,20 @@ import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
-import { PublishSchemaService } from './publish-schema.service';
 import { RefCleanerService } from './ref-cleaner.service';
+import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo, PublishPlanPhase } from './types';
 import { parsePath } from './utils';
 
 @Injectable()
-export class PublishPlanService {
+export class PublishPlanBuildService {
   constructor(
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
     private readonly refCleanerService: RefCleanerService,
-    private readonly schemaService: PublishSchemaService,
+    private readonly schemaService: SchemaHelperService,
   ) {}
 
   /**

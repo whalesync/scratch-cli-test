@@ -1,6 +1,6 @@
 import type { WorkbookId } from '@spinner/shared-types';
-import type { PublishPlanService } from 'src/publish-pipeline/publish-plan.service';
-import type { PublishRunService } from 'src/publish-pipeline/publish-run.service';
+import type { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
 import { JobCanceledError } from '../../job-errors';
@@ -46,8 +46,8 @@ export type PublishJobDefinition = JobDefinitionBuilder<
 
 export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition> {
   constructor(
-    private readonly publishPlanService: PublishPlanService,
-    private readonly publishRunService: PublishRunService,
+    private readonly publishPlanService: PublishPlanBuildService,
+    private readonly publishRunService: PublishPlanRunService,
     private readonly db: import('src/db/db.service').DbService,
     private readonly bullEnqueuerService?: BullEnqueuerService,
   ) {}

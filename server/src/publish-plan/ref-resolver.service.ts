@@ -3,7 +3,7 @@ import { FileIndexService } from './file-index.service';
 import { parsePath } from './utils';
 
 @Injectable()
-export class PublishRefResolverService {
+export class RefResolverService {
   constructor(private readonly fileIndexService: FileIndexService) {}
 
   /**

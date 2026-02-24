@@ -6,8 +6,8 @@ import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
 import _ from 'lodash';
-import { FileIndexService } from 'src/publish-pipeline/file-index.service';
-import { FileReferenceService } from 'src/publish-pipeline/file-reference.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';

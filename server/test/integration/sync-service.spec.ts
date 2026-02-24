@@ -11,7 +11,7 @@ import {
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { FileIndexService } from 'src/publish-pipeline/file-index.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';

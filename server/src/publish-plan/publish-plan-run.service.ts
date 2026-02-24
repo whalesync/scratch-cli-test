@@ -11,8 +11,8 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
-import { PublishRefResolverService } from './publish-ref-resolver.service';
-import { PublishSchemaService } from './publish-schema.service';
+import { RefResolverService } from './ref-resolver.service';
+import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo } from './types';
 import { parsePath } from './utils';
 
@@ -25,7 +25,7 @@ type PublishEntry = {
 };
 
 @Injectable()
-export class PublishRunService {
+export class PublishPlanRunService {
   constructor(
     private readonly db: DbService,
     private readonly connectorsService: ConnectorsService,
@@ -33,8 +33,8 @@ export class PublishRunService {
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
     private readonly scratchGitService: ScratchGitService,
-    private readonly schemaService: PublishSchemaService,
-    private readonly refResolverService: PublishRefResolverService,
+    private readonly schemaService: SchemaHelperService,
+    private readonly refResolverService: RefResolverService,
   ) {}
 
   async runPipeline(

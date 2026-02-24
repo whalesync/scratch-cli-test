@@ -19,8 +19,8 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { WorkbookEventService } from './workbook-event.service';
 
 import { ConnectorPullOptions } from 'src/remote-service/connectors/types';
-import { FileIndexService } from '../publish-pipeline/file-index.service';
-import { FileReferenceService } from '../publish-pipeline/file-reference.service';
+import { FileIndexService } from '../publish-plan/file-index.service';
+import { FileReferenceService } from '../publish-plan/file-reference.service';
 
 @Injectable()
 export class WorkbookService {
