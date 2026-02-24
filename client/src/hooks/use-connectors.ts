@@ -14,7 +14,13 @@ export const useConnectors = () => {
   const getDefaultAuthMethod = useCallback(
     (service: Service): AuthMethod => {
       // Services that support OAuth
-      const oauthSupportedServices = [Service.NOTION, Service.YOUTUBE, Service.WIX_BLOG, Service.SUPABASE];
+      const oauthSupportedServices = [
+        Service.NOTION,
+        Service.AIRTABLE,
+        Service.YOUTUBE,
+        Service.WIX_BLOG,
+        Service.SUPABASE,
+      ];
 
       if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
         oauthSupportedServices.push(Service.WEBFLOW);
@@ -48,7 +54,13 @@ export const useConnectors = () => {
 
   const getSupportedAuthMethods = useCallback(
     (service: Service): AuthMethod[] => {
-      const oauthSupportedServices = [Service.NOTION, Service.YOUTUBE, Service.WIX_BLOG, Service.SUPABASE];
+      const oauthSupportedServices = [
+        Service.NOTION,
+        Service.AIRTABLE,
+        Service.YOUTUBE,
+        Service.WIX_BLOG,
+        Service.SUPABASE,
+      ];
 
       if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
         oauthSupportedServices.push(Service.WEBFLOW);
