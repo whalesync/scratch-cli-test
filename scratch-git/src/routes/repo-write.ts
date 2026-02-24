@@ -119,3 +119,22 @@ repoWriteRouter.post('/rebase', async (req, res) => {
     res.status(500).json({ error: (err as Error).message });
   }
 });
+
+repoWriteRouter.post('/rename', async (req, res) => {
+  try {
+    const { id } = req.params as { id: string };
+    const { folderPath, renames, message } = req.body as {
+      folderPath: string;
+      renames: { oldName: string; newName: string }[];
+      message?: string;
+    };
+    if (folderPath === undefined || !renames || !Array.isArray(renames)) {
+      throw new Error('folderPath and renames are required');
+    }
+    const gitService = new RepoWriteService(id);
+    await gitService.renameFiles(folderPath, renames, message || `Rename batch in ${folderPath}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});

@@ -82,6 +82,19 @@ export class ScratchGitClient {
     });
   }
 
+  async renameFiles(
+    repoId: string,
+    folderPath: string,
+    renames: { oldName: string; newName: string }[],
+    message: string,
+  ): Promise<void> {
+    await this.callGitApi(`/api/repo/write/${repoId}/rename`, 'POST', {
+      folderPath,
+      renames,
+      message,
+    });
+  }
+
   async rebaseDirty(repoId: string): Promise<{ rebased: boolean; conflicts: string[] }> {
     return this.callGitApi(`/api/repo/write/${repoId}/rebase`, 'POST') as Promise<{
       rebased: boolean;

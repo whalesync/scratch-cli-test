@@ -9,6 +9,7 @@ export interface CommitOptions {
 export interface FileChange {
   path: string;
   content?: string;
+  oid?: string; // Optional OID to reuse existing blobs directly
   type: 'add' | 'modify' | 'delete';
 }
 

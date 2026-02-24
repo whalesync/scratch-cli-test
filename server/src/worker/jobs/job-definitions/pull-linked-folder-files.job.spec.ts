@@ -51,8 +51,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       deleteFilesFromBranch: jest.fn(),
     } as unknown as jest.Mocked<ScratchGitService>;
 
-    mockFileIndexService = {} as any;
-    mockFileReferenceService = {} as any;
+    mockFileIndexService = {
+      getFilenamesByRecordIds: jest.fn().mockResolvedValue(new Map()),
+      upsertBatch: jest.fn().mockResolvedValue(undefined),
+    } as any;
+    mockFileReferenceService = { updateRefsForFiles: jest.fn().mockResolvedValue(undefined) } as any;
 
     handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
@@ -89,7 +92,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('my-blog-post.json');
@@ -104,7 +107,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('my-blog-post.json');
@@ -118,7 +121,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('rec-12345.json');
@@ -134,7 +137,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('fallback-title.json');
@@ -151,7 +154,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('nested-slug-value.json');
@@ -173,7 +176,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, usedFileNames);
+        const result = (handler as any).buildGitFilesFromConnectorFiles(
+          '/',
+          records,
+          tableSpec,
+          usedFileNames,
+          new Map(),
+        );
 
         expect(result).toHaveLength(2);
         expect(result[0].path).toContain('same-title.json');
@@ -190,7 +199,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             title: 'Post',
           },
         ];
-        const result1 = (handler as any).buildGitFilesFromConnectorFiles('/', batch1, tableSpec, usedFileNames);
+        const result1 = (handler as any).buildGitFilesFromConnectorFiles(
+          '/',
+          batch1,
+          tableSpec,
+          usedFileNames,
+          new Map(),
+        );
 
         const batch2: ConnectorFile[] = [
           {
@@ -198,7 +213,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             title: 'Post',
           },
         ];
-        const result2 = (handler as any).buildGitFilesFromConnectorFiles('/', batch2, tableSpec, usedFileNames);
+        const result2 = (handler as any).buildGitFilesFromConnectorFiles(
+          '/',
+          batch2,
+          tableSpec,
+          usedFileNames,
+          new Map(),
+        );
 
         expect(result1[0].path).toContain('post.json');
         expect(result2[0].path).toContain('post-rec2.json');
@@ -215,7 +236,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/my-folder', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles(
+          '/my-folder',
+          records,
+          tableSpec,
+          new Set(),
+          new Map(),
+        );
 
         expect(result[0].path).toBe('/my-folder/test-file.json');
       });
@@ -229,7 +256,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result[0].path).toBe('/test-file.json');
       });
@@ -243,7 +270,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('', records, tableSpec, new Set(), new Map());
 
         expect(result[0].path).toBe('/test-file.json');
       });
@@ -262,7 +289,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result[0].content).toEqual(`{
   "name": "Test",
@@ -287,7 +314,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         };
         const records: ConnectorFile[] = [testRecord];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         const parsedContent = JSON.parse(result[0].content);
         expect(parsedContent).toEqual(testRecord);
@@ -305,7 +332,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         // Verify JSON is valid and can be parsed
         const parsed = JSON.parse(result[0].content);
@@ -336,7 +363,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(3);
         expect(result[0].path).toContain('first-post.json');
@@ -348,7 +375,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         const tableSpec = createMockTableSpec();
         const records: ConnectorFile[] = [];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         expect(result).toHaveLength(0);
       });
@@ -364,7 +391,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         // normalizeFileName should lowercase, remove special chars, replace spaces with hyphens
         expect(result[0].path).toMatch(/hello-world-special-chars\.json/);
@@ -379,7 +406,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set());
+        const result = (handler as any).buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
 
         // Accents should be removed, spaces converted to hyphens
         expect(result[0].path).toMatch(/cafe-francais\.json/);

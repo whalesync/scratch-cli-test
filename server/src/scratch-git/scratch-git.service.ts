@@ -132,6 +132,15 @@ export class ScratchGitService {
     await this.scratchGitClient.deleteFiles(workbookId, branch, paths, message);
   }
 
+  async renameFiles(
+    workbookId: WorkbookId,
+    folderPath: string,
+    renames: { oldName: string; newName: string }[],
+    message: string,
+  ): Promise<void> {
+    await this.scratchGitClient.renameFiles(workbookId, folderPath, renames, message);
+  }
+
   async deleteFolder(workbookId: WorkbookId, folderPath: string, message: string, branch?: string): Promise<void> {
     await this.scratchGitClient.deleteFolder(workbookId, folderPath, message, branch);
   }

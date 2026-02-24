@@ -28,6 +28,7 @@ import {
   ClockIcon,
   CloudCogIcon,
   DownloadIcon,
+  Edit2Icon,
   FileJsonIcon,
   FilePlusIcon,
   FlaskRoundIcon,
@@ -55,6 +56,7 @@ import { NewFileModal } from '../shared/NewFileModal';
 import { RemoveConnectionModal } from '../shared/RemoveConnectionModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
+import { RenameFileModal } from '../shared/RenameFileModal';
 import { UpdateConnectionModal } from '../shared/UpdateConnectionModal';
 import { ActiveDataFolderJobIndicator } from './ActiveDataFolderJobIndicator';
 import type { FileTreeMode } from './FileTree';
@@ -768,6 +770,7 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
   // Modals
   const [testTransformerOpened, { open: openTestTransformer, close: closeTestTransformer }] = useDisclosure(false);
   const [removeFileOpened, { open: openRemoveFile, close: closeRemoveFile }] = useDisclosure(false);
+  const [renameFileOpened, { open: openRenameFile, close: closeRenameFile }] = useDisclosure(false);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
@@ -876,6 +879,7 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
             onClick: () => void navigator.clipboard.writeText(`/${filePath}`),
           },
           { type: 'divider' },
+          { label: 'Rename', icon: Edit2Icon, onClick: openRenameFile },
           { label: 'Delete', icon: Trash2Icon, onClick: openRemoveFile, delete: true },
         ]}
       />
@@ -893,6 +897,21 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
         workbookId={params.id as WorkbookId}
         file={file}
         onSuccess={onSuccess}
+      />
+
+      <RenameFileModal
+        opened={renameFileOpened}
+        onClose={closeRenameFile}
+        workbookId={params.id as WorkbookId}
+        file={file}
+        onSuccess={(newName) => {
+          onSuccess?.();
+          // Update URL if the selected file was renamed
+          if (isSelected) {
+            const newEncodedPath = [...encodedPath.split('/').slice(0, -1), encodeURIComponent(newName)].join('/');
+            router.push(`/workbook/${params.id}/${routeBase}/${newEncodedPath}`);
+          }
+        }}
       />
     </>
   );

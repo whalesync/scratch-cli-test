@@ -69,6 +69,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     records: ConnectorFile[],
     tableSpec: BaseJsonTableSpec,
     usedFileNames: Set<string>,
+    existingFileNames: Map<string, string>,
   ): { path: string; content: string }[] {
     const prefix = parentPath === '/' ? '' : parentPath;
     const idColumnRemoteId = tableSpec.idColumnRemoteId;
@@ -78,17 +79,26 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const content = formatJsonWithPrettier(record as Record<string, unknown>);
       const recordId = String(record[idColumnRemoteId]);
 
-      // Resolve filename: slug > title > id
-      const slugValue = tableSpec.slugColumnRemoteId
-        ? (_.get(record, tableSpec.slugColumnRemoteId) as string | undefined)
-        : undefined;
-      const titleValue = tableSpec.titleColumnRemoteId
-        ? (_.get(record, tableSpec.titleColumnRemoteId[0]) as string | undefined)
-        : undefined;
+      let fileName = existingFileNames.get(recordId);
 
-      const baseName = resolveBaseFileName({ slugValue, titleValue, idValue: recordId });
-      const fileName = deduplicateFileName(baseName, '.json', usedFileNames, recordId);
-      const fullPath = `${prefix}/${fileName}`;
+      if (!fileName) {
+        // Resolve filename: slug > title > id
+        const slugValue = tableSpec.slugColumnRemoteId
+          ? (_.get(record, tableSpec.slugColumnRemoteId) as string | undefined)
+          : undefined;
+        const titleValue = tableSpec.titleColumnRemoteId
+          ? (_.get(record, tableSpec.titleColumnRemoteId[0]) as string | undefined)
+          : undefined;
+
+        const baseName = resolveBaseFileName({ slugValue, titleValue, idValue: recordId });
+        fileName = deduplicateFileName(baseName, '.json', usedFileNames, recordId);
+      } else {
+        // If we reuse an existing filename, we should still mark it as used
+        // so we don't accidentally derive it for another new file.
+        usedFileNames.add(fileName);
+      }
+
+      const fullPath = prefix ? `${prefix}/${fileName}` : `/${fileName}`;
 
       processedFiles.push({ path: fullPath, content });
     }
@@ -210,9 +220,23 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         folderPath: dataFolder.path,
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      const recordIds = files.map((f) => String((f as Record<string, unknown>)[tableSpec.idColumnRemoteId] || ''));
+      const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
+        dataFolder.workbookId,
+        dataFolder.path?.replace(/^\//, '') ?? '', // Match how folderPath is saved in upsertBatch
+        recordIds,
+      );
+
       // TODO: Validate files against the table schema before publishing.
       // Build git file payloads from connector files
-      const builtFiles = this.buildGitFilesFromConnectorFiles(dataFolder.path ?? '', files, tableSpec, usedFileNames);
+      const builtFiles = this.buildGitFilesFromConnectorFiles(
+        dataFolder.path ?? '',
+        files,
+        tableSpec,
+        usedFileNames,
+        existingFileNames,
+      );
 
       // Sync to Git (Commit to main + Rebase dirty)
       if (builtFiles.length > 0) {

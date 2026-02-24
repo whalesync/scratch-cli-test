@@ -204,10 +204,13 @@ export class PublishPlanRunService {
             continue;
           }
 
-          // Determine batch size
-          const batchSize = connector.getBatchSize(
-            currentPhase === 'delete' ? 'delete' : currentPhase === 'create' ? 'create' : 'update',
-          );
+          // Determine batch size (rename-files only renames paths, so we can use large batches)
+          const batchSize =
+            currentPhase === 'rename-files'
+              ? 1000
+              : connector.getBatchSize(
+                  currentPhase === 'delete' ? 'delete' : currentPhase === 'create' ? 'create' : 'update',
+                );
 
           WSLogger.info({
             source: 'PublishRunService.runPipeline',
@@ -439,7 +442,7 @@ export class PublishPlanRunService {
           await this.dispatchDeleteBatch(entries, connector, tableSpec, workbookId, planId);
           break;
         case 'rename-files':
-          // Stub: rename execution not yet implemented — operations are marked success immediately
+          await this.dispatchRenameBatch(entries, workbookId);
           break;
         default:
           throw new Error(`Unknown phase: ${phase}`);
@@ -702,6 +705,80 @@ export class PublishPlanRunService {
       content: null,
     }));
     await this.syncBatchToDirtyIfFinal(workbookId, planId, 'delete', dirtySyncBatch);
+  }
+
+  private async dispatchRenameBatch(entries: PublishOperation[], workbookId: string): Promise<void> {
+    if (entries.length === 0) return;
+
+    // Group operations by folderPath
+    const byFolder = new Map<string, PublishOperation[]>();
+    for (const entry of entries) {
+      const { folderPath } = parsePath(entry.filePath);
+      const list = byFolder.get(folderPath) || [];
+      list.push(entry);
+      byFolder.set(folderPath, list);
+    }
+
+    // Process each folder batch
+    for (const [folderPath, folderEntries] of byFolder.entries()) {
+      const filenames = folderEntries.map((e) => parsePath(e.filePath).filename);
+
+      // Find the recordIds that were assigned during the 'create' phase
+      const indexRecords = await this.db.client.fileIndex.findMany({
+        where: {
+          workbookId,
+          folderPath,
+          filename: { in: filenames },
+        },
+      });
+
+      const filenameToRecordId = new Map(indexRecords.map((r) => [r.filename, r.recordId]));
+
+      const renames: { oldName: string; newName: string }[] = [];
+      const fileIndexUpdates: { workbookId: string; folderPath: string; recordId: string; filename: string }[] = [];
+      const refUpdates: { oldPath: string; newPath: string }[] = [];
+
+      for (const entry of folderEntries) {
+        const { filename: oldName } = parsePath(entry.filePath);
+        const recordId = filenameToRecordId.get(oldName);
+        if (!recordId) {
+          throw new Error(`Cannot find recordId for ${oldName} in folder ${folderPath} during rename`);
+        }
+        const newName = `${recordId}.json`;
+
+        if (oldName === newName) continue;
+
+        renames.push({ oldName, newName });
+        fileIndexUpdates.push({ workbookId, folderPath, recordId, filename: newName });
+
+        const oldPathFull = folderPath ? `${folderPath}/${oldName}` : oldName;
+        const newPathFull = folderPath ? `${folderPath}/${newName}` : newName;
+        refUpdates.push({ oldPath: oldPathFull, newPath: newPathFull });
+      }
+
+      if (renames.length > 0) {
+        // Apply batch rename directly via Git
+        await this.scratchGitService.renameFiles(
+          workbookId as WorkbookId,
+          folderPath,
+          renames,
+          `Publish V2 rename batch (${renames.length})`,
+        );
+
+        // Update FileIndex
+        // The file-index.service upsertBatch correctly handles updating based on compound unique key
+        // BUT upsert is on (workbookId, folderPath, recordId), so changing the filename is just an update.
+        await this.fileIndexService.upsertBatch(fileIndexUpdates);
+
+        // Update outbound references in FileReference table
+        for (const ref of refUpdates) {
+          await this.db.client.fileReference.updateMany({
+            where: { workbookId, sourceFilePath: ref.oldPath },
+            data: { sourceFilePath: ref.newPath },
+          });
+        }
+      }
+    }
   }
 
   /**

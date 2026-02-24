@@ -47,5 +47,12 @@ export class CreateDataFolderDto {
 export type ValidatedCreateDataFolderDto = Required<Pick<CreateDataFolderDto, 'name' | 'workbookId'>> &
   Pick<
     CreateDataFolderDto,
-    'connectorAccountId' | 'tableId' | 'parentFolderId' | 'filter' | 'options' | 'idFieldOverride' | 'nameFieldOverride' | 'triggerPull'
+    | 'connectorAccountId'
+    | 'tableId'
+    | 'parentFolderId'
+    | 'filter'
+    | 'options'
+    | 'idFieldOverride'
+    | 'nameFieldOverride'
+    | 'triggerPull'
   >;

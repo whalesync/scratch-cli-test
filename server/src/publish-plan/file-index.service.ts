@@ -149,6 +149,26 @@ export class FileIndexService {
     return entry?.filename || null;
   }
 
+  async getFilenamesByRecordIds(
+    workbookId: string,
+    folderPath: string,
+    recordIds: string[],
+  ): Promise<Map<string, string>> {
+    if (recordIds.length === 0) return new Map();
+
+    const map = new Map<string, string>();
+    for (const recordIdChunk of chunk(recordIds, 1000)) {
+      const entries = await this.db.client.fileIndex.findMany({
+        where: { workbookId, folderPath, recordId: { in: recordIdChunk } },
+        select: { recordId: true, filename: true },
+      });
+      for (const e of entries) {
+        map.set(e.recordId, e.filename);
+      }
+    }
+    return map;
+  }
+
   async removeAll(workbookId: string, folderPath: string): Promise<void> {
     await this.db.client.fileIndex.deleteMany({
       where: { workbookId, folderPath },

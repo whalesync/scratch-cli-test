@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException, NotFoundException, NotImplementedException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import type { DataFolderId, FileDiffStatus, FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import {
   FileDetailsResponseDto,
@@ -203,12 +203,68 @@ export class FilesService {
     const workbook = await this.verifyWorkbookAccess(workbookId, actor);
 
     if (updateFileDto.name) {
-      throw new NotImplementedException('move and rename not supported yet');
-    }
-
-    if (updateFileDto.content !== undefined && updateFileDto.content !== null) {
+      const newPath = path.substring(0, path.lastIndexOf('/')) + '/' + updateFileDto.name;
+      await this.renameFileGit(workbookId, path, newPath, actor);
+      // We don't support content update at the same time as rename in this simplified version,
+      // though we could. Assuming rename is a standalone operation for now.
+    } else if (updateFileDto.content !== undefined && updateFileDto.content !== null) {
       await this.scratchGitService.commitFile(workbookId, path, updateFileDto.content, `Update ${path}`);
       this.posthogService.trackRecordEdited(actor, workbook, path);
     }
+  }
+
+  async renameFileGit(workbookId: WorkbookId, oldPath: string, newPath: string, actor: Actor): Promise<void> {
+    await this.verifyWorkbookAccess(workbookId, actor);
+
+    const existingFile = await this.getFileByPathGit(workbookId, oldPath, actor);
+
+    if (!existingFile) {
+      throw new NotFoundException(`Unable to find ${oldPath}`);
+    }
+
+    const oldFilename = extractFilenameFromPath(oldPath);
+    const newFilename = extractFilenameFromPath(newPath);
+    const folderPath = oldPath.substring(0, oldPath.lastIndexOf('/')) || '';
+
+    try {
+      await this.scratchGitService.renameFiles(
+        workbookId,
+        folderPath,
+        [{ oldName: oldFilename, newName: newFilename }],
+        `Rename ${oldPath} to ${newPath}`,
+      );
+    } catch (e) {
+      throw new InternalServerErrorException(
+        `Failed to rename file in git: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
+    // FileIndex uses paths without leading slash
+    const folderPathWithoutPrefix = folderPath.replace(/^\//, '');
+
+    // 1. Update FileIndex
+    await this.db.client.fileIndex.updateMany({
+      where: {
+        workbookId,
+        folderPath: folderPathWithoutPrefix,
+        filename: oldFilename,
+      },
+      data: {
+        filename: newFilename,
+      },
+    });
+
+    // 2. Update FileReference outbound references
+    await this.db.client.fileReference.updateMany({
+      where: {
+        workbookId,
+        sourceFilePath: oldPath,
+      },
+      data: {
+        sourceFilePath: newPath,
+      },
+    });
+
+    // this.posthogService.trackRecordRenamed(actor, workbook, oldPath, newPath); // Example if tracking existed
   }
 }

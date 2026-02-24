@@ -66,6 +66,137 @@ export class RepoWriteService extends BaseRepoService {
     await this.rebaseDirty();
   }
 
+  async renameFiles(
+    folderPath: string,
+    renames: { oldName: string; newName: string }[],
+    message: string,
+  ): Promise<void> {
+    const dir = this.getRepoPath();
+    const commitOid = await this.resolveRef(DIRTY_BRANCH);
+
+    try {
+      const { commit } = await git.readCommit({ fs, dir, gitdir: dir, oid: commitOid });
+      let currentOid = commit.tree;
+
+      const normalizedFolder = folderPath.startsWith('/') ? folderPath.slice(1) : folderPath;
+      const cleanFolder = normalizedFolder.endsWith('/') ? normalizedFolder.slice(0, -1) : normalizedFolder;
+
+      if (cleanFolder) {
+        const parts = cleanFolder.split('/');
+        for (const part of parts) {
+          const { tree } = await git.readTree({ fs, dir, gitdir: dir, oid: currentOid });
+          const entry = tree.find((e) => e.path === part);
+          if (!entry) throw new Error(`Folder ${part} not found`);
+          currentOid = entry.oid;
+        }
+      }
+
+      const { tree: folderTree } = await git.readTree({ fs, dir, gitdir: dir, oid: currentOid });
+      const changesForDirty: FileChange[] = [];
+
+      // Pre-calculate MAIN branch tree for the same folder to see what actually exists in MAIN
+      const mainCommitOid = await this.resolveRef(MAIN_BRANCH);
+      const { commit: mainCommitVal } = await git.readCommit({ fs, dir, gitdir: dir, oid: mainCommitOid });
+      let mainCurrentOid = mainCommitVal.tree;
+      let mainFolderTree: { path: string; oid: string }[] = [];
+
+      try {
+        if (cleanFolder) {
+          const parts = cleanFolder.split('/');
+          for (const part of parts) {
+            const { tree } = await git.readTree({ fs, dir, gitdir: dir, oid: mainCurrentOid });
+            const entry = tree.find((e) => e.path === part);
+            if (!entry) throw new Error('Not found');
+            mainCurrentOid = entry.oid;
+          }
+        }
+        const { tree } = await git.readTree({ fs, dir, gitdir: dir, oid: mainCurrentOid });
+        mainFolderTree = tree.map((e) => ({ path: e.path, oid: e.oid }));
+      } catch {
+        // It's possible the folder doesn't exist in MAIN at all yet.
+        mainFolderTree = [];
+      }
+
+      const changesForMain: FileChange[] = [];
+
+      for (const rename of renames) {
+        const entryInDirty = folderTree.find((e) => e.path === rename.oldName);
+        if (!entryInDirty) throw new Error(`File ${rename.oldName} not found in ${cleanFolder}`);
+
+        const oldFilePath = cleanFolder ? `${cleanFolder}/${rename.oldName}` : rename.oldName;
+        const newFilePath = cleanFolder ? `${cleanFolder}/${rename.newName}` : rename.newName;
+
+        // Always apply to dirty
+        changesForDirty.push({ path: oldFilePath, type: 'delete' });
+        changesForDirty.push({ path: newFilePath, type: 'add', oid: entryInDirty.oid });
+
+        // Only apply to main if it actually existed in main prior to this rename
+        const entryInMain = mainFolderTree.find((e) => e.path === rename.oldName);
+        if (entryInMain) {
+          changesForMain.push({ path: oldFilePath, type: 'delete' });
+          changesForMain.push({ path: newFilePath, type: 'add', oid: entryInMain.oid });
+        }
+      }
+
+      // Apply to MAIN branch
+      let newMainCommitOid: string = mainCommitOid;
+      await withWriteLock(this.repoId, MAIN_BRANCH, async () => {
+        if (changesForMain.length > 0) {
+          const { tree: mainTree } = await git.readTree({ fs, dir, gitdir: dir, oid: mainCommitVal.tree });
+          const newMainTreeOid = await this.applyChangesToTree(dir, mainTree, changesForMain);
+          newMainCommitOid = await git.writeCommit({
+            fs,
+            dir,
+            gitdir: dir,
+            commit: {
+              tree: newMainTreeOid,
+              parent: [mainCommitOid],
+              author: { ...DEFAULT_AUTHOR, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 },
+              committer: { ...DEFAULT_AUTHOR, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 },
+              message,
+            },
+          });
+          await this.forceRef(MAIN_BRANCH, newMainCommitOid);
+        }
+      });
+
+      // Apply to DIRTY branch with an efficient squashed rebase on top of MAIN
+      await withWriteLock(this.repoId, DIRTY_BRANCH, async () => {
+        const dirtyCommitOid = await this.resolveRef(DIRTY_BRANCH);
+        const { commit: dirtyCommitVal } = await git.readCommit({ fs, dir, gitdir: dir, oid: dirtyCommitOid });
+        const { tree: dirtyTree } = await git.readTree({ fs, dir, gitdir: dir, oid: dirtyCommitVal.tree });
+
+        const newDirtyTreeOid = await this.applyChangesToTree(dir, dirtyTree, changesForDirty);
+
+        // If the resulting DIRTY tree matches the new MAIN tree exactly (meaning there were no other uncommitted changes),
+        // we can do a strict fast-forward pointer update to the same commit.
+        const mainCommitVal2 = await git.readCommit({ fs, dir, gitdir: dir, oid: newMainCommitOid });
+
+        if (newDirtyTreeOid === mainCommitVal2.commit.tree) {
+          await this.forceRef(DIRTY_BRANCH, newMainCommitOid);
+        } else {
+          // Create a squashed commit that keeps all other uncommitted changes but rebases the parent
+          // cleanly on top of the new MAIN commit we just generated without needing a slow 3-way merge
+          const newDirtyCommitOid = await git.writeCommit({
+            fs,
+            dir,
+            gitdir: dir,
+            commit: {
+              tree: newDirtyTreeOid,
+              parent: [newMainCommitOid],
+              author: { ...DEFAULT_AUTHOR, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 },
+              committer: { ...DEFAULT_AUTHOR, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 },
+              message: 'Uncommitted changes after rename',
+            },
+          });
+          await this.forceRef(DIRTY_BRANCH, newDirtyCommitOid);
+        }
+      });
+    } catch (e) {
+      throw new Error(`Cannot rename files: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   async publishFile(file: { path: string; content: string }, message: string): Promise<void> {
     await this.commitFiles(MAIN_BRANCH, [file], message);
     await this.rebaseDirty();
@@ -292,12 +423,14 @@ export class RepoWriteService extends BaseRepoService {
 
       if (direct) {
         if (direct.type === 'delete') continue;
-        const newBlob = await git.writeBlob({
-          fs,
-          dir,
-          gitdir: dir,
-          blob: Buffer.from(direct.content || ''),
-        });
+        const newBlob =
+          direct.oid ||
+          (await git.writeBlob({
+            fs,
+            dir,
+            gitdir: dir,
+            blob: Buffer.from(direct.content || ''),
+          }));
         newEntries.push({
           mode: '100644',
           path: entry.path,
@@ -331,12 +464,14 @@ export class RepoWriteService extends BaseRepoService {
 
     for (const [path, change] of directChangesMap) {
       if ((change.type === 'add' || change.type === 'modify') && !currentEntryPaths.has(path)) {
-        const newBlob = await git.writeBlob({
-          fs,
-          dir,
-          gitdir: dir,
-          blob: Buffer.from(change.content || ''),
-        });
+        const newBlob =
+          change.oid ||
+          (await git.writeBlob({
+            fs,
+            dir,
+            gitdir: dir,
+            blob: Buffer.from(change.content || ''),
+          }));
         newEntries.push({
           mode: '100644',
           path: change.path,
