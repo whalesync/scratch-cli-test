@@ -11,7 +11,7 @@ export class AirtableOAuthProvider implements OAuthProvider {
   constructor(private readonly configService: ConfigService) {
     this.clientId = this.configService.get<string>('AIRTABLE_CLIENT_ID') || '';
     this.clientSecret = this.configService.get<string>('AIRTABLE_CLIENT_SECRET') || '';
-    this.redirectUri = this.configService.get<string>('REDIRECT_URI') || '';
+    this.redirectUri = this.configService.get<string>('AIRTABLE_REDIRECT_URI') || '';
   }
 
   generateAuthUrl(

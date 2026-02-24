@@ -49,15 +49,10 @@ export class ConnectorsService {
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for Airtable', service);
         }
-        if (connectorAccount.authType === AuthType.OAUTH) {
-          const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
-          return new AirtableConnector(accessToken);
-        } else {
-          if (!decryptedCredentials?.apiKey) {
-            throw new ConnectorInstantiationError('API key is required for Airtable', service);
-          }
-          return new AirtableConnector(decryptedCredentials.apiKey);
+        if (!decryptedCredentials?.apiKey) {
+          throw new ConnectorInstantiationError('API key is required for Airtable', service);
         }
+        return new AirtableConnector(decryptedCredentials.apiKey);
       case Service.WORDPRESS:
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for WordPress', service);

@@ -31,7 +31,6 @@ import { DbService } from '../db/db.service';
 import { DecryptedCredentials } from '../remote-service/connector-account/types/encrypted-credentials.interface';
 import { EncryptedData } from '../utils/encryption';
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
-import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
@@ -58,7 +57,6 @@ export class OAuthService {
 
   constructor(
     private readonly db: DbService,
-    private readonly airtableProvider: AirtableOAuthProvider,
     private readonly notionProvider: NotionOAuthProvider,
     private readonly shopifyProvider: ShopifyOAuthProvider,
     private readonly supabaseProvider: SupabaseOAuthProvider,
@@ -69,13 +67,14 @@ export class OAuthService {
     private readonly credentialEncryptionService: CredentialEncryptionService,
   ) {
     // Register OAuth providers
-    this.providers.set('AIRTABLE', this.airtableProvider);
     this.providers.set('NOTION', this.notionProvider);
     this.providers.set('SHOPIFY', this.shopifyProvider);
     this.providers.set('SUPABASE', this.supabaseProvider);
     this.providers.set('WEBFLOW', this.webflowProvider);
     this.providers.set('WIX_BLOG', this.wixProvider);
     this.providers.set('YOUTUBE', this.youTubeProvider);
+    // Future providers can be added here:
+    // this.providers.set('airtable', this.airtableProvider);
   }
 
   /**
