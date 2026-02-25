@@ -19,6 +19,7 @@ import {
   type ConnectorAccount,
   type DataFolder,
   type DataFolderGroup,
+  type FileDiffStatus,
   type FileRefEntity,
   type WorkbookId,
 } from '@spinner/shared-types';
@@ -75,7 +76,7 @@ interface ConnectionNodeProps {
   workbookId: WorkbookId;
   connectorAccount?: ConnectorAccount;
   mode?: FileTreeMode;
-  dirtyFilePaths?: Set<string>;
+  dirtyFilePaths?: Map<string, FileDiffStatus>;
 }
 
 export function ConnectionNode({
@@ -106,7 +107,7 @@ export function ConnectionNode({
     if (mode !== 'review' || !dirtyFilePaths || dirtyFilePaths.size === 0) return group.dataFolders;
 
     return group.dataFolders.filter((folder) => {
-      for (const dirtyPath of dirtyFilePaths) {
+      for (const dirtyPath of dirtyFilePaths.keys()) {
         if (dirtyPath.startsWith(`${folder.name}/`) || dirtyPath.includes(`/${folder.name}/`)) {
           return true;
         }
@@ -402,7 +403,7 @@ interface TableNodeProps {
   folder: DataFolder;
   workbookId: WorkbookId;
   mode?: FileTreeMode;
-  dirtyFilePaths?: Set<string>;
+  dirtyFilePaths?: Map<string, FileDiffStatus>;
   groupName: string;
 }
 
@@ -460,12 +461,9 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
       fileItems = fileItems.filter((f) => dirtyFilePaths.has(f.path));
     }
 
-    // Inject deleted files (ghost nodes)
-    // TODO: this is a bit of a hack, we should have a better way to do this
-    // Probably by taking the files from the main branch
+    // Inject ghost nodes for dirty files not in the file list (e.g. deleted or not yet loaded)
     if (mode === 'review' && dirtyFilePaths) {
       // Determine the expected path prefix for this folder
-      // If we have existing files, use their directory. Otherwise, construct it.
       let folderPrefix = '';
       if (fileItems.length > 0) {
         const firstFilePath = fileItems[0].path;
@@ -473,32 +471,19 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
         if (lastSlashIndex !== -1) {
           folderPrefix = firstFilePath.substring(0, lastSlashIndex + 1);
         }
-      } else {
-        // Fallback: Try multiple potential prefixes
-        // 1. Just folder name (e.g. "MyTable/")
-        // 2. Group + Folder (e.g. "Scratch/MyTable/")
-        // We will filter dirty paths against ANY of these to find candidates
       }
 
-      // Check for dirty paths that starts with this folder's prefix BUT are not in the current file list
+      // Check for dirty paths that belong to this folder but aren't in the current file list
       const existingPaths = new Set(fileItems.map((f) => f.path));
 
-      dirtyFilePaths.forEach((dirtyPath) => {
-        // Strict prefix check to ensure it belongs to this folder
-        // Also check if it's already in the list (if so, it's modified/created, not deleted)
-
+      dirtyFilePaths.forEach((status, dirtyPath) => {
         let belongsToFolder = false;
 
-        // If we have existing files, we know the exact prefix
         if (folderPrefix) {
           belongsToFolder = dirtyPath.startsWith(folderPrefix);
         } else {
           // Heuristic: check if path contains folder name as a segment
-          // This is safer than constructing a rigid prefix
           const parts = dirtyPath.split('/');
-          // Look for folder name in path parts (excluding the filename)
-          // e.g. "Scratch/Table1/file.json" -> parts=["Scratch", "Table1", "file.json"]
-          // We expect "Table1" to be one of the parent directories
           if (parts.length > 1) {
             const parentDirs = parts.slice(0, parts.length - 1);
             belongsToFolder = parentDirs.includes(folder.name);
@@ -506,16 +491,14 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
         }
 
         if (belongsToFolder && !existingPaths.has(dirtyPath)) {
-          // It's in dirty list but not in file list -> it's deleted
           const parts = dirtyPath.split('/');
           const name = parts[parts.length - 1];
           fileItems.push({
             path: dirtyPath,
             name: name,
             type: 'file',
-            status: 'deleted',
-            // Add dummy values for required fields if any
-            content: '', // not needed for list
+            status,
+            content: '',
             parentFolderId: folder.id,
           } as FileRefEntity);
         }

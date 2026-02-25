@@ -10,7 +10,7 @@ import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, Workbook, WorkbookId } from '@spinner/shared-types';
-import { PlusIcon, RefreshCwIcon, SearchIcon } from 'lucide-react';
+import { PlusIcon, RefreshCwIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { CreateConnectionModal } from '../shared/CreateConnectionModal';
@@ -48,15 +48,12 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     [openChooseTables],
   );
 
-  // For review mode, dirty files are fetched on-demand
-  const [showDirtyFiles, setShowDirtyFiles] = useState(false);
-  const { dirtyFiles, isLoading: dirtyFilesLoading } = useDirtyFiles(
-    mode === 'review' && showDirtyFiles ? workbook.id : null,
-  );
+  // In review mode, fetch dirty files immediately
+  const { dirtyFiles, isLoading: dirtyFilesLoading } = useDirtyFiles(mode === 'review' ? workbook.id : null);
 
-  // Create a set of dirty file paths for quick lookup
+  // Create a map of dirty file paths to their status for quick lookup
   const dirtyFilePaths = useMemo(() => {
-    return new Set(dirtyFiles.map((f) => f.path));
+    return new Map(dirtyFiles.map((f) => [f.path, f.status]));
   }, [dirtyFiles]);
 
   // Sort groups: Scratch first, then alphabetically by name
@@ -128,14 +125,6 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
       <Box p="md">
         <ButtonCompactSecondary leftSection={<PlusIcon size={12} />} onClick={openConnectionModal}>
           Connect your first service
-        </ButtonCompactSecondary>
-      </Box>
-    );
-  } else if (mode === 'review' && !showDirtyFiles) {
-    content = (
-      <Box p="md">
-        <ButtonCompactSecondary leftSection={<SearchIcon size={12} />} onClick={() => setShowDirtyFiles(true)}>
-          Show edited files
         </ButtonCompactSecondary>
       </Box>
     );
