@@ -5,9 +5,9 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useFileByPath } from '@/hooks/use-file-path';
+import { jobApi } from '@/lib/api/job';
 import { workbookApi } from '@/lib/api/workbook';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
-import { useWorkbookEditorUIStore, WorkbookModals } from '@/stores/workbook-editor-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
@@ -38,14 +38,34 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDiscarding, setIsDiscarding] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishJobId, setPublishJobId] = useState<string | null>(null);
+  const [isPublishSubmitting, setIsPublishSubmitting] = useState(false);
+  const activeJobs = useActiveJobsStore((state) => state.activeJobs);
+  const isJobActive = publishJobId !== null && activeJobs.some((job) => job.bullJobId === publishJobId);
+  const isPublishing = isPublishSubmitting || isJobActive;
+
+  // Navigate back to review page when publish job completes successfully
+  const [wasJobActive, setWasJobActive] = useState(false);
+  useEffect(() => {
+    if (isJobActive) {
+      setWasJobActive(true);
+    } else if (wasJobActive && publishJobId) {
+      setWasJobActive(false);
+      const finishedJobId = publishJobId;
+      setPublishJobId(null);
+      jobApi.getJobsStatus([finishedJobId]).then((jobs) => {
+        if (jobs[0]?.state === 'completed') {
+          router.push(`/workbook/${workbookId}/review`);
+        }
+      });
+    }
+  }, [isJobActive, wasJobActive, publishJobId, workbookId, router]);
 
   // View mode state - default to split (side-by-side)
   const [viewMode, setViewMode] = useState<ViewMode>('split');
 
   // Confirm dialog
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
-  const showModal = useWorkbookEditorUIStore((state) => state.showModal);
 
   const originalContent = fileResponse?.file?.originalContent ?? '';
 
@@ -115,7 +135,7 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
   const handlePublish = useCallback(async () => {
     if (!filePath) return;
 
-    setIsPublishing(true);
+    setIsPublishSubmitting(true);
     try {
       const folder = findDataFolderForFile(folders, filePath);
 
@@ -129,23 +149,20 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
       const result = await workbookApi.planPublishV2(workbookId, folder.connectorAccountId, true, undefined, filePath);
 
       if (result?.jobId) {
+        setPublishJobId(result.jobId);
         useActiveJobsStore.getState().trackJobIds([result.jobId]);
+        useActiveJobsStore.getState().refreshJobs();
         ScratchpadNotifications.info({ message: 'Initiated publish job for this file' });
       }
 
       // Refresh the file data
       await refreshFile();
-      // Navigate back to review page since this file is now publishing
-      router.push(`/workbook/${workbookId}/review`);
-
-      // Open the publish modal immediately
-      showModal({ type: WorkbookModals.PUBLISH_PLANS });
     } catch (error) {
       console.debug('Failed to publish file:', error);
     } finally {
-      setIsPublishing(false);
+      setIsPublishSubmitting(false);
     }
-  }, [filePath, workbookId, refreshFile, router, showModal, folders]);
+  }, [filePath, workbookId, refreshFile, folders]);
 
   // Keyboard shortcut: Cmd+S / Ctrl+S to save
   useEffect(() => {
