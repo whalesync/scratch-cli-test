@@ -46,6 +46,16 @@ deploy scratch-git to test environment:
       --zone europe-west1-b
       --tunnel-through-iap
       -- 'sudo google_metadata_script_runner startup'
+    # Verify the deployed version is running (google_metadata_script_runner doesn't propagate failures)
+    - |
+      HEALTH=$(gcloud compute ssh scratch-git \
+        --project spv1eu-test \
+        --zone europe-west1-b \
+        --tunnel-through-iap \
+        -- "for i in 1 2 3 4 5 6; do RESP=\$(curl -sf http://localhost:3100/health) && break; sleep 5; done; echo \"\$RESP\"")
+      echo "$HEALTH"
+      if [ -z "$HEALTH" ]; then echo "ERROR: scratch-git health check failed after 30s"; exit 1; fi
+      echo "$HEALTH" | grep -q "$CI_COMMIT_SHORT_SHA" || (echo "ERROR: Expected build containing $CI_COMMIT_SHORT_SHA but got: $HEALTH" && exit 1)
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -126,6 +136,16 @@ deploy scratch-git to production environment:
       --zone europe-west1-b
       --tunnel-through-iap
       -- 'sudo google_metadata_script_runner startup'
+    # Verify the deployed version is running (google_metadata_script_runner doesn't propagate failures)
+    - |
+      HEALTH=$(gcloud compute ssh scratch-git \
+        --project spv1eu-production \
+        --zone europe-west1-b \
+        --tunnel-through-iap \
+        -- "for i in 1 2 3 4 5 6; do RESP=\$(curl -sf http://localhost:3100/health) && break; sleep 5; done; echo \"\$RESP\"")
+      echo "$HEALTH"
+      if [ -z "$HEALTH" ]; then echo "ERROR: scratch-git health check failed after 30s"; exit 1; fi
+      echo "$HEALTH" | grep -q "$CI_COMMIT_SHORT_SHA" || (echo "ERROR: Expected build containing $CI_COMMIT_SHORT_SHA but got: $HEALTH" && exit 1)
   rules:
     - !reference [.rules, on_merge_to_prod]
 
