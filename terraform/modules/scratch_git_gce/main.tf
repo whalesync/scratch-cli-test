@@ -129,12 +129,15 @@ resource "google_compute_instance" "scratch_git" {
     # Authenticate Docker with Artifact Registry
     gcloud auth configure-docker ${split("/", var.docker_image)[0]} --quiet
 
-    # Pull the latest image
-    docker pull ${var.docker_image}
-
     # Stop and remove existing container (if any) before starting fresh
     docker stop scratch-git 2>/dev/null || true
     docker rm scratch-git 2>/dev/null || true
+
+    # Clean up old Docker images to prevent boot disk from filling up
+    docker system prune -af
+
+    # Pull the latest image
+    docker pull ${var.docker_image}
 
     docker run -d \
       --name scratch-git \
