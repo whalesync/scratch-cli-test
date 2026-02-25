@@ -230,14 +230,14 @@ export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, fi
       const [masterRes, dirtyRes, allEntries] = await Promise.allSettled([
         workbookApi.getRepoFile(workbookId, filePath, 'main'),
         workbookApi.getRepoFile(workbookId, filePath, 'dirty'),
-        workbookApi.listPublishPlanOperations(workbookId, publishPlanId),
+        workbookApi.listPublishPlanOperations(workbookId, publishPlanId, { pageSize: 200 }),
       ]);
 
       setMasterJson(masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '');
       setDirtyJson(dirtyRes.status === 'fulfilled' ? formatJson(dirtyRes.value.content) : '');
 
       // Filter entries for this file only
-      const fileEntries = (allEntries.status === 'fulfilled' ? allEntries.value : []) as PlanEntry[];
+      const fileEntries = (allEntries.status === 'fulfilled' ? allEntries.value.data : []) as PlanEntry[];
       setEntries(fileEntries.filter((e) => e.filePath === filePath));
     } catch (err) {
       console.error('RecordPlanModal: fetch failed', err);

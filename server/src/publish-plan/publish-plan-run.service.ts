@@ -54,6 +54,7 @@ export class PublishPlanRunService {
       renameFilesPlanned: number;
       currentPhase: string;
     }) => Promise<void>,
+    onError?: (errorInfo: { lastSyncError: string; errorCount: number }) => void,
   ): Promise<PublishPlanInfo> {
     const plan = await this.db.client.publishPlan.findUnique({ where: { id: pipelineId } });
     if (!plan) {
@@ -103,6 +104,9 @@ export class PublishPlanRunService {
       if (executeSinglePhase) {
         phasesToRun = phasesToRun.slice(0, 1);
       }
+
+      // Track cumulative error count across all batches
+      let cumulativeErrorCount = 0;
 
       // Pre-count total entries per phase across all statuses (for stable progress denominator)
       const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
@@ -225,7 +229,7 @@ export class PublishPlanRunService {
             abortSignal?.throwIfAborted();
 
             const batch = entries.slice(i, i + batchSize);
-            await this.processBatch(
+            const batchHadError = await this.processBatch(
               currentPhase,
               batch as PublishOperation[],
               connector,
@@ -233,6 +237,13 @@ export class PublishPlanRunService {
               plan.workbookId,
               plan.id,
             );
+            if (batchHadError) {
+              cumulativeErrorCount += batch.length;
+              onError?.({
+                lastSyncError: `Batch failed in ${currentPhase} phase (${batch.length} entries)`,
+                errorCount: cumulativeErrorCount,
+              });
+            }
             (completedByPhase as Record<string, number>)[currentPhase] =
               ((completedByPhase as Record<string, number>)[currentPhase] ?? 0) + batch.length;
             await reportRunProgress(currentPhase);
@@ -273,7 +284,25 @@ export class PublishPlanRunService {
             }
 
             // Process individually (batch size 1)
-            await this.processBatch(currentPhase, [entry], connector, tableSpec, plan.workbookId, plan.id);
+            const retryHadError = await this.processBatch(
+              currentPhase,
+              [entry],
+              connector,
+              tableSpec,
+              plan.workbookId,
+              plan.id,
+            );
+            if (retryHadError) {
+              // Individual retry failed — this entry stays as failed-batch
+              // Error count was already counted during initial batch failure, don't double-count
+              onError?.({
+                lastSyncError: `Retry failed for ${entry.filePath} in ${currentPhase} phase`,
+                errorCount: cumulativeErrorCount,
+              });
+            } else {
+              // Retry succeeded — decrement error count
+              cumulativeErrorCount = Math.max(0, cumulativeErrorCount - 1);
+            }
           }
         }
 
@@ -420,6 +449,7 @@ export class PublishPlanRunService {
    * Process a batch of entries for a single table.
    * If successful, upgrades status to 'success'.
    * If failed, marks all as 'failed-batch' for later individual retry.
+   * Returns true if the batch failed.
    */
   private async processBatch(
     phase: string,
@@ -428,7 +458,7 @@ export class PublishPlanRunService {
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       switch (phase) {
         case 'edit':
@@ -453,6 +483,7 @@ export class PublishPlanRunService {
         where: { id: { in: entries.map((e) => e.id) } },
         data: { status: 'success', error: null },
       });
+      return false;
     } catch (err) {
       WSLogger.warn({
         source: 'PublishRunService.processBatch',
@@ -470,6 +501,7 @@ export class PublishPlanRunService {
           error: err instanceof Error ? err.message : String(err),
         },
       });
+      return true;
     }
   }
 

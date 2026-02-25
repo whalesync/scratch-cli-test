@@ -398,6 +398,17 @@ export const workbookApi = {
     }
   },
 
+  getPublishPlanByJobId: async (workbookId: WorkbookId, jobId: string): Promise<PublishPlanEntity | null> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<PublishPlanEntity | null>(`/workbook/${workbookId}/publish-v2/by-job/${jobId}`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch publish plan by job ID');
+      throw error;
+    }
+  },
+
   listFileIndex: async (workbookId: WorkbookId): Promise<unknown[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
@@ -423,12 +434,23 @@ export const workbookApi = {
   listPublishPlanOperations: async (
     workbookId: WorkbookId,
     publishPlanId: string,
-  ): Promise<PublishPlanOperationEntity[]> => {
+    options?: { page?: number; pageSize?: number; phase?: string; hasError?: boolean },
+  ): Promise<{ data: PublishPlanOperationEntity[]; total: number; page: number; pageSize: number }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<PublishPlanOperationEntity[]>(
-        `/workbook/${workbookId}/publish-v2/${publishPlanId}/operations`,
-      );
+      const res = await axios.get<{
+        data: PublishPlanOperationEntity[];
+        total: number;
+        page: number;
+        pageSize: number;
+      }>(`/workbook/${workbookId}/publish-v2/${publishPlanId}/operations`, {
+        params: {
+          page: options?.page,
+          pageSize: options?.pageSize,
+          phase: options?.phase,
+          hasError: options?.hasError ? 'true' : undefined,
+        },
+      });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list publish plan operations');

@@ -11,7 +11,9 @@ import {
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useJobs } from '@/hooks/use-jobs';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { jobApi } from '@/lib/api/job';
+import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { JobEntity } from '@/types/server-entities/job';
 import { timeAgo } from '@/utils/helpers';
@@ -19,13 +21,16 @@ import { getJobDescription, getJobType, getTypeLabel, JobType } from '@/utils/jo
 import { RouteUrls } from '@/utils/route-urls';
 import {
   ActionIcon,
+  Badge,
   Box,
   Center,
+  Code,
   Collapse,
   CopyButton,
   Group,
   JsonInput,
   Loader,
+  Popover,
   ScrollArea,
   Stack,
   Table,
@@ -34,6 +39,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
+import { PublishPlanEntity } from '@spinner/shared-types';
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -41,12 +47,15 @@ import {
   ChevronRightIcon,
   ClockIcon,
   CopyIcon,
+  InfoIcon,
+  ListIcon,
   RefreshCwIcon,
   SquareIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { PlanEntriesModal } from '../modals/PlanEntriesModal';
 
 const ACTIVE_STATES = new Set(['active', 'waiting', 'pending', 'delayed']);
 
@@ -408,7 +417,11 @@ function JobRow({
       <Table.Tr style={{ border: isExpanded ? undefined : 'none' }}>
         <Table.Td colSpan={6} p={0} style={{ border: isExpanded ? undefined : 'none' }}>
           <Collapse in={isExpanded}>
-            <ExpandedJobDetails job={job} isDevToolsEnabled={isDevToolsEnabled} />
+            {jobType === 'publish' ? (
+              <ExpandedPublishJobDetails job={job} isDevToolsEnabled={isDevToolsEnabled} />
+            ) : (
+              <ExpandedJobDetails job={job} isDevToolsEnabled={isDevToolsEnabled} />
+            )}
           </Collapse>
         </Table.Td>
       </Table.Tr>
@@ -520,6 +533,231 @@ function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: JobEntity; isDevT
           </Box>
         )}
       </Stack>
+    </Box>
+  );
+}
+
+function jobStatusBadgeColor(status: string): string {
+  if (status === 'active') return 'blue';
+  if (status === 'completed') return 'green';
+  if (status === 'failed') return 'red';
+  if (status === 'canceled') return 'grape';
+  return 'gray';
+}
+
+function formatCount(count: number): string {
+  if (count >= 10000) {
+    return (count / 1000).toFixed(1) + 'K';
+  }
+  return count.toString();
+}
+
+function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity; isDevToolsEnabled: boolean }) {
+  const { isAdmin } = useScratchPadUser();
+  const params = useParams<{ id: string }>();
+  const workbookId = params.id as WorkbookId;
+  const [publishPlan, setPublishPlan] = useState<PublishPlanEntity | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [operationsModalPublishPlanId, setOperationsModalPublishPlanId] = useState<string | null>(null);
+  const [operationsModalHasErrorFilter, setOperationsModalHasErrorFilter] = useState(false);
+
+  useEffect(() => {
+    if (!job.bullJobId) {
+      setLoading(false);
+      return;
+    }
+    workbookApi
+      .getPublishPlanByJobId(workbookId, job.bullJobId)
+      .then((res) => {
+        setPublishPlan(res);
+      })
+      .catch((err) => {
+        console.error('Failed to load publish plan', err);
+      })
+      .finally(() => setLoading(false));
+  }, [workbookId, job.bullJobId]);
+
+  if (loading) {
+    return (
+      <Box px="md" py="sm" style={{ background: 'var(--bg-panel)' }}>
+        <Center>
+          <Loader size="sm" />
+        </Center>
+      </Box>
+    );
+  }
+
+  if (!publishPlan) {
+    // Fallback to old progress view if plan not found
+    return <ExpandedJobDetails job={job} isDevToolsEnabled={isDevToolsEnabled} />;
+  }
+
+  const p = publishPlan;
+
+  return (
+    <Box px="md" py="sm" style={{ background: 'var(--bg-panel)' }}>
+      <Table withColumnBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>State</Table.Th>
+            <Table.Th>ID</Table.Th>
+            <Table.Th>Connection</Table.Th>
+            <Table.Th>Phase</Table.Th>
+            <Table.Th>Edits</Table.Th>
+            <Table.Th>Creates</Table.Th>
+            <Table.Th>Deletes</Table.Th>
+            <Table.Th>Backfills</Table.Th>
+            <Table.Th>Renames</Table.Th>
+            <Table.Th>Errors</Table.Th>
+            <Table.Th>Created At</Table.Th>
+            <Table.Th>Actions</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          <Table.Tr>
+            <Table.Td>
+              {p.job ? (
+                <Group gap={4} wrap="nowrap">
+                  <Badge color={jobStatusBadgeColor(p.job.status)} size="sm" variant="outline">
+                    {p.job.status}
+                  </Badge>
+                  {isAdmin && (
+                    <Popover position="bottom-start" withinPortal shadow="md" width={400}>
+                      <Popover.Target>
+                        <Tooltip label="Job Data" position="top">
+                          <ActionIcon size="xs" variant="subtle" color="gray">
+                            <InfoIcon size={12} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Popover.Target>
+                      <Popover.Dropdown>
+                        <ScrollArea h={300}>
+                          <Code block style={{ fontSize: 10 }}>
+                            {JSON.stringify(job, null, 2)}
+                          </Code>
+                        </ScrollArea>
+                      </Popover.Dropdown>
+                    </Popover>
+                  )}
+                </Group>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  —
+                </Text>
+              )}
+            </Table.Td>
+            <Table.Td>
+              <Text size="xs" ff="monospace">
+                {p.id.substring(0, 8)}...
+              </Text>
+            </Table.Td>
+            <Table.Td>
+              <Text size="xs" c={p.connectorAccountId ? undefined : 'dimmed'}>
+                {p.connectorAccountId ? p.connectorAccountId.substring(0, 8) + '…' : 'All'}
+              </Text>
+            </Table.Td>
+            <Table.Td>
+              <Badge
+                color={
+                  p.status === 'completed'
+                    ? 'green'
+                    : p.status === 'completed-with-errors'
+                      ? 'orange'
+                      : p.status === 'failed'
+                        ? 'red'
+                        : p.status === 'canceled'
+                          ? 'grape'
+                          : p.status.endsWith('-running')
+                            ? 'blue'
+                            : p.status.endsWith('-completed')
+                              ? 'teal'
+                              : p.status === 'planned'
+                                ? 'yellow'
+                                : 'gray'
+                }
+                size="sm"
+              >
+                {p.status}
+              </Badge>
+            </Table.Td>
+            {(['edits', 'creates', 'deletes', 'backfills', 'renameFiles'] as const).map((phaseKey) => {
+              const executedKey = `${phaseKey}Executed` as keyof Record<string, number>;
+              const plannedKey = `${phaseKey}Planned` as keyof Record<string, number>;
+              const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;
+              const completed = pub?.publicProgress?.[executedKey] ?? 0;
+              const total = pub?.publicProgress?.[plannedKey] ?? 0;
+              return (
+                <Table.Td key={phaseKey}>
+                  {total > 0 ? (
+                    <Text size="xs" c={completed < total ? 'blue' : completed > 0 ? 'green' : undefined}>
+                      {formatCount(completed)}/{formatCount(total)}
+                    </Text>
+                  ) : completed > 0 ? (
+                    <Text size="xs" c="green">
+                      {formatCount(completed)}
+                    </Text>
+                  ) : (
+                    <Text size="xs" c="dimmed">
+                      —
+                    </Text>
+                  )}
+                </Table.Td>
+              );
+            })}
+            <Table.Td>
+              {(() => {
+                const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;
+                const errorCount = pub?.publicProgress?.errorCount ?? 0;
+                return errorCount > 0 ? (
+                  <Text
+                    size="xs"
+                    c="red"
+                    fw={600}
+                    style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => {
+                      setOperationsModalHasErrorFilter(true);
+                      setOperationsModalPublishPlanId(p.id);
+                    }}
+                  >
+                    {formatCount(errorCount)}
+                  </Text>
+                ) : (
+                  <Text size="xs" c="dimmed">
+                    —
+                  </Text>
+                );
+              })()}
+            </Table.Td>
+            <Table.Td>
+              <Text size="xs">{new Date(p.createdAt).toLocaleDateString()}</Text>
+            </Table.Td>
+            <Table.Td>
+              <Tooltip label="View operations">
+                <ActionIcon
+                  variant="light"
+                  size="sm"
+                  onClick={() => {
+                    setOperationsModalHasErrorFilter(false);
+                    setOperationsModalPublishPlanId(p.id);
+                  }}
+                >
+                  <ListIcon size={14} />
+                </ActionIcon>
+              </Tooltip>
+            </Table.Td>
+          </Table.Tr>
+        </Table.Tbody>
+      </Table>
+
+      {operationsModalPublishPlanId && (
+        <PlanEntriesModal
+          opened={!!operationsModalPublishPlanId}
+          onClose={() => setOperationsModalPublishPlanId(null)}
+          workbookId={workbookId}
+          publishPlanId={operationsModalPublishPlanId}
+          initialHasErrorFilter={operationsModalHasErrorFilter}
+        />
+      )}
     </Box>
   );
 }

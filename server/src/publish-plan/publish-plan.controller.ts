@@ -107,9 +107,25 @@ export class PublishPlanController {
     return this.publishAdminService.listPublishPlans(workbookId, connectorAccountId);
   }
 
+  @Get('by-job/:jobId')
+  getByJobId(@Param('workbookId') workbookId: WorkbookId, @Param('jobId') jobId: string) {
+    return this.publishAdminService.getPublishPlanByJobId(workbookId, jobId);
+  }
+
   @Get(':pipelineId/operations')
-  operations(@Param('pipelineId') pipelineId: string) {
-    return this.publishAdminService.listPublishPlanOperations(pipelineId);
+  operations(
+    @Param('pipelineId') pipelineId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('phase') phase?: string,
+    @Query('hasError') hasError?: string,
+  ) {
+    return this.publishAdminService.listPublishPlanOperations(pipelineId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      phase,
+      hasError: hasError === 'true',
+    });
   }
 
   @Get('index/files')

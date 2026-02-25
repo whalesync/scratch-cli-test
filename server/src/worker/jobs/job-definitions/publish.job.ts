@@ -22,6 +22,8 @@ export type PublishPublicProgress = {
   deletesPlanned: number;
   backfillsPlanned: number;
   renameFilesPlanned: number;
+  lastSyncError?: string;
+  errorCount: number;
 };
 
 // ── Job Definition ───────────────────────────────────────────────────
@@ -91,6 +93,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       deletesPlanned: 0,
       backfillsPlanned: 0,
       renameFilesPlanned: 0,
+      errorCount: 0,
     };
 
     const onPlanProgress = async (counts: {
@@ -117,6 +120,8 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       });
     };
 
+    let latestErrorInfo: { lastSyncError?: string; errorCount: number } = { errorCount: 0 };
+
     const onRunProgress = async (counts: {
       editsExecuted: number;
       createsExecuted: number;
@@ -131,10 +136,14 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       currentPhase: string;
     }) => {
       await checkpoint({
-        publicProgress: { status: 'running', ...counts },
+        publicProgress: { status: 'running', ...counts, ...latestErrorInfo },
         jobProgress: {},
         connectorProgress: {},
       });
+    };
+
+    const onError = (errorInfo: { lastSyncError: string; errorCount: number }) => {
+      latestErrorInfo = errorInfo;
     };
 
     try {
@@ -184,6 +193,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
             backfillsExecuted: 0,
             renameFilesExecuted: 0,
             ...plannedTotals,
+            errorCount: 0,
           },
           jobProgress: {},
           connectorProgress: {},
@@ -221,6 +231,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           backfillsExecuted: await getSuccessCount('backfill'),
           renameFilesExecuted: await getSuccessCount('rename-files'),
           ...plannedTotals,
+          errorCount: 0,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -232,6 +243,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         data.executeSinglePhase,
         abortSignal,
         onRunProgress,
+        onError,
       );
 
       await checkpoint({
@@ -248,6 +260,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           deletesPlanned: runResult.totalByPhase?.delete ?? 0,
           backfillsPlanned: runResult.totalByPhase?.backfill ?? 0,
           renameFilesPlanned: runResult.totalByPhase?.['rename-files'] ?? 0,
+          ...latestErrorInfo,
         },
         jobProgress: {},
         connectorProgress: {},

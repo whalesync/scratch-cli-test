@@ -16,7 +16,7 @@ export class PublishPlanCrudService {
         connectorAccountId: connectorAccountId || undefined,
       },
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      take: 20, // increased for list view just to be safe
       include: {
         _count: {
           select: { operations: true },
@@ -91,16 +91,85 @@ export class PublishPlanCrudService {
     });
   }
 
-  async listPublishPlanOperations(pipelineId: string) {
-    return await this.db.client.publishPlanOperation.findMany({
-      where: { planId: pipelineId },
-      orderBy: [{ phase: 'asc' }, { filePath: 'asc' }],
-    });
+  async listPublishPlanOperations(
+    pipelineId: string,
+    options?: { page?: number; pageSize?: number; phase?: string; hasError?: boolean },
+  ) {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 50, 200);
+    const skip = (page - 1) * pageSize;
+
+    const where: Record<string, unknown> = { planId: pipelineId };
+    if (options?.phase) {
+      where.phase = options.phase;
+    }
+    if (options?.hasError) {
+      where.error = { not: null };
+    }
+
+    const [data, total] = await Promise.all([
+      this.db.client.publishPlanOperation.findMany({
+        where,
+        orderBy: [{ phase: 'asc' }, { filePath: 'asc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.db.client.publishPlanOperation.count({ where }),
+    ]);
+
+    return { data, total, page, pageSize };
   }
 
   async deletePublishPlan(pipelineId: string) {
     return await this.db.client.publishPlan.delete({
       where: { id: pipelineId },
     });
+  }
+
+  async getPublishPlanByJobId(workbookId: string, jobId: string) {
+    const p = await this.db.client.publishPlan.findFirst({
+      where: { workbookId, activeJobId: jobId },
+      include: {
+        _count: { select: { operations: true } },
+      },
+    });
+
+    if (!p) return null;
+
+    let dbJob = null;
+    let bullJob: Record<string, unknown> | null = null;
+
+    const job = await this.db.client.dbJob.findFirst({
+      where: { bullJobId: jobId },
+      select: { bullJobId: true, status: true, type: true, progress: true },
+    });
+    if (job) {
+      dbJob = { status: job.status, type: job.type, progress: job.progress };
+    }
+
+    try {
+      const bullQueueJob = await this.bullEnqueuerService.getJob(jobId);
+      if (bullQueueJob) {
+        const state = await bullQueueJob.getState();
+        bullJob = {
+          id: bullQueueJob.id,
+          name: bullQueueJob.name,
+          progress: bullQueueJob.progress,
+          data: bullQueueJob.data,
+          state,
+          failedReason: bullQueueJob.failedReason,
+          stacktrace: bullQueueJob.stacktrace,
+        };
+      }
+    } catch {
+      // Ignore if not found
+    }
+
+    return {
+      ...p,
+      dbJob,
+      bullJob,
+      job: bullJob ? { ...bullJob, status: bullJob.state } : dbJob,
+    };
   }
 }
