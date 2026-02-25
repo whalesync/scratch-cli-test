@@ -761,13 +761,18 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
               const currentSelection = fieldSelections.get(entry.tableKey);
               const showFieldSelectors = supportsFieldSelection && entry.isNew && !entry.isRemoved;
 
-              // Extract field names/types from schema properties
+              // Extract field names/types from schema properties, unwrapping nullable unions
               const schemaFields = tableSchema
                 ? Object.entries((tableSchema.schema?.properties as Record<string, Record<string, unknown>>) ?? {}).map(
-                    ([name, prop]) => ({
-                      name,
-                      type: (prop?.['x-scratch-connector-data-type'] as string) ?? (prop?.type as string) ?? 'unknown',
-                    }),
+                    ([name, prop]) => {
+                      let type = (prop?.['x-scratch-connector-data-type'] as string) ?? (prop?.type as string);
+                      if (!type) {
+                        const variants = (prop?.anyOf ?? prop?.oneOf) as Array<Record<string, unknown>> | undefined;
+                        const real = variants?.filter((s) => s.type !== 'null');
+                        type = (real?.length ? (real[0].type as string) : undefined) ?? 'unknown';
+                      }
+                      return { name, type };
+                    },
                   )
                 : [];
 

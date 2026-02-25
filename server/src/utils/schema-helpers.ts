@@ -50,6 +50,20 @@ export interface SchemaField {
 }
 
 /**
+ * Resolves the type from a JSON Schema, unwrapping anyOf/oneOf unions
+ * (e.g. nullable types like `Union([String, Null])`) to find the real type.
+ */
+function resolveSchemaType(schema: TSchema): string {
+  if (schema.type) return schema.type as string;
+  const variants = (schema.anyOf || schema.oneOf) as TSchema[] | undefined;
+  if (variants) {
+    const real = variants.filter((s) => s.type !== 'null');
+    if (real.length >= 1) return resolveSchemaType(real[0]);
+  }
+  return 'unknown';
+}
+
+/**
  * Extracts all possible dot-notation paths from a JSON Schema with their types.
  */
 export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaField[] {
@@ -57,7 +71,7 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
 
   // Base Path (if meaningful)
   if (parentPath) {
-    const field: SchemaField = { path: parentPath, type: (schema.type as string) || 'unknown' };
+    const field: SchemaField = { path: parentPath, type: resolveSchemaType(schema) };
     const suggested = schema[SUGGESTED_TRANSFORMER] as TransformerConfig | undefined;
     if (suggested) field.suggestedTransformer = suggested;
     if (schema[READONLY_FLAG] === true) field.readonly = true;
