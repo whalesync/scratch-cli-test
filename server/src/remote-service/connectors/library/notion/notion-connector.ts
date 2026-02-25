@@ -100,8 +100,14 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
     return blocks;
   }
 
-  listTables(): Promise<TablePreview[]> {
-    return Promise.resolve([]);
+  async listTables(): Promise<TablePreview[]> {
+    const response = await this.client.search({
+      query: '',
+      filter: { property: 'object', value: 'database' },
+      page_size: 10,
+    });
+    const databases = response.results.filter((r): r is DatabaseObjectResponse => r.object === 'database');
+    return databases.map((db) => this.schemaParser.parseDatabaseTablePreview(db));
   }
 
   async searchTables(searchTerm: string): Promise<{ tables: TablePreview[]; hasMore: boolean }> {

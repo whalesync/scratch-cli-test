@@ -724,6 +724,50 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
             <Text13Regular c="dimmed" ta="center" py="md">
               No databases found
             </Text13Regular>
+          ) : availableTables.length > 0 ? (
+            <ScrollArea.Autosize mah={300}>
+              <Stack gap="xs">
+                {availableTables.map((table) => {
+                  const tableKey = table.id.remoteId.join('/');
+                  const isChecked = selectedTableIds.has(tableKey);
+                  return (
+                    <Checkbox
+                      key={tableKey}
+                      label={
+                        <Group gap={6} align="center" wrap="nowrap">
+                          <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
+                          {table.disabled && (
+                            <Tooltip
+                              label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
+                              multiline
+                              maw={250}
+                              position="right"
+                            >
+                              <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
+                            </Tooltip>
+                          )}
+                          {!table.disabled && table.disabledCreates && (
+                            <Tooltip
+                              label={
+                                DISABLED_CREATES_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_CREATES_MESSAGE
+                              }
+                              multiline
+                              maw={250}
+                              position="right"
+                            >
+                              <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
+                            </Tooltip>
+                          )}
+                        </Group>
+                      }
+                      checked={isChecked}
+                      disabled={table.disabled}
+                      onChange={() => handleToggleTable(table)}
+                    />
+                  );
+                })}
+              </Stack>
+            </ScrollArea.Autosize>
           ) : (
             <Text13Regular c="dimmed" ta="center" py="md">
               Type to search for databases
