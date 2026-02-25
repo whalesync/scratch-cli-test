@@ -217,6 +217,16 @@ export const workbookApi = {
     }
   },
 
+  rebaseDirty: async (workbookId: WorkbookId): Promise<void> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.post(`/scratch-git/${workbookId}/rebase`);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to rebase dirty branch');
+      throw error;
+    }
+  },
+
   getStatus: async (workbookId: WorkbookId): Promise<unknown> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();

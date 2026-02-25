@@ -43,6 +43,12 @@ export class ScratchGitController {
     return this.scratchGitService.getGraph(workbookId);
   }
 
+  @Post(':id/rebase')
+  async rebaseDirty(@Param('id') workbookId: WorkbookId): Promise<void> {
+    console.log(`[ScratchGitController] rebaseDirty called for ${workbookId}`);
+    return this.scratchGitService.rebaseDirty(workbookId);
+  }
+
   @Post(':id/checkpoint')
   async createCheckpoint(@Param('id') workbookId: WorkbookId, @Body('name') name: string): Promise<void> {
     console.log(`[ScratchGitController] createCheckpoint called for ${workbookId} name=${name}`);

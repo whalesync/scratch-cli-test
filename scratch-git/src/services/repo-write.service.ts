@@ -282,40 +282,52 @@ export class RepoWriteService extends BaseRepoService {
       return { rebased: true, conflicts: [] };
     }
 
-    const edits = await Promise.all(
-      userChanges.map(async (change) => {
-        if (change.status === 'deleted') {
+    const edits: Array<{
+      path: string;
+      status: 'deleted' | 'added' | 'modified';
+      content: string | null;
+      baseContent: string | null;
+    }> = [];
+
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < userChanges.length; i += BATCH_SIZE) {
+      const batch = userChanges.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (change) => {
+          if (change.status === 'deleted') {
+            return {
+              path: change.path,
+              status: 'deleted' as const,
+              content: null,
+              baseContent: null,
+            };
+          }
+          const content = await this.getFileContent(DIRTY_BRANCH, change.path);
+          let baseContent: string | null = null;
+          if (strategy === 'diff3' && change.status === 'modified') {
+            try {
+              const { blob } = await git.readBlob({
+                fs,
+                dir,
+                gitdir: dir,
+                oid: mergeBase,
+                filepath: change.path,
+              });
+              baseContent = new TextDecoder().decode(blob);
+            } catch {
+              // ignore
+            }
+          }
           return {
             path: change.path,
-            status: 'deleted' as const,
-            content: null,
-            baseContent: null,
+            status: change.status,
+            content,
+            baseContent,
           };
-        }
-        const content = await this.getFileContent(DIRTY_BRANCH, change.path);
-        let baseContent: string | null = null;
-        if (strategy === 'diff3' && change.status === 'modified') {
-          try {
-            const { blob } = await git.readBlob({
-              fs,
-              dir,
-              gitdir: dir,
-              oid: mergeBase,
-              filepath: change.path,
-            });
-            baseContent = new TextDecoder().decode(blob);
-          } catch {
-            // ignore
-          }
-        }
-        return {
-          path: change.path,
-          status: change.status,
-          content,
-          baseContent,
-        };
-      }),
-    );
+        }),
+      );
+      edits.push(...batchResults);
+    }
 
     await this.forceRef(DIRTY_BRANCH, mainCommit);
 

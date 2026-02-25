@@ -13,6 +13,7 @@ import {
   EllipsisVertical,
   FileCodeIcon,
   GitGraphIcon,
+  GitMergeIcon,
   LinkIcon,
   ServerCrashIcon,
   Trash2Icon,
@@ -35,6 +36,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
   const [refIndexOpen, setRefIndexOpen] = useState(false);
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
+  const [isRebasing, setIsRebasing] = useState(false);
 
   const handleResetWorkbook = () => {
     openConfirmDialog({
@@ -56,6 +58,28 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
         }
       },
     });
+  };
+
+  const handleManualRebase = async () => {
+    setIsRebasing(true);
+    try {
+      await workbookApi.rebaseDirty(workbookId);
+      notifications.show({
+        title: 'Success',
+        message: 'Rebase complete',
+        color: 'green',
+      });
+      window.location.reload();
+    } catch (e) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to rebase',
+        color: 'red',
+      });
+      console.error(e);
+    } finally {
+      setIsRebasing(false);
+    }
   };
 
   return (
@@ -81,6 +105,14 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
               </Menu.Item>
               <Menu.Item data-devtool leftSection={<FileCodeIcon size={16} />} onClick={() => setFileBrowserOpen(true)}>
                 Git File Browser
+              </Menu.Item>
+              <Menu.Item
+                data-devtool
+                leftSection={<GitMergeIcon size={16} />}
+                onClick={handleManualRebase}
+                disabled={isRebasing}
+              >
+                Manual Rebase
               </Menu.Item>
               <Menu.Item data-devtool leftSection={<DatabaseIcon size={16} />} onClick={() => setFileIndexOpen(true)}>
                 File Index
