@@ -182,7 +182,7 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
 
             return (
               <ConnectionNode
-                key={group.name}
+                key={connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name}
                 group={group}
                 workbookId={workbook.id}
                 connectorAccount={connectorAccount}
