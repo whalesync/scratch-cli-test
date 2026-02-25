@@ -133,7 +133,7 @@ export class CliWorkbookController {
    * Proxies git operations to the internal git HTTP backend with authentication.
    * Supports: git clone, git fetch, git push, etc.
    */
-  @All(':id/git/*')
+  @All(':id/git/*path')
   async gitProxy(@Req() req: RequestWithUser & Request, @Param('id') id: string, @Res() res: Response): Promise<void> {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
@@ -164,6 +164,7 @@ export class CliWorkbookController {
     // Stream the request body directly to the git backend without buffering.
     // This avoids body-parser size limits and reduces memory usage for large packfiles.
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
+
     const body: BodyInit | undefined = hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined;
 
     let proxyResponse: globalThis.Response;

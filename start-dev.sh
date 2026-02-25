@@ -96,6 +96,7 @@ echo ""
 CLIENT_PID=""
 SERVER_PID=""
 SCRATCH_GIT_PID=""
+SCRATCH_GIT_HTTP_PID=""
 
 cleanup() {
     echo -e "\n${YELLOW}Shutting down all services...${NC}"
@@ -111,8 +112,13 @@ cleanup() {
     fi
 
     if [ -n "$SCRATCH_GIT_PID" ] && kill -0 "$SCRATCH_GIT_PID" 2>/dev/null; then
-        echo -e "${YELLOW}Stopping scratch-git...${NC}"
+        echo -e "${YELLOW}Stopping scratch-git API...${NC}"
         kill "$SCRATCH_GIT_PID" 2>/dev/null || true
+    fi
+
+    if [ -n "$SCRATCH_GIT_HTTP_PID" ] && kill -0 "$SCRATCH_GIT_HTTP_PID" 2>/dev/null; then
+        echo -e "${YELLOW}Stopping scratch-git HTTP backend...${NC}"
+        kill "$SCRATCH_GIT_HTTP_PID" 2>/dev/null || true
     fi
 
     # Wait a moment for graceful shutdown
@@ -122,6 +128,7 @@ cleanup() {
     [ -n "$CLIENT_PID" ] && kill -9 "$CLIENT_PID" 2>/dev/null || true
     [ -n "$SERVER_PID" ] && kill -9 "$SERVER_PID" 2>/dev/null || true
     [ -n "$SCRATCH_GIT_PID" ] && kill -9 "$SCRATCH_GIT_PID" 2>/dev/null || true
+    [ -n "$SCRATCH_GIT_HTTP_PID" ] && kill -9 "$SCRATCH_GIT_HTTP_PID" 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -159,19 +166,27 @@ echo -e "${GREEN}[SERVER]${NC} Starting NestJS dev server on port 3010..."
 ) &
 SERVER_PID=$!
 
-# Start scratch-git (Git microservice on port 3100)
-echo -e "${YELLOW}[SCRATCH-GIT]${NC} Starting Git microservice on port 3100..."
+# Start scratch-git API (port 3100)
+echo -e "${YELLOW}[SCRATCH-GIT]${NC} Starting Git API on port 3100..."
 (
     cd "$SCRIPT_DIR/scratch-git"
-    yarn run dev:api 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
+    yarn run start:api 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
 ) &
 SCRATCH_GIT_PID=$!
+
+# Start scratch-git HTTP backend (port 3101)
+echo -e "${YELLOW}[SCRATCH-GIT-HTTP]${NC} Starting Git HTTP backend on port 3101..."
+(
+    cd "$SCRIPT_DIR/scratch-git"
+    yarn run dev:http-backend 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT-HTTP]${NC} $line"; done
+) &
+SCRATCH_GIT_HTTP_PID=$!
 
 echo ""
 echo -e "${YELLOW}========================================${NC}"
 echo -e "  ${BLUE}Client${NC}:       http://localhost:3000"
 echo -e "  ${GREEN}Server${NC}:       http://localhost:3010"
-echo -e "  ${YELLOW}scratch-git${NC}:  http://localhost:3100"
+echo -e "  ${YELLOW}scratch-git${NC}:  http://localhost:3100 (API), http://localhost:3101 (HTTP backend)"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"

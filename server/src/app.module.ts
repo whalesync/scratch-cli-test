@@ -79,7 +79,7 @@ export class AppModule implements NestModule {
         // CLI folder files upload (multipart/form-data)
         { path: '/cli/v1/folders/:id/files', method: RequestMethod.PUT },
         // Git proxy (uses raw body)
-        { path: '/cli/v1/workbooks/:id/git/(.*)', method: RequestMethod.ALL },
+        { path: '/cli/v1/workbooks/:id/git/*path', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

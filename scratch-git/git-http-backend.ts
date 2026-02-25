@@ -75,7 +75,7 @@ app.all('/:repoId.git/*', (req, res) => {
     `[GIT] Proxying to repo: ${repoPath}, GIT_PROJECT_ROOT: ${path.dirname(repoPath)}, PATH_INFO: ${req.path}`,
   );
 
-  // env vars for git http-backend
+  // env vars for git http-backend (CGI protocol)
   const env = Object.assign({}, process.env, {
     GIT_PROJECT_ROOT: path.dirname(repoPath), // Parent dir of repos
     GIT_HTTP_EXPORT_ALL: '1',
@@ -84,12 +84,13 @@ app.all('/:repoId.git/*', (req, res) => {
     QUERY_STRING: req.url.split('?')[1] || '',
     REQUEST_METHOD: req.method,
     CONTENT_TYPE: req.headers['content-type'],
+    CONTENT_LENGTH: req.headers['content-length'] || '',
   });
 
   // Spawn git http-backend
   const gitProc = spawn('git', ['http-backend'], { env });
 
-  // Pipe inputs
+  // Pipe request body to git process stdin
   req.pipe(gitProc.stdin);
 
   // Pipe outputs with CGI header parsing
