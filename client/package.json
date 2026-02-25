@@ -38,6 +38,7 @@
     "@minoru/react-dnd-treeview": "^3.5.3",
     "@next/third-parties": "^15.5.4",
     "@posthog/nextjs-config": "^1.6.0",
+    "@posthog/react": "^1.8.0",
     "@spinner/shared-types": "1.0.0",
     "@types/uuid": "^10.0.0",
     "@uiw/react-codemirror": "^4.25.3",
