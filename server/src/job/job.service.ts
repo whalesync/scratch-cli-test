@@ -2,6 +2,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbJob } from '@prisma/client';
 import { createJobId } from '@spinner/shared-types';
+import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { Progress } from 'src/types/progress';
@@ -55,11 +56,17 @@ export class JobService {
     return job;
   }
 
-  async updateJobProgress(id: string, progress: Progress): Promise<void> {
-    await this.db.client.dbJob.update({
+  /**
+   * Update progress and return whether cancellation has been requested.
+   * This combines the progress write with the cancellation check in a single DB round-trip.
+   */
+  async updateJobProgressAndCheckCancel(id: string, progress: Progress): Promise<boolean> {
+    const job = await this.db.client.dbJob.update({
       where: { id },
       data: { progress },
+      select: { cancelRequestedAt: true },
     });
+    return job.cancelRequestedAt != null;
   }
 
   async updateJobStatus(params: {
@@ -145,7 +152,7 @@ export class JobService {
 
     if (bullJobIds.length === 0) return dbJobs.map((j) => dbJobToJobEntity(j));
 
-    const queue = new (await import('bullmq')).Queue('worker-queue', {
+    const queue = new Queue('worker-queue', {
       connection: this.getRedis(),
     });
 
@@ -196,7 +203,7 @@ export class JobService {
    */
   async getJobProgress(jobId: string): Promise<JobEntity> {
     // Get the job from the queue
-    const queue = new (await import('bullmq')).Queue('worker-queue', {
+    const queue = new Queue('worker-queue', {
       connection: this.getRedis(),
     });
 
@@ -233,7 +240,7 @@ export class JobService {
   }
 
   async getJobRaw(jobId: string): Promise<any> {
-    const queue = new (await import('bullmq')).Queue('worker-queue', {
+    const queue = new Queue('worker-queue', {
       connection: this.getRedis(),
     });
 
@@ -279,28 +286,54 @@ export class JobService {
 
     await this.verifyJobAccess(dbJob, actor);
 
-    // Get the job from the queue
-    const queue = new (await import('bullmq')).Queue('worker-queue', {
-      connection: this.getRedis(),
+    // If the DB already shows the job as terminal, no need to cancel
+    if (['completed', 'failed', 'canceled'].includes(dbJob.status)) {
+      return {
+        success: false,
+        message: `Job ${jobId} is already ${dbJob.status}`,
+      };
+    }
+
+    // Persist the cancellation request so checkpoint() can detect it even after worker restart
+    await this.db.client.dbJob.update({
+      where: { id: dbJob.id },
+      data: { cancelRequestedAt: new Date() },
     });
 
+    // Try to also send the fast-path pub/sub signal for immediate in-memory abort
+    const queue = new Queue('worker-queue', {
+      connection: this.getRedis(),
+    });
     const job = await queue.getJob(jobId);
+    await queue.close();
 
     if (!job) {
-      throw new NotFoundException(`Job with id ${jobId} not found in queue`);
+      // Job is gone from BullMQ (worker restarted, cleaned up, etc.) — mark as canceled directly
+      await this.db.client.dbJob.update({
+        where: { id: dbJob.id },
+        data: { status: 'canceled', finishedOn: new Date(), error: 'Canceled (job no longer in queue)' },
+      });
+      return {
+        success: true,
+        message: `Job ${jobId} was no longer in the queue and has been marked as canceled`,
+      };
     }
 
     const state = await job.getState();
 
-    // Check if job is already completed or failed
     if (state === 'completed' || state === 'failed') {
+      // Sync DB status to match BullMQ
+      await this.db.client.dbJob.update({
+        where: { id: dbJob.id },
+        data: { status: state, finishedOn: new Date() },
+      });
       return {
         success: false,
         message: `Job ${jobId} is already ${state}`,
       };
     }
 
-    // Send cancellation message to the job-specific channel
+    // Send cancellation message for immediate abort (fast path)
     const channelName = `job-cancel:${jobId}`;
     await this.getRedis().publish(channelName, JSON.stringify({ action: 'cancel', jobId }));
 

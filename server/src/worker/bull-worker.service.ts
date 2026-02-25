@@ -153,7 +153,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         const newProgress = { ...progress, timestamp: Date.now() };
         latestProgress = newProgress;
         await job.updateProgress(newProgress);
-        await this.jobService.updateJobProgress(dbJob.id, newProgress);
+        // Write progress and check the DB cancellation flag in one round-trip
+        const cancelRequested = await this.jobService.updateJobProgressAndCheckCancel(dbJob.id, newProgress);
+        if (cancelRequested) {
+          abortController.abort();
+        }
         WSLogger.debug({
           source: 'QueueService.checkpoint',
           message: 'Progress persisted to DB',
@@ -161,7 +165,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           dbJobId: dbJob.id,
         });
       }
-      // Check if job was cancelled
+      // Check if job was cancelled (via pub/sub fast-path or DB flag above)
       if (abortController.signal.aborted) {
         throw new JobCanceledError(job.id?.toString() || 'unknown');
       }

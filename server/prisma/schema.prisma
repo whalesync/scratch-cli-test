@@ -275,20 +275,21 @@ model DbJob {
   id        String  @id // type: JobId
   bullJobId String? // BullMQ job ID for tracking
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  progress     Json? // Job progress data
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId       String
-  workbookId   String? // Optional workbook association for filtering
-  dataFolderId String? // Optional data folder association for filtering
-  status       String
-  type         String
-  data         Json // Job-specific data
-  result       Json? // Job result data
-  error        String? // Error message if failed
-  processedOn  DateTime? // When job actually started processing
-  finishedOn   DateTime? // When job completed (success or failure)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  progress          Json? // Job progress data
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String
+  workbookId        String? // Optional workbook association for filtering
+  dataFolderId      String? // Optional data folder association for filtering
+  status            String
+  type              String
+  data              Json // Job-specific data
+  result            Json? // Job result data
+  error             String? // Error message if failed
+  processedOn       DateTime? // When job actually started processing
+  finishedOn        DateTime? // When job completed (success or failure)
+  cancelRequestedAt DateTime? // When cancellation was requested (checked by worker checkpoints)
 
   @@index([userId])
   @@index([workbookId])
