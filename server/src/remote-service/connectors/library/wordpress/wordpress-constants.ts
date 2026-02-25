@@ -9,9 +9,6 @@ export const WORDPRESS_BATCH_SIZE = 25;
 export const WORDPRESS_REMOTE_CUSTOM_FIELDS_ID = 'acf';
 export const WORDPRESS_ORG_V2_PATH = 'wp/v2/';
 
-// Default tables to include
-export const WORDPRESS_DEFAULT_TABLE_IDS = ['tags', 'categories'];
-
 // Tables to exclude from listing
 export const WORDPRESS_EXCLUDE_TABLE_SLUGS = [
   'nav_menu_item',
@@ -45,9 +42,18 @@ export const WORDPRESS_HIDDEN_COLUMN_IDS = [
 // Column ID substrings to exclude
 export const WORDPRESS_EXCLUDE_COLUMN_ID_SUBSTRINGS = ['gmt', 'template', 'capabilities'];
 
-// Foreign key relationships
-export const WORDPRESS_FOREIGN_KEY_COLUMN_IDS: { remoteColumnId: string; foreignKeyRemoteTableId: string }[] = [
+// Taxonomy slugs to exclude from discovery (internal WordPress taxonomies)
+export const WORDPRESS_EXCLUDE_TAXONOMY_SLUGS = [
+  'nav_menu',
+  'link_category',
+  'post_format',
+  'wp_theme',
+  'wp_template_type',
+  'wp_template_part_area',
+  'wp_pattern_category',
+];
+
+// Static foreign key relationships (taxonomy FKs are discovered dynamically)
+export const WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS: { remoteColumnId: string; foreignKeyRemoteTableId: string }[] = [
   { remoteColumnId: 'author', foreignKeyRemoteTableId: 'users' },
-  { remoteColumnId: 'tags', foreignKeyRemoteTableId: 'tags' },
-  { remoteColumnId: 'categories', foreignKeyRemoteTableId: 'categories' },
 ];

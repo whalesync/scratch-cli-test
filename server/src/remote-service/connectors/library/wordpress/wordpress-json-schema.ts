@@ -3,14 +3,18 @@ import { ValuePointer } from '@sinclair/typebox/value';
 import { isArray } from 'lodash';
 import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
-import { WORDPRESS_FOREIGN_KEY_COLUMN_IDS } from './wordpress-constants';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
 /**
  * Resolve the WordPress data type for a field, following the same logic
  * as parseTypeFromArgument in wordpress-schema-parser.ts.
  */
-function resolveWordPressDataType(fieldId: string, field: WordPressArgument, isAcf: boolean): WordPressDataType {
+function resolveWordPressDataType(
+  fieldId: string,
+  field: WordPressArgument,
+  isAcf: boolean,
+  foreignKeyColumnIds: { remoteColumnId: string; foreignKeyRemoteTableId: string }[],
+): WordPressDataType {
   if (field.type === undefined) {
     return WordPressDataType.UNKNOWN;
   }
@@ -39,7 +43,7 @@ function resolveWordPressDataType(fieldId: string, field: WordPressArgument, isA
   }
 
   // Check for foreign keys (non-ACF only)
-  if (!isAcf && WORDPRESS_FOREIGN_KEY_COLUMN_IDS.find((fk) => fk.remoteColumnId === fieldId) !== undefined) {
+  if (!isAcf && foreignKeyColumnIds.find((fk) => fk.remoteColumnId === fieldId) !== undefined) {
     return WordPressDataType.FOREIGN_KEY;
   }
 
@@ -79,10 +83,15 @@ function resolveWordPressDataType(fieldId: string, field: WordPressArgument, isA
  * Convert a WordPress field argument to a TypeBox JSON Schema.
  * Annotates the schema with x-scratch metadata (readonly, foreign key, connector data type).
  */
-export function wordpressFieldToJsonSchema(fieldId: string, field: WordPressArgument, isAcf: boolean): TSchema {
+export function wordpressFieldToJsonSchema(
+  fieldId: string,
+  field: WordPressArgument,
+  isAcf: boolean,
+  foreignKeyColumnIds: { remoteColumnId: string; foreignKeyRemoteTableId: string }[],
+): TSchema {
   const description = fieldId;
   const fieldType = isArray(field.type) ? field.type[0] : field.type;
-  const dataType = resolveWordPressDataType(fieldId, field, isAcf);
+  const dataType = resolveWordPressDataType(fieldId, field, isAcf, foreignKeyColumnIds);
   let schema: TSchema;
 
   // Handle rendered objects (title, content, excerpt, etc.)
@@ -136,7 +145,7 @@ export function wordpressFieldToJsonSchema(fieldId: string, field: WordPressArgu
           const objProps: Record<string, TSchema> = {};
           for (const [propId, propDef] of Object.entries(field.properties)) {
             if (propDef) {
-              objProps[propId] = wordpressFieldToJsonSchema(propId, propDef, isAcf);
+              objProps[propId] = wordpressFieldToJsonSchema(propId, propDef, isAcf, foreignKeyColumnIds);
             }
           }
           schema = Type.Object(objProps, { description });
@@ -153,7 +162,7 @@ export function wordpressFieldToJsonSchema(fieldId: string, field: WordPressArgu
 
   // Set foreign key metadata for known FK fields (non-ACF only)
   if (!isAcf) {
-    const fkDef = WORDPRESS_FOREIGN_KEY_COLUMN_IDS.find((fk) => fk.remoteColumnId === fieldId);
+    const fkDef = foreignKeyColumnIds.find((fk) => fk.remoteColumnId === fieldId);
     if (fkDef) {
       schema[FOREIGN_KEY_OPTIONS] = { linkedTableId: fkDef.foreignKeyRemoteTableId };
     }
@@ -171,6 +180,7 @@ export function wordpressFieldToJsonSchema(fieldId: string, field: WordPressArgu
 export function buildWordPressJsonTableSpec(
   id: EntityId,
   optionsResponse: WordPressEndpointOptionsResponse,
+  foreignKeyColumnIds: { remoteColumnId: string; foreignKeyRemoteTableId: string }[],
 ): BaseJsonTableSpec {
   const [tableId] = id.remoteId;
 
@@ -184,7 +194,7 @@ export function buildWordPressJsonTableSpec(
   for (const [fieldId, fieldDef] of Object.entries(schemaProps)) {
     if (!fieldDef || !('type' in fieldDef)) continue;
 
-    const fieldSchema = wordpressFieldToJsonSchema(fieldId, fieldDef, false);
+    const fieldSchema = wordpressFieldToJsonSchema(fieldId, fieldDef, false, foreignKeyColumnIds);
 
     // Check if field is required
     if (fieldDef.required) {
@@ -210,7 +220,7 @@ export function buildWordPressJsonTableSpec(
     const acfFieldProperties: Record<string, TSchema> = {};
     for (const [acfFieldId, acfFieldDef] of Object.entries(acfProps)) {
       if (!acfFieldDef) continue;
-      const acfFieldSchema = wordpressFieldToJsonSchema(acfFieldId, acfFieldDef, true);
+      const acfFieldSchema = wordpressFieldToJsonSchema(acfFieldId, acfFieldDef, true, foreignKeyColumnIds);
       acfFieldProperties[acfFieldId] = acfFieldDef.required ? acfFieldSchema : Type.Optional(acfFieldSchema);
     }
     properties['acf'] = Type.Optional(Type.Object(acfFieldProperties, { description: 'Advanced Custom Fields' }));

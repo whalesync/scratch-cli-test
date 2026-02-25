@@ -81,6 +81,26 @@ export interface WordPressPostType {
 }
 
 /**
+ * Response to a WordPress taxonomies request.
+ * https://developer.wordpress.org/rest-api/reference/taxonomies/
+ * Includes only relevant properties.
+ */
+export interface WordPressGetTaxonomiesApiResponse {
+  [taxonomySlug: string]: WordPressTaxonomy;
+}
+
+/** Includes only relevant properties. */
+export interface WordPressTaxonomy {
+  name: string;
+  slug: string;
+  rest_base: string;
+  rest_namespace?: string;
+  description?: string;
+  hierarchical?: boolean;
+  types: string[];
+}
+
+/**
  * A single request within a WordPress batch operation.
  * https://developer.wordpress.org/rest-api/using-the-rest-api/global-parameters/#_method-or-x-http-method-override
  */

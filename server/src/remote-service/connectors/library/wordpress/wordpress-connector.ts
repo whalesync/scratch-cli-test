@@ -3,18 +3,21 @@ import { isAxiosError } from 'axios';
 import TurndownService from 'turndown';
 import { Connector } from '../../connector';
 import { extractErrorMessageFromAxiosError } from '../../error';
-import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import {
   WORDPRESS_BATCH_SIZE,
   WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS,
-  WORDPRESS_DEFAULT_TABLE_IDS,
   WORDPRESS_ORG_V2_PATH,
   WORDPRESS_POLLING_PAGE_SIZE,
+  WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS,
 } from './wordpress-constants';
 import { WordPressHttpClient } from './wordpress-http-client';
-import { buildWordPressJsonTableSpec, formatTableName } from './wordpress-json-schema';
-import { parseTableInfoFromTypes } from './wordpress-schema-parser';
+import { buildWordPressJsonTableSpec } from './wordpress-json-schema';
+import {
+  buildTaxonomyForeignKeys,
+  parseTableInfoFromTaxonomies,
+  parseTableInfoFromTypes,
+} from './wordpress-schema-parser';
 import {
   WordPressBatchRequestItem,
   WordPressBatchResponse,
@@ -41,20 +44,16 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
   }
 
   async listTables(): Promise<TablePreview[]> {
-    // Get post types from WordPress
-    const typesResponse = await this.client.getTypes();
-    const tables = parseTableInfoFromTypes(typesResponse);
+    // Fetch post types and taxonomies in parallel
+    const [typesResponse, taxonomiesResponse] = await Promise.all([
+      this.client.getTypes(),
+      this.client.getTaxonomies(),
+    ]);
 
-    // Add default tables (tags, categories)
-    const defaultTables = WORDPRESS_DEFAULT_TABLE_IDS.map((tableId) => ({
-      id: {
-        wsId: sanitizeForTableWsId(tableId),
-        remoteId: [tableId],
-      },
-      displayName: formatTableName(tableId),
-    }));
+    const postTypeTables = parseTableInfoFromTypes(typesResponse);
+    const taxonomyTables = parseTableInfoFromTaxonomies(taxonomiesResponse);
 
-    return [...tables, ...defaultTables];
+    return [...postTypeTables, ...taxonomyTables];
   }
 
   /**
@@ -63,9 +62,14 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [tableId] = id.remoteId;
-    const optionsResponse = await this.client.getEndpointOptions(tableId);
+    const [optionsResponse, taxonomiesResponse] = await Promise.all([
+      this.client.getEndpointOptions(tableId),
+      this.client.getTaxonomies(),
+    ]);
 
-    return buildWordPressJsonTableSpec(id, optionsResponse);
+    const taxonomyForeignKeys = buildTaxonomyForeignKeys(taxonomiesResponse);
+    const foreignKeyColumnIds = [...WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS, ...taxonomyForeignKeys];
+    return buildWordPressJsonTableSpec(id, optionsResponse, foreignKeyColumnIds);
   }
 
   async pullRecordFiles(

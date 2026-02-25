@@ -9,6 +9,7 @@ import {
   WordPressBatchResponse,
   WordPressEndpointOptionsResponse,
   WordPressGetDiscoveryApiResponse,
+  WordPressGetTaxonomiesApiResponse,
   WordPressGetTypesApiResponse,
   WordPressRecord,
 } from './wordpress-types';
@@ -127,6 +128,16 @@ export class WordPressHttpClient {
   async getTypes(): Promise<WordPressGetTypesApiResponse> {
     const url = this.generateUrl(this.endpoint, 'types', null, []);
     const response = await axios.get<WordPressGetTypesApiResponse>(url, { headers: this.authHeaders });
+    return response.data;
+  }
+
+  /**
+   * Get available taxonomies from WordPress
+   * https://developer.wordpress.org/rest-api/reference/taxonomies/
+   */
+  async getTaxonomies(): Promise<WordPressGetTaxonomiesApiResponse> {
+    const url = this.generateUrl(this.endpoint, 'taxonomies', null, []);
+    const response = await axios.get<WordPressGetTaxonomiesApiResponse>(url, { headers: this.authHeaders });
     return response.data;
   }
 
