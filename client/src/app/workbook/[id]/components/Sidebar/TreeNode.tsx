@@ -100,22 +100,21 @@ export function ConnectionNode({
   const isExpanded = expandedNodes.has(nodeId);
   const isScratch = group.name === SCRATCH_GROUP_NAME;
 
-  // Check if this connection has any dirty files (for review mode filtering)
-  const hasDirtyFiles = useMemo(() => {
-    if (mode !== 'review' || !dirtyFilePaths || dirtyFilePaths.size === 0) return true;
+  // In review mode, filter folders to only those with dirty files
+  const visibleFolders = useMemo(() => {
+    if (mode !== 'review' || !dirtyFilePaths || dirtyFilePaths.size === 0) return group.dataFolders;
 
-    // Check if any dirty file path starts with a folder path from this connection
-    for (const folder of group.dataFolders) {
+    return group.dataFolders.filter((folder) => {
       for (const dirtyPath of dirtyFilePaths) {
-        // Check if the dirty file belongs to this folder
-        // The path format is typically: "ConnectionName/FolderName/filename.json"
         if (dirtyPath.startsWith(`${folder.name}/`) || dirtyPath.includes(`/${folder.name}/`)) {
           return true;
         }
       }
-    }
-    return false;
+      return false;
+    });
   }, [mode, dirtyFilePaths, group.dataFolders]);
+
+  const hasDirtyFiles = mode !== 'review' || visibleFolders.length > 0;
 
   // Calculate dirty count across all folders in this connection
   const totalDirtyCount = useMemo(() => {
@@ -297,7 +296,7 @@ export function ConnectionNode({
 
       <Collapse in={isExpanded}>
         <Stack gap={0} pl={INDENT_PX}>
-          {group.dataFolders.length === 0
+          {visibleFolders.length === 0
             ? mode === 'files' &&
               connectorAccount && (
                 <Box pl={INDENT_PX * 2 + 34} py={4}>
@@ -308,7 +307,7 @@ export function ConnectionNode({
                   </UnstyledButton>
                 </Box>
               )
-            : group.dataFolders.map((folder) => (
+            : visibleFolders.map((folder) => (
                 <TableNode
                   key={folder.id}
                   folder={folder}

@@ -11,6 +11,21 @@ import { DataFolderId } from './ids';
 export type FileDiffStatus = 'added' | 'modified' | 'deleted';
 
 /**
+ * Response from the fast "has dirty files" check.
+ * Compares root tree OIDs — instant regardless of repo size.
+ */
+export interface HasDirtyFilesResponse {
+  dirty: boolean;
+}
+
+/**
+ * Response from the dirty file count endpoint.
+ */
+export interface DirtyFileCountResponse {
+  count: number;
+}
+
+/**
  * Reference to a file in the workbook
  */
 export interface FileRefEntity {

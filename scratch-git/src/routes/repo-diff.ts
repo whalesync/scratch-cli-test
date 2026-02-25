@@ -15,6 +15,28 @@ repoDiffRouter.get('/status', async (req, res) => {
   }
 });
 
+repoDiffRouter.get('/status/has-dirty', async (req, res) => {
+  try {
+    const { id } = req.params as { id: string };
+    const repoDiffService = new RepoDiffService(id);
+    const dirty = await repoDiffService.hasDirtyFiles();
+    res.json({ dirty });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+repoDiffRouter.get('/status/count', async (req, res) => {
+  try {
+    const { id } = req.params as { id: string };
+    const repoDiffService = new RepoDiffService(id);
+    const count = await repoDiffService.getDirtyStatusCount();
+    res.json({ count });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 repoDiffRouter.get('/folder-diff', async (req, res) => {
   try {
     const { id } = req.params as { id: string };

@@ -7,10 +7,10 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
-import { Box, Group, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, Workbook, WorkbookId } from '@spinner/shared-types';
-import { PlusIcon, RefreshCwIcon } from 'lucide-react';
+import { PlusIcon, RefreshCwIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { CreateConnectionModal } from '../shared/CreateConnectionModal';
@@ -48,12 +48,11 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     [openChooseTables],
   );
 
-  // For review mode, fetch dirty files
-  const {
-    dirtyFiles,
-    isLoading: dirtyFilesLoading,
-    refresh: refreshDirtyFiles,
-  } = useDirtyFiles(mode === 'review' ? workbook.id : null);
+  // For review mode, dirty files are fetched on-demand
+  const [showDirtyFiles, setShowDirtyFiles] = useState(false);
+  const { dirtyFiles, isLoading: dirtyFilesLoading } = useDirtyFiles(
+    mode === 'review' && showDirtyFiles ? workbook.id : null,
+  );
 
   // Create a set of dirty file paths for quick lookup
   const dirtyFilePaths = useMemo(() => {
@@ -132,6 +131,23 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
         </ButtonCompactSecondary>
       </Box>
     );
+  } else if (mode === 'review' && !showDirtyFiles) {
+    content = (
+      <Box p="md">
+        <ButtonCompactSecondary leftSection={<SearchIcon size={12} />} onClick={() => setShowDirtyFiles(true)}>
+          Show edited files
+        </ButtonCompactSecondary>
+      </Box>
+    );
+  } else if (mode === 'review' && dirtyFilesLoading) {
+    content = (
+      <Box p="md" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Loader size={14} />
+        <Text size="sm" c="dimmed">
+          Loading edited files...
+        </Text>
+      </Box>
+    );
   } else if (mode === 'review' && !dirtyFilesLoading && dirtyFiles.length === 0) {
     content = (
       <Box p="md">
@@ -148,25 +164,24 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
           {/* Section title */}
           <Box px="sm" py={4} mb={4}>
             <Group justify="space-between" align="center">
-              <Text12Regular
-                c="var(--fg-muted)"
-                style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.5px' }}
-              >
-                {mode === 'review' ? 'Edited files' : 'All files'}
-              </Text12Regular>
-              <UnstyledButton
-                onClick={() => {
-                  if (mode === 'review') {
-                    refreshDirtyFiles();
-                  } else {
-                    refreshDataFolders();
-                  }
-                }}
-                style={{ opacity: 0.4, padding: 2 }}
-                title="Refresh"
-              >
-                <RefreshCwIcon size={12} />
-              </UnstyledButton>
+              <Group gap={6} align="center">
+                <Text12Regular
+                  c="var(--fg-muted)"
+                  style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.5px' }}
+                >
+                  {mode === 'review' ? 'Edited files' : 'All files'}
+                </Text12Regular>
+                {mode === 'review' && dirtyFiles.length > 0 && (
+                  <Badge size="sm" variant="filled" color="orange" radius="xl">
+                    {dirtyFiles.length}
+                  </Badge>
+                )}
+              </Group>
+              {mode !== 'review' && (
+                <UnstyledButton onClick={refreshDataFolders} style={{ opacity: 0.4, padding: 2 }} title="Refresh">
+                  <RefreshCwIcon size={12} />
+                </UnstyledButton>
+              )}
             </Group>
           </Box>
 

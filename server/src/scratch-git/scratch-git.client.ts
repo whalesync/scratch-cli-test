@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { FileDiffStatus } from '@spinner/shared-types';
+import { DirtyFileCountResponse, FileDiffStatus, HasDirtyFilesResponse } from '@spinner/shared-types';
 // Trigger reload
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 
@@ -171,6 +171,14 @@ export class ScratchGitClient {
 
   async getStatus(repoId: string): Promise<any> {
     return this.callGitApi(`/api/repo/diff/${repoId}/status`, 'GET');
+  }
+
+  async hasDirtyFiles(repoId: string): Promise<HasDirtyFilesResponse> {
+    return this.callGitApi(`/api/repo/diff/${repoId}/status/has-dirty`, 'GET') as Promise<HasDirtyFilesResponse>;
+  }
+
+  async getStatusCount(repoId: string): Promise<DirtyFileCountResponse> {
+    return this.callGitApi(`/api/repo/diff/${repoId}/status/count`, 'GET') as Promise<DirtyFileCountResponse>;
   }
 
   async getDiff(repoId: string, path: string): Promise<string> {

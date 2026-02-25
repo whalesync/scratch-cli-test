@@ -3,6 +3,8 @@ import {
   CreateWorkbookDto,
   DataFolderGroup,
   DataFolderPublishStatus,
+  DirtyFileCountResponse,
+  HasDirtyFilesResponse,
   PublishPlanBuildDto,
   PublishPlanEntity,
   PublishPlanOperationEntity,
@@ -223,6 +225,28 @@ export const workbookApi = {
       await axios.post(`/scratch-git/${workbookId}/rebase`);
     } catch (error) {
       handleAxiosError(error, 'Failed to rebase dirty branch');
+      throw error;
+    }
+  },
+
+  hasDirtyFiles: async (workbookId: WorkbookId): Promise<HasDirtyFilesResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<HasDirtyFilesResponse>(`/scratch-git/${workbookId}/git-has-dirty`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to check dirty status');
+      throw error;
+    }
+  },
+
+  getStatusCount: async (workbookId: WorkbookId): Promise<DirtyFileCountResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<DirtyFileCountResponse>(`/scratch-git/${workbookId}/git-status-count`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to get git status count');
       throw error;
     }
   },

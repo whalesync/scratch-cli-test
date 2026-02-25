@@ -80,6 +80,8 @@ POST   /oauth/refresh                             # Refresh OAuth tokens
 GET    /scratch-git/:id/list                      # List repo files
 GET    /scratch-git/:id/file                      # Get file content
 GET    /scratch-git/:id/git-status                # Get git status
+GET    /scratch-git/:id/git-has-dirty             # Check if dirty files exist (fast)
+GET    /scratch-git/:id/git-status-count          # Get dirty file count
 GET    /scratch-git/:id/git-diff                  # Get file diff
 GET    /scratch-git/:id/graph                     # Get commit graph
 POST   /scratch-git/:id/checkpoint                # Create checkpoint
@@ -797,6 +799,38 @@ Returns the current git status of the repository.
   "staged": [],
   "unstaged": [{ "path": "docs/readme.md", "status": "modified" }],
   "untracked": []
+}
+```
+
+### Check for Dirty Files
+
+```
+GET /scratch-git/:id/git-has-dirty
+```
+
+Fast check for whether any dirty (changed) files exist. Compares root tree OIDs without walking the tree — effectively instant regardless of repo size.
+
+**Response:**
+
+```json
+{
+  "dirty": true
+}
+```
+
+### Get Git Status Count
+
+```
+GET /scratch-git/:id/git-status-count
+```
+
+Returns the count of dirty (changed) files. Lightweight alternative to `git-status` — returns only a count instead of the full file list.
+
+**Response:**
+
+```json
+{
+  "count": 42
 }
 ```
 

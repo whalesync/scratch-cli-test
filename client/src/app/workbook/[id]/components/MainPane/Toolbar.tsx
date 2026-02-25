@@ -7,8 +7,9 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorAccount } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
+import { SWR_KEYS } from '@/lib/api/keys';
+import { workbookApi } from '@/lib/api/workbook';
 import { trackToggleDisplayMode } from '@/lib/posthog';
 import { useLayoutManagerStore } from '@/stores/layout-manager-store';
 import { useWorkbookEditorUIStore, WorkbookModals } from '@/stores/workbook-editor-store';
@@ -31,6 +32,7 @@ import {
 import Link from 'next/link';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import useSWR, { useSWRConfig } from 'swr';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { ConnectToCLIModal } from '../shared/ConnectToCLIModal';
@@ -103,8 +105,13 @@ export function Toolbar({ workbook }: ToolbarProps) {
   const [isPulling, setIsPulling] = useState(false);
   const [isDiscarding, setIsDiscarding] = useState(false);
 
-  // Dirty files for review mode
-  const { dirtyFiles, refresh: refreshDirtyFiles } = useDirtyFiles(isReviewPage ? workbook.id : null);
+  // Fast dirty check for review mode toolbar buttons
+  const { data: dirtyStatus, mutate: mutateDirtyStatus } = useSWR(
+    isReviewPage ? SWR_KEYS.dirtyFiles.hasDirty(workbook.id as WorkbookId) : null,
+    () => workbookApi.hasDirtyFiles(workbook.id as WorkbookId),
+  );
+  const { mutate } = useSWRConfig();
+  const hasDirty = dirtyStatus?.dirty ?? false;
 
   // Confirm dialog
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
@@ -126,14 +133,15 @@ export function Toolbar({ workbook }: ToolbarProps) {
 
         try {
           await discardAllChanges();
-          refreshDirtyFiles();
+          mutateDirtyStatus();
+          mutate(SWR_KEYS.dirtyFiles.list(workbook.id as WorkbookId));
           router.push(RouteUrls.workbookReviewPageUrl(workbook.id));
         } finally {
           setIsDiscarding(false);
         }
       },
     });
-  }, [router, openConfirmDialog, discardAllChanges, workbook.id, refreshDirtyFiles]);
+  }, [router, openConfirmDialog, discardAllChanges, workbook.id, mutateDirtyStatus, mutate]);
 
   const toggleColorScheme = () => {
     const newScheme = colorScheme === 'light' ? 'dark' : 'light';
@@ -251,7 +259,7 @@ export function Toolbar({ workbook }: ToolbarProps) {
         )}
 
         {/* Review mode buttons */}
-        {isReviewPage && dirtyFiles.length > 0 && (
+        {isReviewPage && hasDirty && (
           <>
             {/* <ButtonCompactPrimary
               leftSection={<CloudUploadIcon size={12} />}

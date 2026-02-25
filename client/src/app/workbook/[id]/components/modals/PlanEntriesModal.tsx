@@ -202,11 +202,7 @@ export function PlanEntriesModal({ opened, onClose, workbookId, publishPlanId }:
                         <Table.Td>
                           <Badge
                             color={
-                              operation.status === 'success'
-                                ? 'green'
-                                : operation.status === 'failed'
-                                  ? 'red'
-                                  : 'gray'
+                              operation.status === 'success' ? 'green' : operation.status === 'failed' ? 'red' : 'gray'
                             }
                             variant="outline"
                             size="sm"

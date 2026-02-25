@@ -3,13 +3,14 @@
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text13Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import { Badge, Box, Stack, Tooltip, UnstyledButton } from '@mantine/core';
-import type { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
+import type { WorkbookId } from '@spinner/shared-types';
 import { FolderIcon, PencilIcon, RefreshCwIcon, SquareIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import useSWR from 'swr';
 
 interface NavTab {
   id: string;
@@ -18,11 +19,7 @@ interface NavTab {
   href: string;
   disabled?: boolean;
   badge?: number;
-}
-
-interface DirtyFile {
-  path: string;
-  status: FileDiffStatus;
+  dot?: boolean;
 }
 
 export function NavTabs() {
@@ -31,23 +28,12 @@ export function NavTabs() {
   const workbookId = params.id as WorkbookId;
 
   const { activeJobs } = useWorkbookActiveJobs(workbookId);
-  const [dirtyCount, setDirtyCount] = useState<number>(0);
-
-  const fetchDirtyCount = useCallback(async () => {
-    try {
-      const data = (await workbookApi.getStatus(workbookId)) as DirtyFile[];
-      setDirtyCount(data?.length ?? 0);
-    } catch (error) {
-      console.debug('Failed to fetch dirty count:', error);
-    }
-  }, [workbookId]);
-
-  useEffect(() => {
-    fetchDirtyCount();
-    // Refresh periodically to catch changes
-    const interval = setInterval(fetchDirtyCount, 10000);
-    return () => clearInterval(interval);
-  }, [fetchDirtyCount]);
+  const { data: dirtyStatus } = useSWR(
+    SWR_KEYS.dirtyFiles.hasDirty(workbookId),
+    () => workbookApi.hasDirtyFiles(workbookId),
+    { refreshInterval: 10000 },
+  );
+  const hasDirty = dirtyStatus?.dirty ?? false;
 
   const tabs: NavTab[] = [
     {
@@ -63,7 +49,7 @@ export function NavTabs() {
       icon: PencilIcon,
       href: `/workbook/${params.id}/review`,
       disabled: false,
-      badge: dirtyCount > 0 ? dirtyCount : undefined,
+      dot: hasDirty,
     },
     {
       id: 'syncs',
@@ -120,6 +106,16 @@ export function NavTabs() {
                 <StyledLucideIcon Icon={tab.icon} size="sm" c={active ? 'var(--fg-primary)' : 'var(--fg-secondary)'} />
                 <Text13Regular c={active ? 'var(--fg-primary)' : 'var(--fg-secondary)'}>{tab.label}</Text13Regular>
               </Box>
+              {tab.dot && (
+                <Box
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--mantine-color-orange-filled)',
+                  }}
+                />
+              )}
               {tab.badge && (
                 <Badge size="sm" variant="filled" color="orange" radius="xl">
                   {tab.badge}

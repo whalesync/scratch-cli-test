@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import type { WorkbookId } from '@spinner/shared-types';
+import type { DirtyFileCountResponse, HasDirtyFilesResponse, WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import { ScratchGitService } from './scratch-git.service';
 
@@ -29,6 +29,16 @@ export class ScratchGitController {
   async getRepoStatus(@Param('id') workbookId: WorkbookId): Promise<unknown> {
     console.log(`[ScratchGitController] getRepoStatus called for ${workbookId}`);
     return this.scratchGitService.getRepoStatus(workbookId);
+  }
+
+  @Get(':id/git-has-dirty')
+  async hasDirtyFiles(@Param('id') workbookId: WorkbookId): Promise<HasDirtyFilesResponse> {
+    return this.scratchGitService.hasDirtyFiles(workbookId);
+  }
+
+  @Get(':id/git-status-count')
+  async getRepoStatusCount(@Param('id') workbookId: WorkbookId): Promise<DirtyFileCountResponse> {
+    return this.scratchGitService.getRepoStatusCount(workbookId);
   }
 
   @Get(':id/git-diff')
