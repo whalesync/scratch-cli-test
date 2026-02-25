@@ -5,7 +5,9 @@ import { ComingSoonBadge } from '@/app/components/ComingSoonBadge';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDataFolders } from '@/hooks/use-data-folders';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
+import { scheduleApi } from '@/lib/api/schedule';
 import { syncApi } from '@/lib/api/sync';
 import { workbookApi } from '@/lib/api/workbook';
 import { useSyncStore } from '@/stores/sync-store';
@@ -43,6 +45,7 @@ import type {
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
+import { ScheduleAction } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   ArrowRight,
@@ -183,13 +186,17 @@ interface ScheduleOption {
   disabled?: boolean;
 }
 
+const EVERY_MINUTE = '* * * * *';
+
 const SCHEDULE_OPTIONS: ScheduleOption[] = [
   { value: '', label: 'Manual only' },
-  { value: '*/5 * * * *', label: 'Every 5 minutes', disabled: true },
-  { value: '*/15 * * * *', label: 'Every 15 minutes', disabled: true },
-  { value: '0 * * * *', label: 'Every hour', disabled: true },
-  { value: '0 0 * * *', label: 'Daily at midnight', disabled: true },
+  { value: '*/5 * * * *', label: 'Every 5 minutes', disabled: false },
+  { value: '*/15 * * * *', label: 'Every 15 minutes', disabled: false },
+  { value: '0 * * * *', label: 'Every hour', disabled: false },
+  { value: '0 0 * * *', label: 'Daily at midnight', disabled: false },
 ];
+
+const DEV_ONLY_SCHEDULE_OPTION: ScheduleOption = { value: EVERY_MINUTE, label: 'Every minute (internal use only)' };
 
 const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
   <Group gap="xs" wrap="nowrap">
@@ -215,6 +222,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const activeJobs = useSyncStore((state) => state.activeJobs);
   const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
   const runSync = useSyncStore((state) => state.runSync);
+
+  const { isDevToolsEnabled } = useDevTools();
 
   const isNew = syncId === 'new';
   const existingSync = useMemo(() => syncs.find((s) => s.id === syncId), [syncs, syncId]);
@@ -320,8 +329,17 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     if (!existingSync) return;
 
     setSyncName(existingSync.displayName);
-    setSchedule('');
     setEditorMode('visual');
+
+    // Fetch the SYNC schedule for this entity
+    scheduleApi
+      .findByEntity(workbookId, ScheduleAction.SYNC, syncId)
+      .then((syncSchedule) => {
+        setSchedule(syncSchedule?.cronExpression ?? '');
+      })
+      .catch(() => {
+        setSchedule('');
+      });
     setJsonContent('');
     setJsonError(null);
 
@@ -421,6 +439,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         displayName: syncName || 'Untitled Sync',
         mappings,
         validateMappings: enableValidation,
+        schedule,
       };
 
       if (isNew) {
@@ -568,9 +587,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
   const getFolderName = (id: string) => allFolders.find((f) => f.id === id)?.name || 'Unknown';
 
+  const scheduleOptions = useMemo(
+    () => (isDevToolsEnabled ? [...SCHEDULE_OPTIONS, DEV_ONLY_SCHEDULE_OPTION] : SCHEDULE_OPTIONS),
+    [isDevToolsEnabled],
+  );
+
   const renderScheduleOption = ({ option }: { option: ScheduleOption }) => (
     <Group gap="sm" wrap="nowrap" justify="space-between" w="100%">
-      <Text size="sm" c={option.disabled ? 'dimmed' : undefined}>
+      <Text size="sm" c={option.disabled ? 'dimmed' : option.value === EVERY_MINUTE ? 'violet.6' : undefined}>
         {option.label}
       </Text>
       {option.disabled && <ComingSoonBadge />}
@@ -921,12 +945,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
             <Select
               label="Schedule"
               placeholder="Select schedule"
-              data={SCHEDULE_OPTIONS}
+              data={scheduleOptions}
               value={schedule}
               onChange={(val) => {
                 setSchedule(val || '');
               }}
               renderOption={renderScheduleOption}
+              allowDeselect={false}
             />
 
             {/* Options */}

@@ -5,6 +5,8 @@ export interface SaveSyncBody {
   displayName: string;
   mappings: SyncMapping;
   validateMappings: boolean;
+  /** Optional cron expression for a sync schedule. Empty string means "no schedule". */
+  schedule?: string;
 }
 
 /** POST body for preview-record endpoint */

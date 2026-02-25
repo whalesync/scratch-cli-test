@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Schedule } from '@prisma/client';
 import {
   createScheduleId,
+  ScheduleAction,
   ValidatedCreateScheduleDto,
   ValidatedUpdateScheduleDto,
   WorkbookId,
@@ -60,6 +61,25 @@ export class ScheduleService {
       orderBy: { createdAt: 'desc' },
     });
     return schedules.map((s) => new ScheduleEntity(s));
+  }
+
+  async findByEntity(
+    workbookId: WorkbookId,
+    action: ScheduleAction,
+    entityId: string,
+    actor: Actor,
+  ): Promise<ScheduleEntity | null> {
+    const workbook = await this.db.client.workbook.findFirst({
+      where: { id: workbookId, organizationId: actor.organizationId },
+    });
+    if (!workbook) {
+      throw new NotFoundException(`Workbook ${workbookId} not found`);
+    }
+
+    const schedule = await this.db.client.schedule.findFirst({
+      where: { workbookId, action, entityId },
+    });
+    return schedule ? new ScheduleEntity(schedule) : null;
   }
 
   async findOne(workbookId: WorkbookId, scheduleId: string, actor: Actor): Promise<ScheduleEntity> {

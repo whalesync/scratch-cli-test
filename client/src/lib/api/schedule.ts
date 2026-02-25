@@ -1,4 +1,11 @@
-import { CreateScheduleDto, Schedule, ScheduleId, UpdateScheduleDto, WorkbookId } from '@spinner/shared-types';
+import {
+  CreateScheduleDto,
+  Schedule,
+  ScheduleAction,
+  ScheduleId,
+  UpdateScheduleDto,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -20,6 +27,18 @@ export const scheduleApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list schedules');
+    }
+  },
+
+  findByEntity: async (workbookId: WorkbookId, action: ScheduleAction, entityId: string): Promise<Schedule | null> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<Schedule | null>(`/workbooks/${workbookId}/schedules/by-entity`, {
+        params: { action, entityId },
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to find schedule');
     }
   },
 

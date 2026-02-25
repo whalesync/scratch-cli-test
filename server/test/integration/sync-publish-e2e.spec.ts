@@ -25,6 +25,7 @@ import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
 import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from 'src/remote-service/connectors/types';
+import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
@@ -200,10 +201,16 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     } as unknown as CredentialEncryptionService;
 
     // ---- Instantiate SyncService (real, with mocked deps) ----
+    const scheduleService = {
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as unknown as ScheduleService;
     syncService = new SyncService(
       dbService,
       dataFolderService,
       {} as PostHogService,
+      scheduleService,
       scratchGitService,
       {} as WorkbookService,
     );

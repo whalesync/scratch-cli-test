@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UseInterceptors,
@@ -18,6 +19,7 @@ import type {
   ValidatedCreateScheduleDto,
   WorkbookId,
 } from '@spinner/shared-types';
+import { ScheduleAction } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { userToActor } from 'src/users/types';
@@ -41,6 +43,16 @@ export class ScheduleController {
   @Get()
   async list(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<Schedule[]> {
     return this.scheduleService.findAllForWorkbook(workbookId, userToActor(req.user));
+  }
+
+  @Get('by-entity')
+  async findByEntity(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('action') action: ScheduleAction,
+    @Query('entityId') entityId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<Schedule | null> {
+    return this.scheduleService.findByEntity(workbookId, action, entityId, userToActor(req.user));
   }
 
   @Get(':scheduleId')

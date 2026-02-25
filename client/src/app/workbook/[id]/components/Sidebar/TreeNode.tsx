@@ -53,6 +53,7 @@ import { ContextMenu } from '../shared/ContextMenu';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
+import { PullScheduleModal } from '../shared/PullScheduleModal';
 import { RemoveConnectionModal } from '../shared/RemoveConnectionModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
@@ -430,6 +431,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const [deleteAllModalOpened, { open: openDeleteAllModal, close: closeDeleteAllModal }] = useDisclosure(false);
   const [schemaModalOpened, { open: openSchemaModal, close: closeSchemaModal }] = useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
+  const [pullScheduleOpened, { open: openPullSchedule, close: closePullSchedule }] = useDisclosure(false);
 
   // Pull handler for this table
   const handlePullTable = async () => {
@@ -695,6 +697,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             },
             { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
+            { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
             { type: 'divider' },
             { label: 'Unlink this table', icon: UnlinkIcon, onClick: openRemoveModal, delete: true },
             { label: 'Delete all records', icon: Trash2Icon, onClick: openDeleteAllModal, delete: true },
@@ -719,6 +722,9 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
         workbookId={workbookId}
         onSuccess={handleRefreshTable}
       />
+
+      {/* Pull Schedule Modal */}
+      <PullScheduleModal opened={pullScheduleOpened} onClose={closePullSchedule} folder={folder} />
 
       {/* Advanced Folder Settings Modal */}
       <AdvancedFolderSettingsModal opened={settingsOpened} onClose={closeSettings} folder={folder} />

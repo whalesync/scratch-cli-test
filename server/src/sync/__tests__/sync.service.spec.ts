@@ -7,6 +7,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
@@ -39,6 +40,7 @@ const ACTOR: Actor = { userId: 'usr_abc', organizationId: 'org_xyz' };
 function makeSaveSyncBody(overrides?: Partial<SaveSyncBody>): SaveSyncBody {
   return {
     displayName: 'Test Sync',
+    validateMappings: false,
     mappings: {
       version: 1,
       tableMappings: [
@@ -49,12 +51,16 @@ function makeSaveSyncBody(overrides?: Partial<SaveSyncBody>): SaveSyncBody {
         },
       ],
     },
+    schedule: '',
     ...overrides,
   };
 }
 
 const MOCK_WORKBOOK = { id: WORKBOOK_ID, organizationId: 'org_xyz' };
 const MOCK_SYNC = { id: SYNC_ID, displayName: 'Test Sync', mappings: {} };
+/** Valid cron: every hour at minute 0 (meets min 1-min interval) */
+const CRON_HOURLY = '0 * * * *';
+const CRON_EVERY_TWO_HOURS = '0 */2 * * *';
 const MOCK_SCHEMA = {
   type: 'object',
   properties: { title: { type: 'string' }, name: { type: 'string' } },
@@ -65,6 +71,7 @@ describe('SyncService', () => {
   let dbService: jest.Mocked<DbService>;
   let dataFolderService: jest.Mocked<DataFolderService>;
   let posthogService: jest.Mocked<PostHogService>;
+  let scheduleService: jest.Mocked<ScheduleService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let workbookService: jest.Mocked<WorkbookService>;
 
@@ -79,6 +86,7 @@ describe('SyncService', () => {
           delete: jest.fn(),
         },
         syncTablePair: { deleteMany: jest.fn() },
+        schedule: { findFirst: jest.fn() },
         dataFolder: { findUnique: jest.fn() },
         $transaction: jest.fn(),
       },
@@ -102,7 +110,20 @@ describe('SyncService', () => {
       findOne: jest.fn(),
     } as unknown as jest.Mocked<WorkbookService>;
 
-    service = new SyncService(dbService, dataFolderService, posthogService, scratchGitService, workbookService);
+    scheduleService = {
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as unknown as jest.Mocked<ScheduleService>;
+
+    service = new SyncService(
+      dbService,
+      dataFolderService,
+      posthogService,
+      scheduleService,
+      scratchGitService,
+      workbookService,
+    );
   });
 
   afterEach(() => {
@@ -335,6 +356,37 @@ describe('SyncService', () => {
         { sourceColumnId: 'slug', destinationColumnId: 'url_slug' },
       ]);
     });
+
+    it('creates a schedule when schedule cron expression is provided', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      const createdSync = { id: SYNC_ID, displayName: 'Scheduled Sync', syncTablePairs: [] };
+      (dbService.client.sync.create as jest.Mock).mockResolvedValue(createdSync);
+
+      const body = makeSaveSyncBody({ displayName: 'Scheduled Sync', schedule: CRON_HOURLY });
+      await service.createSync(WORKBOOK_ID, body, ACTOR);
+
+      expect(scheduleService.create).toHaveBeenCalledTimes(1);
+      const createCall = (scheduleService.create as jest.Mock).mock.calls[0];
+      expect(createCall[0]).toBe(WORKBOOK_ID);
+      expect(createCall[1]).toMatchObject({
+        name: 'Sync: Scheduled Sync',
+        action: 'SYNC',
+        cronExpression: CRON_HOURLY,
+        enabled: true,
+      });
+      expect(createCall[1].entityId).toBeDefined();
+      expect(typeof createCall[1].entityId).toBe('string');
+      expect(createCall[2]).toEqual(ACTOR);
+    });
+
+    it('does not create a schedule when schedule is omitted or empty', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
+
+      await service.createSync(WORKBOOK_ID, makeSaveSyncBody({ schedule: '' }), ACTOR);
+
+      expect(scheduleService.create).not.toHaveBeenCalled();
+    });
   });
 
   // ===========================================================================
@@ -463,6 +515,71 @@ describe('SyncService', () => {
       await service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR);
 
       expect(posthogService.trackUpdateSync).toHaveBeenCalledWith(ACTOR, updatedSync);
+    });
+
+    it('adds a schedule when updating sync with schedule and none exists', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
+      (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
+      (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const body = makeSaveSyncBody({ displayName: 'Test Sync', schedule: CRON_HOURLY });
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
+
+      expect(scheduleService.create).toHaveBeenCalledTimes(1);
+      expect(scheduleService.create).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        expect.objectContaining({
+          name: 'Sync: Test Sync',
+          action: 'SYNC',
+          entityId: SYNC_ID,
+          cronExpression: CRON_HOURLY,
+          enabled: true,
+        }),
+        ACTOR,
+      );
+      expect(scheduleService.update).not.toHaveBeenCalled();
+      expect(scheduleService.delete).not.toHaveBeenCalled();
+    });
+
+    it('updates the schedule when updating sync with new cron and one exists', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
+      (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
+      const existingSchedule = { id: 'sched_existing123' };
+      (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(existingSchedule);
+
+      const body = makeSaveSyncBody({ schedule: CRON_EVERY_TWO_HOURS });
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
+
+      expect(scheduleService.update).toHaveBeenCalledTimes(1);
+      expect(scheduleService.update).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        existingSchedule.id,
+        { cronExpression: CRON_EVERY_TWO_HOURS },
+        ACTOR,
+      );
+      expect(scheduleService.create).not.toHaveBeenCalled();
+      expect(scheduleService.delete).not.toHaveBeenCalled();
+    });
+
+    it('removes the schedule when updating sync with empty schedule and one exists', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
+      (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
+      const existingSchedule = { id: 'sched_existing123' };
+      (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(existingSchedule);
+
+      const body = makeSaveSyncBody({ schedule: '' });
+      await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
+
+      expect(scheduleService.delete).toHaveBeenCalledTimes(1);
+      expect(scheduleService.delete).toHaveBeenCalledWith(WORKBOOK_ID, existingSchedule.id, ACTOR);
+      expect(scheduleService.create).not.toHaveBeenCalled();
+      expect(scheduleService.update).not.toHaveBeenCalled();
     });
   });
 

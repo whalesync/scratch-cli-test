@@ -12,6 +12,7 @@ import {
   PreviewRecordBody,
   PreviewRecordResponse,
   SaveSyncBody,
+  ScheduleAction,
   Service,
   SyncId,
   SyncMapping,
@@ -26,6 +27,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
 import { previewRecordBodySchema, saveSyncBodySchema } from 'src/sync/sync-mapping.schema';
@@ -70,6 +72,7 @@ export class SyncService {
     private readonly db: DbService,
     private readonly dataFolderService: DataFolderService,
     private readonly posthogService: PostHogService,
+    private readonly scheduleService: ScheduleService,
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookService: WorkbookService,
   ) {}
@@ -128,6 +131,21 @@ export class SyncService {
         syncTablePairs: true,
       },
     });
+
+    // Create schedule if a non-empty cron expression was provided
+    if (body.schedule) {
+      await this.scheduleService.create(
+        workbookId,
+        {
+          name: `Sync: ${body.displayName}`,
+          action: ScheduleAction.SYNC,
+          entityId: syncId,
+          cronExpression: body.schedule,
+          enabled: true,
+        },
+        actor,
+      );
+    }
 
     this.posthogService.trackCreateSync(actor, sync);
     return sync;
@@ -218,6 +236,36 @@ export class SyncService {
         },
       });
     });
+
+    // Handle schedule create/update/delete
+    if (body.schedule !== undefined) {
+      const existingSchedule = await this.db.client.schedule.findFirst({
+        where: { workbookId, action: 'SYNC', entityId: syncId },
+      });
+
+      if (body.schedule === '') {
+        // Empty string means "no schedule" — delete if one exists
+        if (existingSchedule) {
+          await this.scheduleService.delete(workbookId, existingSchedule.id, actor);
+        }
+      } else if (existingSchedule) {
+        // Update existing schedule's cron expression
+        await this.scheduleService.update(workbookId, existingSchedule.id, { cronExpression: body.schedule }, actor);
+      } else {
+        // Create a new schedule
+        await this.scheduleService.create(
+          workbookId,
+          {
+            name: `Sync: ${body.displayName}`,
+            action: ScheduleAction.SYNC,
+            entityId: syncId,
+            cronExpression: body.schedule,
+            enabled: true,
+          },
+          actor,
+        );
+      }
+    }
 
     this.posthogService.trackUpdateSync(actor, updated);
     return updated;
