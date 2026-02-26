@@ -1,237 +1,168 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Instructions for Claude Code when working in this repository. Subdirectory CLAUDE.md files contain additional rules scoped to their directories — always read them before working in those areas.
+
+## Critical Rules
+
+- **Always use `yarn`**, never `npm`. This applies to installs, running scripts, and adding dependencies.
+- **Always run `nvm use`** before any Node-dependent command. Run it in the directory you're working in (e.g. `server/`, `client/`). You do NOT need to source `~/.nvm/nvm.sh`.
+- **Prefer running commands from the repo root** using Turborepo (see [Development Commands](#development-commands)).
+- **Always run `yarn build`, `yarn lint`, and `yarn format` from the repo root** after completing a series of code changes to verify nothing is broken.
+- Look for **Skills** to help with specific tasks in the `.claude/skills` folder
 
 ## Project Overview
 
-**Scratch** (codename: "Spinner") is a content management system that syncs data between external services (e.g. Airtable, Webflow) and a git-based storage layer. It enables knowledge workers to manage content across services in a unified workspace with a VS Code-like interface.
+**Scratch** (codename: "Spinner") is a content management system that syncs data between external services (e.g. Airtable, Webflow) and a git-based storage layer. It provides knowledge workers a VS Code-like workspace for managing content across services.
 
-### Architecture
+## Monorepo Structure
 
-- **Client** (`/client`): Next.js web app on port 3000
-- **Server** (`/server`): NestJS API server on port 3010
+This is a Yarn workspaces monorepo managed by Turborepo.
 
-**NOTE**: The Next.js web app does **not** run in a serverless environment. It runs in Google Cloud Run.
+| Package     | Path           | Description                                                 |
+| ----------- | -------------- | ----------------------------------------------------------- |
+| Client      | `/client`      | Next.js web app (port 3000)                                 |
+| Server      | `/server`      | NestJS API server (port 3010)                               |
+| scratch-git | `/scratch-git` | Git operations library                                      |
+| scratch-cli | `/scratch-cli` | CLI tool in go for interacting with Scratch and local files |
 
-### Subdirectory-Specific Rules
+| shared-types | `/packages/shared-types` | Yarn package containing shared TypeScript types between client and server |
+| Infrastructure | `/terraform` | Terraform for GCP test and production environments |
 
-Each component has its own CLAUDE.md with instructions specific to the project.
+## Domain Model: Files and Folders
+
+Scratch models external data records as files organized in a tree structure. Understanding this model is essential for working with the codebase:
+
+- A **Workbook** is a workspace that owns a Git repository. All files within a Workbook have unique paths.
+- A **DataFolder** represents a directory in the tree. `DataFolder.path` always starts with `/` and uses POSIX format.
+- A **Record file** is a data file that belongs to a DataFolder. Its full path is `DataFolder.path` + filename.
+- Record files are stored in the Workbook's Git repository and can be indexed in database tables for pull, publish, and sync operations.
+- Each record file has a **remote ID** linking it to a record in an external service (e.g. an Airtable row or Webflow item).
+- Always reference files by their full path (folder path + filename).
 
 ## Development Commands
 
 ### Initial Setup
 
-**Prerequisites**: Node.js (via nvm), Docker, Yarn
+**Prerequisites**: Node.js ≥22 (via nvm), Docker, Yarn 1.x
 
 ```bash
-# Install dependencies
-cd client && yarn install
-cd server && yarn install
+cd client && yarn install && cd ..
+cd server && yarn install && cd ..
 
-# Setup environment files
-# Copy .env.example to .env in each directory and configure
+# Copy .env.example → .env in client/ and server/, then configure
 
-# Start Docker services (PostgreSQL + Redis)
-cd server/localdev && docker compose up -d
+# Start PostgreSQL + Redis
+cd server/localdev && docker compose up -d && cd ../..
 
-# Create database (first time only)
-# Install: brew install libpq && brew link --force libpq
+# Create database (first time only — requires: brew install libpq && brew link --force libpq)
 createdb -h localhost -p 5432 -U postgres scratchpad  # password: postgres
 
 # Run migrations
 cd server && yarn run migrate
 ```
 
-### Package Manager
-
-**IMPORTANT**: This project uses **`yarn`** as the package manager, NOT `npm`.
-
-- Always use `yarn` for installing dependencies (e.g., `yarn add`, `yarn install`)
-- Always use `yarn` for running scripts (e.g., `yarn build`, `yarn dev`)
-- Never use `npm install` or `npm` commands
-
-### NVM
-
-When running commands that depend on Node, first run `nvm use` in whichever directory you're working in (e.g.
-server/, client/). You DON'T need to source `~/.nvm/nvm.sh`.
-
-### Common Commands
-
-This monorepo uses Turborepo. Prefer running commands from the **root directory**:
+### Root-Level Commands (Turborepo)
 
 ```bash
 yarn dev              # Start all dev servers (client, server, scratch-git, shared-types watch)
-yarn build            # Build all packages with caching and correct dependency ordering
+yarn build            # Build all packages with caching and dependency ordering
 yarn migrate          # Run database migrations
-yarn lint             # Run linting across all packages
-yarn format           # Reformat code across all packages
+yarn lint             # Lint all packages
+yarn format           # Format all packages
 yarn test             # Run tests across all packages
 yarn test:integration # Run integration tests across all packages
 ```
 
-You can still run commands in individual packages if needed:
+### Per-Package Commands
 
-**Client:**
+Run these from within the package directory:
 
-```bash
-yarn run dev          # Start dev server
-yarn run build        # Build for production
-yarn run lint         # Run ESLint
-yarn run lint-strict  # ESLint with max-warnings=0
-```
+**Client** (`/client`):
+`yarn run dev` | `yarn run build` | `yarn run lint` | `yarn run lint-strict`
 
-**Server:**
-
-```bash
-yarn run start:dev    # Development with watch mode
-yarn run build        # Build TypeScript
-yarn run lint         # Run ESLint
-yarn run lint-fix     # ESLint with auto-fix
-yarn run test         # Run Jest tests
-yarn run test:watch   # Tests in watch mode
-yarn run migrate      # Deploy Prisma migrations
-```
-
-### NestJS DTOs in "server/"
-
-For NestJS DTOs, we use the pattern:
-
-- `class` definitions with 'class-validator' decorators for validation
-- All properties are optional (in TypeScript, "?") to pass strict build rules
-- A corresponding `Validated...` type where required fields are declared as required, using `Required<>` and `Pick<>`
-
-### Infrastructure
-
-The **`/terraform`** folder defines infrastructure for the application.
-
-- shell scripts and utilities for managing the application
-- Terraform files defining the infrastructure for the TEST and Production environnments on GCP
-- Documentation on system architecture
-
-### Project Management
-
-We use [Linear](https://linear.app/whalesync/team/DEV) for project management.
-
-## High-Level Architecture
-
-### Server Module Organization
-
-**Key modules:**
-
-- `remote-service` - Connector abstraction layer for external services (see [Connector Development Guide](/server/src/remote-service/connectors/CONNECTOR_GUIDE.md))
-- `custom-connector` / `custom-connector-builder` - User-defined and AI-generated connectors
-- `worker` / `worker-enqueuer` - Background job processing (BullMQ + Piscina)
-- `auth` / `clerk` - Multi-strategy authentication
-- `users` / `payment` - User management and Stripe billing
-
-### Microservice Architecture
-
-Server supports different deployment modes via `SERVICE_TYPE` env variable:
-
-- **MONOLITH**: All services in one process (local development)
-- **FRONTEND**: HTTP API server only
-- **WORKER**: Background job processor only
-- **CRON**: Scheduled task runner only
-
-This allows horizontal scaling in production while maintaining simplicity in development.
-
-### Real-time Updates
-
-Changes broadcast through Redis pub/sub → WebSocket gateway → connected clients. Multiple server instances coordinate seamlessly.
+**Server** (`/server`):
+`yarn run start:dev` | `yarn run build` | `yarn run lint` | `yarn run lint-fix` | `yarn run test` | `yarn run test:watch` | `yarn run migrate`
 
 ## Code Conventions
 
-### Technologies & Patterns
+### Code Style
 
-**Client:**
+- Prettier with organize-imports plugin
+- Single quotes, semicolons, 120-char line width, trailing commas everywhere
+- `kebab-case` for filenames: `user-service.ts`
+- `PascalCase` for classes: `UserService`
+- Files end with a newline
 
-- Next.js App Router (not Pages Router)
-- React with Mantine UI components
-- Zustand for state management, SWR for data fetching
-- **Always use `next/link` for links, never `<a>`**
-- Icons from `lucide-react`, wrapped in `StyledLucideIcon`
-- Use `console.debug` instead of `console.log`
+### Client Conventions
 
-**Server:**
+- Next.js **App Router** (not Pages Router)
+- Mantine UI components — read `client/src/app/components/UI_SYSTEM.md` before writing UI code
+- Zustand for state management, SWR for server data fetching
+- Use `next/link` for links, never `<a>` tags
+- Icons: `lucide-react` wrapped in `StyledLucideIcon`
+- Use `console.debug`, not `console.log`
 
-- NestJS with modular architecture - each feature is a self-contained module
-- Prisma ORM + Knex for complex queries
-- **Always use Yarn, never npm**
-- Files end with newline, not space
+### Server Conventions
 
-### Client/Server Communication Pattern
+- NestJS modular architecture — each feature is a self-contained module
+- Prisma ORM for standard queries, Knex for complex queries
+- Use `WSLogger.info|warn|error` for logging, never `console.log`
+- Do not use `as any` to solve type issues
 
-When creating new REST endpoints, keep these elements in sync:
+### NestJS DTO Pattern
+
+```
+class CreateFooDto {
+  @IsString() @IsOptional() name?: string;  // All properties optional with class-validator decorators
+}
+type ValidatedCreateFooDto = Required<Pick<CreateFooDto, 'name'>>;  // Required fields declared explicitly
+```
+
+### NestJS Module Structure
+
+```
+/module-name/
+├── module-name.module.ts        # NestJS module definition
+├── module-name.controller.ts    # HTTP endpoints
+├── module-name.service.ts       # Business logic
+├── module-name.types.ts         # Type definitions
+├── dto/*.dto.ts                 # Request/response DTOs
+├── entities/*.entity.ts         # Database entities
+└── __tests__/*.spec.ts          # Jest tests
+```
+
+### Client/Server Communication
+
+When creating new REST endpoints, keep these files in sync:
 
 ```
 client/src/
 ├── hooks/use-[resource].ts              # SWR hook for components
 ├── lib/api/keys.ts                      # SWR cache keys
-├── lib/api/[resource].ts                # API fetch methods
+├── lib/api/[resource].ts                # API fetch functions
 └── types/server-entities/[resource].ts  # TypeScript interfaces
 
 server/src/[resource]/
 ├── [resource].controller.ts             # API endpoints
 ├── entities/*.entity.ts                 # Database entities
-└── dto/*.dto.ts                         # Create/update DTOs
+└── dto/*.dto.ts                         # Request/response DTOs
 ```
 
-### File Structure
+#### Real-time Updates
 
-Each NestJS module follows this pattern:
-
-```
-/module-name/
-├── README.md                    # Module documentation
-├── module-name.module.ts        # NestJS module
-├── module-name.controller.ts    # HTTP endpoints
-├── module-name.service.ts       # Business logic
-├── module-name.types.ts         # Type definitions
-└── __tests__/*.spec.ts          # Jest tests
-```
-
-### Code Style
-
-- Prettier with organize-imports plugin
-- Single quotes, semicolons, 120 char line width
-- Trailing commas everywhere
-- kebab-case for files: `user-service.ts`
-- PascalCase for classes: `UserService`
-
-## Deployment
-
-**Production URLs:**
-
-- Client: https://app.scratch.md/
-- Server: https://api.scratch.md/
-
-**Deployment Process:**
-
-- Main branch: `master` (development)
-- Production branch: `prod`
-- Scheduled pipeline merges master → prod daily at 9:30am PST
-
-**Manual deployment:**
-
-```bash
-git checkout master && git pull
-git checkout prod && git pull origin prod
-git merge -m "(Auto) Merge branch 'master' into prod" --no-ff -X theirs master
-git push origin prod
-git checkout master  # Always leave prod immediately
-```
+Redis pub/sub → WebSocket gateway → connected clients. Multiple server instances coordinate via Redis.
 
 ## Important Notes
 
 - React Strict Mode runs components twice in dev (affects debugging)
-- Feature flags use OpenFeature + PostHog - **do NOT enable "Persist flag across authentication steps"** (causes errors)
-- Connection credentials encrypted with `ENCRYPTION_MASTER_KEY`
-- Test coverage is critically low (<1%) - see `TEST_COVERAGE.md` for priorities
-- Project is rebranding from "ScratchPad" to "Scratch"
+- Feature flags: OpenFeature + PostHog — do NOT enable "Persist flag across authentication steps" (causes errors)
+- Connection credentials are encrypted with `ENCRYPTION_MASTER_KEY`
+- Test coverage is critically low (<1%) — see `TEST_COVERAGE.md` for priorities
+- Project management: [Linear](https://linear.app/whalesync/team/DEV)
 
 ## Additional Resources
 
-- Main README: `/README.md`
-- Module-specific docs: Each `/server/src/*/README.md`
-- Connector Development Guide: `/server/src/remote-service/connectors/CONNECTOR_GUIDE.md`
-- GitLab Pipeline Schedules: https://gitlab.com/whalesync/spinner/-/pipeline_schedules
+- [Main README](/README.md)
+- [Connector Development Guide](/server/src/remote-service/connectors/CONNECTOR_GUIDE.md)
+- Module-specific docs: `/server/src/*/README.md`
+- [GitLab Pipeline Schedules](https://gitlab.com/whalesync/spinner/-/pipeline_schedules)
