@@ -421,8 +421,13 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
 
   // Check if this folder is currently selected (showing in the right panel)
   const routeBase = mode === 'review' ? 'review' : 'files';
-  const folderPath = `/workbook/${workbookId}/${routeBase}/${encodeURIComponent(folder.name)}`;
-  const isSelected = pathname === folderPath;
+  const encodedFolderPath = (folder.path ?? folder.name)
+    .replace(/^\//, '')
+    .split('/')
+    .map((s) => encodeURIComponent(s))
+    .join('/');
+  const urlFolderPath = `/workbook/${workbookId}/${routeBase}/${encodedFolderPath}`;
+  const isSelected = pathname === urlFolderPath;
 
   const { files, isLoading, refreshFiles } = useFolderFileList(workbookId, folder.id);
 
@@ -517,12 +522,12 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   // Row click (folder name): navigate to folder detail AND expand if collapsed
   const handleRowClick = useCallback(() => {
     const routeBase = mode === 'review' ? 'review' : 'files';
-    router.push(`/workbook/${workbookId}/${routeBase}/${encodeURIComponent(folder.name)}`);
+    router.push(`/workbook/${workbookId}/${routeBase}/${encodedFolderPath}`);
     // Also expand if not already expanded
     if (!isExpanded) {
       toggleNode(nodeId);
     }
-  }, [mode, router, workbookId, folder.name, isExpanded, toggleNode, nodeId]);
+  }, [mode, router, workbookId, encodedFolderPath, isExpanded, toggleNode, nodeId]);
 
   // In review mode, hide tables with no dirty files
   if (mode === 'review' && !hasAnyDirtyFiles && !isLoading) {
@@ -617,7 +622,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
               <Group gap={6} wrap="nowrap">
                 <Box style={{ width: 6, flexShrink: 0 }} />
                 <Link
-                  href={`/workbook/${workbookId}/files/${encodeURIComponent(folder.name)}`}
+                  href={`/workbook/${workbookId}/files/${encodedFolderPath}`}
                   style={{ textDecoration: 'none' }}
                 >
                   <Text12Regular c="var(--mantine-color-blue-6)" style={{ cursor: 'pointer' }}>

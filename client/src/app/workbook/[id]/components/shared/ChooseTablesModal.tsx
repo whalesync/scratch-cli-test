@@ -194,6 +194,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       name: string;
       tableId: string[];
       options: Record<string, unknown> | null;
+      path: string | null;
     }[] = [];
     dataFolderGroups.forEach((group) => {
       group.dataFolders.forEach((folder) => {
@@ -203,6 +204,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
             name: folder.name,
             tableId: folder.tableId,
             options: folder.options,
+            path: folder.path,
           });
         }
       });
@@ -507,7 +509,13 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       const key = table.id.remoteId.join('/');
       if (seen.has(key)) return;
       seen.add(key);
-      tables.push({ tableKey: key, displayName: table.displayName, label: getTableLabel(table), isNew: true, isRemoved: false });
+      tables.push({
+        tableKey: key,
+        displayName: table.displayName,
+        label: getTableLabel(table),
+        isNew: true,
+        isRemoved: false,
+      });
     });
 
     return tables;
@@ -527,11 +535,14 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       try {
         const dirtyFiles = (await workbookApi.getStatus(workbookId)) as { path: string }[];
 
-        const folderNames = new Set(pendingFoldersToRemove.map((f) => f.name));
+        const folderPaths = new Set(
+          pendingFoldersToRemove.map((f) => (f.path ?? f.name).replace(/^\//, '')),
+        );
         const dirtyInRemovedFolders = dirtyFiles.filter((file) => {
-          return Array.from(folderNames).some(
-            (folderName) => file.path.startsWith(`${folderName}/`) || file.path.includes(`/${folderName}/`),
-          );
+          return Array.from(folderPaths).some((folderPath) => {
+            const prefix = folderPath.endsWith('/') ? folderPath : `${folderPath}/`;
+            return file.path.startsWith(prefix);
+          });
         });
 
         setFoldersToRemove(pendingFoldersToRemove);
@@ -746,7 +757,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
       <Group justify="flex-end" gap="sm" mt="md">
         <ButtonSecondaryOutline onClick={onClose}>Cancel</ButtonSecondaryOutline>
-        <ButtonPrimaryLight onClick={handleNext} disabled={selectedTableIds.size === 0}>
+        <ButtonPrimaryLight
+          onClick={handleNext}
+          disabled={selectedTableIds.size === 0 && pendingFoldersToRemove.length === 0}
+        >
           Next
         </ButtonPrimaryLight>
       </Group>
@@ -925,7 +939,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
       <Group justify="flex-end" gap="sm" mt="md">
         <ButtonSecondaryOutline onClick={onClose}>Cancel</ButtonSecondaryOutline>
-        <ButtonPrimaryLight onClick={handleNext} disabled={selectedTableIds.size === 0}>
+        <ButtonPrimaryLight
+          onClick={handleNext}
+          disabled={selectedTableIds.size === 0 && pendingFoldersToRemove.length === 0}
+        >
           Next
         </ButtonPrimaryLight>
       </Group>

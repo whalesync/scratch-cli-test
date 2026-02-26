@@ -2,7 +2,6 @@ import {} from '@/types/server-entities/workbook';
 import {
   CreateWorkbookDto,
   DataFolderGroup,
-  DataFolderPublishStatus,
   DirtyFileCountResponse,
   GitGcResponse,
   GitObjectCountsResponse,
@@ -107,16 +106,6 @@ export const workbookApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list data folders');
-    }
-  },
-
-  getDataFoldersPublishStatus: async (workbookId: WorkbookId): Promise<DataFolderPublishStatus[]> => {
-    try {
-      const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<DataFolderPublishStatus[]>(`/workbook/${workbookId}/data-folders/publish-status`);
-      return res.data;
-    } catch (error) {
-      handleAxiosError(error, 'Failed to get data folders publish status');
     }
   },
 

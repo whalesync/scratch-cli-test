@@ -13,7 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { DataFolderGroup, DataFolderPublishStatus, PullFilesResponseDto, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderGroup, PullFilesResponseDto, WorkbookId } from '@spinner/shared-types';
 import { CreateWorkbookDto, PullFilesDto, UpdateWorkbookDto } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -129,13 +129,5 @@ export class WorkbookController {
   @Get(':id/data-folders/list')
   async listDataFolders(@Param('id') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<DataFolderGroup[]> {
     return await this.dataFolderService.listGroupedByConnectorBases(workbookId, userToActor(req.user));
-  }
-
-  @Get(':id/data-folders/publish-status')
-  async getDataFoldersPublishStatus(
-    @Param('id') workbookId: WorkbookId,
-    @Req() req: RequestWithUser,
-  ): Promise<DataFolderPublishStatus[]> {
-    return await this.dataFolderService.getPublishStatus(workbookId, userToActor(req.user));
   }
 }

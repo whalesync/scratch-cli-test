@@ -16,7 +16,6 @@ import {
 import type {
   DataFolder,
   DataFolderId,
-  Service,
   ValidatedCreateDataFolderDto,
   ValidatedMoveDataFolderDto,
   ValidatedRenameDataFolderDto,
@@ -37,10 +36,6 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { userToActor } from '../users/types';
 import { SchemaField } from '../utils/schema-helpers';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
-import {
-  FolderPublishProgress,
-  PublishDataFolderPublicProgress,
-} from '../worker/jobs/job-definitions/publish-data-folder.job';
 import { DataFolderService } from './data-folder.service';
 import { WorkbookService } from './workbook.service';
 
@@ -69,118 +64,6 @@ export class DataFolderController {
     }
 
     return await this.dataFolderService.createFolder(dto, actor);
-  }
-
-  /**
-   * Publish multiple data folders in a single job.
-   * POST /data-folder/publish
-   */
-  @Post('/publish')
-  async publish(
-    @Body() body: { workbookId: string; dataFolderIds: string[] },
-    @Req() req: RequestWithUser,
-  ): Promise<{ jobId: string }> {
-    const actor = userToActor(req.user);
-    const workbookId = body.workbookId as WorkbookId;
-    const dataFolderIds = body.dataFolderIds as DataFolderId[];
-
-    if (!dataFolderIds || dataFolderIds.length === 0) {
-      throw new BadRequestException('At least one data folder ID is required');
-    }
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    // Verify all data folders exist and belong to this workbook
-    const dataFolders: DataFolder[] = [];
-    for (const folderId of dataFolderIds) {
-      const dataFolder = await this.dataFolderService.findOne(folderId, actor);
-      if (!dataFolder) {
-        throw new NotFoundException(`Data folder ${folderId} not found`);
-      }
-      if (dataFolder.workbookId !== workbookId) {
-        throw new BadRequestException(`Data folder ${folderId} does not belong to this workbook`);
-      }
-      // Check if folder is already locked by another operation
-      if (dataFolder.lock) {
-        throw new BadRequestException(
-          `Data folder "${dataFolder.name}" is currently locked by another ${dataFolder.lock} operation`,
-        );
-      }
-      dataFolders.push(dataFolder);
-    }
-
-    // Acquire locks on all folders before enqueueing the job
-    await this.db.client.dataFolder.updateMany({
-      where: { id: { in: dataFolderIds } },
-      data: { lock: 'publish' },
-    });
-
-    // Calculate expected counts for all folders
-    const foldersProgress: FolderPublishProgress[] = [];
-
-    for (const dataFolder of dataFolders) {
-      let expectedCreates = 0;
-      let expectedUpdates = 0;
-      let expectedDeletes = 0;
-
-      try {
-        const diff = await this.scratchGitService.getFolderDiff(workbookId, dataFolder.name);
-        for (const file of diff) {
-          // Only count JSON files
-          if (!file.path.endsWith('.json')) continue;
-
-          if (file.status === 'added') {
-            expectedCreates++;
-          } else if (file.status === 'modified') {
-            expectedUpdates++;
-          } else if (file.status === 'deleted') {
-            expectedDeletes++;
-          }
-        }
-      } catch {
-        // If git operations fail, continue with zero expected counts
-      }
-
-      foldersProgress.push({
-        id: dataFolder.id,
-        name: dataFolder.name,
-        connector: (dataFolder.connectorService as Service) ?? '',
-        creates: 0,
-        updates: 0,
-        deletes: 0,
-        expectedCreates,
-        expectedUpdates,
-        expectedDeletes,
-        createdPaths: [],
-        updatedPaths: [],
-        deletedPaths: [],
-        status: 'pending',
-      });
-    }
-
-    // Build initial public progress with all folders
-    const initialPublicProgress: PublishDataFolderPublicProgress = {
-      totalFilesPublished: 0,
-      folders: foldersProgress,
-    };
-
-    // Enqueue the publish job with all folder IDs
-    const job = await this.bullEnqueuerService.enqueuePublishDataFolderJob(
-      workbookId,
-      actor,
-      dataFolderIds,
-      initialPublicProgress,
-    );
-
-    this.posthogService.trackPublishDataFromWorkbook(actor, workbook, {
-      dataFolderCount: dataFolderIds.length,
-    });
-
-    return { jobId: job.id ?? '' };
   }
 
   @Get(':id')

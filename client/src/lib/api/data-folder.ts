@@ -70,20 +70,6 @@ export const dataFolderApi = {
     }
   },
 
-  /**
-   * Publish multiple data folders in a single job.
-   * This ensures all folders are tracked in one progress display.
-   */
-  publish: async (dataFolderIds: DataFolderId[], workbookId: WorkbookId): Promise<{ jobId: string }> => {
-    try {
-      const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<{ jobId: string }>('/data-folder/publish', { workbookId, dataFolderIds });
-      return res.data;
-    } catch (error) {
-      handleAxiosError(error, 'Failed to publish data folders');
-    }
-  },
-
   getSchema: async (dataFolderId: DataFolderId): Promise<Record<string, unknown>> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();

@@ -160,9 +160,9 @@ export class CliLinkedController {
     let deletes = 0;
     let hasChanges = false;
 
-    if (dataFolder.connectorAccountId && dataFolder.name) {
+    if (dataFolder.connectorAccountId && dataFolder.path) {
       try {
-        const diff = await this.scratchGitService.getFolderDiff(workbookId as WorkbookId, dataFolder.name);
+        const diff = await this.scratchGitService.getFolderDiff(workbookId as WorkbookId, dataFolder.path);
         for (const file of diff) {
           if (!file.path.endsWith('.json')) continue;
           if (file.status === 'added') creates++;

@@ -5,7 +5,6 @@ import {
   createDataFolderId,
   DataFolderGroup,
   DataFolderId,
-  DataFolderPublishStatus,
   Service,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
@@ -66,80 +65,6 @@ export class DataFolderService {
 
     const schedulesByEntityId = await this.workbookService.fetchSchedulesByEntityId(workbookId);
     return dataFolders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? []));
-  }
-
-  /**
-   * Gets publish status for all data folders in a workbook.
-   * Returns change counts (creates, updates, deletes) for each connected folder.
-   */
-  async getPublishStatus(workbookId: WorkbookId, actor: Actor): Promise<DataFolderPublishStatus[]> {
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    const dataFolders = await this.db.client.dataFolder.findMany({
-      where: { workbookId },
-      include: DataFolderCluster._validator.include,
-      orderBy: { name: 'asc' },
-    });
-
-    const results: DataFolderPublishStatus[] = [];
-
-    for (const folder of dataFolders) {
-      // Only get diff for connected folders
-      // Use folder.name (not path) to match the git storage format (no leading slash)
-      if (folder.connectorAccountId && folder.name) {
-        try {
-          const diff = await this.scratchGitService.getFolderDiff(workbookId, folder.name);
-
-          // Count changes by status
-          let creates = 0;
-          let updates = 0;
-          let deletes = 0;
-
-          for (const file of diff) {
-            // Only count JSON files
-            if (!file.path.endsWith('.json')) continue;
-
-            if (file.status === 'added') {
-              creates++;
-            } else if (file.status === 'modified') {
-              updates++;
-            } else if (file.status === 'deleted') {
-              deletes++;
-            }
-          }
-
-          results.push({
-            folderId: folder.id as DataFolderId,
-            folderName: folder.name,
-            connectorService: (folder.connectorService as Service) ?? null,
-            connectorDisplayName: folder.connectorAccount?.displayName ?? null,
-            lock: folder.lock,
-            creates,
-            updates,
-            deletes,
-            hasChanges: creates > 0 || updates > 0 || deletes > 0,
-          });
-        } catch {
-          // If git operations fail, still include the folder with zero changes
-          results.push({
-            folderId: folder.id as DataFolderId,
-            folderName: folder.name,
-            connectorService: (folder.connectorService as Service) ?? null,
-            connectorDisplayName: folder.connectorAccount?.displayName ?? null,
-            lock: folder.lock,
-            creates: 0,
-            updates: 0,
-            deletes: 0,
-            hasChanges: false,
-          });
-        }
-      }
-    }
-
-    return results;
   }
 
   async listGroupedByConnectorBases(workbookId: WorkbookId, actor: Actor): Promise<DataFolderGroup[]> {

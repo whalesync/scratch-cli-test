@@ -240,7 +240,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
       });
 
       try {
-        const folderPath = dataFolder.name;
+        const folderPath = dataFolder.path ?? dataFolder.name;
 
         WSLogger.debug({
           source: 'PublishDataFolderJob',

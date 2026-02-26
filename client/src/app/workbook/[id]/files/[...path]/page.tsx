@@ -10,8 +10,8 @@ import { FolderViewer } from '../../components/MainPane/FolderViewer';
 /**
  * Files tab with a specific file or folder selected
  * URL patterns:
- * - /workbook/<id>/files/<tableName> - shows folder contents
- * - /workbook/<id>/files/<tableName>/<file>.json - shows file editor
+ * - /workbook/<id>/files/Audienceful/People - shows folder contents (path segments map to DataFolder.path)
+ * - /workbook/<id>/files/Audienceful/People/record.json - shows file editor
  */
 export default function FileDetailPage() {
   const params = useParams<{ id: string; path: string[] }>();
@@ -22,22 +22,22 @@ export default function FileDetailPage() {
   const pathSegments = useMemo(() => params.path?.map((segment) => decodeURIComponent(segment)) ?? [], [params.path]);
   const filePath = pathSegments.join('/');
 
-  // Check if this path matches a folder (single segment matching a folder name)
+  // Try to match the full URL path against a folder's path.
+  // Folder paths in the DB have a leading slash (e.g. "/Audienceful/People"),
+  // while URL segments don't, so we prepend "/" when comparing.
   const matchedFolder = useMemo(() => {
-    if (pathSegments.length === 1) {
-      return folders.find((f) => f.name === pathSegments[0]);
-    }
-    return null;
+    const candidate = '/' + pathSegments.join('/');
+    return folders.find((f) => f.path === candidate) ?? null;
   }, [pathSegments, folders]);
 
-  // If path matches a folder, show folder viewer
+  // If the full path matches a folder exactly, show the folder viewer
   if (matchedFolder) {
     return <FolderViewer workbookId={workbookId} folderId={matchedFolder.id} folderName={matchedFolder.name} />;
   }
 
-  // Don't render FileViewer until folders have loaded — a single-segment path
-  // might be a folder, and we'd incorrectly try to read a directory as a file.
-  if (foldersLoading && pathSegments.length === 1) {
+  // Don't render FileViewer until folders have loaded — the path segments
+  // might match a folder, and we'd incorrectly try to read a directory as a file.
+  if (foldersLoading) {
     return null;
   }
 

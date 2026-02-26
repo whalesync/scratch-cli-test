@@ -16,15 +16,15 @@ export default function ReviewFilePage() {
   const pathSegments = useMemo(() => params.path?.map((segment) => decodeURIComponent(segment)) ?? [], [params.path]);
   const filePath = pathSegments.join('/') || null;
 
-  // Check if this path matches a folder (single segment matching a folder name)
+  // Try to match the full URL path against a folder's path.
+  // Folder paths in the DB have a leading slash (e.g. "/Audienceful/People"),
+  // while URL segments don't, so we prepend "/" when comparing.
   const matchedFolder = useMemo(() => {
-    if (pathSegments.length === 1) {
-      return folders.find((f) => f.name === pathSegments[0]);
-    }
-    return null;
+    const candidate = '/' + pathSegments.join('/');
+    return folders.find((f) => f.path === candidate) ?? null;
   }, [pathSegments, folders]);
 
-  // If path matches a folder, show folder viewer in review mode
+  // If the full path matches a folder exactly, show folder viewer in review mode
   if (matchedFolder) {
     return (
       <FolderViewer workbookId={workbookId} folderId={matchedFolder.id} folderName={matchedFolder.name} mode="review" />

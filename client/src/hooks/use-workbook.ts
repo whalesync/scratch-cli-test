@@ -2,7 +2,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
-import { trackDiscardChanges, trackPublishAll, trackPullFiles } from '@/lib/posthog';
+import { trackDiscardChanges, trackPullFiles } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import {
@@ -34,7 +34,6 @@ export interface UseWorkbookReturn {
     triggerPull?: boolean,
   ) => Promise<DataFolder>;
   pullFolders: (dataFolderIds?: DataFolderId[]) => Promise<void>;
-  publishFolders: (dataFolderIds: DataFolderId[]) => Promise<void>;
   discardAllChanges: () => Promise<void>;
 }
 
@@ -107,35 +106,6 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
     [id, mutate],
   );
 
-  const publishFolders = useCallback(
-    async (dataFolderIds: DataFolderId[]): Promise<void> => {
-      if (!id || dataFolderIds.length === 0) {
-        return;
-      }
-      trackPublishAll(id, dataFolderIds.length);
-      try {
-        const result = await dataFolderApi.publish(dataFolderIds, id);
-        useActiveJobsStore.getState().trackJobIds([result.jobId]);
-        // TODO: this notification is just overkill for now, we shouldn't need it at all once the UI is more reactive
-        ScratchpadNotifications.info({ message: 'Initiated data publish job for changes' });
-      } catch (error) {
-        console.error('Failed to publish folders:', error);
-        setWorkbookError({
-          scope: 'review',
-          description: 'Failed to start the data publish job for ${dataFolderIds.length} folders',
-          cause: error as Error,
-        });
-      }
-      await mutate();
-      await useActiveJobsStore.getState().refreshJobs();
-      await globalMutate(SWR_KEYS.dataFolders.list(id));
-      for (const folderId of dataFolderIds) {
-        globalMutate(SWR_KEYS.dataFolders.detail(folderId));
-      }
-    },
-    [globalMutate, id, mutate, setWorkbookError],
-  );
-
   const discardAllChanges = useCallback(async (): Promise<void> => {
     if (!id) {
       return;
@@ -194,12 +164,10 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
     workbook: data,
     isLoading,
     error: displayError,
-    // publish,
     refreshWorkbook,
     updateWorkbook,
     addLinkedDataFolder,
     pullFolders,
-    publishFolders,
     discardAllChanges,
   };
 };
