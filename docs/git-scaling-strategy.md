@@ -90,6 +90,15 @@ The 3-way merge (using `node-diff3`) is hand-rolled in `repo-write.service.ts`. 
 
 No `git gc`, `git prune`, or packfile optimization exists. Loose objects accumulate indefinitely. Unreachable objects (from rebases, old commits) are never cleaned up.
 
+### 6. Inefficient job granularity (Data Folder based polling)
+
+Current poll jobs are Data Folder based. This is suboptimal because:
+
+- **API quota is per-connection**: There is no benefit in parallelizing work into multiple jobs if they all share the same connection quota.
+- **Git locking**: Git is locking by nature; multiple jobs attempting to write to the same repository simultaneously create contention and potential bottlenecks.
+
+Publish jobs are already connection-based, which avoids these issues as they do not result in API or Git locking conflicts.
+
 ---
 
 ## Sources of Repo Bloat
@@ -659,7 +668,7 @@ func (s *GitService) InitRepo(repoPath string) error
 
 ### Option C: gitoxide (Rust) as child process
 
-Same architecture as Go option. gitoxide is the fastest git implementation available (~100ms for 100k-entry tree walk). Only recommended if someone on the team is comfortable with Rust.
+Same architecture as Go option. gitoxide is the fastest git implementation available (~100ms for 100k-entry tree walk). The Git API is well-defined and encapsulated, making it reasonable to "vibecode" this even without deep Rust experience. The existing Node implementation can serve as a template for the rewrite, as it already addresses various edge cases.
 
 ### Option D: libgit2 via Node.js bindings
 
@@ -671,21 +680,61 @@ Not recommended. `nodegit` is effectively abandoned. The Node.js native binding 
 
 **Long-term (if concurrent user scaling requires it):** Go child process (Option B). The API surface is already clean — the 11 isomorphic-git primitives map directly to Go functions.
 
+## Strategy 5: Repo-per-Connection Architecture
+
+Instead of one monolithic git repository per workbook, split the data into multiple repositories based on their source connection.
+
+### The Granularity "Sweet Spot"
+
+While it might be tempting to go even further (e.g., one repo per folder), per-folder repositories are too granular and create excessive management overhead. **Per-connection is the sweet spot.** Since background job parallelization is already bound by per-connection API quotas, using one repository per connection keeps the system perfectly symmetrical.
+
+### Encapsulation and Sharding
+
+Creating one repository per connection ensures that each connection's data is well-encapsulated. This architectural shift significantly improves sharding capabilities:
+
+- **Independent Sharding**: Connection-level repositories can be distributed across worker nodes or storage instances without dependencies.
+- **Localized Indexing**: The SQLite indexing layer can also be split per connection. Since there are no cross-connection foreign keys or data dependencies, this provides a clean boundary for horizontal scaling.
+
+### Performance and Locking
+
+Smaller repositories reduce the overhead of critical git operations like tree walks and diffs. Furthermore, it aligns git's locking granularity with the API quota granularity, eliminating the locking contention currently caused by parallel Data Folder based jobs writing to the same workbook repository.
+
+## Strategy 6: Merge-Base UI Diffing
+
+Modify the UI to display the `diff(merge_base, dirty)` instead of `diff(main, dirty)`.
+
+### Problem: Phantom Deletes
+
+Currently, if the `main` branch moves ahead (e.g., due to a pull or another user's activity) and the `dirty` branch is not immediately rebased, any rows added to `main` will appear as "deleted" in the `dirty` diff view. This is because the diff logic compares the current WIP state against the latest `main` state. This is highly confusing for users.
+
+### Solution: Stable Baseline
+
+By diffing against the `merge_base` (the common ancestor where `dirty` originally diverged from `main`), the UI maintains a stable baseline. New additions on `main` are simply ignored in the `dirty` view until the user explicitly rebases.
+
+### Synergy with Repo-per-Connection
+
+This strategy is particularly powerful when combined with a **Repo-per-Connection** architecture:
+
+- **Independent Squashing**: We can pull data and squash it into a single clean commit on the `main` branch of a connection-specific repo without needing to rebase the `dirty` branch immediately.
+- **Workflow Decoupling**: One connection can be busy pulling and writing to `main` while another has active user edits on `dirty`. The user's WIP view remains clean and focused only on their own changes relative to their starting point.
+
 ---
 
 ## Implementation Priority
 
-| Phase         | Change                                           | Effort    | Impact                                         |
-| ------------- | ------------------------------------------------ | --------- | ---------------------------------------------- |
-| **1 (now)**   | `git gc --auto` after heavy operations           | 1 day     | Prevents repo size explosion                   |
-| **1 (now)**   | Verify hash-before-write (no unnecessary blobs)  | 1 day     | Prevents most churn                            |
-| **2 (soon)**  | Shallow history (squash commits >30 days)        | 1-2 days  | Bounds disk usage permanently                  |
-| **2 (soon)**  | SQLite index for reads                           | 3-5 days  | 100-1000x faster file listing and dirty status |
-| **3 (next)**  | Native `git ls-tree` / `git diff-tree` for reads | 3-5 days  | 5-10x faster even without index                |
-| **3 (next)**  | Worker threads for remaining isomorphic-git ops  | 2-3 days  | Unblocks event loop                            |
-| **4 (later)** | Full native git plumbing for writes              | 1 week    | Native performance + gc for free               |
-| **5 (scale)** | Go/Rust child process                            | 3-4 weeks | Full solution for concurrent users             |
-| **5 (scale)** | Repo sharding across instances                   | 1-2 weeks | Horizontal scaling                             |
+| Phase         | Change                                           | Effort    | Impact                                               |
+| ------------- | ------------------------------------------------ | --------- | ---------------------------------------------------- |
+| **1 (now)**   | `git gc --auto` after heavy operations           | 1 day     | Prevents repo size explosion                         |
+| **1 (now)**   | **Repo-per-connection architecture**             | 2-3 days  | Encapsulation, sharding, and reduced lock contention |
+| **1 (now)**   | Verify hash-before-write (no unnecessary blobs)  | 1 day     | Prevents most churn                                  |
+| **1 (now)**   | **Merge-base UI diffing**                        | 1 day     | Fixes phantom deletes and enables cleaner squashing  |
+| **2 (soon)**  | Shallow history (squash commits >30 days)        | 1-2 days  | Bounds disk usage permanently                        |
+| **2 (soon)**  | SQLite index for reads                           | 3-5 days  | 100-1000x faster file listing and dirty status       |
+| **3 (next)**  | Native `git ls-tree` / `git diff-tree` for reads | 3-5 days  | 5-10x faster even without index                      |
+| **3 (next)**  | Worker threads for remaining isomorphic-git ops  | 2-3 days  | Unblocks event loop                                  |
+| **4 (later)** | Full native git plumbing for writes              | 1 week    | Native performance + gc for free                     |
+| **5 (scale)** | Go/Rust child process                            | 3-4 weeks | Full solution for concurrent users                   |
+| **5 (scale)** | Repo sharding across instances                   | 1-2 weeks | Horizontal scaling                                   |
 
 Each phase compounds on the previous one and is independently valuable. No big-bang rewrite required.
 
