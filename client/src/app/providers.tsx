@@ -3,8 +3,8 @@
 
 import { JSX, ReactNode, useEffect } from 'react';
 
-import posthog from 'posthog-js';
 import { PostHogProvider } from '@posthog/react';
+import posthog from 'posthog-js';
 
 interface PosthogProviderProps {
   children: ReactNode;

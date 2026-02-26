@@ -620,9 +620,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                                     </Text13Regular>
                                     {table.disabled && (
                                       <Tooltip
-                                        label={
-                                          DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE
-                                        }
+                                        label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
                                         multiline
                                         maw={250}
                                         position="right"

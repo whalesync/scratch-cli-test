@@ -45,7 +45,7 @@ import type {
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
-import { ScheduleAction } from '@spinner/shared-types';
+import { getTransformerLabel, ScheduleAction } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   ArrowRight,
@@ -846,7 +846,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                               rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
                             />
                             <Tooltip
-                              label={mapping.transformer ? mapping.transformer.type.replaceAll('_', ' ') : 'Transform'}
+                              label={mapping.transformer ? getTransformerLabel(mapping.transformer.type) : 'Transform'}
                             >
                               <ActionIcon
                                 variant="subtle"

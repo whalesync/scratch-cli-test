@@ -54,6 +54,25 @@ export type TransformerType =
   | 'airmark_to_html'
   | 'html_to_airmark';
 
+export interface TransformerTypeInfo {
+  type: TransformerType;
+  label: string;
+}
+
+export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
+  { type: 'string_to_number', label: 'String to Number' },
+  { type: 'source_fk_to_dest_fk', label: 'Foreign Key Lookup' },
+  { type: 'lookup_field', label: 'Lookup Field' },
+  { type: 'notion_to_html', label: 'Notion to HTML' },
+  { type: 'airmark_to_html', label: 'AirMark to HTML' },
+  { type: 'html_to_airmark', label: 'HTML to AirMark' },
+];
+
+/** Get the display label for a transformer type */
+export function getTransformerLabel(type: TransformerType): string {
+  return TRANSFORMER_TYPES.find((t) => t.type === type)?.label ?? type.replace(/_/g, ' ');
+}
+
 /** Options for the string_to_number transformer */
 export interface StringToNumberOptions {
   /** Strip currency symbols ($, €, £, etc.) before parsing */

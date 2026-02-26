@@ -2,7 +2,13 @@ import { workbookApi } from '@/lib/api/workbook';
 import { Autocomplete, Badge, Button, Code, Group, Modal, Select, Stack, Text, Title } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
-import { FileRefEntity, TestTransformerResponse, TransformerType, WorkbookId } from '@spinner/shared-types';
+import {
+  FileRefEntity,
+  TestTransformerResponse,
+  TRANSFORMER_TYPES,
+  TransformerType,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { FlaskRoundIcon, Search, Wand2Icon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -13,12 +19,7 @@ interface TestTransformerModalProps {
   file: FileRefEntity;
 }
 
-const TRANSFORMER_TYPES: { value: TransformerType; label: string }[] = [
-  { value: 'notion_to_html', label: 'Notion to HTML' },
-  { value: 'string_to_number', label: 'String to Number' },
-  { value: 'source_fk_to_dest_fk', label: 'Foreign Key Mapping' },
-  { value: 'lookup_field', label: 'Lookup Field' },
-];
+const transformerSelectData = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label }));
 
 interface PathOption {
   value: string;
@@ -193,7 +194,7 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
               {...form.getInputProps('path')}
             />
 
-            <Select label="Transformer" data={TRANSFORMER_TYPES} {...form.getInputProps('transformerType')} />
+            <Select label="Transformer" data={transformerSelectData} {...form.getInputProps('transformerType')} />
 
             <Button type="submit" loading={isLoading}>
               Apply

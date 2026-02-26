@@ -4,6 +4,7 @@ import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import type { ComboboxItem } from '@mantine/core';
 import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
 import type { DataFolder, DataFolderId, TransformerConfig, TransformerType } from '@spinner/shared-types';
+import { TRANSFORMER_TYPES } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
 interface TransformerConfigModalProps {
@@ -16,10 +17,7 @@ interface TransformerConfigModalProps {
 
 const TRANSFORMER_OPTIONS = [
   { value: '', label: 'None' },
-  { value: 'string_to_number', label: 'String to Number' },
-  { value: 'source_fk_to_dest_fk', label: 'Foreign Key Lookup' },
-  { value: 'lookup_field', label: 'Lookup Field' },
-  { value: 'notion_to_html', label: 'Notion to HTML' },
+  ...TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label })),
 ];
 
 export function TransformerConfigModal({

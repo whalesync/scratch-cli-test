@@ -10,8 +10,10 @@ import type {
   DataFolderId,
   PreviewFieldResult,
   TransformerConfig,
+  TransformerType,
   WorkbookId,
 } from '@spinner/shared-types';
+import { getTransformerLabel } from '@spinner/shared-types';
 import { AlertTriangle, ChevronDown, ChevronUp, Eye } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -243,7 +245,7 @@ export function SyncPreviewPanel({ workbookId, sourceId, fieldMappings }: SyncPr
                       <Table.Td>
                         {field.transformerType && (
                           <Badge size="xs" variant="light" color="blue">
-                            {field.transformerType.replaceAll('_', ' ')}
+                            {getTransformerLabel(field.transformerType as TransformerType)}
                           </Badge>
                         )}
                       </Table.Td>
