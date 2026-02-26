@@ -9,7 +9,7 @@ export class AirtableSchemaParser {
         wsId: sanitizeForTableWsId(table.name),
         remoteId: [base.id, table.id],
       },
-      displayName: `${base.name} - ${table.name}`,
+      displayName: table.name,
       metadata: {
         baseName: base.name,
       },

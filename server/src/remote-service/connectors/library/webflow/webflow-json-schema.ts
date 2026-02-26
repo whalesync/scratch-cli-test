@@ -202,13 +202,13 @@ export function buildWebflowJsonTableSpec(
 
   const schema = Type.Object(properties, {
     $id: collectionId,
-    title: `${site.displayName} - ${collection.displayName}`,
+    title: collection.displayName,
   });
 
   return {
     id,
     slug: collection.slug ?? id.wsId,
-    name: `${site.displayName} - ${collection.displayName}`,
+    name: collection.displayName,
     schema,
     titleColumnRemoteId,
     mainContentColumnRemoteId,

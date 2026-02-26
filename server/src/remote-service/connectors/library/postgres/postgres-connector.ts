@@ -158,7 +158,7 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
       name: tableName,
       schema,
       idColumnRemoteId: primaryKey,
-      basePath: ['public'],
+      basePath: id.remoteId[0] ? [id.remoteId[0]] : ['public'],
       generatedAt: new Date().toISOString(),
     };
   }

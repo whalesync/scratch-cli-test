@@ -40,36 +40,64 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
 type TableGroup = {
-  projectLabel: string | null;
-  schemaGroups: {
-    schemaLabel: string;
+  groupLabel: string | null;
+  subGroups: {
+    subGroupLabel: string | null;
     tables: TablePreview[];
   }[];
 };
 
-function groupTablesByProjectAndSchema(tables: TablePreview[]): TableGroup[] {
-  const projectMap = new Map<string, Map<string, TablePreview[]>>();
+function getGroupKeys(table: TablePreview, service: Service): { group: string; subGroup: string | null } | null {
+  switch (service) {
+    case Service.SUPABASE:
+      return {
+        group: (table.metadata?.projectName as string) || (table.metadata?.projectRef as string) || '',
+        subGroup: (table.metadata?.schema as string) || 'public',
+      };
+    case Service.AIRTABLE:
+      return {
+        group: (table.metadata?.baseName as string) || '',
+        subGroup: null,
+      };
+    case Service.WEBFLOW:
+      return {
+        group: (table.metadata?.siteName as string) || '',
+        subGroup: null,
+      };
+    default:
+      return null;
+  }
+}
+
+function groupTables(tables: TablePreview[], service: Service): TableGroup[] | null {
+  const first = tables[0];
+  if (!first || !getGroupKeys(first, service)) return null;
+
+  const groupMap = new Map<string, Map<string, TablePreview[]>>();
 
   for (const table of tables) {
-    const projectKey = (table.metadata?.projectName as string) || (table.metadata?.projectRef as string) || '';
-    const schema = (table.metadata?.schema as string) || 'public';
+    const keys = getGroupKeys(table, service)!;
+    const subKey = keys.subGroup ?? '';
 
-    if (!projectMap.has(projectKey)) projectMap.set(projectKey, new Map());
-    const schemaMap = projectMap.get(projectKey)!;
-    if (!schemaMap.has(schema)) schemaMap.set(schema, []);
-    schemaMap.get(schema)!.push(table);
+    if (!groupMap.has(keys.group)) groupMap.set(keys.group, new Map());
+    const subMap = groupMap.get(keys.group)!;
+    if (!subMap.has(subKey)) subMap.set(subKey, []);
+    subMap.get(subKey)!.push(table);
   }
 
-  const multipleProjects = projectMap.size > 1;
-  const sortedProjects = Array.from(projectMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  // Always show group labels for services without sub-groups (Airtable, Webflow)
+  // For Supabase, only show when there are multiple projects (sub-groups provide context)
+  const alwaysShowGroupLabel = service === Service.AIRTABLE || service === Service.WEBFLOW;
+  const showGroupLabel = alwaysShowGroupLabel || groupMap.size > 1;
+  const sorted = Array.from(groupMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
-  return sortedProjects.map(([projectKey, schemaMap]) => ({
-    projectLabel: multipleProjects ? projectKey || 'Unknown project' : null,
-    schemaGroups: Array.from(schemaMap.entries())
+  return sorted.map(([groupKey, subMap]) => ({
+    groupLabel: showGroupLabel ? groupKey || 'Unknown' : null,
+    subGroups: Array.from(subMap.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([schema, schemaTables]) => ({
-        schemaLabel: schema,
-        tables: schemaTables.sort((a, b) => a.displayName.localeCompare(b.displayName)),
+      .map(([subKey, subTables]) => ({
+        subGroupLabel: subMap.size > 1 ? subKey : null,
+        tables: subTables.sort((a, b) => a.displayName.localeCompare(b.displayName)),
       })),
   }));
 }
@@ -138,12 +166,11 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   const supportsFilter = FILTER_SUPPORTED_SERVICES.has(connectorAccount.service);
   const supportsFieldSelection = FIELD_SELECTION_SERVICES.has(connectorAccount.service);
-  const isSupabase = connectorAccount.service === Service.SUPABASE;
   const isAirtable = connectorAccount.service === Service.AIRTABLE;
   const isNotion = connectorAccount.service === Service.NOTION;
   const groupedTables = useMemo(
-    () => (isSupabase ? groupTablesByProjectAndSchema(availableTables) : null),
-    [isSupabase, availableTables],
+    () => groupTables(availableTables, connectorAccount.service),
+    [availableTables, connectorAccount.service],
   );
   const hasConnectorOptions = isAirtable || isNotion;
   const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
@@ -444,10 +471,25 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     [linkedFolders, selectedTableIds],
   );
 
+  const getTableLabel = useCallback(
+    (table: TablePreview) => {
+      const keys = getGroupKeys(table, connectorAccount.service);
+      if (keys?.group) {
+        return `${keys.group} / ${table.displayName}`;
+      }
+      return table.displayName;
+    },
+    [connectorAccount.service],
+  );
+
   // Tables that remain selected (both existing and new) for step 2 display
   const selectedTablesForStep2 = useMemo(() => {
-    const tables: { tableKey: string; displayName: string; isNew: boolean; isRemoved: boolean }[] = [];
+    const tables: { tableKey: string; displayName: string; label: string; isNew: boolean; isRemoved: boolean }[] = [];
     const seen = new Set<string>();
+
+    // Build a lookup from allKnownTables for label resolution
+    const tableLookup = new Map<string, TablePreview>();
+    for (const t of allKnownTables) tableLookup.set(t.id.remoteId.join('/'), t);
 
     // Existing linked folders first
     linkedFolders.forEach((folder) => {
@@ -455,7 +497,9 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       if (seen.has(key)) return;
       seen.add(key);
       const isRemoved = !selectedTableIds.has(key);
-      tables.push({ tableKey: key, displayName: folder.name, isNew: false, isRemoved });
+      const preview = tableLookup.get(key);
+      const label = preview ? getTableLabel(preview) : folder.name;
+      tables.push({ tableKey: key, displayName: folder.name, label, isNew: false, isRemoved });
     });
 
     // Newly added tables
@@ -463,11 +507,11 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       const key = table.id.remoteId.join('/');
       if (seen.has(key)) return;
       seen.add(key);
-      tables.push({ tableKey: key, displayName: table.displayName, isNew: true, isRemoved: false });
+      tables.push({ tableKey: key, displayName: table.displayName, label: getTableLabel(table), isNew: true, isRemoved: false });
     });
 
     return tables;
-  }, [linkedFolders, selectedTableIds, tablesToAdd]);
+  }, [linkedFolders, selectedTableIds, tablesToAdd, allKnownTables, getTableLabel]);
 
   const handleNext = () => {
     setStep(2);
@@ -595,18 +639,20 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           <Stack gap="xs">
             {groupedTables
               ? groupedTables.map((group, gi) => (
-                  <Box key={group.projectLabel ?? gi}>
-                    {group.projectLabel && (
+                  <Box key={group.groupLabel ?? gi}>
+                    {group.groupLabel && (
                       <Text13Medium mb={4} mt={gi > 0 ? 'sm' : 0}>
-                        {group.projectLabel}
+                        {group.groupLabel}
                       </Text13Medium>
                     )}
-                    {group.schemaGroups.map((sg) => (
-                      <Box key={sg.schemaLabel} ml={group.projectLabel ? 'xs' : 0}>
-                        <Text12Regular c="dimmed" mb={2} mt={4}>
-                          {sg.schemaLabel}
-                        </Text12Regular>
-                        <Stack gap={4} ml="xs">
+                    {group.subGroups.map((sg, si) => (
+                      <Box key={sg.subGroupLabel ?? si} ml={group.groupLabel ? 'xs' : 0}>
+                        {sg.subGroupLabel && (
+                          <Text12Regular c="dimmed" mb={2} mt={4}>
+                            {sg.subGroupLabel}
+                          </Text12Regular>
+                        )}
+                        <Stack gap={4} ml={sg.subGroupLabel ? 'xs' : 0}>
                           {sg.tables.map((table) => {
                             const tableKey = table.id.remoteId.join('/');
                             const isChecked = selectedTableIds.has(tableKey);
@@ -926,7 +972,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                   {index > 0 && <Divider mb="sm" />}
                   <Stack gap="xs">
                     <Group gap="xs" align="center">
-                      <Text13Medium c={entry.isRemoved ? 'dimmed' : undefined}>{entry.displayName}</Text13Medium>
+                      <Text13Medium c={entry.isRemoved ? 'dimmed' : undefined}>{entry.label}</Text13Medium>
                       {entry.isRemoved && <Badge color="red">Will be removed</Badge>}
                       {entry.isNew && <Badge color="green">New</Badge>}
                     </Group>

@@ -2,26 +2,35 @@ import type { DirtyFile } from '@/hooks/use-dirty-files';
 import type { DataFolder, DataFolderGroup, DataFolderId } from '@spinner/shared-types';
 
 /**
+ * Strips a leading slash if present.
+ * DataFolder.path uses a leading slash (e.g. "/Airtable/Base/Table")
+ * while git file paths do not (e.g. "Airtable/Base/Table/file.json").
+ */
+function stripLeadingSlash(p: string): string {
+  return p.startsWith('/') ? p.substring(1) : p;
+}
+
+/**
+ * Returns true if `filePath` belongs to the given folder,
+ * i.e. the file path starts with the folder path as a directory prefix.
+ * Handles the leading-slash mismatch between DataFolder.path and git paths.
+ */
+export function fileMatchesFolder(folderPath: string, filePath: string): boolean {
+  const normalizedFolder = stripLeadingSlash(folderPath);
+  const normalizedFile = stripLeadingSlash(filePath);
+  const prefix = normalizedFolder.endsWith('/') ? normalizedFolder : `${normalizedFolder}/`;
+  return normalizedFile.startsWith(prefix);
+}
+
+/**
  * Given a list of dirty files and data folder groups, returns the IDs of
- * data folders whose name matches a folder path extracted from the dirty files.
- *
- * NOTE: This is fragile — it breaks if a folder name contains a slash.
- * We should include folder IDs in the dirty file object in the future.
+ * data folders that contain at least one dirty file.
  */
 export function getDirtyDataFolderIds(dirtyFiles: DirtyFile[], dataFolderGroups: DataFolderGroup[]): DataFolderId[] {
-  const dirtyFolderPaths = new Set<string>();
-  dirtyFiles.forEach((file) => {
-    const lastIndex = file.path.lastIndexOf('/');
-    const folderPath = file.path.substring(0, lastIndex);
-    if (folderPath) {
-      dirtyFolderPaths.add(folderPath);
-    }
-  });
-
   const dataFolderIds: DataFolderId[] = [];
   dataFolderGroups.forEach((group) => {
     group.dataFolders.forEach((folder) => {
-      if (folder.path && dirtyFolderPaths.has(folder.path)) {
+      if (folder.path && dirtyFiles.some((file) => fileMatchesFolder(folder.path!, file.path))) {
         dataFolderIds.push(folder.id);
       }
     });
@@ -30,14 +39,15 @@ export function getDirtyDataFolderIds(dirtyFiles: DirtyFile[], dataFolderGroups:
   return dataFolderIds;
 }
 
-/** Finds the DataFolder that a file belongs to by matching its parent path. */
+/** Finds the most specific DataFolder that a file belongs to (longest matching path). */
 export function findDataFolderForFile(folders: DataFolder[], filePath: string): DataFolder | undefined {
-  const lastIndex = filePath.lastIndexOf('/');
-  const folderPath = lastIndex === -1 ? '' : filePath.substring(0, lastIndex);
-  const normalizedFolderPath = folderPath.startsWith('/') ? folderPath.substring(1) : folderPath;
-
-  return folders.find((f) => {
-    const fPath = f.path && f.path.startsWith('/') ? f.path.substring(1) : f.path;
-    return fPath === normalizedFolderPath;
-  });
+  let best: DataFolder | undefined;
+  for (const folder of folders) {
+    if (folder.path && fileMatchesFolder(folder.path, filePath)) {
+      if (!best || !best.path || folder.path.length > best.path.length) {
+        best = folder;
+      }
+    }
+  }
+  return best;
 }

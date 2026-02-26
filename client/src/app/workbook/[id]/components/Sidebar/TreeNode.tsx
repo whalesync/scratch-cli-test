@@ -11,6 +11,7 @@ import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { OAuthService } from '@/types/oauth';
+import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { initiateOAuth } from '@/utils/oauth';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -107,8 +108,9 @@ export function ConnectionNode({
     if (mode !== 'review' || !dirtyFilePaths || dirtyFilePaths.size === 0) return group.dataFolders;
 
     return group.dataFolders.filter((folder) => {
+      if (!folder.path) return false;
       for (const dirtyPath of dirtyFilePaths.keys()) {
-        if (dirtyPath.startsWith(`${folder.name}/`) || dirtyPath.includes(`/${folder.name}/`)) {
+        if (fileMatchesFolder(folder.path, dirtyPath)) {
           return true;
         }
       }
@@ -462,35 +464,11 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
     }
 
     // Inject ghost nodes for dirty files not in the file list (e.g. deleted or not yet loaded)
-    if (mode === 'review' && dirtyFilePaths) {
-      // Determine the expected path prefix for this folder
-      let folderPrefix = '';
-      if (fileItems.length > 0) {
-        const firstFilePath = fileItems[0].path;
-        const lastSlashIndex = firstFilePath.lastIndexOf('/');
-        if (lastSlashIndex !== -1) {
-          folderPrefix = firstFilePath.substring(0, lastSlashIndex + 1);
-        }
-      }
-
-      // Check for dirty paths that belong to this folder but aren't in the current file list
+    if (mode === 'review' && dirtyFilePaths && folder.path) {
       const existingPaths = new Set(fileItems.map((f) => f.path));
 
       dirtyFilePaths.forEach((status, dirtyPath) => {
-        let belongsToFolder = false;
-
-        if (folderPrefix) {
-          belongsToFolder = dirtyPath.startsWith(folderPrefix);
-        } else {
-          // Heuristic: check if path contains folder name as a segment
-          const parts = dirtyPath.split('/');
-          if (parts.length > 1) {
-            const parentDirs = parts.slice(0, parts.length - 1);
-            belongsToFolder = parentDirs.includes(folder.name);
-          }
-        }
-
-        if (belongsToFolder && !existingPaths.has(dirtyPath)) {
+        if (fileMatchesFolder(folder.path!, dirtyPath) && !existingPaths.has(dirtyPath)) {
           const parts = dirtyPath.split('/');
           const name = parts[parts.length - 1];
           fileItems.push({
@@ -520,7 +498,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
       dirtyCount: dirty,
       hasAnyDirtyFiles: fileItems.length > 0,
     };
-  }, [files, mode, dirtyFilePaths, folder.name, folder.id]);
+  }, [files, mode, dirtyFilePaths, folder.id, folder.path]);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();

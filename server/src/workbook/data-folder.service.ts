@@ -263,9 +263,6 @@ export class DataFolderService {
       }
     }
 
-    // Build the path based on parent folder
-    const folderPath = parentFolder ? `${parentFolder.path}/${name}` : '/' + name;
-
     const dataFolderId = createDataFolderId();
 
     if (connectorAccountId && dto.tableId && dto.tableId.length > 0) {
@@ -316,6 +313,16 @@ export class DataFolderService {
           tableSpec.titleColumnRemoteId = [nameFieldOverride];
         }
       }
+
+      // Build path from connector display name, base path, and table name
+      let folderPath = this.buildConnectorFolderPath(
+        connectorAccount.displayName,
+        tableSpec,
+        parentFolder?.path ?? undefined,
+      );
+
+      // Ensure path is unique within the workbook
+      folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
 
       // Create the DataFolder
       const createdDataFolder = await this.db.client.dataFolder.create({
@@ -405,6 +412,11 @@ export class DataFolderService {
       return new DataFolderEntity(createdDataFolder);
     } else {
       // Case 2: Scratch folder with no connector
+      let folderPath = parentFolder ? `${parentFolder.path}/${name}` : '/' + name;
+
+      // Ensure path is unique within the workbook
+      folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
+
       const createdDataFolder = await this.db.client.dataFolder.create({
         data: {
           id: dataFolderId,
@@ -666,6 +678,28 @@ export class DataFolderService {
     return new DataFolderEntity(updatedDataFolder);
   }
 
+  /**
+   * Checks whether `path` is already used by another DataFolder in the same workbook.
+   * If it is, appends `-{last 5 chars of dataFolderId}` to make the path unique.
+   * This is to prevent conflicts when creating data folders with the same name in the same workbook.
+   * @param workbookId - The ID of the workbook
+   * @param path - The path to check
+   * @param dataFolderId - The ID of the data folder
+   * @returns The unique path to use for the new data folder
+   */
+  private async ensureUniquePath(workbookId: WorkbookId, path: string, dataFolderId: DataFolderId): Promise<string> {
+    const existing = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path },
+      select: { id: true },
+    });
+
+    if (existing) {
+      return `${path}-${dataFolderId.slice(-5)}`;
+    }
+
+    return path;
+  }
+
   private async updateChildrenPaths(parentId: string, parentPath: string): Promise<void> {
     const children = await this.db.client.dataFolder.findMany({
       where: { parentId },
@@ -841,9 +875,40 @@ export class DataFolderService {
   }
 
   /**
-   * Returns schema paths (dot notation) for a data folder.
-   * Fetches fresh schema from the connector.
+   * Builds the folder path for a DataFolder linked to a connector account.
+   * Path parts: [parentFolderPath] / connectorDisplayName / basePath[0..n] / tableName
    */
+  buildConnectorFolderPath(
+    connectorDisplayName: string,
+    tableSpec: BaseJsonTableSpec,
+    parentFolderPath?: string,
+  ): string {
+    const escape = (s: string) =>
+      Array.from(s)
+        .map((c) => (c === '\t' ? ' ' : c)) // convert tabs to spaces
+        .filter((c) => c.charCodeAt(0) > 31) // strip other control characters
+        .join('')
+        .replace(/[/*?"<>|]/g, ' ') // replace filesystem-unsafe chars
+        .replace(/ {2,}/g, ' ') // collapse consecutive spaces
+        .replace(/^[\s]+|[\s.]+$/g, ''); // trim leading whitespace; trim trailing whitespace and dots
+    const parts: string[] = [];
+
+    if (parentFolderPath) {
+      // parentFolderPath already includes leading slash, strip it for joining
+      parts.push(parentFolderPath.replace(/^\//, ''));
+    }
+
+    parts.push(escape(connectorDisplayName));
+
+    if (tableSpec.basePath && tableSpec.basePath.length > 0) {
+      parts.push(...tableSpec.basePath.filter(Boolean).map(escape));
+    }
+
+    parts.push(escape(tableSpec.name));
+
+    return '/' + parts.join('/');
+  }
+
   /**
    * Fetches the full JSON Table Spec from the connector for a data folder.
    */

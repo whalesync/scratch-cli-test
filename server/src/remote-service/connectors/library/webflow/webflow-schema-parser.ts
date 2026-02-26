@@ -12,7 +12,7 @@ export class WebflowSchemaParser {
         wsId: sanitizeForTableWsId(collection.id),
         remoteId: [site.id, collection.id],
       },
-      displayName: `${site.displayName} - ${collection.displayName}`,
+      displayName: `${collection.displayName}`,
       metadata: {
         siteId: site.id,
         siteName: site.displayName,
