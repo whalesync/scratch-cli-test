@@ -2,14 +2,18 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
-import { AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
+import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
 
 /**
  * Build a BaseJsonTableSpec from an Airtable table definition.
  * Generates a JSON Schema describing the raw Airtable record format:
  * { id: string, fields: { ... }, createdTime: string }
  */
-export function buildAirtableJsonTableSpec(id: EntityId, table: AirtableTableV2): BaseJsonTableSpec {
+export function buildAirtableJsonTableSpec(
+  id: EntityId,
+  base: AirtableBase,
+  table: AirtableTableV2,
+): BaseJsonTableSpec {
   const [baseId, tableId] = id.remoteId;
 
   const fieldProperties: Record<string, TSchema> = {};
@@ -53,6 +57,8 @@ export function buildAirtableJsonTableSpec(id: EntityId, table: AirtableTableV2)
     idColumnRemoteId: 'id',
     titleColumnRemoteId,
     mainContentColumnRemoteId,
+    basePath: [base.name],
+    generatedAt: new Date().toISOString(),
   };
 }
 

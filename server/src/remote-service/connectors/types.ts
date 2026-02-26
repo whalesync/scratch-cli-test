@@ -32,10 +32,18 @@ export type BaseJsonTableSpec = {
   // The remoteId of the column that should be used as the main content/body in MD view
   // This is used to display the main content of the record in the MD view.
   mainContentColumnRemoteId?: EntityId['remoteId'];
-  // Dot-path to the field in a raw record whose value should be used as the filename slug.
   // When set, files will be named `<slug>.json` instead of `<id>.json`.
   // Example: 'fieldData.slug' for Webflow records.
   slugColumnRemoteId?: string;
+
+  // The root path of this connector including any sites, bases, collections that should precede the table
+  // For Webflow this would be the site name and collection name
+  // For Airtable this would be the base name
+  basePath?: string[];
+
+  // The date and time the schema was generated
+  // ISO 8601 format
+  generatedAt?: string;
 };
 
 /**

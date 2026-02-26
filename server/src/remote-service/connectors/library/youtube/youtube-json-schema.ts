@@ -94,6 +94,8 @@ export function buildYouTubeJsonTableSpec(id: EntityId, channelId: string, chann
     idColumnRemoteId: 'id',
     titleColumnRemoteId: [channelId, 'snippet.title'],
     mainContentColumnRemoteId: [channelId, 'snippet.description'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
   };
 }
 

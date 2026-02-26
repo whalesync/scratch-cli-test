@@ -240,6 +240,8 @@ export function buildWordPressJsonTableSpec(
     titleColumnRemoteId,
     mainContentColumnRemoteId,
     slugColumnRemoteId: 'slug',
+    basePath: [],
+    generatedAt: new Date().toISOString(),
   };
 }
 

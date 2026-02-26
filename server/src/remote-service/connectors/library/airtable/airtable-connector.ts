@@ -48,13 +48,18 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [baseId, tableId] = id.remoteId;
+    const bases = await this.client.listBases();
+    const base = bases.bases.find((b) => b.id === baseId);
+    if (!base) {
+      throw new Error(`Base ${baseId} not found`);
+    }
     const baseSchema = await this.client.getBaseSchema(baseId);
     const table = baseSchema.tables.find((t) => t.id === tableId);
     if (!table) {
       throw new Error(`Table ${tableId} not found in base ${baseId}`);
     }
 
-    return buildAirtableJsonTableSpec(id, table);
+    return buildAirtableJsonTableSpec(id, base, table);
   }
 
   async pullRecordFiles(

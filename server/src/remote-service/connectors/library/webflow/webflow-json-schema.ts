@@ -214,6 +214,8 @@ export function buildWebflowJsonTableSpec(
     mainContentColumnRemoteId,
     idColumnRemoteId: 'id',
     slugColumnRemoteId: 'fieldData.slug',
+    basePath: [site.displayName ?? site.shortName ?? ''],
+    generatedAt: new Date().toISOString(),
   };
 }
 

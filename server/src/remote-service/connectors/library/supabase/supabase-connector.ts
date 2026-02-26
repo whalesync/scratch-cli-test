@@ -475,6 +475,8 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
         name: displayName,
         schema: tableSchema,
         idColumnRemoteId: primaryKey,
+        basePath: schema === 'public' ? [] : [schema],
+        generatedAt: new Date().toISOString(),
       };
     }, resolved.connectionString);
   }

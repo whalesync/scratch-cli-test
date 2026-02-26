@@ -122,6 +122,8 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
     schema,
     idColumnRemoteId: 'id',
     titleColumnRemoteId,
+    basePath: [],
+    generatedAt: new Date().toISOString(),
   };
 }
 

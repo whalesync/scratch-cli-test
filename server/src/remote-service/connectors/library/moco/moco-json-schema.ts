@@ -436,5 +436,7 @@ export function buildMocoJsonTableSpec(id: EntityId, entityType: MocoEntityType)
     idColumnRemoteId: 'id',
     titleColumnRemoteId: getTitleColumnRemoteId(entityType).slice(1),
     mainContentColumnRemoteId: getMainContentColumnRemoteId(entityType).slice(1),
+    basePath: [],
+    generatedAt: new Date().toISOString(),
   };
 }

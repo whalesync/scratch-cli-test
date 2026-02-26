@@ -19,6 +19,8 @@ export function buildAudiencefulJsonTableSpec(id: EntityId, customFields: Audien
     idColumnRemoteId: 'uid',
     titleColumnRemoteId: ['email'],
     mainContentColumnRemoteId: ['notes'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
   };
 }
 

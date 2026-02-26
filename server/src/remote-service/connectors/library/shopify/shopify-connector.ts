@@ -153,6 +153,7 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
       name: config.displayName,
       schema,
       idColumnRemoteId: 'id',
+      generatedAt: new Date().toISOString(),
     };
 
     // Safely access columns - TypeScript union types make direct access difficult
