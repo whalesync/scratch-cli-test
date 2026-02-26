@@ -4,7 +4,7 @@ import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import type { ComboboxItem } from '@mantine/core';
 import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
 import type { DataFolder, DataFolderId, TransformerConfig, TransformerType } from '@spinner/shared-types';
-import { TRANSFORMER_TYPES } from '@spinner/shared-types';
+import { TRANSFORMER_TYPES, TransformerTypes } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
 interface TransformerConfigModalProps {
@@ -29,18 +29,18 @@ export function TransformerConfigModal({
 }: TransformerConfigModalProps) {
   const [type, setType] = useState<TransformerType | ''>(currentConfig?.type ?? '');
   const [stripCurrency, setStripCurrency] = useState(
-    currentConfig?.type === 'string_to_number' ? (currentConfig.options?.stripCurrency ?? false) : false,
+    currentConfig?.type === TransformerTypes.StringToNumber ? (currentConfig.options?.stripCurrency ?? false) : false,
   );
   const [parseInteger, setParseInteger] = useState(
-    currentConfig?.type === 'string_to_number' ? (currentConfig.options?.parseInteger ?? false) : false,
+    currentConfig?.type === TransformerTypes.StringToNumber ? (currentConfig.options?.parseInteger ?? false) : false,
   );
   const [referencedDataFolderId, setReferencedDataFolderId] = useState<DataFolderId | ''>(
-    currentConfig?.type === 'source_fk_to_dest_fk' || currentConfig?.type === 'lookup_field'
+    currentConfig?.type === TransformerTypes.SourceFkToDestFk || currentConfig?.type === TransformerTypes.LookupField
       ? currentConfig.options.referencedDataFolderId
       : '',
   );
   const [referencedFieldPath, setReferencedFieldPath] = useState(
-    currentConfig?.type === 'lookup_field' ? currentConfig.options.referencedFieldPath : '',
+    currentConfig?.type === TransformerTypes.LookupField ? currentConfig.options.referencedFieldPath : '',
   );
 
   // Sync form state whenever the modal opens
@@ -48,17 +48,24 @@ export function TransformerConfigModal({
     if (opened) {
       setType(currentConfig?.type ?? '');
       setStripCurrency(
-        currentConfig?.type === 'string_to_number' ? (currentConfig.options?.stripCurrency ?? false) : false,
+        currentConfig?.type === TransformerTypes.StringToNumber
+          ? (currentConfig.options?.stripCurrency ?? false)
+          : false,
       );
       setParseInteger(
-        currentConfig?.type === 'string_to_number' ? (currentConfig.options?.parseInteger ?? false) : false,
+        currentConfig?.type === TransformerTypes.StringToNumber
+          ? (currentConfig.options?.parseInteger ?? false)
+          : false,
       );
       setReferencedDataFolderId(
-        currentConfig?.type === 'source_fk_to_dest_fk' || currentConfig?.type === 'lookup_field'
+        currentConfig?.type === TransformerTypes.SourceFkToDestFk ||
+          currentConfig?.type === TransformerTypes.LookupField
           ? currentConfig.options.referencedDataFolderId
           : ('' as DataFolderId | ''),
       );
-      setReferencedFieldPath(currentConfig?.type === 'lookup_field' ? currentConfig.options.referencedFieldPath : '');
+      setReferencedFieldPath(
+        currentConfig?.type === TransformerTypes.LookupField ? currentConfig.options.referencedFieldPath : '',
+      );
     }
   }, [opened, currentConfig]);
 
@@ -71,19 +78,19 @@ export function TransformerConfigModal({
 
     let config: TransformerConfig;
     switch (type) {
-      case 'string_to_number':
+      case TransformerTypes.StringToNumber:
         config = { type, options: { stripCurrency, parseInteger } };
         break;
-      case 'source_fk_to_dest_fk':
+      case TransformerTypes.SourceFkToDestFk:
         config = { type, options: { referencedDataFolderId: referencedDataFolderId as DataFolderId } };
         break;
-      case 'lookup_field':
+      case TransformerTypes.LookupField:
         config = {
           type,
           options: { referencedDataFolderId: referencedDataFolderId as DataFolderId, referencedFieldPath },
         };
         break;
-      case 'notion_to_html':
+      case TransformerTypes.NotionToHtml:
         config = { type };
         break;
       default:
@@ -108,8 +115,8 @@ export function TransformerConfigModal({
   );
 
   const isSaveDisabled =
-    (type === 'source_fk_to_dest_fk' && !referencedDataFolderId) ||
-    (type === 'lookup_field' && (!referencedDataFolderId || !referencedFieldPath));
+    (type === TransformerTypes.SourceFkToDestFk && !referencedDataFolderId) ||
+    (type === TransformerTypes.LookupField && (!referencedDataFolderId || !referencedFieldPath));
 
   return (
     <Modal opened={opened} onClose={onClose} title="Configure Transformer" size="md">
@@ -121,7 +128,7 @@ export function TransformerConfigModal({
           onChange={(val) => setType((val as TransformerType) || '')}
         />
 
-        {type === 'string_to_number' && (
+        {type === TransformerTypes.StringToNumber && (
           <Stack gap="xs">
             <Checkbox
               label="Strip currency symbols ($, €, £, etc.)"
@@ -136,7 +143,7 @@ export function TransformerConfigModal({
           </Stack>
         )}
 
-        {type === 'source_fk_to_dest_fk' && (
+        {type === TransformerTypes.SourceFkToDestFk && (
           <Select
             label="Referenced Folder"
             description="The folder containing the records referenced by this foreign key"
@@ -149,7 +156,7 @@ export function TransformerConfigModal({
           />
         )}
 
-        {type === 'lookup_field' && (
+        {type === TransformerTypes.LookupField && (
           <>
             <Select
               label="Referenced Folder"

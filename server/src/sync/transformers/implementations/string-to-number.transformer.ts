@@ -1,4 +1,4 @@
-import { StringToNumberOptions } from '@spinner/shared-types';
+import { StringToNumberOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
@@ -10,7 +10,7 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  * - parseInteger: Use parseInt instead of parseFloat (rounds down)
  */
 export const stringToNumberTransformer: FieldTransformer = {
-  type: 'string_to_number',
+  type: TransformerTypes.StringToNumber,
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

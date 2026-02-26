@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
+import { TransformerTypes } from '@spinner/shared-types';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WSLogger } from '../../../logger';
 import { SyncService } from '../../../sync/sync.service';
@@ -237,7 +238,9 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     // Phase 2: Resolve FK references by re-running table mappings with FOREIGN_KEY_MAPPING phase
     for (let i = 0; i < tableMappings.length; i++) {
       const tableMapping = tableMappings[i];
-      const hasFkColumns = tableMapping.columnMappings.some((m) => m.transformer?.type === 'source_fk_to_dest_fk');
+      const hasFkColumns = tableMapping.columnMappings.some(
+        (m) => m.transformer?.type === TransformerTypes.SourceFkToDestFk,
+      );
       if (hasFkColumns) {
         try {
           const fkResult = await this.syncService.syncTableMapping(

@@ -17,6 +17,7 @@ import {
   SyncId,
   SyncMapping,
   TableMapping,
+  TransformerTypes,
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
@@ -796,7 +797,9 @@ export class SyncService {
     sourceRecords: SyncRecord[],
     fkValuesByFolder: Map<DataFolderId, Set<string>>,
   ): void {
-    const lookupFieldMappings = tableMapping.columnMappings.filter((m) => m.transformer?.type === 'lookup_field');
+    const lookupFieldMappings = tableMapping.columnMappings.filter(
+      (m) => m.transformer?.type === TransformerTypes.LookupField,
+    );
     if (lookupFieldMappings.length === 0) {
       return;
     }

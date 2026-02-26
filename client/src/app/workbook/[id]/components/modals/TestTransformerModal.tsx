@@ -7,6 +7,7 @@ import {
   TestTransformerResponse,
   TRANSFORMER_TYPES,
   TransformerType,
+  TransformerTypes,
   WorkbookId,
 } from '@spinner/shared-types';
 import { FlaskRoundIcon, Search, Wand2Icon } from 'lucide-react';
@@ -128,7 +129,7 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
   const form = useForm({
     initialValues: {
       path: '',
-      transformerType: 'notion_to_html' as TransformerType,
+      transformerType: TransformerTypes.NotionToHtml as TransformerType,
     },
     validate: {
       path: (value) => (value ? null : 'Path is required'),

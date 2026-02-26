@@ -46,13 +46,17 @@ export interface ColumnMapping {
 // Transformer Types
 // ============================================================================
 
-export type TransformerType =
-  | 'string_to_number'
-  | 'source_fk_to_dest_fk'
-  | 'lookup_field'
-  | 'notion_to_html'
-  | 'airmark_to_html'
-  | 'html_to_airmark';
+/** Canonical transformer type constants. Add new transformers here. */
+export const TransformerTypes = {
+  StringToNumber: 'string_to_number',
+  SourceFkToDestFk: 'source_fk_to_dest_fk',
+  LookupField: 'lookup_field',
+  NotionToHtml: 'notion_to_html',
+  AirmarkToHtml: 'airmark_to_html',
+  HtmlToAirmark: 'html_to_airmark',
+} as const;
+
+export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
 
 export interface TransformerTypeInfo {
   type: TransformerType;
@@ -60,12 +64,12 @@ export interface TransformerTypeInfo {
 }
 
 export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
-  { type: 'string_to_number', label: 'String to Number' },
-  { type: 'source_fk_to_dest_fk', label: 'Foreign Key Lookup' },
-  { type: 'lookup_field', label: 'Lookup Field' },
-  { type: 'notion_to_html', label: 'Notion to HTML' },
-  { type: 'airmark_to_html', label: 'AirMark to HTML' },
-  { type: 'html_to_airmark', label: 'HTML to AirMark' },
+  { type: TransformerTypes.StringToNumber, label: 'String to Number' },
+  { type: TransformerTypes.SourceFkToDestFk, label: 'Foreign Key Lookup' },
+  { type: TransformerTypes.LookupField, label: 'Lookup Field' },
+  { type: TransformerTypes.NotionToHtml, label: 'Notion to HTML' },
+  { type: TransformerTypes.AirmarkToHtml, label: 'AirMark to HTML' },
+  { type: TransformerTypes.HtmlToAirmark, label: 'HTML to AirMark' },
 ];
 
 /** Get the display label for a transformer type */
@@ -100,9 +104,9 @@ export type TransformerOptions = StringToNumberOptions | SourceFkToDestFkOptions
 
 /** Configuration for a field transformer with strictly typed options */
 export type TransformerConfig =
-  | { type: 'string_to_number'; options?: StringToNumberOptions }
-  | { type: 'source_fk_to_dest_fk'; options: SourceFkToDestFkOptions }
-  | { type: 'lookup_field'; options: LookupFieldOptions }
-  | { type: 'notion_to_html'; options?: Record<string, never> }
-  | { type: 'airmark_to_html'; options?: Record<string, never> }
-  | { type: 'html_to_airmark'; options?: Record<string, never> };
+  | { type: typeof TransformerTypes.StringToNumber; options?: StringToNumberOptions }
+  | { type: typeof TransformerTypes.SourceFkToDestFk; options: SourceFkToDestFkOptions }
+  | { type: typeof TransformerTypes.LookupField; options: LookupFieldOptions }
+  | { type: typeof TransformerTypes.NotionToHtml; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.AirmarkToHtml; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.HtmlToAirmark; options?: Record<string, never> };

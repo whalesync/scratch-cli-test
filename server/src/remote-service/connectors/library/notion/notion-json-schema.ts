@@ -1,5 +1,6 @@
 import { DatabaseObjectResponse } from '@notionhq/client';
 import { Type, type TSchema } from '@sinclair/typebox';
+import { TransformerTypes } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG, SUGGESTED_TRANSFORMER } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
@@ -101,7 +102,7 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
       page_content: Type.Optional(
         Type.Array(Type.Unknown(), {
           description: 'Page body content (Notion blocks)',
-          [SUGGESTED_TRANSFORMER]: { type: 'notion_to_html' },
+          [SUGGESTED_TRANSFORMER]: { type: TransformerTypes.NotionToHtml },
           [READONLY_FLAG]: true,
         }),
       ),

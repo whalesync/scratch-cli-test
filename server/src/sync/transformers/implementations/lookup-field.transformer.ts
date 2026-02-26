@@ -1,4 +1,4 @@
-import { LookupFieldOptions } from '@spinner/shared-types';
+import { LookupFieldOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
@@ -13,7 +13,7 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  * Only operates in DATA phase. Skips in FOREIGN_KEY_MAPPING phase.
  */
 export const lookupFieldTransformer: FieldTransformer = {
-  type: 'lookup_field',
+  type: TransformerTypes.LookupField,
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     // Only operate in DATA phase — FK records are pre-cached before transformation

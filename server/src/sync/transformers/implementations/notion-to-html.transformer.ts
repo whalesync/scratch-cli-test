@@ -4,6 +4,7 @@ import {
   TableBlockObjectResponse,
   TableRowBlockObjectResponse,
 } from '@notionhq/client/build/src/api-endpoints';
+import { TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { TransformContext, TransformResult } from '../transformer.types';
 
@@ -17,7 +18,7 @@ type MediaValue =
   | { type: 'file'; file: { url: string; expiry_time: string }; caption: RichTextItemResponse[] };
 
 export const NotionToHtmlTransformer = {
-  type: 'notion_to_html' as const,
+  type: TransformerTypes.NotionToHtml,
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const blocks = await Promise.resolve(ctx.sourceValue as ConvertedNotionBlock[]);

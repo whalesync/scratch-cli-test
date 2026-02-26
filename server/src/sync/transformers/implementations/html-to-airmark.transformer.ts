@@ -1,3 +1,4 @@
+import { TransformerTypes } from '@spinner/shared-types';
 import {
   AirmarkConversionError,
   htmlToAirMark,
@@ -6,7 +7,7 @@ import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
 export const htmlToAirmarkTransformer: FieldTransformer = {
-  type: 'html_to_airmark',
+  type: TransformerTypes.HtmlToAirmark,
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue } = ctx;

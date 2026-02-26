@@ -1,4 +1,4 @@
-import { SourceFkToDestFkOptions } from '@spinner/shared-types';
+import { SourceFkToDestFkOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } from '../transformer.types';
 
@@ -13,7 +13,7 @@ import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } 
  * Skips transformation when the destination already has the correct value.
  */
 export const sourceFkToDestFkTransformer: FieldTransformer = {
-  type: 'source_fk_to_dest_fk',
+  type: TransformerTypes.SourceFkToDestFk,
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     // In DATA phase, skip transform: resolution happens in FOREIGN_KEY_MAPPING phase

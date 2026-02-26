@@ -1,3 +1,4 @@
+import { TransformerTypes } from '@spinner/shared-types';
 import { z } from 'zod';
 
 // -- Transformer schemas --
@@ -24,12 +25,12 @@ const lookupFieldOptionsSchema = z
   .strict();
 
 const transformerConfigSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('string_to_number'), options: stringToNumberOptionsSchema }),
-  z.object({ type: z.literal('source_fk_to_dest_fk'), options: sourceFkToDestFkOptionsSchema }),
-  z.object({ type: z.literal('lookup_field'), options: lookupFieldOptionsSchema }),
-  z.object({ type: z.literal('notion_to_html'), options: z.record(z.string(), z.never()).optional() }),
-  z.object({ type: z.literal('airmark_to_html'), options: z.record(z.string(), z.never()).optional() }),
-  z.object({ type: z.literal('html_to_airmark'), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
+  z.object({ type: z.literal(TransformerTypes.SourceFkToDestFk), options: sourceFkToDestFkOptionsSchema }),
+  z.object({ type: z.literal(TransformerTypes.LookupField), options: lookupFieldOptionsSchema }),
+  z.object({ type: z.literal(TransformerTypes.NotionToHtml), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.AirmarkToHtml), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.HtmlToAirmark), options: z.record(z.string(), z.never()).optional() }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --
