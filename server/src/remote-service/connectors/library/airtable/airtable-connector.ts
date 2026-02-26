@@ -82,6 +82,24 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
     }
   }
 
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const [baseId, tableId] = tableSpec.id.remoteId;
+    const BATCH_SIZE = 100;
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      const filterByFormula = `OR(${batch.map((id) => `RECORD_ID()='${id}'`).join(',')})`;
+
+      for await (const rawRecords of this.client.listRecords(baseId, tableId, { filterByFormula })) {
+        await callback({ files: rawRecords as unknown as ConnectorFile[] });
+      }
+    }
+  }
+
   getBatchSize(): number {
     return 10;
   }

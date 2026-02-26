@@ -295,6 +295,32 @@ export class MocoApiClient {
   }
 
   /**
+   * Get a single entity by type and ID.
+   * Returns null if not found (404).
+   */
+  async getEntity(entityType: MocoEntityType, id: number): Promise<Record<string, unknown> | null> {
+    try {
+      switch (entityType) {
+        case 'companies':
+          return (await this.getCompany(id)) as unknown as Record<string, unknown>;
+        case 'contacts':
+          return (await this.getContact(id)) as unknown as Record<string, unknown>;
+        case 'projects':
+          return (await this.getProject(id)) as unknown as Record<string, unknown>;
+        default: {
+          const _exhaustiveCheck: never = entityType;
+          throw new MocoError(`Unknown entity type: ${String(_exhaustiveCheck)}`, 400, 'UNKNOWN_ENTITY_TYPE');
+        }
+      }
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Create an entity by type
    */
   async createEntity(entityType: MocoEntityType, fields: Record<string, unknown>): Promise<Record<string, unknown>> {

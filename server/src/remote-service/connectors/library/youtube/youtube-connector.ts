@@ -123,6 +123,14 @@ export class YouTubeConnector extends Connector<typeof Service.YOUTUBE> {
     await callback({ files: [], connectorProgress: progress });
   }
 
+  pullRecordFilesByIds(
+    _tableSpec: BaseJsonTableSpec,
+    _ids: string[],
+    _callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    throw new Error('pullRecordFilesByIds is not implemented for YouTube');
+  }
+
   getBatchSize(operation: 'create' | 'update' | 'delete'): number {
     // YouTube API has rate limits, so we use smaller batch sizes
     switch (operation) {

@@ -189,6 +189,42 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     return buildWebflowJsonTableSpec(id, site, collection);
   }
 
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const [, collectionId] = tableSpec.id.remoteId;
+    const BATCH_SIZE = 20;
+    const buffer: ConnectorFile[] = [];
+
+    for (const itemId of ids) {
+      try {
+        const item = await this.client.collections.items.getItem(collectionId, itemId);
+        if (item) {
+          buffer.push(item as unknown as ConnectorFile);
+        }
+
+        if (buffer.length >= BATCH_SIZE) {
+          await callback({ files: buffer.splice(0) });
+        }
+      } catch (error) {
+        if (error instanceof WebflowError && error.statusCode === 404) {
+          WSLogger.warn({
+            source: 'WebflowConnector',
+            message: `Item ${itemId} not found in collection ${collectionId}, skipping`,
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (buffer.length > 0) {
+      await callback({ files: buffer });
+    }
+  }
+
   getBatchSize(): number {
     // Webflow supports bulk operations up to 100 items
     return WEBFLOW_DEFAULT_BATCH_SIZE;

@@ -1,5 +1,6 @@
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
@@ -96,6 +97,40 @@ export class MocoConnector extends Connector<typeof Service.MOCO> {
 
     for await (const entities of this.client.listEntities(entityType)) {
       await callback({ files: entities as unknown as ConnectorFile[] });
+    }
+  }
+
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const entityType = tableSpec.id.wsId as MocoEntityType;
+    const BATCH_SIZE = 20;
+    const buffer: ConnectorFile[] = [];
+
+    for (const id of ids) {
+      const numericId = parseInt(id, 10);
+      if (isNaN(numericId)) {
+        WSLogger.warn({
+          source: 'MocoConnector',
+          message: `Invalid non-numeric ID "${id}" for ${entityType}, skipping`,
+        });
+        continue;
+      }
+
+      const entity = await this.client.getEntity(entityType, numericId);
+      if (entity) {
+        buffer.push(entity as ConnectorFile);
+      }
+
+      if (buffer.length >= BATCH_SIZE) {
+        await callback({ files: buffer.splice(0) });
+      }
+    }
+
+    if (buffer.length > 0) {
+      await callback({ files: buffer });
     }
   }
 

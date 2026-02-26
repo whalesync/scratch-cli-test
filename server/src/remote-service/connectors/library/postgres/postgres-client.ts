@@ -112,6 +112,21 @@ export class PostgresClient {
   }
 
   /**
+   * Select rows by primary key values using a parameterized WHERE IN query.
+   */
+  async selectByIds(tableName: string, pkColumn: string, ids: (string | number)[]): Promise<Record<string, unknown>[]> {
+    if (ids.length === 0) return [];
+
+    await this.validateTableName(tableName);
+    const quotedTable = this.quoteIdentifier(tableName);
+    const quotedPk = this.quoteIdentifier(pkColumn);
+
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+    const result = await this.pool.query(`SELECT * FROM ${quotedTable} WHERE ${quotedPk} IN (${placeholders})`, ids);
+    return result.rows as Record<string, unknown>[];
+  }
+
+  /**
    * Insert a row and return the inserted data.
    */
   async insertRow(tableName: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {

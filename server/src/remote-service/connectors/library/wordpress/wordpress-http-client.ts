@@ -155,6 +155,22 @@ export class WordPressHttpClient {
   }
 
   /**
+   * Get a single record by ID. Returns null if not found (404).
+   */
+  async getRecord(tableId: string, recordId: string): Promise<WordPressRecord | null> {
+    const url = this.generateUrl(this.endpoint, tableId, recordId, [{ name: 'context', value: 'edit' }]);
+    try {
+      const response = await axios.get<WordPressRecord>(url, { headers: this.authHeaders });
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Create a new record in WordPress
    */
   async createRecord(tableId: string, record: WordPressRecord): Promise<WordPressRecord> {

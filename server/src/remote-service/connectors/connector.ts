@@ -99,6 +99,21 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
   ): Promise<void>;
 
   /**
+   * Fetch specific records by their IDs from the remote service.
+   * Uses bulk API endpoints where supported, falling back to individual fetches otherwise.
+   * Records that cannot be found (e.g. deleted/404) are silently skipped.
+   *
+   * @param tableSpec The JSON table spec for the target table.
+   * @param ids Array of record IDs to fetch.
+   * @param callback Receives batches of fetched files, same pattern as pullRecordFiles.
+   */
+  abstract pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void>;
+
+  /**
    * Validate files against the table schema before publishing.
    * This is an optional method that connectors can override to provide custom validation logic.
    * By default, returns undefined to indicate that the connector does not support validation.

@@ -101,6 +101,31 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     }
   }
 
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const [tableId] = tableSpec.id.remoteId;
+    const BATCH_SIZE = 20;
+    const buffer: ConnectorFile[] = [];
+
+    for (const recordId of ids) {
+      const record = await this.client.getRecord(tableId, recordId);
+      if (record) {
+        buffer.push(record as unknown as ConnectorFile);
+      }
+
+      if (buffer.length >= BATCH_SIZE) {
+        await callback({ files: buffer.splice(0) });
+      }
+    }
+
+    if (buffer.length > 0) {
+      await callback({ files: buffer });
+    }
+  }
+
   getBatchSize(): number {
     return WORDPRESS_BATCH_SIZE;
   }

@@ -254,6 +254,50 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
   }
 
   /**
+   * Fetch specific records by their GIDs using Shopify's `nodes` query.
+   * The API client resolves the GraphQL type name from the entity registry.
+   * For child entities, adds the parent foreign key from the node data if available.
+   */
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const entityType = tableSpec.id.wsId as EntityType;
+
+    if (!ENTITY_REGISTRY[entityType]) {
+      throw new ShopifyError(`Unsupported table: ${tableSpec.id.wsId}`, 400);
+    }
+
+    const nodes = await this.client.fetchNodesByIds(entityType, ids);
+
+    if (isChildEntity(entityType)) {
+      const config = ENTITY_REGISTRY[entityType];
+      if ('parent' in config && config.parent) {
+        const foreignKey = config.parent.foreignKey;
+        const parentEntitySingular = config.parent.entityType.replace(/s$/, '');
+        const files = nodes.map((node) => {
+          const file = { ...node } as ConnectorFile;
+          // Extract parent ID from the embedded parent object (e.g. node.product, node.order)
+          if (!file[foreignKey]) {
+            const parentObj = node[parentEntitySingular] as { id: string } | undefined;
+            if (parentObj?.id) {
+              file[foreignKey] = String(parentObj.id);
+            }
+          }
+          return file;
+        });
+        await callback({ files });
+        return;
+      }
+    }
+
+    if (nodes.length > 0) {
+      await callback({ files: nodes as ConnectorFile[] });
+    }
+  }
+
+  /**
    * Get the batch size for CRUD operations.
    */
   getBatchSize(operation: 'create' | 'update' | 'delete'): number {

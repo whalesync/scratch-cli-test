@@ -93,6 +93,30 @@ export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> 
     }
   }
 
+  async pullRecordFilesByIds(
+    _tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const BATCH_SIZE = 20;
+    const buffer: ConnectorFile[] = [];
+
+    for (const uid of ids) {
+      const person = await this.client.getPerson(uid);
+      if (person) {
+        buffer.push(person as unknown as ConnectorFile);
+      }
+
+      if (buffer.length >= BATCH_SIZE) {
+        await callback({ files: buffer.splice(0) });
+      }
+    }
+
+    if (buffer.length > 0) {
+      await callback({ files: buffer });
+    }
+  }
+
   /**
    * Get the batch size for CRUD operations.
    * Audienceful supports batch operations.

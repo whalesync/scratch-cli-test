@@ -87,6 +87,16 @@ export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
     await callback({ files: [], connectorProgress: progress });
   }
 
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  pullRecordFilesByIds(
+    _tableSpec: BaseJsonTableSpec,
+    _ids: string[],
+    _callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    throw new Error('pullRecordFilesByIds is not implemented for Wix Blog');
+  }
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+
   getBatchSize(): number {
     return 1;
   }

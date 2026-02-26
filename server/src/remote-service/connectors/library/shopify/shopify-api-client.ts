@@ -64,7 +64,7 @@ import {
   PRODUCTS_UPDATE_MUTATION,
 } from './graphql/mutations/products.mutations';
 
-import { API_VERSION, EntityType } from './graphql';
+import { API_VERSION, ENTITY_REGISTRY, EntityType } from './graphql';
 
 const LOG_SOURCE = 'ShopifyApiClient';
 
@@ -416,6 +416,73 @@ export class ShopifyApiClient {
     }
 
     return allDefs;
+  }
+
+  // ============= Bulk Node Fetching =============
+
+  /**
+   * Entity types that cannot be fetched via the top-level `nodes(ids:)` query.
+   * - order_line_items / order_shipping_lines: don't implement the Node interface.
+   * - product_media / files: their graphqlType is an interface (Media / File), not
+   *   a concrete Node type, so inline fragments won't resolve reliably.
+   */
+  private static readonly NODES_UNSUPPORTED_TYPES = new Set<string>([
+    'order_line_items',
+    'order_shipping_lines',
+    'product_media',
+    'files',
+  ]);
+
+  /**
+   * Fetch multiple nodes by their GIDs using Shopify's top-level `nodes` query.
+   * Resolves the GraphQL type name from the entity registry.
+   * Batches requests to stay within Shopify's 250-node limit per query.
+   */
+  async fetchNodesByIds(entityType: EntityType, ids: string[]): Promise<Record<string, unknown>[]> {
+    if (ShopifyApiClient.NODES_UNSUPPORTED_TYPES.has(entityType)) {
+      const config = ENTITY_REGISTRY[entityType];
+      throw new ShopifyError(
+        `pullRecordFilesByIds is not supported for ${config.displayName}. ` +
+          `These entities cannot be fetched via the Shopify nodes query.`,
+        400,
+      );
+    }
+
+    const config = ENTITY_REGISTRY[entityType];
+    const graphqlTypeName = config.graphqlType as string;
+    const queryFields = QUERY_FIELDS_MAP[entityType];
+    if (!queryFields) {
+      throw new ShopifyError(`No query fields for entity type: ${entityType}`, 400);
+    }
+
+    const NODES_BATCH_SIZE = 250;
+    const allNodes: Record<string, unknown>[] = [];
+
+    for (let i = 0; i < ids.length; i += NODES_BATCH_SIZE) {
+      const batch = ids.slice(i, i + NODES_BATCH_SIZE);
+
+      const queryString = `
+        query FetchNodesByIds($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on ${graphqlTypeName} {
+              ${queryFields}
+            }
+          }
+        }
+      `;
+
+      const data = await this.query<{ nodes: (Record<string, unknown> | null)[] }>(queryString, { ids: batch });
+
+      if (data.nodes) {
+        for (const node of data.nodes) {
+          if (node && node.id) {
+            allNodes.push(node);
+          }
+        }
+      }
+    }
+
+    return allNodes;
   }
 
   // ============= Connection Fetching =============

@@ -200,6 +200,56 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
     }
   }
 
+  async pullRecordFilesByIds(
+    _tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const BATCH_SIZE = 10;
+    const buffer: ConnectorFile[] = [];
+
+    for (const pageId of ids) {
+      try {
+        const page = (await this.client.pages.retrieve({ page_id: pageId })) as PageObjectResponse;
+        const connectorFile = page as unknown as ConnectorFile;
+
+        try {
+          const childrenData = await this.pollRecordPageContentChildren(
+            page.id,
+            NotionConnector.PAGE_CONTENT_MAX_DEPTH,
+            page.id,
+          );
+          connectorFile['page_content'] = childrenData.children;
+        } catch (error) {
+          WSLogger.error({
+            source: 'NotionConnector',
+            message: `Failed to fetch content for page ${pageId}`,
+            error,
+          });
+        }
+
+        buffer.push(connectorFile);
+
+        if (buffer.length >= BATCH_SIZE) {
+          await callback({ files: buffer.splice(0) });
+        }
+      } catch (error) {
+        if (APIResponseError.isAPIResponseError(error) && error.code === APIErrorCode.ObjectNotFound) {
+          WSLogger.warn({
+            source: 'NotionConnector',
+            message: `Page ${pageId} not found, skipping`,
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (buffer.length > 0) {
+      await callback({ files: buffer });
+    }
+  }
+
   getBatchSize(): number {
     return 1;
   }

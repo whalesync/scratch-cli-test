@@ -193,6 +193,26 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
   }
 
   /**
+   * Fetch specific rows by primary key values.
+   */
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
+    const pkColumn = tableSpec.idColumnRemoteId || 'id';
+
+    for (let i = 0; i < ids.length; i += READ_BATCH_SIZE) {
+      const batch = ids.slice(i, i + READ_BATCH_SIZE);
+      const rows = await this.client.selectByIds(tableName, pkColumn, batch);
+      if (rows.length > 0) {
+        await callback({ files: rows as ConnectorFile[] });
+      }
+    }
+  }
+
+  /**
    * Get the batch size for CRUD operations.
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

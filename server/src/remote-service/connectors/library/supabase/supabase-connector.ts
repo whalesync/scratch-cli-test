@@ -538,6 +538,26 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
     }, resolved.connectionString);
   }
 
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const resolved = this.resolveConnection(tableSpec.id.remoteId);
+    return this.withPgClient(async (client) => {
+      const { schema, tableName } = resolved;
+      const pk = tableSpec.idColumnRemoteId;
+
+      for (let i = 0; i < ids.length; i += READ_BATCH_SIZE) {
+        const batch = ids.slice(i, i + READ_BATCH_SIZE);
+        const rows = await client.selectByIds(schema, tableName, ['*'], pk, batch);
+        if (rows.length > 0) {
+          await callback({ files: rows as ConnectorFile[] });
+        }
+      }
+    }, resolved.connectionString);
+  }
+
   // -------------------------------------------------------------------------
   // Batch size
   // -------------------------------------------------------------------------
