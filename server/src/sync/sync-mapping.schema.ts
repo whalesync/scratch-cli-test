@@ -28,6 +28,8 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('source_fk_to_dest_fk'), options: sourceFkToDestFkOptionsSchema }),
   z.object({ type: z.literal('lookup_field'), options: lookupFieldOptionsSchema }),
   z.object({ type: z.literal('notion_to_html'), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal('airmark_to_html'), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal('html_to_airmark'), options: z.record(z.string(), z.never()).optional() }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

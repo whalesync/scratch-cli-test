@@ -95,7 +95,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
       break;
 
     case AirtableDataType.RICH_TEXT:
-      schema = Type.String({ description, contentMediaType: 'text/markdown' });
+      schema = Type.String({ description, contentMediaType: 'text/airmark' });
       break;
 
     case AirtableDataType.NUMBER:

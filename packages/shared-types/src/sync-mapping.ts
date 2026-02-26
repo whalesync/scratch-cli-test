@@ -46,7 +46,13 @@ export interface ColumnMapping {
 // Transformer Types
 // ============================================================================
 
-export type TransformerType = 'string_to_number' | 'source_fk_to_dest_fk' | 'lookup_field' | 'notion_to_html';
+export type TransformerType =
+  | 'string_to_number'
+  | 'source_fk_to_dest_fk'
+  | 'lookup_field'
+  | 'notion_to_html'
+  | 'airmark_to_html'
+  | 'html_to_airmark';
 
 /** Options for the string_to_number transformer */
 export interface StringToNumberOptions {
@@ -78,4 +84,6 @@ export type TransformerConfig =
   | { type: 'string_to_number'; options?: StringToNumberOptions }
   | { type: 'source_fk_to_dest_fk'; options: SourceFkToDestFkOptions }
   | { type: 'lookup_field'; options: LookupFieldOptions }
-  | { type: 'notion_to_html'; options?: Record<string, never> };
+  | { type: 'notion_to_html'; options?: Record<string, never> }
+  | { type: 'airmark_to_html'; options?: Record<string, never> }
+  | { type: 'html_to_airmark'; options?: Record<string, never> };
