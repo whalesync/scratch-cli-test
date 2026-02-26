@@ -9,8 +9,8 @@ module "eu_production" {
   gcp_zone           = "europe-west1-b"
   as_gitlab          = var.as_gitlab
 
-  # Cloud IDS - disabled initially for EU (can enable later with EU-region endpoint)
-  enable_intrusion_detection = false
+  # Cloud IDS (creates a new endpoint in europe-west1-b)
+  enable_intrusion_detection = true
 
   # Load Balancer
   enable_client_load_balancer = true
