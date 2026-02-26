@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { DirtyFileCountResponse, FileDiffStatus, GitGcResponse, HasDirtyFilesResponse } from '@spinner/shared-types';
+import {
+  DirtyFileCountResponse,
+  FileDiffStatus,
+  GitGcResponse,
+  GitObjectCountsResponse,
+  HasDirtyFilesResponse,
+} from '@spinner/shared-types';
 // Trigger reload
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 
@@ -26,7 +32,12 @@ export class ScratchGitClient {
       const text = await response.text();
       throw new Error(`Git API Error ${endpoint}: ${response.status} ${text}`);
     }
-    return response.json();
+    const jsonResult = (await response.json()) as { data: unknown; status: unknown };
+    // Unpack { data, status } wrapper if present, otherwise return raw json directly
+    if (jsonResult && typeof jsonResult === 'object' && 'data' in jsonResult) {
+      return jsonResult.data;
+    }
+    return jsonResult;
   }
 
   async initRepo(repoId: string): Promise<void> {
@@ -41,8 +52,12 @@ export class ScratchGitClient {
     await this.callGitApi(`/api/repo/manage/${repoId}/reset`, 'POST', { path });
   }
 
-  async gc(repoId: string): Promise<GitGcResponse> {
-    return this.callGitApi(`/api/repo/manage/${repoId}/gc`, 'POST') as Promise<GitGcResponse>;
+  async gc(repoId: string, aggressive?: boolean): Promise<GitGcResponse> {
+    return this.callGitApi(`/api/repo/manage/${repoId}/gc`, 'POST', { aggressive }) as Promise<GitGcResponse>;
+  }
+
+  async getObjectCounts(repoId: string): Promise<GitObjectCountsResponse> {
+    return this.callGitApi(`/api/repo/manage/${repoId}/count-objects`, 'GET') as Promise<GitObjectCountsResponse>;
   }
 
   async commitFiles(

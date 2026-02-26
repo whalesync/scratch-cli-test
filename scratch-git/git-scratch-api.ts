@@ -14,6 +14,33 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
+import { gcState } from './src/services/gc-state';
+
+app.use((req, res, next) => {
+  const originalJson = res.json;
+  res.json = function (body) {
+    if (body && typeof body === 'object' && 'data' in body && 'status' in body) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      return originalJson.call(this, body);
+    }
+
+    let repoId: string | null = null;
+    const regex = new RegExp('^/api/repo/(?:manage|read|write|diff|checkpoint|debug)/([^/?]+)');
+    const match = req.originalUrl.match(regex);
+    if (match) {
+      repoId = match[1];
+    }
+
+    const status = {
+      gcInProgress: repoId ? gcState.get(repoId) || null : null,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-assignment
+    return originalJson.call(this, { data: body, status });
+  };
+  next();
+});
+
 app.use((req, res, next) => {
   const start = Date.now();
   console.log(`[API] ${req.method} ${req.url}`);

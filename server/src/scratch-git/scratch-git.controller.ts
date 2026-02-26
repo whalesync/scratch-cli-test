@@ -1,5 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import type { DirtyFileCountResponse, GitGcResponse, HasDirtyFilesResponse, WorkbookId } from '@spinner/shared-types';
+import type {
+  DirtyFileCountResponse,
+  GitGcResponse,
+  GitObjectCountsResponse,
+  HasDirtyFilesResponse,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import { ScratchGitService } from './scratch-git.service';
 
@@ -59,10 +65,18 @@ export class ScratchGitController {
     return this.scratchGitService.rebaseDirty(workbookId);
   }
 
+  @Get(':id/object-counts')
+  async getObjectCounts(@Param('id') workbookId: WorkbookId): Promise<GitObjectCountsResponse> {
+    return this.scratchGitService.getObjectCounts(workbookId);
+  }
+
   @Post(':id/gc')
-  async runGitGc(@Param('id') workbookId: WorkbookId): Promise<GitGcResponse> {
-    console.log(`[ScratchGitController] runGitGc called for ${workbookId}`);
-    return this.scratchGitService.runGitGc(workbookId);
+  async runGitGc(
+    @Param('id') workbookId: WorkbookId,
+    @Body('aggressive') aggressive?: boolean,
+  ): Promise<GitGcResponse> {
+    console.log(`[ScratchGitController] runGitGc called for ${workbookId} (aggressive: ${aggressive})`);
+    return this.scratchGitService.runGitGc(workbookId, aggressive);
   }
 
   @Post(':id/checkpoint')

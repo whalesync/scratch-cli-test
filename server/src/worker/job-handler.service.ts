@@ -72,6 +72,7 @@ export class JobHandlerService {
           prisma,
           this.syncService,
           this.workbookEventService,
+          this.scratchGitService,
         ) as JobHandler<JobDefinition>;
 
       case 'publish':

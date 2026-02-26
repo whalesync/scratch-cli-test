@@ -26,6 +26,14 @@ export interface DirtyFileCountResponse {
 }
 
 /**
+ * Response from the git count-objects endpoint.
+ */
+export interface GitObjectCountsResponse {
+  stats: string;
+  gcInProgress: number | null;
+}
+
+/**
  * Response from the git gc endpoint.
  */
 export interface GitGcResponse {

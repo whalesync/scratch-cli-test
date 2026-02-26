@@ -1,7 +1,8 @@
 'use client';
 
-import { Box, Button, Code, Group, Modal, Stack, Title } from '@mantine/core';
+import { Box, Button, Group, Modal, Stack, Title } from '@mantine/core';
 import { GitGcResponse } from '@spinner/shared-types';
+import { GitStatsViewer } from './GitStatsViewer';
 
 interface GitGcModalProps {
   opened: boolean;
@@ -19,18 +20,14 @@ export function GitGcModal({ opened, onClose, data }: GitGcModalProps) {
           <Title order={5} mb="xs">
             Repository Statistics Before GC
           </Title>
-          <Code block style={{ whiteSpace: 'pre-wrap' }}>
-            {data.statsBefore}
-          </Code>
+          <GitStatsViewer stats={data.statsBefore} />
         </Box>
 
         <Box>
           <Title order={5} mb="xs">
             Repository Statistics After GC
           </Title>
-          <Code block style={{ whiteSpace: 'pre-wrap' }}>
-            {data.statsAfter}
-          </Code>
+          <GitStatsViewer stats={data.statsAfter} />
         </Box>
 
         <Group justify="flex-end" mt="md">

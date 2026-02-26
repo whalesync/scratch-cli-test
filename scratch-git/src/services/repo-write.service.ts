@@ -260,6 +260,7 @@ export class RepoWriteService extends BaseRepoService {
     const [mainCommit, dirtyCommit] = await Promise.all([this.resolveRef(MAIN_BRANCH), this.resolveRef(DIRTY_BRANCH)]);
 
     if (mainCommit === dirtyCommit) {
+      await git.writeRef({ fs, dir, gitdir: dir, ref: 'refs/tags/merge_base', value: mainCommit, force: true });
       return { rebased: true, conflicts: [] };
     }
 
@@ -269,8 +270,10 @@ export class RepoWriteService extends BaseRepoService {
       gitdir: dir,
       oids: [mainCommit, dirtyCommit],
     });
+
     if (mergeBaseOids.length === 0) {
       await this.forceRef(DIRTY_BRANCH, mainCommit);
+      await git.writeRef({ fs, dir, gitdir: dir, ref: 'refs/tags/merge_base', value: mainCommit, force: true });
       return { rebased: true, conflicts: [] };
     }
     const mergeBase = mergeBaseOids[0] as string;
@@ -279,6 +282,7 @@ export class RepoWriteService extends BaseRepoService {
 
     if (userChanges.length === 0) {
       await this.forceRef(DIRTY_BRANCH, mainCommit);
+      await git.writeRef({ fs, dir, gitdir: dir, ref: 'refs/tags/merge_base', value: mainCommit, force: true });
       return { rebased: true, conflicts: [] };
     }
 
@@ -365,6 +369,7 @@ export class RepoWriteService extends BaseRepoService {
       await this.commitChangesToRef(DIRTY_BRANCH, changesToCommit, 'Rebase dirty on main');
     }
 
+    await git.writeRef({ fs, dir, gitdir: dir, ref: 'refs/tags/merge_base', value: mainCommit, force: true });
     return { rebased: true, conflicts };
   }
 

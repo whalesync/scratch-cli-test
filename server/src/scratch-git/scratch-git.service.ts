@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { DirtyFileCountResponse, FileDiffStatus, HasDirtyFilesResponse, WorkbookId } from '@spinner/shared-types';
+import {
+  DirtyFileCountResponse,
+  FileDiffStatus,
+  GitObjectCountsResponse,
+  HasDirtyFilesResponse,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { ScratchGitClient } from './scratch-git.client';
 
 // The object returned by listRepoFiles
@@ -32,8 +38,12 @@ export class ScratchGitService {
     await this.scratchGitClient.rebaseDirty(workbookId);
   }
 
-  async runGitGc(workbookId: WorkbookId) {
-    return this.scratchGitClient.gc(workbookId);
+  async runGitGc(workbookId: WorkbookId, aggressive?: boolean) {
+    return this.scratchGitClient.gc(workbookId, aggressive);
+  }
+
+  async getObjectCounts(workbookId: WorkbookId): Promise<GitObjectCountsResponse> {
+    return this.scratchGitClient.getObjectCounts(workbookId);
   }
 
   async commitFilesToBranch(

@@ -33,8 +33,10 @@ export function DeleteAllRecordsModal({ opened, onClose, folder, workbookId, onS
 
     setLoading(true);
     try {
-      // Use folder path from folder name
-      await dataFolderApi.deleteAllRecords(workbookId, folder.name);
+      // Use folder path if available, fallback to folder name
+      // TODO: quick fix to unblock test. We probably just need path.
+      debugger;
+      await dataFolderApi.deleteAllRecords(workbookId, folder.path || folder.name);
 
       notifications.show({
         title: 'Success',

@@ -5,6 +5,7 @@ import {
   DataFolderPublishStatus,
   DirtyFileCountResponse,
   GitGcResponse,
+  GitObjectCountsResponse,
   HasDirtyFilesResponse,
   PublishPlanBuildDto,
   PublishPlanEntity,
@@ -229,13 +230,23 @@ export const workbookApi = {
       throw error;
     }
   },
-  runGitGc: async (workbookId: WorkbookId): Promise<GitGcResponse> => {
+  runGitGc: async (workbookId: WorkbookId, aggressive?: boolean): Promise<GitGcResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<GitGcResponse>(`/scratch-git/${workbookId}/gc`);
+      const res = await axios.post<GitGcResponse>(`/scratch-git/${workbookId}/gc`, { aggressive });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to run git gc');
+      throw error;
+    }
+  },
+  getObjectCounts: async (workbookId: WorkbookId): Promise<GitObjectCountsResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<GitObjectCountsResponse>(`/scratch-git/${workbookId}/object-counts`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to get object counts');
       throw error;
     }
   },

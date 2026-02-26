@@ -429,6 +429,17 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           jobId: jobId,
         },
       });
+
+      try {
+        await this.scratchGitService.runGitGc(dataFolder.workbookId as WorkbookId);
+      } catch (err) {
+        WSLogger.warn({
+          source: 'PullLinkedFolderFilesJob',
+          message: 'Failed to run Git GC',
+          workbookId: dataFolder.workbookId,
+          error: err,
+        });
+      }
     } catch (error) {
       // Mark as failed
       publicProgress.status = 'failed';

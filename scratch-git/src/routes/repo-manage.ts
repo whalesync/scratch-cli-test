@@ -2,10 +2,10 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import { resolve } from 'node:path';
+import { gcState } from '../services/gc-state';
 import { RepoDiffService } from '../services/repo-diff.service';
 import { RepoManageService } from '../services/repo-manage.service';
 import { RepoWriteService } from '../services/repo-write.service';
-
 export const repoManageRouter = Router({ mergeParams: true });
 
 repoManageRouter.post('/init', async (req, res) => {
@@ -63,12 +63,36 @@ repoManageRouter.post('/reset', async (req, res) => {
   }
 });
 
-repoManageRouter.post('/gc', async (req, res) => {
+repoManageRouter.get('/count-objects', async (req, res) => {
   try {
     const { id } = req.params as { id: string };
     const gitService = new RepoManageService(id);
-    const stats = await gitService.gc();
-    res.json({ success: true, ...stats });
+    const stats = await gitService.countObjects();
+    const gcInProgress = gcState.get(id) || null;
+    res.json({ stats, gcInProgress });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+repoManageRouter.post('/gc', async (req, res) => {
+  try {
+    const { id } = req.params as { id: string };
+    const { aggressive } = req.body as { aggressive?: boolean };
+
+    if (gcState.has(id)) {
+      return res.status(409).json({ error: 'GC already in progress' });
+    }
+
+    gcState.set(id, Date.now());
+
+    try {
+      const gitService = new RepoManageService(id);
+      const stats = await gitService.gc(aggressive);
+      res.json({ success: true, ...stats });
+    } finally {
+      gcState.delete(id);
+    }
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

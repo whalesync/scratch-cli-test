@@ -3,6 +3,7 @@ import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/sha
 import { TransformerTypes } from '@spinner/shared-types';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WSLogger } from '../../../logger';
+import { ScratchGitService } from '../../../scratch-git/scratch-git.service';
 import { SyncService } from '../../../sync/sync.service';
 import { Actor } from '../../../users/types';
 import type { JsonSafeObject } from '../../../utils/objects';
@@ -52,6 +53,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     private readonly prisma: PrismaClient,
     private readonly syncService: SyncService,
     private readonly workbookEventService: WorkbookEventService,
+    private readonly scratchGitService: ScratchGitService,
   ) {}
 
   async run(params: {
@@ -319,6 +321,17 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         jobId: params.jobId,
       },
     });
+
+    try {
+      await this.scratchGitService.runGitGc(data.workbookId);
+    } catch (err) {
+      WSLogger.warn({
+        source: 'SyncDataFoldersJob',
+        message: 'Failed to run Git GC',
+        workbookId: data.workbookId,
+        error: err,
+      });
+    }
 
     WSLogger.info({
       source: 'SyncDataFoldersJob',

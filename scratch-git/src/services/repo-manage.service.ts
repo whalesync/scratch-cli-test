@@ -68,6 +68,9 @@ export class RepoManageService extends BaseRepoService {
         object: commitOid,
         checkout: false,
       });
+
+      // Point merge_base to this initial commit
+      await git.writeRef({ fs, dir, gitdir: dir, ref: 'refs/tags/merge_base', value: commitOid, force: true });
     }
   }
 
@@ -86,7 +89,18 @@ export class RepoManageService extends BaseRepoService {
     await this.forceRef(DIRTY_BRANCH, mainOid);
   }
 
-  async gc(): Promise<{ statsBefore: string; statsAfter: string }> {
+  async countObjects(): Promise<string> {
+    const dir = this.getRepoPath();
+    const execAsync = promisify(exec);
+    try {
+      const { stdout } = await execAsync('git count-objects -v', { cwd: dir });
+      return stdout;
+    } catch (err) {
+      throw new Error(`Failed to get object counts: ${err}`);
+    }
+  }
+
+  async gc(aggressive: boolean = false): Promise<{ statsBefore: string; statsAfter: string }> {
     const dir = this.getRepoPath();
     console.log(`[RepoManageService] Running git gc for repo "${this.repoId}" at ${dir}`);
     const execAsync = promisify(exec);
@@ -104,7 +118,8 @@ export class RepoManageService extends BaseRepoService {
       const statsBefore = await getStats();
       console.log(`[RepoManageService] Stats before gc:\n${statsBefore}`);
 
-      const { stdout, stderr } = await execAsync('git gc', { cwd: dir });
+      const gcCommand = aggressive ? 'git gc --prune=now --aggressive' : 'git gc --prune=now';
+      const { stdout, stderr } = await execAsync(gcCommand, { cwd: dir });
       if (stdout) console.log(`[RepoManageService] git gc stdout:\n${stdout}`);
       if (stderr) console.log(`[RepoManageService] git gc stderr:\n${stderr}`);
 

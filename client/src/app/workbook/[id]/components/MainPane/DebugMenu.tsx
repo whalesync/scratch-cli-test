@@ -7,8 +7,9 @@ import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { GitGcResponse, WorkbookId } from '@spinner/shared-types';
+import { GitGcResponse, GitObjectCountsResponse, WorkbookId } from '@spinner/shared-types';
 import {
+  ChevronRightIcon,
   DatabaseIcon,
   EllipsisVertical,
   FileCodeIcon,
@@ -23,6 +24,7 @@ import { FileIndexModal } from '../modals/FileIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
 import { GitGraphModal } from '../modals/GitGraphModal';
+import { GitObjectCountsModal } from '../modals/GitObjectCountsModal';
 import { RefIndexModal } from '../modals/RefIndexModal';
 
 interface DebugMenuProps {
@@ -86,13 +88,34 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
 
   const [gcData, setGcData] = useState<GitGcResponse | null>(null);
   const [gcModalOpen, setGcModalOpen] = useState(false);
+  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
+  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
+  const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
 
   // ... handleManualRebase ...
 
-  const handleGitGc = async () => {
+  const handleGetObjectCounts = async () => {
+    setIsLoadingObjectCounts(true);
+    try {
+      const result = await workbookApi.getObjectCounts(workbookId);
+      setObjectCountsData(result);
+      setObjectCountsModalOpen(true);
+    } catch (e) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to get object counts',
+        color: 'red',
+      });
+      console.error(e);
+    } finally {
+      setIsLoadingObjectCounts(false);
+    }
+  };
+
+  const handleGitGc = async (aggressive: boolean = false) => {
     setIsGcing(true);
     try {
-      const result = await workbookApi.runGitGc(workbookId);
+      const result = await workbookApi.runGitGc(workbookId, aggressive);
       setGcData(result);
       setGcModalOpen(true);
       notifications.show({
@@ -130,29 +153,76 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
             <>
               <Menu.Divider />
               <Menu.Label>Debug Tools</Menu.Label>
-              <Menu.Item data-devtool leftSection={<GitGraphIcon size={16} />} onClick={() => setGitGraphOpen(true)}>
-                Git Graph
-              </Menu.Item>
-              <Menu.Item data-devtool leftSection={<FileCodeIcon size={16} />} onClick={() => setFileBrowserOpen(true)}>
-                Git File Browser
-              </Menu.Item>
-              <Menu.Item
-                data-devtool
-                leftSection={<GitMergeIcon size={16} />}
-                onClick={handleManualRebase}
-                disabled={isRebasing}
-              >
-                Manual Rebase
-              </Menu.Item>
-              <Menu.Item data-devtool leftSection={<GitGraphIcon size={16} />} onClick={handleGitGc} disabled={isGcing}>
-                Run Git GC
-              </Menu.Item>
-              <Menu.Item data-devtool leftSection={<DatabaseIcon size={16} />} onClick={() => setFileIndexOpen(true)}>
-                File Index
-              </Menu.Item>
-              <Menu.Item data-devtool leftSection={<LinkIcon size={16} />} onClick={() => setRefIndexOpen(true)}>
-                Ref Index
-              </Menu.Item>
+              <Menu trigger="hover" position="left-start" offset={0} withinPortal>
+                <Menu.Target>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitGraphIcon size={16} />}
+                    rightSection={<ChevronRightIcon size={14} />}
+                  >
+                    Git Tools
+                  </Menu.Item>
+                </Menu.Target>
+
+                <Menu.Dropdown>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitGraphIcon size={16} />}
+                    onClick={() => setGitGraphOpen(true)}
+                  >
+                    Git Graph
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<FileCodeIcon size={16} />}
+                    onClick={() => setFileBrowserOpen(true)}
+                  >
+                    Git File Browser
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitMergeIcon size={16} />}
+                    onClick={handleManualRebase}
+                    disabled={isRebasing}
+                  >
+                    Manual Rebase
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitGraphIcon size={16} />}
+                    onClick={handleGetObjectCounts}
+                    disabled={isLoadingObjectCounts}
+                  >
+                    Get Object Counts
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitGraphIcon size={16} />}
+                    onClick={() => handleGitGc(false)}
+                    disabled={isGcing}
+                  >
+                    Run Git GC (Standard)
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<Trash2Icon size={16} />}
+                    onClick={() => handleGitGc(true)}
+                    disabled={isGcing}
+                  >
+                    Run Git GC (Aggressive)
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<DatabaseIcon size={16} />}
+                    onClick={() => setFileIndexOpen(true)}
+                  >
+                    File Index
+                  </Menu.Item>
+                  <Menu.Item data-devtool leftSection={<LinkIcon size={16} />} onClick={() => setRefIndexOpen(true)}>
+                    Ref Index
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
               <Menu.Item
                 data-devtool
                 leftSection={<ServerCrashIcon size={16} />}
@@ -179,6 +249,12 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
 
       <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
+
+      <GitObjectCountsModal
+        opened={objectCountsModalOpen}
+        onClose={() => setObjectCountsModalOpen(false)}
+        data={objectCountsData}
+      />
 
       {/* Confirm Dialog */}
       <ConfirmDialog {...dialogProps} />
