@@ -39,6 +39,41 @@ import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
+type TableGroup = {
+  projectLabel: string | null;
+  schemaGroups: {
+    schemaLabel: string;
+    tables: TablePreview[];
+  }[];
+};
+
+function groupTablesByProjectAndSchema(tables: TablePreview[]): TableGroup[] {
+  const projectMap = new Map<string, Map<string, TablePreview[]>>();
+
+  for (const table of tables) {
+    const projectKey = (table.metadata?.projectName as string) || (table.metadata?.projectRef as string) || '';
+    const schema = (table.metadata?.schema as string) || 'public';
+
+    if (!projectMap.has(projectKey)) projectMap.set(projectKey, new Map());
+    const schemaMap = projectMap.get(projectKey)!;
+    if (!schemaMap.has(schema)) schemaMap.set(schema, []);
+    schemaMap.get(schema)!.push(table);
+  }
+
+  const multipleProjects = projectMap.size > 1;
+  const sortedProjects = Array.from(projectMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+  return sortedProjects.map(([projectKey, schemaMap]) => ({
+    projectLabel: multipleProjects ? projectKey || 'Unknown project' : null,
+    schemaGroups: Array.from(schemaMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([schema, schemaTables]) => ({
+        schemaLabel: schema,
+        tables: schemaTables.sort((a, b) => a.displayName.localeCompare(b.displayName)),
+      })),
+  }));
+}
+
 const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE, Service.SUPABASE]);
 const FIELD_SELECTION_SERVICES = new Set([Service.SUPABASE]);
 
@@ -103,8 +138,13 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   const supportsFilter = FILTER_SUPPORTED_SERVICES.has(connectorAccount.service);
   const supportsFieldSelection = FIELD_SELECTION_SERVICES.has(connectorAccount.service);
+  const isSupabase = connectorAccount.service === Service.SUPABASE;
   const isAirtable = connectorAccount.service === Service.AIRTABLE;
   const isNotion = connectorAccount.service === Service.NOTION;
+  const groupedTables = useMemo(
+    () => (isSupabase ? groupTablesByProjectAndSchema(availableTables) : null),
+    [isSupabase, availableTables],
+  );
   const hasConnectorOptions = isAirtable || isNotion;
   const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
     new Map(),
@@ -553,46 +593,109 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       ) : (
         <ScrollArea.Autosize mah={400}>
           <Stack gap="xs">
-            {availableTables.map((table) => {
-              const tableKey = table.id.remoteId.join('/');
-              const isChecked = selectedTableIds.has(tableKey);
+            {groupedTables
+              ? groupedTables.map((group, gi) => (
+                  <Box key={group.projectLabel ?? gi}>
+                    {group.projectLabel && (
+                      <Text13Medium mb={4} mt={gi > 0 ? 'sm' : 0}>
+                        {group.projectLabel}
+                      </Text13Medium>
+                    )}
+                    {group.schemaGroups.map((sg) => (
+                      <Box key={sg.schemaLabel} ml={group.projectLabel ? 'xs' : 0}>
+                        <Text12Regular c="dimmed" mb={2} mt={4}>
+                          {sg.schemaLabel}
+                        </Text12Regular>
+                        <Stack gap={4} ml="xs">
+                          {sg.tables.map((table) => {
+                            const tableKey = table.id.remoteId.join('/');
+                            const isChecked = selectedTableIds.has(tableKey);
+                            return (
+                              <Checkbox
+                                key={tableKey}
+                                label={
+                                  <Group gap={6} align="center" wrap="nowrap">
+                                    <Text13Regular c={table.disabled ? 'dimmed' : undefined}>
+                                      {table.displayName}
+                                    </Text13Regular>
+                                    {table.disabled && (
+                                      <Tooltip
+                                        label={
+                                          DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE
+                                        }
+                                        multiline
+                                        maw={250}
+                                        position="right"
+                                      >
+                                        <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
+                                      </Tooltip>
+                                    )}
+                                    {!table.disabled && table.disabledCreates && (
+                                      <Tooltip
+                                        label={
+                                          DISABLED_CREATES_MESSAGES[connectorAccount.service] ??
+                                          DEFAULT_DISABLED_CREATES_MESSAGE
+                                        }
+                                        multiline
+                                        maw={250}
+                                        position="right"
+                                      >
+                                        <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
+                                      </Tooltip>
+                                    )}
+                                  </Group>
+                                }
+                                checked={isChecked}
+                                disabled={table.disabled}
+                                onChange={() => handleToggleTable(table)}
+                              />
+                            );
+                          })}
+                        </Stack>
+                      </Box>
+                    ))}
+                  </Box>
+                ))
+              : availableTables.map((table) => {
+                  const tableKey = table.id.remoteId.join('/');
+                  const isChecked = selectedTableIds.has(tableKey);
 
-              return (
-                <Checkbox
-                  key={tableKey}
-                  label={
-                    <Group gap={6} align="center" wrap="nowrap">
-                      <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
-                      {table.disabled && (
-                        <Tooltip
-                          label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
-                          multiline
-                          maw={250}
-                          position="right"
-                        >
-                          <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
-                        </Tooltip>
-                      )}
-                      {!table.disabled && table.disabledCreates && (
-                        <Tooltip
-                          label={
-                            DISABLED_CREATES_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_CREATES_MESSAGE
-                          }
-                          multiline
-                          maw={250}
-                          position="right"
-                        >
-                          <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
-                        </Tooltip>
-                      )}
-                    </Group>
-                  }
-                  checked={isChecked}
-                  disabled={table.disabled}
-                  onChange={() => handleToggleTable(table)}
-                />
-              );
-            })}
+                  return (
+                    <Checkbox
+                      key={tableKey}
+                      label={
+                        <Group gap={6} align="center" wrap="nowrap">
+                          <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
+                          {table.disabled && (
+                            <Tooltip
+                              label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
+                              multiline
+                              maw={250}
+                              position="right"
+                            >
+                              <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
+                            </Tooltip>
+                          )}
+                          {!table.disabled && table.disabledCreates && (
+                            <Tooltip
+                              label={
+                                DISABLED_CREATES_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_CREATES_MESSAGE
+                              }
+                              multiline
+                              maw={250}
+                              position="right"
+                            >
+                              <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
+                            </Tooltip>
+                          )}
+                        </Group>
+                      }
+                      checked={isChecked}
+                      disabled={table.disabled}
+                      onChange={() => handleToggleTable(table)}
+                    />
+                  );
+                })}
           </Stack>
         </ScrollArea.Autosize>
       )}

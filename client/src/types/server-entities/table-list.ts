@@ -5,6 +5,7 @@ export interface TablePreview {
   displayName: string;
   disabled?: boolean;
   disabledCreates?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TableList {
