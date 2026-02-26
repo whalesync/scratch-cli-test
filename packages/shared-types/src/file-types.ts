@@ -26,6 +26,15 @@ export interface DirtyFileCountResponse {
 }
 
 /**
+ * Response from the git gc endpoint.
+ */
+export interface GitGcResponse {
+  success: boolean;
+  statsBefore: string;
+  statsAfter: string;
+}
+
+/**
  * Reference to a file in the workbook
  */
 export interface FileRefEntity {

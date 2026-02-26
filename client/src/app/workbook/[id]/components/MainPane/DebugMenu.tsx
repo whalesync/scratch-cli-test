@@ -7,7 +7,7 @@ import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { WorkbookId } from '@spinner/shared-types';
+import { GitGcResponse, WorkbookId } from '@spinner/shared-types';
 import {
   DatabaseIcon,
   EllipsisVertical,
@@ -21,6 +21,7 @@ import {
 import { useState } from 'react';
 import { FileIndexModal } from '../modals/FileIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
+import { GitGcModal } from '../modals/GitGcModal';
 import { GitGraphModal } from '../modals/GitGraphModal';
 import { RefIndexModal } from '../modals/RefIndexModal';
 
@@ -37,6 +38,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
   const [isRebasing, setIsRebasing] = useState(false);
+  const [isGcing, setIsGcing] = useState(false);
 
   const handleResetWorkbook = () => {
     openConfirmDialog({
@@ -82,6 +84,34 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
     }
   };
 
+  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
+  const [gcModalOpen, setGcModalOpen] = useState(false);
+
+  // ... handleManualRebase ...
+
+  const handleGitGc = async () => {
+    setIsGcing(true);
+    try {
+      const result = await workbookApi.runGitGc(workbookId);
+      setGcData(result);
+      setGcModalOpen(true);
+      notifications.show({
+        title: 'Success',
+        message: 'Git GC complete',
+        color: 'green',
+      });
+    } catch (e) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to run Git GC',
+        color: 'red',
+      });
+      console.error(e);
+    } finally {
+      setIsGcing(false);
+    }
+  };
+
   return (
     <>
       <Menu shadow="md" width={200} position="bottom-end">
@@ -114,6 +144,9 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
               >
                 Manual Rebase
               </Menu.Item>
+              <Menu.Item data-devtool leftSection={<GitGraphIcon size={16} />} onClick={handleGitGc} disabled={isGcing}>
+                Run Git GC
+              </Menu.Item>
               <Menu.Item data-devtool leftSection={<DatabaseIcon size={16} />} onClick={() => setFileIndexOpen(true)}>
                 File Index
               </Menu.Item>
@@ -144,6 +177,8 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       <FileIndexModal opened={fileIndexOpen} onClose={() => setFileIndexOpen(false)} workbookId={workbookId} />
 
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
+
+      <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
 
       {/* Confirm Dialog */}
       <ConfirmDialog {...dialogProps} />

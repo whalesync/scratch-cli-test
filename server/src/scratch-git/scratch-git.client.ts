@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DirtyFileCountResponse, FileDiffStatus, HasDirtyFilesResponse } from '@spinner/shared-types';
+import { DirtyFileCountResponse, FileDiffStatus, GitGcResponse, HasDirtyFilesResponse } from '@spinner/shared-types';
 // Trigger reload
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 
@@ -39,6 +39,10 @@ export class ScratchGitClient {
 
   async resetRepo(repoId: string, path?: string): Promise<void> {
     await this.callGitApi(`/api/repo/manage/${repoId}/reset`, 'POST', { path });
+  }
+
+  async gc(repoId: string): Promise<GitGcResponse> {
+    return this.callGitApi(`/api/repo/manage/${repoId}/gc`, 'POST') as Promise<GitGcResponse>;
   }
 
   async commitFiles(

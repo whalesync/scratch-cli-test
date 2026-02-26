@@ -63,4 +63,15 @@ repoManageRouter.post('/reset', async (req, res) => {
   }
 });
 
+repoManageRouter.post('/gc', async (req, res) => {
+  try {
+    const { id } = req.params as { id: string };
+    const gitService = new RepoManageService(id);
+    const stats = await gitService.gc();
+    res.json({ success: true, ...stats });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Archive endpoint removed, integrated into repo-read.ts

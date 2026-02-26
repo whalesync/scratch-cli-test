@@ -4,6 +4,7 @@ import {
   DataFolderGroup,
   DataFolderPublishStatus,
   DirtyFileCountResponse,
+  GitGcResponse,
   HasDirtyFilesResponse,
   PublishPlanBuildDto,
   PublishPlanEntity,
@@ -225,6 +226,16 @@ export const workbookApi = {
       await axios.post(`/scratch-git/${workbookId}/rebase`);
     } catch (error) {
       handleAxiosError(error, 'Failed to rebase dirty branch');
+      throw error;
+    }
+  },
+  runGitGc: async (workbookId: WorkbookId): Promise<GitGcResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<GitGcResponse>(`/scratch-git/${workbookId}/gc`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to run git gc');
       throw error;
     }
   },

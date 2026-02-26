@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import type { DirtyFileCountResponse, HasDirtyFilesResponse, WorkbookId } from '@spinner/shared-types';
+import type { DirtyFileCountResponse, GitGcResponse, HasDirtyFilesResponse, WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import { ScratchGitService } from './scratch-git.service';
 
@@ -57,6 +57,12 @@ export class ScratchGitController {
   async rebaseDirty(@Param('id') workbookId: WorkbookId): Promise<void> {
     console.log(`[ScratchGitController] rebaseDirty called for ${workbookId}`);
     return this.scratchGitService.rebaseDirty(workbookId);
+  }
+
+  @Post(':id/gc')
+  async runGitGc(@Param('id') workbookId: WorkbookId): Promise<GitGcResponse> {
+    console.log(`[ScratchGitController] runGitGc called for ${workbookId}`);
+    return this.scratchGitService.runGitGc(workbookId);
   }
 
   @Post(':id/checkpoint')

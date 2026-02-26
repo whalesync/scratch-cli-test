@@ -1,6 +1,8 @@
 import git from 'isomorphic-git';
+import { exec } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { DIRTY_BRANCH, MAIN_BRANCH } from '../../lib/constants';
 import { BaseRepoService } from './base-repo.service';
 
@@ -82,5 +84,38 @@ export class RepoManageService extends BaseRepoService {
 
     // Force dirty to point to main
     await this.forceRef(DIRTY_BRANCH, mainOid);
+  }
+
+  async gc(): Promise<{ statsBefore: string; statsAfter: string }> {
+    const dir = this.getRepoPath();
+    console.log(`[RepoManageService] Running git gc for repo "${this.repoId}" at ${dir}`);
+    const execAsync = promisify(exec);
+
+    const getStats = async () => {
+      try {
+        const { stdout } = await execAsync('git count-objects -v', { cwd: dir });
+        return stdout;
+      } catch (err) {
+        return `Failed to get stats: ${err}`;
+      }
+    };
+
+    try {
+      const statsBefore = await getStats();
+      console.log(`[RepoManageService] Stats before gc:\n${statsBefore}`);
+
+      const { stdout, stderr } = await execAsync('git gc', { cwd: dir });
+      if (stdout) console.log(`[RepoManageService] git gc stdout:\n${stdout}`);
+      if (stderr) console.log(`[RepoManageService] git gc stderr:\n${stderr}`);
+
+      const statsAfter = await getStats();
+      console.log(`[RepoManageService] Stats after gc:\n${statsAfter}`);
+
+      console.log(`[RepoManageService] git gc completed for repo "${this.repoId}"`);
+      return { statsBefore, statsAfter };
+    } catch (err) {
+      console.error(`[RepoManageService] git gc failed for repo "${this.repoId}":`, err);
+      throw err;
+    }
   }
 }

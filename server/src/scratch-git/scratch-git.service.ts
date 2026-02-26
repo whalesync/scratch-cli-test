@@ -32,6 +32,10 @@ export class ScratchGitService {
     await this.scratchGitClient.rebaseDirty(workbookId);
   }
 
+  async runGitGc(workbookId: WorkbookId) {
+    return this.scratchGitClient.gc(workbookId);
+  }
+
   async commitFilesToBranch(
     workbookId: WorkbookId,
     branch: string,
