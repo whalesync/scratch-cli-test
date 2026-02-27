@@ -1,13 +1,16 @@
 import { Text12Regular, Text13Medium } from '@/app/components/base/text';
+import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Badge, Group, Menu, UnstyledButton } from '@mantine/core';
-import { ChevronDown, Plus } from 'lucide-react';
+import { ArrowRight, ChevronDown, Plus } from 'lucide-react';
 
 interface FolderPairSummary {
   id: string;
   sourceId: string;
   destId: string;
   fieldMappingCount: number;
+  sourceConnectorService?: string | null;
+  destConnectorService?: string | null;
 }
 
 interface TablePairSelectorProps {
@@ -16,6 +19,15 @@ interface TablePairSelectorProps {
   onSelect: (index: number) => void;
   onAddPair: () => void;
   getFolderName: (id: string) => string;
+}
+
+function FolderLabel({ name, connectorService }: { name: string; connectorService?: string | null }) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      {connectorService && <ConnectorIcon connector={connectorService} size={16} p={0} />}
+      <Text13Medium>{name}</Text13Medium>
+    </Group>
+  );
 }
 
 export function TablePairSelector({
@@ -27,18 +39,10 @@ export function TablePairSelector({
 }: TablePairSelectorProps) {
   const activePair = folderPairs[selectedIndex];
 
-  const getPairLabel = (pair: FolderPairSummary) => {
-    if (pair.sourceId && pair.destId) {
-      return `${getFolderName(pair.sourceId)} \u2192 ${getFolderName(pair.destId)}`;
-    }
-    const blankCount = folderPairs.filter((p) => !p.sourceId || !p.destId).length;
-    return blankCount > 1 ? `New folder mapping ${folderPairs.indexOf(pair) + 1}` : 'New folder mapping';
-  };
-
   const validMappingCount = activePair?.fieldMappingCount ?? 0;
 
   return (
-    <Menu position="bottom-start" withinPortal>
+    <Menu position="bottom-start" withinPortal width="target">
       <Menu.Target>
         <UnstyledButton
           px="sm"
@@ -49,10 +53,22 @@ export function TablePairSelector({
             display: 'flex',
             alignItems: 'center',
             gap: 8,
+            minWidth: 400,
           }}
         >
           <Text12Regular c="dimmed">FOLDERS</Text12Regular>
-          <Text13Medium>{activePair ? getPairLabel(activePair) : 'Select table'}</Text13Medium>
+          {activePair && activePair.sourceId && activePair.destId ? (
+            <Group gap="xs" wrap="nowrap" style={{ flex: 1 }}>
+              <FolderLabel
+                name={getFolderName(activePair.sourceId)}
+                connectorService={activePair.sourceConnectorService}
+              />
+              <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
+              <FolderLabel name={getFolderName(activePair.destId)} connectorService={activePair.destConnectorService} />
+            </Group>
+          ) : (
+            <Text13Medium style={{ flex: 1 }}>{activePair ? 'New folder mapping' : 'Select table'}</Text13Medium>
+          )}
           {validMappingCount > 0 && (
             <Badge size="xs" variant="light" color="blue">
               {validMappingCount}
@@ -72,7 +88,15 @@ export function TablePairSelector({
               bg={index === selectedIndex ? 'var(--mantine-color-blue-light)' : undefined}
             >
               <Group gap="sm" wrap="nowrap">
-                <Text13Medium style={{ flex: 1 }}>{getPairLabel(pair)}</Text13Medium>
+                {pair.sourceId && pair.destId ? (
+                  <Group gap="xs" wrap="nowrap" style={{ flex: 1 }}>
+                    <FolderLabel name={getFolderName(pair.sourceId)} connectorService={pair.sourceConnectorService} />
+                    <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
+                    <FolderLabel name={getFolderName(pair.destId)} connectorService={pair.destConnectorService} />
+                  </Group>
+                ) : (
+                  <Text13Medium style={{ flex: 1 }}>New folder mapping</Text13Medium>
+                )}
                 {mappingCount > 0 && (
                   <Badge size="xs" variant="light" color="blue">
                     {mappingCount}
