@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo dev dev:http-backend",
+    "dev": "turbo dev",
     "build": "yarn install && turbo build",
     "migrate": "turbo migrate",
     "lint": "turbo lint",
