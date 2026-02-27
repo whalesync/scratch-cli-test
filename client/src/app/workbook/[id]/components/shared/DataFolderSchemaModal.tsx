@@ -13,12 +13,14 @@ interface DataFolderSchemaModalProps {
   opened: boolean;
   onClose: () => void;
   folder: DataFolder;
+  mode?: 'view' | 'refresh';
 }
 
-export function DataFolderSchemaModal({ opened, onClose, folder }: DataFolderSchemaModalProps) {
+export function DataFolderSchemaModal({ opened, onClose, folder, mode = 'view' }: DataFolderSchemaModalProps) {
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const { colorScheme } = useMantineColorScheme();
 
   useEffect(() => {
@@ -27,13 +29,23 @@ export function DataFolderSchemaModal({ opened, onClose, folder }: DataFolderSch
     setLoading(true);
     setError(null);
     setSchema(null);
+    setRefreshedAt(null);
 
-    dataFolderApi
-      .getSchema(folder.id)
-      .then((data) => setSchema(data))
+    const fetchFn = mode === 'refresh' ? dataFolderApi.refreshSchema : dataFolderApi.getSchema;
+
+    fetchFn(folder.id)
+      .then((data) => {
+        setSchema(data);
+        setRefreshedAt(mode === 'refresh' ? new Date().toISOString() : null);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load schema'))
       .finally(() => setLoading(false));
-  }, [opened, folder.id]);
+  }, [opened, folder.id, mode]);
+
+  const lastUpdated = refreshedAt ?? folder.lastSchemaRefreshAt;
+  const lastUpdatedLabel = lastUpdated
+    ? `Last updated ${new Date(lastUpdated).toLocaleString()}`
+    : null;
 
   const extensions = useMemo(() => [json(), EditorView.lineWrapping], []);
   const schemaText = useMemo(() => (schema ? JSON.stringify(schema, null, 2) : ''), [schema]);
@@ -69,23 +81,30 @@ export function DataFolderSchemaModal({ opened, onClose, folder }: DataFolderSch
           {error}
         </Text>
       ) : schema ? (
-        <Box style={{ maxHeight: '70vh', overflow: 'auto' }}>
-          <CodeMirror
-            value={schemaText}
-            extensions={extensions}
-            theme={colorScheme === 'dark' ? 'dark' : 'light'}
-            editable={false}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: true,
-              highlightActiveLineGutter: false,
-              highlightActiveLine: false,
-              syntaxHighlighting: true,
-              bracketMatching: true,
-            }}
-            style={{ fontSize: '13px' }}
-          />
-        </Box>
+        <>
+          <Box style={{ maxHeight: '70vh', overflow: 'auto' }}>
+            <CodeMirror
+              value={schemaText}
+              extensions={extensions}
+              theme={colorScheme === 'dark' ? 'dark' : 'light'}
+              editable={false}
+              basicSetup={{
+                lineNumbers: true,
+                foldGutter: true,
+                highlightActiveLineGutter: false,
+                highlightActiveLine: false,
+                syntaxHighlighting: true,
+                bracketMatching: true,
+              }}
+              style={{ fontSize: '13px' }}
+            />
+          </Box>
+          {lastUpdatedLabel && (
+            <Text c="dimmed" size="xs" pt="xs">
+              {lastUpdatedLabel}
+            </Text>
+          )}
+        </>
       ) : (
         <Text c="dimmed" p="md">
           No schema available for this data folder.

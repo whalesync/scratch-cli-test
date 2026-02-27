@@ -48,7 +48,7 @@ export class DataFolderEntity implements DataFolder {
     this.options = dataFolder.options
       ? normalizeJsonObject(dataFolder.options as Prisma.JsonValue | null | undefined)
       : {};
-    this.schema = {};
+    this.schema = normalizeJsonObject(dataFolder.schema as Prisma.JsonValue | null | undefined);
     this.schedules = schedules.map((s) => new ScheduleEntity(s));
   }
 }

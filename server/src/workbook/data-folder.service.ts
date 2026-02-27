@@ -835,6 +835,14 @@ export class DataFolderService {
   }
 
   /**
+   * Returns the schema already stored in the DB for a data folder, without calling the connector.
+   */
+  async getStoredSchema(id: DataFolderId, actor: Actor): Promise<Record<string, unknown> | null> {
+    const folder = await this.findOne(id, actor);
+    return folder.schema;
+  }
+
+  /**
    * Fetches the full JSON Table Spec from the connector for a data folder.
    */
   async fetchSchemaSpec(id: DataFolderId, actor: Actor): Promise<BaseJsonTableSpec | null> {

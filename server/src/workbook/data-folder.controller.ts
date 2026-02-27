@@ -220,11 +220,20 @@ export class DataFolderController {
   @Get(':id/schema')
   async getDataFolderSchema(@Param('id') id: DataFolderId, @Req() req: RequestWithUser) {
     const actor = userToActor(req.user);
+    const schema = await this.dataFolderService.getStoredSchema(id, actor);
+    if (!schema) {
+      throw new NotFoundException('No schema found for this data folder');
+    }
+    return schema;
+  }
+
+  @Post(':id/refresh-schema')
+  async refreshDataFolderSchema(@Param('id') id: DataFolderId, @Req() req: RequestWithUser) {
+    const actor = userToActor(req.user);
     const spec = await this.dataFolderService.fetchSchemaSpec(id, actor);
     if (!spec) {
       throw new NotFoundException('No schema found for this data folder');
     }
-
     return spec;
   }
 

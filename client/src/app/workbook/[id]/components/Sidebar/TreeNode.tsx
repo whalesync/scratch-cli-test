@@ -444,6 +444,8 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const [removeModalOpened, { open: openRemoveModal, close: closeRemoveModal }] = useDisclosure(false);
   const [deleteAllModalOpened, { open: openDeleteAllModal, close: closeDeleteAllModal }] = useDisclosure(false);
   const [schemaModalOpened, { open: openSchemaModal, close: closeSchemaModal }] = useDisclosure(false);
+  const [refreshSchemaModalOpened, { open: openRefreshSchemaModal, close: closeRefreshSchemaModal }] =
+    useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const [pullScheduleOpened, { open: openPullSchedule, close: closePullSchedule }] = useDisclosure(false);
 
@@ -671,6 +673,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
               },
             },
             { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
+            { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
             { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
             { type: 'divider' },
@@ -686,8 +689,16 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
       {/* Remove Table Modal */}
       <RemoveTableModal opened={removeModalOpened} onClose={closeRemoveModal} folder={folder} workbookId={workbookId} />
 
-      {/* Schema Modal (dev tools only) */}
-      <DataFolderSchemaModal opened={schemaModalOpened} onClose={closeSchemaModal} folder={folder} />
+      {/* Schema Modal */}
+      <DataFolderSchemaModal opened={schemaModalOpened} onClose={closeSchemaModal} folder={folder} mode="view" />
+
+      {/* Refresh Schema Modal */}
+      <DataFolderSchemaModal
+        opened={refreshSchemaModalOpened}
+        onClose={closeRefreshSchemaModal}
+        folder={folder}
+        mode="refresh"
+      />
 
       {/* Delete All Records Modal */}
       <DeleteAllRecordsModal
