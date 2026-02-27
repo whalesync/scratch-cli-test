@@ -60,9 +60,14 @@ describe('Payment Helpers', () => {
     });
 
     it('should include subscriptions with expiration equal to current date', () => {
-      const now = new Date();
+      // Use end of today to avoid flakiness from milliseconds elapsing between
+      // creating the expiration and the >= check inside getActiveSubscriptions.
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
 
-      const subscriptions: Subscription[] = [createTestSubscription({ id: 'sub_1', userId: 'usr_1', expiration: now })];
+      const subscriptions: Subscription[] = [
+        createTestSubscription({ id: 'sub_1', userId: 'usr_1', expiration: endOfToday }),
+      ];
 
       const result = getActiveSubscriptions(subscriptions);
 
