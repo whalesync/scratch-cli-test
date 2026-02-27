@@ -722,19 +722,19 @@ This strategy is particularly powerful when combined with a **Repo-per-Connectio
 
 ## Implementation Priority
 
-| Phase         | Change                                           | Effort    | Impact                                               |
-| ------------- | ------------------------------------------------ | --------- | ---------------------------------------------------- |
-| **1 (now)**   | `git gc --auto` after heavy operations           | 1 day     | Prevents repo size explosion                         |
-| **1 (now)**   | **Repo-per-connection architecture**             | 2-3 days  | Encapsulation, sharding, and reduced lock contention |
-| **1 (now)**   | Verify hash-before-write (no unnecessary blobs)  | 1 day     | Prevents most churn                                  |
-| **1 (now)**   | **Merge-base UI diffing**                        | 1 day     | Fixes phantom deletes and enables cleaner squashing  |
-| **2 (soon)**  | Shallow history (squash commits >30 days)        | 1-2 days  | Bounds disk usage permanently                        |
-| **2 (soon)**  | SQLite index for reads                           | 3-5 days  | 100-1000x faster file listing and dirty status       |
-| **3 (next)**  | Native `git ls-tree` / `git diff-tree` for reads | 3-5 days  | 5-10x faster even without index                      |
-| **3 (next)**  | Worker threads for remaining isomorphic-git ops  | 2-3 days  | Unblocks event loop                                  |
-| **4 (later)** | Full native git plumbing for writes              | 1 week    | Native performance + gc for free                     |
-| **5 (scale)** | Go/Rust child process                            | 3-4 weeks | Full solution for concurrent users                   |
-| **5 (scale)** | Repo sharding across instances                   | 1-2 weeks | Horizontal scaling                                   |
+| Phase         | Change                                           | Effort (if hand coded) | Impact                                               |
+| ------------- | ------------------------------------------------ | ---------------------- | ---------------------------------------------------- |
+| **1 (now)**   | `git gc --auto` after heavy operations           | 1 day                  | Prevents repo size explosion                         |
+| **1 (now)**   | **Repo-per-connection architecture**             | 2-3 days               | Encapsulation, sharding, and reduced lock contention |
+| **1 (now)**   | Verify hash-before-write (no unnecessary blobs)  | 1 day                  | Prevents most churn                                  |
+| **1 (now)**   | **Merge-base UI diffing**                        | 1 day                  | Fixes phantom deletes and enables cleaner squashing  |
+| **2 (soon)**  | Shallow history (squash commits >30 days)        | 1-2 days               | Bounds disk usage permanently                        |
+| **2 (soon)**  | SQLite index for reads                           | 3-5 days               | 100-1000x faster file listing and dirty status       |
+| **3 (next)**  | Native `git ls-tree` / `git diff-tree` for reads | 3-5 days               | 5-10x faster even without index                      |
+| **3 (next)**  | Worker threads for remaining isomorphic-git ops  | 2-3 days               | Unblocks event loop                                  |
+| **4 (later)** | Full native git plumbing for writes              | 1 week                 | Native performance + gc for free                     |
+| **5 (scale)** | Go/Rust child process                            | 3-4 weeks              | Full solution for concurrent users                   |
+| **5 (scale)** | Repo sharding across instances                   | 1-2 weeks              | Horizontal scaling                                   |
 
 Each phase compounds on the previous one and is independently valuable. No big-bang rewrite required.
 

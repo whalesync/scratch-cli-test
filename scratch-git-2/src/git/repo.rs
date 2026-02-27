@@ -9,8 +9,8 @@ use crate::types::*;
 
 pub struct GitRepo {
     pub repo: gix::Repository,
-    pub repo_path: PathBuf,
-    pub repo_id: String,
+    _repo_path: PathBuf,
+    _repo_id: String,
 }
 
 impl GitRepo {
@@ -22,8 +22,8 @@ impl GitRepo {
         })?;
         Ok(Self {
             repo,
-            repo_path,
-            repo_id: repo_id.to_string(),
+            _repo_path: repo_path,
+            _repo_id: repo_id.to_string(),
         })
     }
 
@@ -42,8 +42,8 @@ impl GitRepo {
 
             let git_repo = Self {
                 repo,
-                repo_path: repo_path.clone(),
-                repo_id: repo_id.to_string(),
+                _repo_path: repo_path.clone(),
+                _repo_id: repo_id.to_string(),
             };
 
             // Create initial commit if main doesn't exist
@@ -548,7 +548,7 @@ impl GitRepo {
         let parents: Vec<ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
 
         Ok(CommitInfo {
-            oid,
+            _oid: oid,
             message,
             parents,
             timestamp,
@@ -559,7 +559,7 @@ impl GitRepo {
 }
 
 pub struct CommitInfo {
-    pub oid: ObjectId,
+    pub _oid: ObjectId,
     pub message: String,
     pub parents: Vec<ObjectId>,
     pub timestamp: gix::date::SecondsSinceUnixEpoch,

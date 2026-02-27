@@ -1,4 +1,3 @@
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::json;
@@ -51,14 +50,3 @@ pub fn envelope_result<T: Serialize>(
     }
 }
 
-/// A response type that wraps in envelope and handles errors.
-pub struct EnvelopeResponse {
-    pub status: StatusCode,
-    pub response: Response,
-}
-
-impl IntoResponse for EnvelopeResponse {
-    fn into_response(self) -> Response {
-        self.response
-    }
-}
