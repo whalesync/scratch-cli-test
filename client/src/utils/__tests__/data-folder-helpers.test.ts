@@ -1,6 +1,6 @@
-import { fileMatchesFolder, findDataFolderForFile, getDirtyDataFolderIds } from '../data-folder-helpers';
-import type { DataFolder, DataFolderGroup, DataFolderId, WorkbookId } from '@spinner/shared-types';
 import type { DirtyFile } from '@/hooks/use-dirty-files';
+import type { DataFolder, DataFolderGroup, DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { fileMatchesFolder, findDataFolderForFile, getDirtyDataFolderIds } from '../data-folder-helpers';
 
 /** Helper to create a minimal DataFolder with just the fields we need. */
 function makeFolder(overrides: Partial<DataFolder> & { id: DataFolderId; path: string | null }): DataFolder {

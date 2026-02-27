@@ -90,11 +90,9 @@ export function TransformerConfigModal({
           options: { referencedDataFolderId: referencedDataFolderId as DataFolderId, referencedFieldPath },
         };
         break;
-      case TransformerTypes.NotionToHtml:
-        config = { type };
-        break;
       default:
-        return;
+        config = { type } as TransformerConfig;
+        break;
     }
 
     onSave(config);

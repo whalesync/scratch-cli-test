@@ -535,9 +535,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       try {
         const dirtyFiles = (await workbookApi.getStatus(workbookId)) as { path: string }[];
 
-        const folderPaths = new Set(
-          pendingFoldersToRemove.map((f) => (f.path ?? f.name).replace(/^\//, '')),
-        );
+        const folderPaths = new Set(pendingFoldersToRemove.map((f) => (f.path ?? f.name).replace(/^\//, '')));
         const dirtyInRemovedFolders = dirtyFiles.filter((file) => {
           return Array.from(folderPaths).some((folderPath) => {
             const prefix = folderPath.endsWith('/') ? folderPath : `${folderPath}/`;
