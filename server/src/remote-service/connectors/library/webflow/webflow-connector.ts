@@ -2,8 +2,10 @@ import { TObject, TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
+import { sleep } from 'src/util';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Webflow, WebflowClient, WebflowError } from 'webflow-api';
+import { TooManyRequestsError } from 'webflow-api/api/errors';
 import { minifyHtml } from '../../../../wrappers/html-minify';
 import { Connector } from '../../connector';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
@@ -12,6 +14,9 @@ import { WebflowSchemaParser } from './webflow-schema-parser';
 import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
 
 export const WEBFLOW_DEFAULT_BATCH_SIZE = 100;
+const MAX_RETRIES = 5;
+const INITIAL_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 60_000;
 
 export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   readonly service = Service.WEBFLOW;
@@ -25,6 +30,37 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     this.client = new WebflowClient({ accessToken });
   }
 
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    let retryDelay = INITIAL_RETRY_DELAY_MS;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (!(error instanceof TooManyRequestsError) || attempt === MAX_RETRIES) {
+          throw error;
+        }
+
+        const retryAfterHeader = error.rawResponse?.headers?.get('retry-after');
+        const retryAfterSeconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
+
+        if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
+          retryDelay = Math.min(retryAfterSeconds * 1000, MAX_RETRY_DELAY_MS);
+        }
+
+        WSLogger.warn({
+          source: 'WebflowConnector',
+          message: `Webflow API rate limited (429), retrying in ${retryDelay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
+        });
+        await sleep(retryDelay);
+
+        retryDelay = Math.min(retryDelay * 2 + Math.random() * 500, MAX_RETRY_DELAY_MS);
+      }
+    }
+
+    throw new Error('Webflow API rate limit retries exhausted');
+  }
+
   public async testConnection(): Promise<void> {
     // Test connection by listing sites
     await this.client.sites.list();
@@ -34,12 +70,12 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     const tables: TablePreview[] = [];
 
     // Get all sites
-    const sitesResponse = await this.client.sites.list();
+    const sitesResponse = await this.withRetry(() => this.client.sites.list());
     const sites = sitesResponse.sites || [];
 
     // For each site, get all collections
     for (const site of sites) {
-      const collectionsResponse = await this.client.collections.list(site.id);
+      const collectionsResponse = await this.withRetry(() => this.client.collections.list(site.id));
       const collections = collectionsResponse.collections || [];
 
       for (const collection of collections) {
@@ -144,10 +180,12 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
 
     while (hasMore) {
       // List items with pagination
-      const response = await this.client.collections.items.listItems(collectionId, {
-        offset,
-        limit: WEBFLOW_DEFAULT_BATCH_SIZE,
-      });
+      const response = await this.withRetry(() =>
+        this.client.collections.items.listItems(collectionId, {
+          offset,
+          limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+        }),
+      );
 
       const items = response.items || [];
 
@@ -182,8 +220,8 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
 
     // Fetch site and collection directly from Webflow API
     const [site, collection] = await Promise.all([
-      this.client.sites.get(siteId),
-      this.client.collections.get(collectionId),
+      this.withRetry(() => this.client.sites.get(siteId)),
+      this.withRetry(() => this.client.collections.get(collectionId)),
     ]);
 
     return buildWebflowJsonTableSpec(id, site, collection);
@@ -200,7 +238,7 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
 
     for (const itemId of ids) {
       try {
-        const item = await this.client.collections.items.getItem(collectionId, itemId);
+        const item = await this.withRetry(() => this.client.collections.items.getItem(collectionId, itemId));
         if (item) {
           buffer.push(item as unknown as ConnectorFile);
         }
@@ -244,12 +282,14 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
       fieldDataArray.push(fields);
     }
 
-    const created = await this.client.collections.items.createItems(collectionId, {
-      skipInvalidFiles: false,
-      isArchived: false,
-      isDraft: false,
-      fieldData: fieldDataArray as Webflow.collections.CreateBulkCollectionItemRequestBodyFieldData,
-    });
+    const created = await this.withRetry(() =>
+      this.client.collections.items.createItems(collectionId, {
+        skipInvalidFiles: false,
+        isArchived: false,
+        isDraft: false,
+        fieldData: fieldDataArray as Webflow.collections.CreateBulkCollectionItemRequestBodyFieldData,
+      }),
+    );
 
     const createdItems = _.get(created, 'items', []) as Webflow.CollectionItem[];
     return createdItems as unknown as ConnectorFile[];
@@ -271,7 +311,9 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
       });
     }
 
-    await this.client.collections.items.updateItems(collectionId, { skipInvalidFiles: false, items });
+    await this.withRetry(() =>
+      this.client.collections.items.updateItems(collectionId, { skipInvalidFiles: false, items }),
+    );
   }
 
   /**
@@ -284,7 +326,7 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
 
     const items = files.map((file) => ({ id: file.id as string }));
     try {
-      await this.client.collections.items.deleteItems(collectionId, { items });
+      await this.withRetry(() => this.client.collections.items.deleteItems(collectionId, { items }));
     } catch (e) {
       // If item not found (404), that's fine - it's already deleted
       const errorMessage = e instanceof Error ? e.message : String(e);
