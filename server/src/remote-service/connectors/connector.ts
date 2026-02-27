@@ -1,5 +1,6 @@
 import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
+import { getServiceDisplayName } from './display-names';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from './types';
 
 /**
@@ -174,4 +175,17 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * @returns The connector error details.
    */
   abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails;
+
+  /**
+   * Default fallback error details that always includes the actual error message.
+   * Connectors should call this as their final fallback in extractConnectorErrorDetails.
+   */
+  protected fallbackErrorDetails(error: unknown): ConnectorErrorDetails {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const serviceName = getServiceDisplayName(this.service);
+    return {
+      userFriendlyMessage: `${serviceName} error: ${errorMessage}`,
+      description: errorMessage,
+    };
+  }
 }

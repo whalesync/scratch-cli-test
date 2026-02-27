@@ -351,7 +351,6 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    // TODO: Webflow errors are really bad for user friendliness, we should improve this.
     const errors = _.get(error, 'errors');
     if (errors && Array.isArray(errors)) {
       const formattedError = {
@@ -374,9 +373,6 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
         description: error.message,
       };
     }
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to Webflow',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 }

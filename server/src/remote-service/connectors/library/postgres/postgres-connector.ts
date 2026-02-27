@@ -290,10 +290,7 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
       };
     }
 
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to PostgreSQL',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 
   /**

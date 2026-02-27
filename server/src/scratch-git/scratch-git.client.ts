@@ -115,7 +115,7 @@ export class ScratchGitClient {
   }
 
   async rebaseDirty(repoId: string): Promise<{ rebased: boolean; conflicts: string[] }> {
-    return this.callGitApi(`/api/repo/write/${repoId}/rebase`, 'POST') as Promise<{
+    return this.callGitApi(`/api/repo/write/${repoId}/rebase`, 'POST', {}) as Promise<{
       rebased: boolean;
       conflicts: string[];
     }>;

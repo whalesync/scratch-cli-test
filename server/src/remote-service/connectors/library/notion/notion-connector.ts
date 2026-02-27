@@ -545,10 +545,7 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
         };
       }
     }
-    return {
-      userFriendlyMessage: 'An unexpected error occurred while connecting to Notion',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 
   supportsFilters(): boolean {

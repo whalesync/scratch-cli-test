@@ -158,7 +158,7 @@ export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    let userFriendlyMessage = 'An error occurred while connecting to Wix';
+    let userFriendlyMessage = this.fallbackErrorDetails(error).userFriendlyMessage;
     let description = error instanceof Error ? error.message : String(error);
     let statusCode: number | undefined;
     // TODO: we can probably do much better than this.

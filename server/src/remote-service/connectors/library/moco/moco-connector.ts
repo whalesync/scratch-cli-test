@@ -341,9 +341,6 @@ export class MocoConnector extends Connector<typeof Service.MOCO> {
       };
     }
 
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to Moco',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 }

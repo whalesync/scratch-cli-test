@@ -190,10 +190,7 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
         },
       };
     }
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to Airtable',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 
   supportsFilters(): boolean {

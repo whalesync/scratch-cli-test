@@ -269,9 +269,6 @@ export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> 
       };
     }
 
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to Audienceful',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 }

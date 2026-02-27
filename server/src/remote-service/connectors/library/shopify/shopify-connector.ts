@@ -426,9 +426,6 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
       };
     }
 
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to Shopify',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 }

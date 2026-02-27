@@ -690,10 +690,7 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
       }
     }
 
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to Supabase',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 
   private getPgErrorMessage(code: string, fallbackMessage: string): string {

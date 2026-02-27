@@ -248,9 +248,6 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
       };
     }
 
-    return {
-      userFriendlyMessage: `An error occurred while connecting to Wordpress: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 }

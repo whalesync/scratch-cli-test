@@ -26,6 +26,7 @@ settings.local.json
 # Node.js compiled output and packages.
 dist/
 node_modules/
+*.tsbuildinfo
 
 # Turborepo cache.
 .turbo/

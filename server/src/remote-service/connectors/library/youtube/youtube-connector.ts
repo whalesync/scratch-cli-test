@@ -260,11 +260,6 @@ export class YouTubeConnector extends Connector<typeof Service.YOUTUBE> {
   // }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    // TODO - parse the error more gracefully and return more specific error details.
-
-    return {
-      userFriendlyMessage: 'An error occurred while connecting to YouTube',
-      description: error instanceof Error ? error.message : String(error),
-    };
+    return this.fallbackErrorDetails(error);
   }
 }
