@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 // -- Transformer schemas --
 
+const autoConvertOptionsSchema = z
+  .object({
+    targetType: z.enum(['string', 'number', 'integer', 'boolean', 'array']),
+  })
+  .strict();
+
 const stringToNumberOptionsSchema = z
   .object({
     stripCurrency: z.boolean().optional(),
@@ -25,6 +31,7 @@ const lookupFieldOptionsSchema = z
   .strict();
 
 const transformerConfigSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal(TransformerTypes.AutoConvert), options: autoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.SourceFkToDestFk), options: sourceFkToDestFkOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.LookupField), options: lookupFieldOptionsSchema }),

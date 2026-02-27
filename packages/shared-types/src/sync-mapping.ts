@@ -48,6 +48,7 @@ export interface ColumnMapping {
 
 /** Canonical transformer type constants. Add new transformers here. */
 export const TransformerTypes = {
+  AutoConvert: 'auto_convert',
   StringToNumber: 'string_to_number',
   SourceFkToDestFk: 'source_fk_to_dest_fk',
   LookupField: 'lookup_field',
@@ -64,6 +65,7 @@ export interface TransformerTypeInfo {
 }
 
 export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
+  { type: TransformerTypes.AutoConvert, label: 'Auto Convert' },
   { type: TransformerTypes.StringToNumber, label: 'String to Number' },
   { type: TransformerTypes.SourceFkToDestFk, label: 'Foreign Key Lookup' },
   { type: TransformerTypes.LookupField, label: 'Lookup Field' },
@@ -75,6 +77,12 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
 /** Get the display label for a transformer type */
 export function getTransformerLabel(type: TransformerType): string {
   return TRANSFORMER_TYPES.find((t) => t.type === type)?.label ?? type.replace(/_/g, ' ');
+}
+
+/** Options for the auto_convert transformer */
+export interface AutoConvertOptions {
+  /** The target type to convert the source value to */
+  targetType: 'string' | 'number' | 'integer' | 'boolean' | 'array';
 }
 
 /** Options for the string_to_number transformer */
@@ -100,10 +108,15 @@ export interface LookupFieldOptions {
 }
 
 /** Union of all transformer options types */
-export type TransformerOptions = StringToNumberOptions | SourceFkToDestFkOptions | LookupFieldOptions;
+export type TransformerOptions =
+  | AutoConvertOptions
+  | StringToNumberOptions
+  | SourceFkToDestFkOptions
+  | LookupFieldOptions;
 
 /** Configuration for a field transformer with strictly typed options */
 export type TransformerConfig =
+  | { type: typeof TransformerTypes.AutoConvert; options: AutoConvertOptions }
   | { type: typeof TransformerTypes.StringToNumber; options?: StringToNumberOptions }
   | { type: typeof TransformerTypes.SourceFkToDestFk; options: SourceFkToDestFkOptions }
   | { type: typeof TransformerTypes.LookupField; options: LookupFieldOptions }

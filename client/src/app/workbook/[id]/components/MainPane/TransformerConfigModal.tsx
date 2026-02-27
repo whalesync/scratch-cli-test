@@ -3,7 +3,13 @@
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import type { ComboboxItem } from '@mantine/core';
 import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
-import type { DataFolder, DataFolderId, TransformerConfig, TransformerType } from '@spinner/shared-types';
+import type {
+  AutoConvertOptions,
+  DataFolder,
+  DataFolderId,
+  TransformerConfig,
+  TransformerType,
+} from '@spinner/shared-types';
 import { TRANSFORMER_TYPES, TransformerTypes } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
@@ -42,6 +48,9 @@ export function TransformerConfigModal({
   const [referencedFieldPath, setReferencedFieldPath] = useState(
     currentConfig?.type === TransformerTypes.LookupField ? currentConfig.options.referencedFieldPath : '',
   );
+  const [targetType, setTargetType] = useState<AutoConvertOptions['targetType']>(
+    currentConfig?.type === TransformerTypes.AutoConvert ? currentConfig.options.targetType : 'string',
+  );
 
   // Sync form state whenever the modal opens
   useEffect(() => {
@@ -66,6 +75,7 @@ export function TransformerConfigModal({
       setReferencedFieldPath(
         currentConfig?.type === TransformerTypes.LookupField ? currentConfig.options.referencedFieldPath : '',
       );
+      setTargetType(currentConfig?.type === TransformerTypes.AutoConvert ? currentConfig.options.targetType : 'string');
     }
   }, [opened, currentConfig]);
 
@@ -78,6 +88,9 @@ export function TransformerConfigModal({
 
     let config: TransformerConfig;
     switch (type) {
+      case TransformerTypes.AutoConvert:
+        config = { type, options: { targetType } };
+        break;
       case TransformerTypes.StringToNumber:
         config = { type, options: { stripCurrency, parseInteger } };
         break;
@@ -125,6 +138,22 @@ export function TransformerConfigModal({
           value={type}
           onChange={(val) => setType((val as TransformerType) || '')}
         />
+
+        {type === TransformerTypes.AutoConvert && (
+          <Select
+            label="Target Type"
+            description="The data type to convert the source value to"
+            data={[
+              { value: 'string', label: 'String' },
+              { value: 'number', label: 'Number' },
+              { value: 'integer', label: 'Integer' },
+              { value: 'boolean', label: 'Boolean' },
+              { value: 'array', label: 'Array' },
+            ]}
+            value={targetType}
+            onChange={(val) => setTargetType((val as AutoConvertOptions['targetType']) || 'string')}
+          />
+        )}
 
         {type === TransformerTypes.StringToNumber && (
           <Stack gap="xs">

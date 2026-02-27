@@ -34,6 +34,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type {
+  AutoConvertOptions,
   ColumnMapping,
   DataFolderId,
   PreviewFieldResult,
@@ -43,7 +44,7 @@ import type {
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
-import { getTransformerLabel, ScheduleAction } from '@spinner/shared-types';
+import { getTransformerLabel, ScheduleAction, TransformerTypes } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   AlertCircle,
@@ -76,6 +77,10 @@ interface FieldMapping {
   sourceField: string;
   destField: string;
   transformer?: TransformerConfig;
+  /** True when the transformer was auto-applied (can be replaced when fields change) */
+  transformerAutoApplied?: boolean;
+  /** True when the user has explicitly cleared the transformer (opt-out of auto-applied transformer) */
+  transformerClearedManually?: boolean;
 }
 
 interface FolderPair {
@@ -713,11 +718,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     pairIndex: number,
     mappingIndex: number,
     transformer: TransformerConfig | undefined,
+    options?: { cleared?: boolean; autoApplied?: boolean },
   ) => {
     const next = [...folderPairs];
     next[pairIndex].fieldMappings[mappingIndex] = {
       ...next[pairIndex].fieldMappings[mappingIndex],
       transformer,
+      transformerClearedManually: options?.cleared ?? false,
+      transformerAutoApplied: options?.autoApplied ?? false,
     };
     setFolderPairs(next);
   };
@@ -725,6 +733,67 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const openTransformerModal = (pairIndex: number, mappingIndex: number) => {
     setEditingTransformerTarget({ pairIndex, mappingIndex });
     setTransformerModalOpen(true);
+  };
+
+  /**
+   * Clear any auto-applied transformer so maybeAutoConvert can re-evaluate.
+   * Returns true if the transformer was cleared (caller should use updated state).
+   */
+  const clearAutoAppliedTransformer = (pairIndex: number, mappingIndex: number): boolean => {
+    const mapping = folderPairs[pairIndex].fieldMappings[mappingIndex];
+    const clearTransformer = (mapping.transformer && mapping.transformerAutoApplied) ?? false;
+
+    const next = [...folderPairs];
+    const previous = next[pairIndex].fieldMappings[mappingIndex];
+    next[pairIndex].fieldMappings[mappingIndex] = {
+      ...previous,
+      transformer: clearTransformer ? undefined : previous.transformer,
+      transformerAutoApplied: clearTransformer ? false : true,
+      transformerClearedManually: false,
+    };
+    setFolderPairs(next);
+
+    return clearTransformer;
+  };
+
+  /**
+   * Auto-apply AutoConvert transformer when source and dest field types differ.
+   * @param wasAutoCleared pass true if clearAutoAppliedTransformer just cleared the transformer
+   *        in this same event handler (React hasn't re-rendered yet so folderPairs is stale).
+   */
+  const maybeAutoConvert = (
+    pairIndex: number,
+    mappingIndex: number,
+    sourceField: string,
+    destField: string,
+    wasAutoCleared?: boolean,
+  ) => {
+    const pair = folderPairs[pairIndex];
+    const mapping = pair.fieldMappings[mappingIndex];
+    if (!sourceField || !destField) return;
+    if (mapping.transformerClearedManually) return;
+    // If there's a non-auto-applied transformer, don't override it
+    if (mapping.transformer && !mapping.transformerAutoApplied && !wasAutoCleared) return;
+
+    const sourceSchema = schemaCache[pair.sourceId] || [];
+    const destSchema = schemaCache[pair.destId] || [];
+    const sourceInfo = sourceSchema.find((f) => f.path === sourceField);
+    const destInfo = destSchema.find((f) => f.path === destField);
+    if (!sourceInfo || !destInfo) return;
+    if (sourceInfo.suggestedTransformer) return;
+
+    if (sourceInfo.type === destInfo.type) return;
+
+    const targetType = destInfo.type as AutoConvertOptions['targetType'];
+    const validTargets: AutoConvertOptions['targetType'][] = ['string', 'number', 'integer', 'boolean', 'array'];
+    if (!validTargets.includes(targetType)) return;
+
+    updateFieldMappingTransformer(
+      pairIndex,
+      mappingIndex,
+      { type: TransformerTypes.AutoConvert, options: { targetType } },
+      { autoApplied: true },
+    );
   };
 
   const getFolderName = (id: string) => allFolders.find((f) => f.id === id)?.name || 'Unknown';
@@ -939,17 +1008,25 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                     value={mapping.sourceField}
                                     onChange={(val) => {
                                       updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
+                                      const wasAutoCleared = clearAutoAppliedTransformer(activePairIndex, mIndex);
+                                      const currentMapping = folderPairs[activePairIndex].fieldMappings[mIndex];
+                                      const hasTransformer = currentMapping.transformer && !wasAutoCleared;
                                       const field = (schemaCache[activePair.sourceId] || []).find(
                                         (f) => f.path === val,
                                       );
-                                      if (
-                                        field?.suggestedTransformer &&
-                                        !folderPairs[activePairIndex].fieldMappings[mIndex].transformer
-                                      ) {
+                                      if (field?.suggestedTransformer && !hasTransformer) {
                                         updateFieldMappingTransformer(
                                           activePairIndex,
                                           mIndex,
                                           field.suggestedTransformer,
+                                        );
+                                      } else {
+                                        maybeAutoConvert(
+                                          activePairIndex,
+                                          mIndex,
+                                          val,
+                                          mapping.destField,
+                                          wasAutoCleared,
                                         );
                                       }
                                     }}
@@ -965,7 +1042,17 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                     placeholder="Dest field"
                                     style={{ flex: 1 }}
                                     value={mapping.destField}
-                                    onChange={(val) => updateFieldMapping(activePairIndex, mIndex, 'destField', val)}
+                                    onChange={(val) => {
+                                      updateFieldMapping(activePairIndex, mIndex, 'destField', val);
+                                      const wasAutoCleared = clearAutoAppliedTransformer(activePairIndex, mIndex);
+                                      maybeAutoConvert(
+                                        activePairIndex,
+                                        mIndex,
+                                        mapping.sourceField,
+                                        val,
+                                        wasAutoCleared,
+                                      );
+                                    }}
                                     data={(schemaCache[activePair.destId] || []).map((f) => {
                                       if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
                                       return { value: f.path, label: f.path, type: f.type };
@@ -1160,6 +1247,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
               editingTransformerTarget.pairIndex,
               editingTransformerTarget.mappingIndex,
               config,
+              !config ? { cleared: true } : undefined, // mark as cleared when user sets to "None"
             );
           }
         }}
