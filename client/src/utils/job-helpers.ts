@@ -5,7 +5,7 @@ export type JobType = 'sync' | 'publish' | 'pull' | 'unknown';
 export const getJobType = (type: string): JobType => {
   if (type.includes('sync')) return 'sync';
   if (type.includes('publish')) return 'publish';
-  if (type.includes('pull')) return 'pull';
+  if (type.includes('pull') || type === 'refresh-records') return 'pull';
   return 'unknown';
 };
 
@@ -54,8 +54,9 @@ export const getJobDescription = (job: JobEntity): string => {
     }
     case 'pull': {
       const folderSuffix = progress?.folderName ? ` for ${progress.folderName}` : '';
-      if (progress?.totalFiles !== undefined) {
-        const count = Number(progress.totalFiles) || 0;
+      const fileCount = progress?.totalFiles ?? progress?.totalRequested;
+      if (fileCount !== undefined) {
+        const count = Number(fileCount) || 0;
         return `Refreshed ${count} file${count !== 1 ? 's' : ''}${folderSuffix}`;
       }
       return 'Refreshed data';

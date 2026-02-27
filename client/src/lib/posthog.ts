@@ -11,6 +11,7 @@ export enum PostHogEvents {
   PULL_FILES = 'pull_files',
   PUBLISH_ALL = 'publish_all',
   DISCARD_CHANGES = 'discard_changes',
+  REFRESH_RECORDS = 'refresh_records',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -94,4 +95,8 @@ export function trackPublishAll(workbookId: string, folderCount: number): void {
 
 export function trackDiscardChanges(workbookId: string): void {
   captureEvent(PostHogEvents.DISCARD_CHANGES, { workbookId });
+}
+
+export function trackRefreshRecords(workbookId: string, dataFolderId: string): void {
+  captureEvent(PostHogEvents.REFRESH_RECORDS, { workbookId, dataFolderId });
 }

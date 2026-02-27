@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { type ConnectorPullOptions, DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
+import { type DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
@@ -9,45 +9,45 @@ import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
-import { MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
 
-/** Maximum number of file paths to track per category in progress */
+/** Maximum number of file paths to track in progress */
 const MAX_PROGRESS_PATHS = 1000;
 
-export type PullLinkedFolderFilesPublicProgress = {
-  totalFiles: number;
+export type RefreshRecordsPublicProgress = {
+  status: 'pending' | 'active' | 'completed' | 'failed';
   folderId: string;
   folderName: string;
   connector: string;
-  filter: string | null;
-  status: 'pending' | 'active' | 'completed' | 'failed';
-  createdPaths: string[];
+  totalRequested: number;
   updatedPaths: string[];
-  deletedPaths: string[];
 };
 
-export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
-  'pull-linked-folder-files',
+export type RefreshRecordsJobDefinition = JobDefinitionBuilder<
+  'refresh-records',
   {
     workbookId: WorkbookId;
     dataFolderId: DataFolderId;
     userId: string;
     organizationId: string;
+    filePaths: string[];
     progress?: JsonSafeObject;
-    initialPublicProgress?: PullLinkedFolderFilesPublicProgress;
+    initialPublicProgress?: RefreshRecordsPublicProgress;
   },
-  PullLinkedFolderFilesPublicProgress,
+  RefreshRecordsPublicProgress,
   Record<string, never>,
   void
 >;
 
 /**
- * This job pulls records as ConnectorFiles for a single DataFolder (linked folder)
+ * This job refreshes specific records by ID from their remote source.
+ * It resolves file paths to record IDs via the FileIndex, then pulls
+ * those records using the connector's pullRecordFilesByIds method.
  */
-export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLinkedFolderFilesJobDefinition> {
+export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecordsJobDefinition> {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly connectorService: ConnectorsService,
@@ -60,29 +60,24 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
   async run(params: {
     jobId: string;
-    data: PullLinkedFolderFilesJobDefinition['data'];
+    data: RefreshRecordsJobDefinition['data'];
     progress: Progress<
-      PullLinkedFolderFilesJobDefinition['publicProgress'],
-      PullLinkedFolderFilesJobDefinition['initialJobProgress']
+      RefreshRecordsJobDefinition['publicProgress'],
+      RefreshRecordsJobDefinition['initialJobProgress']
     >;
     abortSignal: AbortSignal;
     checkpoint: (
       progress: Omit<
-        Progress<
-          PullLinkedFolderFilesJobDefinition['publicProgress'],
-          PullLinkedFolderFilesJobDefinition['initialJobProgress']
-        >,
+        Progress<RefreshRecordsJobDefinition['publicProgress'], RefreshRecordsJobDefinition['initialJobProgress']>,
         'timestamp'
       >,
     ) => Promise<void>;
   }) {
-    const { jobId, data, checkpoint, progress } = params;
+    const { jobId, data, checkpoint } = params;
 
     const dataFolder = await this.prisma.dataFolder.findUnique({
       where: { id: data.dataFolderId },
-      include: {
-        connectorAccount: true,
-      },
+      include: { connectorAccount: true },
     });
 
     if (!dataFolder) {
@@ -99,18 +94,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const tableSpec = dataFolder.schema as BaseJsonTableSpec;
 
-    const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
-
-    const publicProgress: PullLinkedFolderFilesPublicProgress = {
-      totalFiles: 0,
+    const publicProgress: RefreshRecordsPublicProgress = {
+      status: 'active',
       folderId: dataFolder.id,
       folderName: dataFolder.name,
       connector: dataFolder.connectorService,
-      filter: pullOptions.filter ?? null,
-      status: 'active',
-      createdPaths: [],
+      totalRequested: data.filePaths.length,
       updatedPaths: [],
-      deletedPaths: [],
     };
 
     this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
@@ -118,12 +108,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       data: {
         source: 'job',
         entityId: dataFolder.id,
-        message: 'Pulling files for data folder',
-        jobId: jobId,
+        message: 'Refreshing records from source',
+        jobId,
       },
     });
 
-    // Checkpoint initial status
     await checkpoint({
       publicProgress,
       jobProgress: {},
@@ -131,13 +120,52 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     });
 
     WSLogger.debug({
-      source: 'PullLinkedFolderFilesJob',
-      message: 'Pulling files for data folder',
+      source: 'RefreshRecordsJob',
+      message: 'Refreshing records for data folder',
       workbookId: dataFolder.workbookId,
       dataFolderId: dataFolder.id,
+      filePathCount: data.filePaths.length,
     });
 
-    // Get connector for this folder
+    // Resolve filePaths → recordIds via FileIndex
+    const lookups = data.filePaths.map((fp) => {
+      const normalized = fp.startsWith('/') ? fp.slice(1) : fp;
+      const lastSlash = normalized.lastIndexOf('/');
+      return {
+        folderPath: lastSlash === -1 ? '' : normalized.substring(0, lastSlash),
+        filename: lastSlash === -1 ? normalized : normalized.substring(lastSlash + 1),
+      };
+    });
+
+    const recordIdMap = await this.fileIndexService.getRecordIds(dataFolder.workbookId, lookups);
+    const recordIds = [...new Set(recordIdMap.values())];
+
+    if (recordIds.length === 0) {
+      WSLogger.warn({
+        source: 'RefreshRecordsJob',
+        message: 'No record IDs found for the given file paths',
+        workbookId: dataFolder.workbookId,
+        dataFolderId: dataFolder.id,
+        filePaths: data.filePaths,
+      });
+
+      publicProgress.status = 'completed';
+      await checkpoint({ publicProgress, jobProgress: {}, connectorProgress: {} });
+
+      await this.prisma.dataFolder.update({
+        where: { id: dataFolder.id },
+        data: { lock: null },
+      });
+
+      this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
+        type: 'job-completed',
+        data: { entityId: dataFolder.id, source: 'job', message: 'No records to refresh', jobId },
+      });
+
+      return;
+    }
+
+    // Get connector
     const service = dataFolder.connectorService;
 
     let decryptedConnectorAccount: Awaited<ReturnType<typeof this.connectorAccountService.findOneById>> | null = null;
@@ -158,30 +186,27 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       userId: data.userId,
     });
 
-    let gitFiles: { path: string; content: string }[] = [];
     const usedFileNames = new Set<string>();
-    const callback = async (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => {
-      const { files, connectorProgress } = params;
+
+    const callback = async (callbackParams: { files: ConnectorFile[] }) => {
+      const { files } = callbackParams;
 
       WSLogger.debug({
-        source: 'PullLinkedFolderFilesJob',
+        source: 'RefreshRecordsJob',
         message: 'Received files from connector',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
         fileCount: files.length,
-        folderPath: dataFolder.path,
       });
 
       // eslint-disable-next-line @typescript-eslint/no-base-to-string
-      const recordIds = files.map((f) => String((f as Record<string, unknown>)[tableSpec.idColumnRemoteId] || ''));
+      const batchRecordIds = files.map((f) => String((f as Record<string, unknown>)[tableSpec.idColumnRemoteId] || ''));
       const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
         dataFolder.workbookId,
-        dataFolder.path?.replace(/^\//, '') ?? '', // Match how folderPath is saved in upsertBatch
-        recordIds,
+        dataFolder.path?.replace(/^\//, '') ?? '',
+        batchRecordIds,
       );
 
-      // TODO: Validate files against the table schema before publishing.
-      // Build git file payloads from connector files
       const builtFiles = buildGitFilesFromConnectorFiles(
         dataFolder.path ?? '',
         files,
@@ -190,28 +215,23 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         existingFileNames,
       );
 
-      // Sync to Git (Commit to main + Rebase dirty)
       if (builtFiles.length > 0) {
         const batchGitFiles = builtFiles.map((f) => ({
           path: f.path.startsWith('/') ? f.path.slice(1) : f.path,
           content: f.content,
         }));
 
-        // Accumulate for deletion tracking
-        gitFiles = gitFiles.concat(batchGitFiles);
-
         await this.scratchGitService.commitFilesToBranch(
           dataFolder.workbookId as WorkbookId,
           'main',
           batchGitFiles,
-          `Sync batch of ${builtFiles.length} files`,
+          `Refresh ${builtFiles.length} record(s)`,
         );
 
         await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
 
-        // Update File Index & References (Best effort, after commit)
+        // Update File Index & References (best effort)
         try {
-          // Update File Index
           await this.fileIndexService.upsertBatch(
             builtFiles
               .map((f) => {
@@ -219,8 +239,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
                 // eslint-disable-next-line @typescript-eslint/no-base-to-string
                 const recordId = String(content[tableSpec.idColumnRemoteId] || '');
 
-                // f.path is full path e.g. /folder/file.json
-                // We want folderPath without leading slash, and filename
                 const parts = f.path.split('/');
                 const filename = parts.pop()!;
                 const folderPath = parts.join('/').replace(/^\//, '');
@@ -237,181 +255,99 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
               .filter((x): x is NonNullable<typeof x> => x !== null),
           );
 
-          // Update File References
           await this.fileReferenceService.updateRefsForFiles(
             dataFolder.workbookId,
-            MAIN_BRANCH, // Pulled files go to main
+            MAIN_BRANCH,
             builtFiles.map((f) => ({
               path: f.path.startsWith('/') ? f.path.slice(1) : f.path,
               // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
               content: JSON.parse(f.content),
             })),
-            tableSpec.schema, // Schema for Pass 2 (resolved ID refs)
+            tableSpec.schema,
           );
         } catch (err) {
           WSLogger.error({
-            source: 'PullLinkedFolderFilesJob',
+            source: 'RefreshRecordsJob',
             message: 'Failed to update indices',
             workbookId: dataFolder.workbookId,
             error: err,
           });
-          // Don't fail the job if indexing fails, but log it.
         }
       }
 
-      // Track file paths (all pulled records are "created" from the pull perspective)
       for (const file of builtFiles) {
         const normalizedPath = file.path.startsWith('/') ? file.path.slice(1) : file.path;
-        if (publicProgress.createdPaths.length < MAX_PROGRESS_PATHS) {
-          publicProgress.createdPaths.push(normalizedPath);
+        if (publicProgress.updatedPaths.length < MAX_PROGRESS_PATHS) {
+          publicProgress.updatedPaths.push(normalizedPath);
         }
       }
-
-      publicProgress.totalFiles += files.length;
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'folder-contents-changed',
         data: {
           entityId: dataFolder.id,
           source: 'job',
-          message: 'Updated data folder progress',
-          jobId: jobId,
+          message: 'Refreshed records',
+          jobId,
         },
       });
 
       await checkpoint({
         publicProgress,
         jobProgress: {},
-        connectorProgress: connectorProgress ?? {},
+        connectorProgress: {},
       });
     };
 
     try {
-      await connector.pullRecordFiles(tableSpec, callback, progress, pullOptions);
+      await connector.pullRecordFilesByIds(tableSpec, recordIds, callback);
 
-      // After download, remove files from main that no longer exist in remote
-      // This ensures deleted items don't keep showing up in future diffs
-      const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
-      try {
-        const mainFiles = (await this.scratchGitService.listRepoFiles(
-          dataFolder.workbookId as WorkbookId,
-          MAIN_BRANCH,
-          folderPath,
-        )) as RepoFileRef[];
-        const downloadedFilePaths = gitFiles.map((f) => f.path);
-        const filesToDelete = mainFiles.filter((f) => !downloadedFilePaths.includes(f.path)).map((f) => f.path);
-
-        if (filesToDelete.length > 0) {
-          // Track deleted file paths
-          for (const path of filesToDelete) {
-            if (publicProgress.deletedPaths.length < MAX_PROGRESS_PATHS) {
-              publicProgress.deletedPaths.push(path);
-            }
-          }
-
-          WSLogger.debug({
-            source: 'DownloadLinkedFolderFilesJob',
-            message: 'Removing deleted files from main branch',
-            workbookId: dataFolder.workbookId,
-            dataFolderId: dataFolder.id,
-            filesToDelete,
-          });
-
-          await this.scratchGitService.deleteFilesFromBranch(
-            dataFolder.workbookId as WorkbookId,
-            MAIN_BRANCH,
-            filesToDelete,
-            `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
-          );
-
-          await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
-        }
-      } catch (err) {
-        WSLogger.error({
-          source: 'DownloadLinkedFolderFilesJob',
-          message: 'Failed to clean up deleted files from main',
-          workbookId: dataFolder.workbookId,
-          error: err,
-        });
-        // Don't fail the job for cleanup errors
-      }
-
-      // Mark as completed
       publicProgress.status = 'completed';
 
-      // Checkpoint final status
       await checkpoint({
         publicProgress,
         jobProgress: {},
         connectorProgress: {},
       });
 
-      // Set lock=null and update lastSyncTime on success
       await this.prisma.dataFolder.update({
         where: { id: dataFolder.id },
-        data: {
-          lock: null,
-          lastSyncTime: new Date(),
-        },
+        data: { lock: null },
       });
 
       WSLogger.debug({
-        source: 'PullLinkedFolderFilesJob',
-        message: 'Pull completed for data folder',
+        source: 'RefreshRecordsJob',
+        message: 'Refresh completed for data folder',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
       });
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'folder-updated',
-        data: {
-          entityId: dataFolder.id,
-          source: 'job',
-          message: 'Updated status of folder',
-          jobId: jobId,
-        },
+        data: { entityId: dataFolder.id, source: 'job', message: 'Updated status of folder', jobId },
       });
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'job-completed',
-        data: {
-          entityId: dataFolder.id,
-          source: 'job',
-          message: 'Pull completed for data folder',
-          jobId: jobId,
-        },
+        data: { entityId: dataFolder.id, source: 'job', message: 'Refresh completed for data folder', jobId },
       });
-
-      try {
-        await this.scratchGitService.runGitGc(dataFolder.workbookId as WorkbookId);
-      } catch (err) {
-        WSLogger.warn({
-          source: 'PullLinkedFolderFilesJob',
-          message: 'Failed to run Git GC',
-          workbookId: dataFolder.workbookId,
-          error: err,
-        });
-      }
     } catch (error) {
-      // Mark as failed
       publicProgress.status = 'failed';
 
-      // Checkpoint failed status
       await checkpoint({
         publicProgress,
         jobProgress: {},
         connectorProgress: {},
       });
 
-      // Set lock=null on failure
       await this.prisma.dataFolder.update({
         where: { id: dataFolder.id },
         data: { lock: null },
       });
 
       WSLogger.error({
-        source: 'PullLinkedFolderFilesJob',
-        message: 'Failed to pull files for data folder',
+        source: 'RefreshRecordsJob',
+        message: 'Failed to refresh records for data folder',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -419,22 +355,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'folder-updated',
-        data: {
-          entityId: dataFolder.id,
-          source: 'job',
-          message: 'Updated status of folder',
-          jobId: jobId,
-        },
+        data: { entityId: dataFolder.id, source: 'job', message: 'Updated status of folder', jobId },
       });
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'job-failed',
-        data: {
-          entityId: dataFolder.id,
-          source: 'job',
-          message: 'Pull failed for data folder',
-          jobId: jobId,
-        },
+        data: { entityId: dataFolder.id, source: 'job', message: 'Refresh failed for data folder', jobId },
       });
 
       throw exceptionForConnectorError(error, connector);

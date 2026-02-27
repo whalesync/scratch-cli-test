@@ -165,6 +165,58 @@ export class DataFolderController {
     return { jobId: job.id ?? '' };
   }
 
+  @Post(':id/refresh-records')
+  async refreshRecords(
+    @Param('id') id: DataFolderId,
+    @Body() body: { workbookId: string; filePaths: string[] },
+    @Req() req: RequestWithUser,
+  ): Promise<{ jobId: string }> {
+    const actor = userToActor(req.user);
+    const workbookId = body.workbookId as WorkbookId;
+    const filePaths = body.filePaths;
+
+    if (!filePaths || filePaths.length === 0) {
+      throw new BadRequestException('At least one file path is required');
+    }
+
+    // Verify the user has access to the workbook
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    // Verify the data folder exists and belongs to this workbook
+    const dataFolder = await this.dataFolderService.findOne(id, actor);
+    if (!dataFolder) {
+      throw new NotFoundException('Data folder not found');
+    }
+    if (dataFolder.workbookId !== workbookId) {
+      throw new BadRequestException('Data folder does not belong to this workbook');
+    }
+    if (!dataFolder.connectorAccountId) {
+      throw new BadRequestException('Data folder does not have a connected source');
+    }
+
+    // Check if folder is already locked by another operation
+    if (dataFolder.lock) {
+      throw new BadRequestException(
+        `Data folder "${dataFolder.name}" is currently locked by another ${dataFolder.lock} operation`,
+      );
+    }
+
+    // Acquire lock before enqueueing the job
+    await this.db.client.dataFolder.update({
+      where: { id },
+      data: { lock: 'pull' },
+    });
+
+    const job = await this.bullEnqueuerService.enqueueRefreshRecordsJob(workbookId, actor, id, filePaths);
+
+    this.posthogService.trackRefreshRecords(actor, workbookId, id);
+
+    return { jobId: job.id ?? '' };
+  }
+
   @Get(':id/schema')
   async getDataFolderSchema(@Param('id') id: DataFolderId, @Req() req: RequestWithUser) {
     const actor = userToActor(req.user);

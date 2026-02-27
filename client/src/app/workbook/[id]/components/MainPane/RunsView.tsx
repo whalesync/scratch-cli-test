@@ -996,13 +996,13 @@ function PublishProgressTable({ progress }: { progress: Record<string, unknown> 
 function PullProgressTable({ progress }: { progress: Record<string, unknown> }) {
   const folderName = progress.folderName as string | undefined;
   const connector = progress.connector as string | undefined;
-  const totalFiles = progress.totalFiles as number | undefined;
+  const totalFiles = (progress.totalFiles ?? progress.totalRequested) as number | undefined;
   const status = progress.status as string | undefined;
   if (!folderName && totalFiles === undefined) return null;
 
   const affectedFiles = collectAffectedFiles([
     {
-      refreshedPaths: progress.createdPaths as string[] | undefined,
+      refreshedPaths: (progress.createdPaths ?? progress.updatedPaths) as string[] | undefined,
     },
   ]);
 

@@ -9,6 +9,7 @@ import { JobData } from 'src/worker/jobs/union-types';
 import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/publish-data-folder.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { RefreshRecordsJobDefinition } from '../worker/jobs/job-definitions/refresh-records.job';
 import { SyncDataFoldersJobDefinition } from '../worker/jobs/job-definitions/sync-data-folders.job';
 
 @Injectable()
@@ -189,6 +190,34 @@ export class BullEnqueuerService implements OnModuleDestroy {
       bullJobId: id,
       workbookId,
       progress: initialProgress,
+    });
+    return await this.enqueueJobWithId(data, id);
+  }
+
+  async enqueueRefreshRecordsJob(
+    workbookId: WorkbookId,
+    actor: Actor,
+    dataFolderId: DataFolderId,
+    filePaths: string[],
+    initialPublicProgress?: RefreshRecordsJobDefinition['publicProgress'],
+  ): Promise<Job> {
+    const id = `refresh-records-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const data: RefreshRecordsJobDefinition['data'] = {
+      workbookId,
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+      dataFolderId,
+      filePaths,
+      type: 'refresh-records',
+      initialPublicProgress,
+    };
+    await this.jobService.createJob({
+      userId: actor.userId,
+      type: data.type,
+      data,
+      bullJobId: id,
+      workbookId,
+      dataFolderId,
     });
     return await this.enqueueJobWithId(data, id);
   }

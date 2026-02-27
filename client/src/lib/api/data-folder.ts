@@ -70,6 +70,23 @@ export const dataFolderApi = {
     }
   },
 
+  refreshRecords: async (
+    dataFolderId: DataFolderId,
+    workbookId: WorkbookId,
+    filePaths: string[],
+  ): Promise<{ jobId: string }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ jobId: string }>(`/data-folder/${dataFolderId}/refresh-records`, {
+        workbookId,
+        filePaths,
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to refresh records');
+    }
+  },
+
   getSchema: async (dataFolderId: DataFolderId): Promise<Record<string, unknown>> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();

@@ -3,11 +3,15 @@
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { PulsingIcon } from '@/app/components/Icons/PulsingIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
+import { dataFolderApi } from '@/lib/api/data-folder';
+import { trackRefreshRecords } from '@/lib/posthog';
+import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { OAuthService } from '@/types/oauth';
@@ -20,6 +24,7 @@ import {
   type ConnectorAccount,
   type DataFolder,
   type DataFolderGroup,
+  type DataFolderId,
   type FileDiffStatus,
   type FileRefEntity,
   type WorkbookId,
@@ -36,6 +41,7 @@ import {
   FlaskRoundIcon,
   FolderIcon,
   MoreHorizontalIcon,
+  RefreshCwIcon,
   RocketIcon,
   RouteIcon,
   SettingsIcon,
@@ -613,7 +619,13 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
 
           {/* File list */}
           {displayedFiles.map((file) => (
-            <FileNode key={file.path} file={file} mode={mode} onSuccess={handleRefreshTable} />
+            <FileNode
+              key={file.path}
+              file={file}
+              mode={mode}
+              onSuccess={handleRefreshTable}
+              linkedFolderId={folder.connectorAccountId ? folder.id : undefined}
+            />
           ))}
 
           {/* Hidden count indicator - links to folder view */}
@@ -703,9 +715,11 @@ interface FileNodeProps {
   file: FileRefEntity;
   mode?: FileTreeMode;
   onSuccess?: () => void;
+  /** ID of the parent DataFolder if the file belongs to a linked (connector-backed) folder */
+  linkedFolderId?: DataFolderId;
 }
 
-function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
+function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeProps) {
   const params = useParams<{ id: string }>();
   const pathname = usePathname();
   const router = useRouter();
@@ -751,6 +765,21 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setContextMenu({ x: rect.right, y: rect.bottom });
   };
+
+  const handleRefreshFromSource = useCallback(async () => {
+    if (!linkedFolderId) return;
+    try {
+      const result = await dataFolderApi.refreshRecords(linkedFolderId, params.id as WorkbookId, [file.path]);
+      if (result?.jobId) {
+        useActiveJobsStore.getState().trackJobIds([result.jobId]);
+        useActiveJobsStore.getState().refreshJobs();
+        ScratchpadNotifications.info({ message: 'Refreshing record from source' });
+        trackRefreshRecords(params.id as string, linkedFolderId);
+      }
+    } catch {
+      ScratchpadNotifications.error({ message: 'Failed to refresh record from source' });
+    }
+  }, [linkedFolderId, file.path, params.id]);
 
   const handleFileClick = () => {
     router.push(href);
@@ -840,6 +869,9 @@ function FileNode({ file, mode = 'files', onSuccess }: FileNodeProps) {
         items={[
           ...(showSecretButton
             ? [{ label: 'Test Transformer', icon: FlaskRoundIcon, onClick: openTestTransformer }]
+            : []),
+          ...(linkedFolderId
+            ? [{ label: 'Refresh from source', icon: RefreshCwIcon, onClick: () => void handleRefreshFromSource() }]
             : []),
           {
             label: 'Copy Path',

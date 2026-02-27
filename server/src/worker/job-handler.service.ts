@@ -17,6 +17,7 @@ import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
+import { RefreshRecordsJobHandler } from './jobs/job-definitions/refresh-records.job';
 import { SyncDataFoldersJobHandler } from './jobs/job-definitions/sync-data-folders.job';
 import { JobData, JobDefinition, JobHandler } from './jobs/union-types';
 
@@ -48,6 +49,17 @@ export class JobHandlerService {
     switch (data.type) {
       case 'pull-linked-folder-files':
         return new PullLinkedFolderFilesJobHandler(
+          prisma,
+          this.connectorService,
+          this.connectorAccountService,
+          this.workbookEventService,
+          this.scratchGitService,
+          this.fileIndexService,
+          this.fileReferenceService,
+        ) as JobHandler<JobDefinition>;
+
+      case 'refresh-records':
+        return new RefreshRecordsJobHandler(
           prisma,
           this.connectorService,
           this.connectorAccountService,

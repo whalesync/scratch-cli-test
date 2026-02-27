@@ -152,7 +152,7 @@ export class PostHogService implements OnModuleDestroy {
   }
 
   trackPullWorkbook(actor: Actor, workbook: WorkbookCluster.Workbook): void {
-    this.captureEvent(PostHogEventName.WORKBOOK_PUBLISHED, actor, {
+    this.captureEvent(PostHogEventName.WORKBOOK_PULLED, actor, {
       ...mapWorkbookProperties(workbook),
     });
   }
@@ -234,6 +234,13 @@ export class PostHogService implements OnModuleDestroy {
   trackRemoveDataFolder(actor: Actor, dataFolder: DataFolder): void {
     this.captureEvent(PostHogEventName.DATA_FOLDER_REMOVED, actor, {
       ...mapDataFolderProperties(dataFolder),
+    });
+  }
+
+  trackRefreshRecords(actor: Actor, workbookId: string, dataFolderId: string): void {
+    this.captureEvent(PostHogEventName.REFRESH_RECORDS, actor, {
+      workbookId,
+      dataFolderId,
     });
   }
 
@@ -372,6 +379,7 @@ export enum PostHogEventName {
   WORKBOOK_CHANGES_DISCARDED = 'workbook_changes_discarded',
   WORKBOOK_REMOVED = 'workbook_deleted',
   WORKBOOK_RESET = 'workbook_reset',
+  WORKBOOK_PULLED = 'workbook_pulled',
   WORKBOOK_PULL_FILES = 'workbook_pull_files',
   WORKBOOK_PUBLISH_TRIGGERED = 'workbook_publish_triggered',
   WORKBOOK_PUBLISHED = 'workbook_published',
@@ -386,6 +394,7 @@ export enum PostHogEventName {
   SYNC_UPDATED = 'sync_updated',
   SYNC_REMOVED = 'sync_removed',
   START_SYNC_RUN = 'start_sync_run',
+  REFRESH_RECORDS = 'refresh_records',
   RECORD_CREATED = 'record_created',
   RECORD_EDITED = 'record_edited',
   RECORD_DELETED = 'record_deleted',

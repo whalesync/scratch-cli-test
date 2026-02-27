@@ -57,6 +57,17 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
         )}
       </Stack>
     );
+  } else if (job.type === 'refresh-records') {
+    const progress = job.publicProgress as { totalRequested?: number; updatedPaths?: string[] };
+    const updated = progress.updatedPaths?.length ?? 0;
+    cardContent = (
+      <Stack gap={8}>
+        <Text12Regular>Refreshing records from {folder.connectorDisplayName}</Text12Regular>
+        <Text12Regular c="var(--fg-secondary)">
+          {updated} / {progress.totalRequested ?? 0} files
+        </Text12Regular>
+      </Stack>
+    );
   } else if (job.type === 'publish-data-folder') {
     const progress = job.publicProgress as PublishRecordsPublicProgress;
     const tableProgress = progress.tables.find((t) => t.id === folder.id);
