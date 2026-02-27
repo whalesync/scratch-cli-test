@@ -53,11 +53,17 @@ export const getJobDescription = (job: JobEntity): string => {
       return 'Published changes';
     }
     case 'pull': {
-      const folderSuffix = progress?.folderName ? ` for ${progress.folderName}` : '';
       const fileCount = progress?.totalFiles ?? progress?.totalRequested;
       if (fileCount !== undefined) {
         const count = Number(fileCount) || 0;
-        return `Refreshed ${count} file${count !== 1 ? 's' : ''}${folderSuffix}`;
+        const folderCount = progress?.folderCount as number | undefined;
+        const connectionName = progress?.connectionName as string | undefined;
+        const connectionSuffix = connectionName ? ` in ${connectionName}` : '';
+        if (folderCount && folderCount > 1) {
+          return `Pulled ${count} record${count !== 1 ? 's' : ''} from ${folderCount} folders${connectionSuffix}`;
+        }
+        const folderSuffix = progress?.folderName ? ` for ${progress.folderName}` : '';
+        return `Pulled ${count} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
       }
       return 'Refreshed data';
     }

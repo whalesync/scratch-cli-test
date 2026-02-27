@@ -31,6 +31,8 @@ export type PullFilesProgress = {
 // Pull linked folder files progress (single folder from pull-linked-folder-files job)
 export type PullLinkedFolderFilesProgress = {
   totalFiles: number;
+  folderCount?: number;
+  connectionName?: string;
   folderId: string;
   folderName: string;
   connector: string;

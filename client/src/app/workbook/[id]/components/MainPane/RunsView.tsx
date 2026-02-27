@@ -346,7 +346,7 @@ function JobRow({
           <Text
             size="sm"
             style={{
-              maxWidth: 250,
+              maxWidth: 400,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',

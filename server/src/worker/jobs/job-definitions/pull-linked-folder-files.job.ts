@@ -19,6 +19,8 @@ const MAX_PROGRESS_PATHS = 1000;
 
 export type PullLinkedFolderFilesPublicProgress = {
   totalFiles: number;
+  folderCount: number;
+  connectionName: string;
   folderId: string;
   folderName: string;
   connector: string;
@@ -33,7 +35,7 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
   'pull-linked-folder-files',
   {
     workbookId: WorkbookId;
-    dataFolderId: DataFolderId;
+    dataFolderIds: DataFolderId[];
     userId: string;
     organizationId: string;
     progress?: JsonSafeObject;
@@ -45,7 +47,8 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
 >;
 
 /**
- * This job pulls records as ConnectorFiles for a single DataFolder (linked folder)
+ * This job pulls records as ConnectorFiles for all DataFolders belonging to a single
+ * ConnectorAccount (connection), processing each folder sequentially.
  */
 export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLinkedFolderFilesJobDefinition> {
   constructor(
@@ -77,24 +80,79 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     ) => Promise<void>;
   }) {
     const { jobId, data, checkpoint, progress } = params;
+    const folderCount = data.dataFolderIds.length;
+
+    // Fetch all folders upfront to validate they share the same connection
+    const folders = await this.prisma.dataFolder.findMany({
+      where: { id: { in: data.dataFolderIds } },
+      include: { connectorAccount: true },
+    });
+
+    const connectorAccountIds = new Set(folders.map((f) => f.connectorAccountId));
+    if (connectorAccountIds.size > 1) {
+      throw new Error(
+        `All folders in a pull job must belong to the same connection, got: ${[...connectorAccountIds].join(', ')}`,
+      );
+    }
+
+    const connectionName = folders[0]?.connectorAccount?.displayName ?? 'Unknown connection';
+
+    const totalFilesAccumulator = { count: 0 };
+    for (const dataFolderId of data.dataFolderIds) {
+      await this.pullFolder({
+        jobId,
+        dataFolderId,
+        folderCount,
+        connectionName,
+        totalFilesAccumulator,
+        data,
+        checkpoint,
+        progress,
+      });
+    }
+  }
+
+  private async pullFolder(params: {
+    jobId: string;
+    dataFolderId: DataFolderId;
+    folderCount: number;
+    connectionName: string;
+    totalFilesAccumulator: { count: number };
+    data: PullLinkedFolderFilesJobDefinition['data'];
+    progress: Progress<
+      PullLinkedFolderFilesJobDefinition['publicProgress'],
+      PullLinkedFolderFilesJobDefinition['initialJobProgress']
+    >;
+    checkpoint: (
+      progress: Omit<
+        Progress<
+          PullLinkedFolderFilesJobDefinition['publicProgress'],
+          PullLinkedFolderFilesJobDefinition['initialJobProgress']
+        >,
+        'timestamp'
+      >,
+    ) => Promise<void>;
+  }) {
+    const { jobId, dataFolderId, folderCount, connectionName, totalFilesAccumulator, data, checkpoint, progress } =
+      params;
 
     const dataFolder = await this.prisma.dataFolder.findUnique({
-      where: { id: data.dataFolderId },
+      where: { id: dataFolderId },
       include: {
         connectorAccount: true,
       },
     });
 
     if (!dataFolder) {
-      throw new Error(`DataFolder with id ${data.dataFolderId} not found`);
+      throw new Error(`DataFolder with id ${dataFolderId} not found`);
     }
 
     if (!dataFolder.connectorAccountId) {
-      throw new Error(`DataFolder ${data.dataFolderId} does not have an associated connector account`);
+      throw new Error(`DataFolder ${dataFolderId} does not have an associated connector account`);
     }
 
     if (!dataFolder.connectorService) {
-      throw new Error(`DataFolder ${data.dataFolderId} does not have a connector service`);
+      throw new Error(`DataFolder ${dataFolderId} does not have a connector service`);
     }
 
     const tableSpec = dataFolder.schema as BaseJsonTableSpec;
@@ -102,7 +160,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
 
     const publicProgress: PullLinkedFolderFilesPublicProgress = {
-      totalFiles: 0,
+      totalFiles: totalFilesAccumulator.count,
+      folderCount,
+      connectionName,
       folderId: dataFolder.id,
       folderName: dataFolder.name,
       connector: dataFolder.connectorService,
@@ -160,8 +220,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     let gitFiles: { path: string; content: string }[] = [];
     const usedFileNames = new Set<string>();
-    const callback = async (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => {
-      const { files, connectorProgress } = params;
+    const callback = async (callbackParams: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => {
+      const { files, connectorProgress } = callbackParams;
 
       WSLogger.debug({
         source: 'PullLinkedFolderFilesJob',
@@ -268,6 +328,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       }
 
       publicProgress.totalFiles += files.length;
+      totalFilesAccumulator.count = publicProgress.totalFiles;
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'folder-contents-changed',

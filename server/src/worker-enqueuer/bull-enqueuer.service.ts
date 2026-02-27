@@ -61,7 +61,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
   async enqueuePullLinkedFolderFilesJob(
     workbookId: WorkbookId,
     actor: Actor,
-    dataFolderId: DataFolderId,
+    dataFolderIds: DataFolderId[],
     initialPublicProgress?: PullLinkedFolderFilesJobDefinition['publicProgress'],
   ): Promise<Job> {
     const id = `pull-linked-folder-files-${actor.userId}-${workbookId}-${createPlainId()}`;
@@ -69,7 +69,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       workbookId,
       userId: actor.userId,
       organizationId: actor.organizationId,
-      dataFolderId,
+      dataFolderIds,
       type: 'pull-linked-folder-files',
       initialPublicProgress,
     };
@@ -79,7 +79,6 @@ export class BullEnqueuerService implements OnModuleDestroy {
       data,
       bullJobId: id,
       workbookId,
-      dataFolderId,
     });
     return await this.enqueueJobWithId(data, id);
   }

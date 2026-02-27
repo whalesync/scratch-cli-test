@@ -121,11 +121,9 @@ export class SchedulerService {
 
     switch (schedule.action) {
       case 'PULL':
-        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
-          workbookId,
-          actor,
+        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, [
           schedule.entityId as DataFolderId,
-        );
+        ]);
         break;
       case 'PUBLISH':
         await this.bullEnqueuerService.enqueuePublishDataFolderJob(workbookId, actor, [

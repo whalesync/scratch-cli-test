@@ -28,6 +28,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   beforeEach(() => {
     mockPrisma = {
       dataFolder: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'dfld_123',
+            connectorAccountId: 'coa_123',
+            connectorAccount: { displayName: 'Test Connection' },
+          },
+        ]),
         findUnique: jest.fn(),
         update: jest.fn(),
       },
@@ -425,7 +432,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     const createMockParams = (overrides?: any) => ({
       data: {
         workbookId: 'wkb_123' as WorkbookId,
-        dataFolderId: 'dfld_123' as DataFolderId,
+        dataFolderIds: ['dfld_123' as DataFolderId],
         userId: 'usr_123',
         organizationId: 'org_123',
       },

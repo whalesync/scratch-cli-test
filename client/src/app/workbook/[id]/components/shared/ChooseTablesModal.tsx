@@ -153,7 +153,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   );
 
   const { dataFolderGroups, refresh: refreshDataFolders } = useDataFolders();
-  const { addLinkedDataFolder } = useWorkbook(workbookId);
+  const { addLinkedDataFolder, pullFolders } = useWorkbook(workbookId);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedTableIds, setSelectedTableIds] = useState<Set<string>>(new Set());
@@ -555,6 +555,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     setIsSaving(true);
     try {
       // Add new tables (with optional filter, field overrides, and connector options)
+      // Create all folders first with triggerPull=false, then trigger a single pull job for all
+      const createdFolderIds: DataFolderId[] = [];
       for (const table of tablesToAdd) {
         const tableKey = table.id.remoteId.join('/');
         const filter = filterValues.get(tableKey)?.trim() || undefined;
@@ -562,7 +564,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         const idFieldOverride = fields?.idField || undefined;
         const nameFieldOverride = fields?.nameField || undefined;
         const options = buildOptionsForTable(tableKey);
-        await addLinkedDataFolder(
+        const created = await addLinkedDataFolder(
           table.id.remoteId,
           table.displayName,
           connectorAccount.id,
@@ -570,8 +572,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           idFieldOverride,
           nameFieldOverride,
           options,
-          triggerPull,
+          false, // defer pull until all folders are created
         );
+        createdFolderIds.push(created.id as DataFolderId);
+      }
+      if (triggerPull !== false && createdFolderIds.length > 0) {
+        await pullFolders(createdFolderIds);
       }
 
       // Update filters and connector options on existing tables that changed

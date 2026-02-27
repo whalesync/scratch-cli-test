@@ -319,20 +319,36 @@ export class WorkbookService {
       });
     });
 
-    // Enqueue a pull job for each data folder
-    const jobs: { id: string }[] = [];
+    // Group folders by connectorAccountId and enqueue one pull job per connection
+    const foldersByConnection = new Map<string, typeof foldersToProcess>();
     for (const folder of foldersToProcess) {
-      const job = await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(id, actor, folder.id as DataFolderId, {
-        totalFiles: 0,
-        folderId: folder.id,
-        folderName: folder.name,
-        connector: folder.connectorService ?? 'unknown',
-        filter: (folder.options as unknown as ConnectorPullOptions)?.filter ?? null,
-        status: 'pending',
-        createdPaths: [],
-        updatedPaths: [],
-        deletedPaths: [],
-      });
+      const connKey = folder.connectorAccountId!;
+      const group = foldersByConnection.get(connKey) ?? [];
+      group.push(folder);
+      foldersByConnection.set(connKey, group);
+    }
+
+    const jobs: { id: string }[] = [];
+    for (const [, connFolders] of foldersByConnection) {
+      const firstFolder = connFolders[0];
+      const job = await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
+        id,
+        actor,
+        connFolders.map((f) => f.id as DataFolderId),
+        {
+          totalFiles: 0,
+          folderCount: connFolders.length,
+          connectionName: firstFolder.connectorAccount?.displayName ?? 'Unknown connection',
+          folderId: firstFolder.id,
+          folderName: firstFolder.name,
+          connector: firstFolder.connectorService ?? 'unknown',
+          filter: (firstFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+          status: 'pending',
+          createdPaths: [],
+          updatedPaths: [],
+          deletedPaths: [],
+        },
+      );
       jobs.push({ id: job.id as string });
     }
 

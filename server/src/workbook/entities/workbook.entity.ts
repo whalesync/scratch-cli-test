@@ -8,6 +8,7 @@ export class Workbook {
   name: string | null;
   createdAt: Date;
   updatedAt: Date;
+  version: number;
   userId: string | null;
   organizationId: string;
   dataFolders?: DataFolderEntity[];
@@ -17,6 +18,7 @@ export class Workbook {
     this.name = workbook.name ?? null;
     this.createdAt = workbook.createdAt;
     this.updatedAt = workbook.updatedAt;
+    this.version = workbook.version;
     this.userId = workbook.userId ?? null;
     this.organizationId = workbook.organizationId;
     this.dataFolders = workbook.dataFolders?.map(

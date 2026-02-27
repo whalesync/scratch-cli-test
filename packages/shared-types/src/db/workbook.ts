@@ -11,6 +11,7 @@ export interface Workbook {
   name: string | null;
   createdAt: string;
   updatedAt: string;
+  version: number;
   dataFolders?: DataFolder[];
   userId: string;
 }

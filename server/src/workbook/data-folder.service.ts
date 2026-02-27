@@ -282,8 +282,10 @@ export class DataFolderService {
       // Trigger pull job (defaults to true if not specified)
       if (dto.triggerPull !== false) {
         try {
-          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, dataFolderId, {
+          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, [dataFolderId], {
             totalFiles: 0,
+            folderCount: 1,
+            connectionName: createdDataFolder.connectorAccount?.displayName ?? 'Unknown connection',
             folderId: dataFolderId,
             folderName: createdDataFolder.name,
             connector: createdDataFolder.connectorService ?? 'unknown',

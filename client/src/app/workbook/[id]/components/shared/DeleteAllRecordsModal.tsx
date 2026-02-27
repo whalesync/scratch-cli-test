@@ -35,12 +35,11 @@ export function DeleteAllRecordsModal({ opened, onClose, folder, workbookId, onS
     try {
       // Use folder path if available, fallback to folder name
       // TODO: quick fix to unblock test. We probably just need path.
-      debugger;
       await dataFolderApi.deleteAllRecords(workbookId, folder.path || folder.name);
 
       notifications.show({
-        title: 'Success',
-        message: 'All records deleted. Pulling changes...',
+        title: `Deleted all records in folder ${folder.name}`,
+        message: 'Remote records will not be affected until published.',
         color: 'green',
       });
 

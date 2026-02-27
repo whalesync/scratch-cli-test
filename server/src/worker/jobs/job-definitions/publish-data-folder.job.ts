@@ -207,7 +207,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
       await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
         data.workbookId,
         { userId: data.userId, organizationId: data.organizationId },
-        dataFolder.id as DataFolderId,
+        [dataFolder.id as DataFolderId],
       );
 
       WSLogger.debug({
@@ -309,7 +309,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
         await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
           data.workbookId,
           { userId: data.userId, organizationId: data.organizationId },
-          dataFolder.id as DataFolderId,
+          [dataFolder.id as DataFolderId],
         );
 
         WSLogger.debug({

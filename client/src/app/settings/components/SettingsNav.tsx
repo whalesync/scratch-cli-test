@@ -6,6 +6,7 @@ import { useDevTools } from '@/hooks/use-dev-tools';
 import { Box, Divider, Stack, UnstyledButton } from '@mantine/core';
 import {
   BlocksIcon,
+  BookOpenIcon,
   BriefcaseIcon,
   CreditCardIcon,
   DatabaseIcon,
@@ -89,6 +90,12 @@ const devNavItems: NavItem[] = [
     label: 'Grid Playground',
     icon: GridIcon,
     href: '/settings/dev/grid',
+  },
+  {
+    id: 'workbooks',
+    label: 'Workbooks Admin',
+    icon: BookOpenIcon,
+    href: '/settings/dev/workbooks',
   },
 ];
 
