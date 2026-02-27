@@ -3,10 +3,63 @@ include:
   - "/gitlab-ci/common.yml"
 
 # =============================================================================
+# Shared change-sets — referenced by both normal and local-runner jobs
+# =============================================================================
+
+.changes:
+  client:
+    - client/**/*
+    - packages/**/*
+    - gitlab-ci/stages/01-build-and-test.yml
+  client-docker:
+    - client/Dockerfile.monorepo
+    - gitlab-ci/stages/01-build-and-test.yml
+    - gitlab-ci/stages/03-push-images.yml
+  server:
+    - server/**/*
+    - packages/**/*
+    - gitlab-ci/stages/01-build-and-test.yml
+  server-docker:
+    - server/Dockerfile.monorepo
+    - gitlab-ci/stages/01-build-and-test.yml
+    - gitlab-ci/stages/03-push-images.yml
+  scratch-cli:
+    - scratch-cli/**/*
+    - gitlab-ci/stages/01-build-and-test.yml
+  scratch-git:
+    - scratch-git/**/*
+    - gitlab-ci/stages/01-build-and-test.yml
+  scratch-git-docker:
+    - scratch-git/Dockerfile
+    - gitlab-ci/stages/01-build-and-test.yml
+    - gitlab-ci/stages/03-push-images.yml
+  dummy:
+    - terraform/**/*
+    - .cursor/**/*
+    - gitlab-ci/**/*
+    - .vscode/**/*
+    - experimental/**/*
+    - "*"
+    - docs/**/*
+
+# =============================================================================
+# Local runner user list
+#
+# Add your GitLab username here when you register a local runner.
+# This skips the shared-runner MR jobs for these users; their MR jobs
+# run on their local runner instead (see gitlab-ci/local-runners.yml).
+# =============================================================================
+
+.rules:
+  skip_for_local_runner_users:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger)$/'
+      when: never
+
+# =============================================================================
 # CLIENT SUBPROJECT
 # =============================================================================
 
-build and test client:
+.build-and-test-client:
   stage: build and test
   interruptible: true
   script:
@@ -21,16 +74,17 @@ build and test client:
     paths:
       - client/.next
     expire_in: 1 hour
+
+build and test client:
+  extends: .build-and-test-client
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - client/**/*
-        - packages/**/*
-        - gitlab-ci/stages/01-build-and-test.yml
+      changes: !reference [.changes, client]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
-build client docker image for test:
+.build-client-docker-image-for-test:
   stage: build and test
   extends:
     - .docker_builder_image
@@ -59,12 +113,13 @@ build client docker image for test:
       -t spinner/spinner-client-test
       -f client/Dockerfile.monorepo .
     - docker save spinner/spinner-client-test > client/image-test.tar
+
+build client docker image for test:
+  extends: .build-client-docker-image-for-test
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - client/Dockerfile.monorepo
-        - gitlab-ci/stages/01-build-and-test.yml
-        - gitlab-ci/stages/03-push-images.yml
+      changes: !reference [.changes, client-docker]
     - !reference [.rules, on_merge_to_master]
 
 build client docker image for production:
@@ -104,7 +159,7 @@ build client docker image for production:
 # SERVER SUBPROJECT
 # =============================================================================
 
-build and test server:
+.build-and-test-server:
   stage: build and test
   interruptible: true
   script:
@@ -125,16 +180,17 @@ build and test server:
       - server/dist
     expire_in: 1 hour
   cache: !reference [.caches, server]
+
+build and test server:
+  extends: .build-and-test-server
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - server/**/*
-        - packages/**/*
-        - gitlab-ci/stages/01-build-and-test.yml
+      changes: !reference [.changes, server]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
-integration test server:
+.integration-test-server:
   stage: build and test
   interruptible: true
   services:
@@ -157,16 +213,17 @@ integration test server:
       junit: "server/junit.xml"
     expire_in: 1 week
   cache: !reference [.caches, server]
+
+integration test server:
+  extends: .integration-test-server
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - server/**/*
-        - packages/**/*
-        - gitlab-ci/stages/01-build-and-test.yml
+      changes: !reference [.changes, server]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
-build server docker image:
+.build-server-docker-image:
   stage: build and test
   extends:
     - .docker_builder_image
@@ -186,12 +243,13 @@ build server docker image:
       -t spinner/spinner-server
       -f server/Dockerfile.monorepo .
     - docker save spinner/spinner-server > server/image.tar
+
+build server docker image:
+  extends: .build-server-docker-image
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - server/Dockerfile.monorepo
-        - gitlab-ci/stages/01-build-and-test.yml
-        - gitlab-ci/stages/03-push-images.yml
+      changes: !reference [.changes, server-docker]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
@@ -199,7 +257,7 @@ build server docker image:
 # SCRATCH-CLI SUBPROJECT
 # =============================================================================
 
-build and test scratch-cli:
+.build-and-test-scratch-cli:
   stage: build and test
   image: golang:1.25
   interruptible: true
@@ -211,11 +269,13 @@ build and test scratch-cli:
     - go build -o scratchmd ./cmd/scratchmd
     - echo "Testing executable"
     - ./scratchmd --help
+
+build and test scratch-cli:
+  extends: .build-and-test-scratch-cli
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - scratch-cli/**/*
-        - gitlab-ci/stages/01-build-and-test.yml
+      changes: !reference [.changes, scratch-cli]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
@@ -223,7 +283,7 @@ build and test scratch-cli:
 # SCRATCH-GIT SUBPROJECT
 # =============================================================================
 
-build and test scratch-git:
+.build-and-test-scratch-git:
   stage: build and test
   interruptible: true
   script:
@@ -232,15 +292,17 @@ build and test scratch-git:
     - yarn build
     # enable this once we have fixed all the linting on the scratch-git project
     # - yarn run lint
+
+build and test scratch-git:
+  extends: .build-and-test-scratch-git
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - scratch-git/**/*
-        - gitlab-ci/stages/01-build-and-test.yml
+      changes: !reference [.changes, scratch-git]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
-build scratch-git docker image:
+.build-scratch-git-docker-image:
   stage: build and test
   extends:
     - .docker_builder_image
@@ -261,12 +323,13 @@ build scratch-git docker image:
       -t spinner/spinner-scratch-git
       -f Dockerfile .
     - docker save spinner/spinner-scratch-git > image.tar
+
+build scratch-git docker image:
+  extends: .build-scratch-git-docker-image
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - scratch-git/Dockerfile
-        - gitlab-ci/stages/01-build-and-test.yml
-        - gitlab-ci/stages/03-push-images.yml
+      changes: !reference [.changes, scratch-git-docker]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
 
@@ -274,19 +337,16 @@ build scratch-git docker image:
 # MISC
 # =============================================================================
 
-dummy job:
+.dummy-job:
   stage: build and test
   interruptible: true
   image:
   script:
     - echo "Gitlab won't merge a MR with changes only in these directories, since that doesn't trigger any pipelines"
+
+dummy job:
+  extends: .dummy-job
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH != "master" && $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
-      changes:
-        - terraform/**/*
-        - .cursor/**/*
-        - gitlab-ci/**/*
-        - .vscode/**/*
-        - experimental/**/*
-        - "*"
-        - docs/**/*
+      changes: !reference [.changes, dummy]
