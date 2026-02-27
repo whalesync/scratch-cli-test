@@ -4,6 +4,7 @@ import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { JobModule } from 'src/job/job.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
+import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SyncModule } from 'src/sync/sync.module';
@@ -28,6 +29,7 @@ import { CliWorkbookController } from './cli-workbook.controller';
     WorkerEnqueuerModule,
     ScratchGitModule,
     SyncModule,
+    PublishPlanModule,
   ],
   controllers: [
     CliAuthController,

@@ -20,6 +20,7 @@ import { DbService } from 'src/db/db.service';
 import { JobEntity } from 'src/job/entities/job.entity';
 import { JobService } from 'src/job/job.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
@@ -47,6 +48,7 @@ export class CliLinkedController {
     private readonly db: DbService,
     private readonly jobService: JobService,
     private readonly connectorAccountService: ConnectorAccountService,
+    private readonly publishPlanBuildService: PublishPlanBuildService,
   ) {}
 
   /**
@@ -200,7 +202,7 @@ export class CliLinkedController {
 
   /**
    * Publish changes from the workbook to the CRM for a specific linked table.
-   * Reuses the publish logic from DataFolderController.publishSingleFolder.
+   * Uses the publish-v2 pipeline (plan + run) for modern publish flow.
    */
   @Post('workbooks/:workbookId/linked/:folderId/publish')
   async publishLinkedTable(
@@ -235,6 +237,11 @@ export class CliLinkedController {
       throw new BadRequestException('Linked table does not belong to this workbook');
     }
 
+    // Validate that the folder has the required fields for publish-v2
+    if (!dataFolder.path || !dataFolder.connectorAccountId) {
+      throw new BadRequestException('Linked table is missing a path or connector account — cannot publish');
+    }
+
     // Check if folder is already locked by another operation
     if (dataFolder.lock) {
       throw new BadRequestException(
@@ -242,14 +249,24 @@ export class CliLinkedController {
       );
     }
 
-    // Acquire lock before enqueueing the job
-    await this.db.client.dataFolder.update({
-      where: { id: dfId },
-      data: { lock: 'publish' },
-    });
+    // Create the publish-v2 pipeline
+    const { pipelineId } = await this.publishPlanBuildService.createPipeline(
+      wbId,
+      req.user.id,
+      dataFolder.connectorAccountId,
+    );
 
-    // Enqueue the publish job
-    const job = await this.bullEnqueuerService.enqueuePublishDataFolderJob(wbId, actor, [dfId]);
+    // Enqueue a combined plan+run job (runAfterPlan=true) scoped to this folder
+    const job = await this.bullEnqueuerService.enqueuePlanPipelineJob(
+      wbId,
+      actor,
+      pipelineId,
+      dataFolder.connectorAccountId,
+      true, // runAfterPlan
+      dataFolder.path,
+    );
+
+    await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
 
     this.posthogService.trackPublishDataFromWorkbook(actor, workbook, { dataFolderCount: 1 });
 
