@@ -76,7 +76,7 @@ isomorphic-git stores every `writeBlob()` as a loose object file under `.git/obj
 
 ### 2. Slow dirty file loading
 
-`getDirtyStatus()` calls `compareCommits()` which calls `getTreeFiles()` twice — once for each branch. Each call uses `git.walk()` to traverse the **entire** tree. For a 100k-file repo, this is 200k tree entries visited per dirty status check. The UI (used to) poll this every 10 seconds.
+`getDirtyStatus()` calls `compareCommits()` which calls `getTreeFiles()` twice — once for each branch. Each call uses `git.walk()` to traverse the **entire** tree. For a 100k-file repo, this is 200k tree entries visited per dirty status check. The UI used to poll this every 10 seconds.
 
 ### 3. Event loop blocking
 
