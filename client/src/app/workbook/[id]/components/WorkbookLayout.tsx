@@ -5,6 +5,8 @@ import { Box, Stack } from '@mantine/core';
 import type { Workbook } from '@spinner/shared-types';
 import { usePathname } from 'next/navigation';
 import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { FilesSubToolbar } from './MainPane/FilesSubToolbar';
+import { ReviewSubToolbar } from './MainPane/ReviewSubToolbar';
 import { Toolbar } from './MainPane/Toolbar';
 import { ResizeHandle } from './shared/ResizeHandle';
 import { WorkbookErrorAlert } from './shared/WorkbookErrorAlert';
@@ -43,6 +45,9 @@ export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
     }
     return 'files';
   }, [pathname]);
+
+  const isFilesPage = pathname.includes('/files');
+  const isReviewPage = pathname.includes('/review');
 
   // File tree mode (only for files/review)
   const fileTreeMode: FileTreeMode = sidebarMode === 'review' ? 'review' : 'files';
@@ -123,8 +128,11 @@ export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
             overflow: 'hidden',
           }}
         >
-          {/* Toolbar */}
-          <Toolbar workbook={workbook} />
+          {/* Toolbar — always rendered */}
+          <Toolbar workbookId={workbook.id} />
+          {/* Page-specific sub-toolbars */}
+          {isFilesPage && <FilesSubToolbar workbookId={workbook.id} />}
+          {isReviewPage && <ReviewSubToolbar workbookId={workbook.id} />}
           <WorkbookErrorAlert />
           {/* Content */}
           <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</Box>

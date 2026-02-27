@@ -3,11 +3,12 @@
 import { ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
+import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { Box, Group, SimpleGrid, Stack, TextInput, UnstyledButton } from '@mantine/core';
 import type { DataFolderId, FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import { FileIcon, SearchIcon } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const INITIAL_LIMIT = 300;
 const COLUMN_COUNT = 3;
@@ -23,6 +24,7 @@ export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' 
   const { files, isLoading } = useFolderFileList(workbookId, folderId);
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const setSummary = useReviewToolbarStore((state) => state.setSummary);
 
   // Filter to only files, optionally filter to dirty only in review mode, apply search, and apply limit
   const { displayedFiles, totalCount, hasMore } = useMemo(() => {
@@ -49,6 +51,15 @@ export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' 
     };
   }, [files, showAll, mode, searchQuery]);
 
+  // In review mode, push the summary into the toolbar store
+  useEffect(() => {
+    if (mode === 'review') {
+      const summary = folderName ? `${folderName} - ${totalCount} ${totalCount === 1 ? 'file' : 'files'}` : null;
+      setSummary(summary);
+      return () => setSummary(null);
+    }
+  }, [mode, folderName, totalCount, setSummary]);
+
   if (isLoading && files.length === 0) {
     return (
       <Box p="xl" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -67,27 +78,29 @@ export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' 
 
   return (
     <Stack h="100%" gap={0}>
-      {/* Header */}
-      <Group
-        h={36}
-        px="md"
-        justify="space-between"
-        style={{
-          borderBottom: '0.5px solid var(--fg-divider)',
-          flexShrink: 0,
-          backgroundColor: 'var(--bg-base)',
-        }}
-      >
-        <Text12Regular c="var(--fg-muted)">
-          {folderName ? `${folderName} - ` : ''}
-          {totalCount} {totalCount === 1 ? 'file' : 'files'}
-        </Text12Regular>
-        {hasMore && (
-          <ButtonCompactSecondary onClick={() => setShowAll(true)}>
-            Load all ({totalCount - INITIAL_LIMIT} more)
-          </ButtonCompactSecondary>
-        )}
-      </Group>
+      {/* Header (files mode only — in review mode the summary is in the toolbar) */}
+      {mode !== 'review' && (
+        <Group
+          h={36}
+          px="md"
+          justify="space-between"
+          style={{
+            borderBottom: '0.5px solid var(--fg-divider)',
+            flexShrink: 0,
+            backgroundColor: 'var(--bg-base)',
+          }}
+        >
+          <Text12Regular c="var(--fg-muted)">
+            {folderName ? `${folderName} - ` : ''}
+            {totalCount} {totalCount === 1 ? 'file' : 'files'}
+          </Text12Regular>
+          {hasMore && (
+            <ButtonCompactSecondary onClick={() => setShowAll(true)}>
+              Load all ({totalCount - INITIAL_LIMIT} more)
+            </ButtonCompactSecondary>
+          )}
+        </Group>
+      )}
 
       {/* File grid */}
       <Box style={{ flex: 1, overflow: 'auto' }} p="md">

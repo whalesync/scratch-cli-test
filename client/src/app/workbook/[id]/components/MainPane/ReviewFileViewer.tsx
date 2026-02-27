@@ -1,6 +1,5 @@
 'use client';
 
-import { ButtonCompactDanger, ButtonCompactPrimary, ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
@@ -8,18 +7,16 @@ import { useFileByPath } from '@/hooks/use-file-path';
 import { jobApi } from '@/lib/api/job';
 import { workbookApi } from '@/lib/api/workbook';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
+import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
-import { Box, Group, SegmentedControl, Text, useMantineColorScheme } from '@mantine/core';
+import { Box, Text, useMantineColorScheme } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
-import { CloudUploadIcon, RotateCcwIcon, SaveIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MergeEditor } from '../shared/MergeEditor';
-
-type ViewMode = 'split' | 'unified';
 
 interface ReviewFileViewerProps {
   workbookId: WorkbookId;
@@ -61,8 +58,10 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
     }
   }, [isJobActive, wasJobActive, publishJobId, workbookId, router]);
 
-  // View mode state - default to split (side-by-side)
-  const [viewMode, setViewMode] = useState<ViewMode>('split');
+  // View mode from shared toolbar store
+  const viewMode = useReviewToolbarStore((state) => state.viewMode);
+  const setFileActions = useReviewToolbarStore((state) => state.setFileActions);
+  const clearFileActions = useReviewToolbarStore((state) => state.clearFileActions);
 
   // Confirm dialog
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
@@ -177,10 +176,23 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
-  const viewModeOptions = [
-    { value: 'split', label: 'Side-by-side' },
-    { value: 'unified', label: 'Inline' },
-  ];
+  // Register file actions in the shared toolbar store
+  useEffect(() => {
+    setFileActions({
+      onPublishFile: handlePublish,
+      onDiscardFile: handleDiscard,
+      onSaveFile: handleSave,
+      isPublishing,
+      isDiscarding,
+      isSaving,
+      hasChanges,
+    });
+  }, [setFileActions, handlePublish, handleDiscard, handleSave, isPublishing, isDiscarding, isSaving, hasChanges]);
+
+  // Clear file actions on unmount
+  useEffect(() => {
+    return () => clearFileActions();
+  }, [clearFileActions]);
 
   const extensions = useMemo(() => {
     if (viewMode === 'unified') {
@@ -236,43 +248,6 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
 
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Toolbar */}
-      <Group
-        h={40}
-        px="sm"
-        justify="space-between"
-        style={{
-          borderBottom: '0.5px solid var(--fg-divider)',
-          flexShrink: 0,
-        }}
-      >
-        <Group gap="xs">
-          <SegmentedControl
-            size="xs"
-            value={viewMode}
-            onChange={(value) => setViewMode(value as ViewMode)}
-            data={viewModeOptions}
-          />
-        </Group>
-        <Group gap="xs">
-          <ButtonCompactPrimary
-            leftSection={<CloudUploadIcon size={12} />}
-            onClick={handlePublish}
-            loading={isPublishing}
-          >
-            Publish this file
-          </ButtonCompactPrimary>
-          <ButtonCompactDanger leftSection={<RotateCcwIcon size={12} />} onClick={handleDiscard} loading={isDiscarding}>
-            Discard
-          </ButtonCompactDanger>
-          {hasChanges && (
-            <ButtonCompactSecondary leftSection={<SaveIcon size={12} />} onClick={handleSave} loading={isSaving}>
-              Save
-            </ButtonCompactSecondary>
-          )}
-        </Group>
-      </Group>
-
       {/* Diff Editor */}
       <Box style={{ flex: 1, overflow: 'auto' }}>
         {viewMode === 'split' ? (

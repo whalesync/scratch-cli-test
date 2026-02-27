@@ -134,10 +134,12 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
         <Menu.Target>
           <UnstyledButton
             px="sm"
-            py="sm"
+            h={40}
             style={{
               width: '100%',
               borderBottom: '1px solid var(--fg-divider)',
+              display: 'flex',
+              alignItems: 'center',
             }}
           >
             <Group justify="space-between" wrap="nowrap">

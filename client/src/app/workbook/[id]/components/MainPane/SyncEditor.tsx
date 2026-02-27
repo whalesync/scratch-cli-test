@@ -1,11 +1,8 @@
 'use client';
 
 import { Text13Medium } from '@/app/components/base/text';
-import { ComingSoonBadge } from '@/app/components/ComingSoonBadge';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
-import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { useDevTools } from '@/hooks/use-dev-tools';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { scheduleApi } from '@/lib/api/schedule';
 import { syncApi } from '@/lib/api/sync';
@@ -23,7 +20,6 @@ import {
   Badge,
   Box,
   Button,
-  Checkbox,
   Collapse,
   Flex,
   Group,
@@ -32,7 +28,6 @@ import {
   Select,
   Stack,
   Text,
-  TextInput,
   Tooltip,
   useMantineColorScheme,
 } from '@mantine/core';
@@ -53,17 +48,16 @@ import {
   ChevronUp,
   ClipboardCopy,
   Database,
-  PlayIcon,
   Plus,
-  RefreshCwIcon,
   Search,
+  Settings,
   Trash2,
-  Wand2,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
 import { SyncPreviewPanel } from './SyncPreviewPanel';
+import { SyncToolbar } from './SyncToolbar';
 import { TransformerConfigModal } from './TransformerConfigModal';
 
 interface SyncEditorProps {
@@ -180,24 +174,6 @@ const isSyncMapping = (obj: any): obj is SyncMapping => {
   return true;
 };
 
-interface ScheduleOption {
-  value: string;
-  label: string;
-  disabled?: boolean;
-}
-
-const EVERY_MINUTE = '* * * * *';
-
-const SCHEDULE_OPTIONS: ScheduleOption[] = [
-  { value: '', label: 'Manual only' },
-  { value: '*/5 * * * *', label: 'Every 5 minutes', disabled: false },
-  { value: '*/15 * * * *', label: 'Every 15 minutes', disabled: false },
-  { value: '0 * * * *', label: 'Every hour', disabled: false },
-  { value: '0 0 * * *', label: 'Daily at midnight', disabled: false },
-];
-
-const DEV_ONLY_SCHEDULE_OPTION: ScheduleOption = { value: EVERY_MINUTE, label: 'Every minute (internal use only)' };
-
 const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
   <Group gap="xs" wrap="nowrap">
     {option.connectorService && <ConnectorIcon connector={option.connectorService} size={16} p={0} />}
@@ -219,15 +195,10 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const router = useRouter();
   const { dataFolderGroups } = useDataFolders();
   const syncs = useSyncStore((state) => state.syncs);
-  const activeJobs = useSyncStore((state) => state.activeJobs);
   const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
-  const runSync = useSyncStore((state) => state.runSync);
-
-  const { isDevToolsEnabled } = useDevTools();
 
   const isNew = syncId === 'new';
   const existingSync = useMemo(() => syncs.find((s) => s.id === syncId), [syncs, syncId]);
-  const isRunning = !isNew && !!activeJobs[syncId];
 
   const [folderPairs, setFolderPairs] = useState<FolderPair[]>([createPair()]);
   const [syncName, setSyncName] = useState('');
@@ -255,8 +226,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const { colorScheme } = useMantineColorScheme();
   const cmExtensions = useMemo(() => [json(), EditorView.lineWrapping], []);
 
-  // Confirm dialog
-  const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
+  // Track unsaved changes — snapshot the last-saved state
+  const [lastSavedState, setLastSavedState] = useState<string>('');
+  const getCurrentStateSnapshot = useCallback(() => {
+    return JSON.stringify({ syncName, schedule, folderPairs, editorMode, jsonContent });
+  }, [syncName, schedule, folderPairs, editorMode, jsonContent]);
+
+  const hasUnsavedChanges = isNew ? true : getCurrentStateSnapshot() !== lastSavedState;
 
   // Flatten folders for easy selection
   const allFolders = dataFolderGroups.flatMap((g) => g.dataFolders);
@@ -386,22 +362,32 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncId, existingSync?.id]);
 
-  // Auto-generate name for new syncs
+  // Capture saved state after initialization settles
+  const initSettled = useRef(false);
   useEffect(() => {
-    if (isNew && !syncName) {
-      const validPairs = folderPairs.filter((p) => p.sourceId && p.destId);
-      if (validPairs.length > 0) {
-        const firstPair = validPairs[0];
-        const sourceFolder = allFolders.find((f) => f.id === firstPair.sourceId);
-        const destFolder = allFolders.find((f) => f.id === firstPair.destId);
+    if (!isNew && existingSync && !initSettled.current) {
+      // Delay to let schedule fetch resolve
+      const timer = setTimeout(() => {
+        setLastSavedState(getCurrentStateSnapshot());
+        initSettled.current = true;
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isNew, existingSync, getCurrentStateSnapshot]);
 
-        if (sourceFolder && destFolder) {
-          const suffix = validPairs.length > 1 ? ` (+${validPairs.length - 1})` : '';
-          setSyncName(`${sourceFolder.name} → ${destFolder.name}${suffix}`);
-        }
+  // Compute a placeholder from the first folder pair (used when syncName is empty)
+  const syncNamePlaceholder = useMemo(() => {
+    const validPairs = folderPairs.filter((p) => p.sourceId && p.destId);
+    if (validPairs.length > 0) {
+      const firstPair = validPairs[0];
+      const sourceFolder = allFolders.find((f) => f.id === firstPair.sourceId);
+      const destFolder = allFolders.find((f) => f.id === firstPair.destId);
+      if (sourceFolder && destFolder) {
+        return `${sourceFolder.name} → ${destFolder.name}`;
       }
     }
-  }, [isNew, folderPairs, allFolders, syncName]);
+    return '';
+  }, [folderPairs, allFolders]);
 
   const validPairsCount = folderPairs.filter((p) => {
     const hasValidMappings = p.fieldMappings.some((m) => m.sourceField && m.destField);
@@ -436,7 +422,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       }
 
       const payload: SaveSyncBody = {
-        displayName: syncName || 'Untitled Sync',
+        displayName: syncName.trim() || syncNamePlaceholder || 'Untitled Sync',
         mappings,
         validateMappings: enableValidation,
         schedule,
@@ -454,6 +440,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       } else {
         await syncApi.update(workbookId, syncId, payload);
         await fetchSyncs(workbookId);
+        setLastSavedState(getCurrentStateSnapshot());
         notifications.show({
           title: 'Sync updated',
           message: 'Changes have been saved',
@@ -463,50 +450,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     } catch (error) {
       console.debug('Error saving sync:', error);
       setErrorBanner({ title: 'Failed to save sync', body: getHumanReadableErrorMessage(error) });
+      throw error; // Re-throw so callers (e.g. Save & Run) can detect failure
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleDelete = () => {
-    if (isNew) return;
-
-    openConfirmDialog({
-      title: 'Delete Sync',
-      message: `Are you sure you want to delete "${syncName}"?`,
-      confirmLabel: 'Delete',
-      variant: 'danger',
-      onConfirm: async () => {
-        setErrorBanner(null);
-        try {
-          await syncApi.delete(workbookId, syncId);
-          await fetchSyncs(workbookId);
-          notifications.show({
-            title: 'Sync deleted',
-            message: `"${syncName}" has been deleted`,
-            color: 'green',
-          });
-          router.push(`/workbook/${workbookId}/syncs`);
-        } catch (error) {
-          console.debug('Failed to delete sync:', error);
-          setErrorBanner({ title: 'Failed to delete sync', body: getHumanReadableErrorMessage(error) });
-        }
-      },
-    });
-  };
-
-  const handleRunSync = async () => {
-    if (isNew) return;
-    setErrorBanner(null);
-    try {
-      await runSync(workbookId, syncId);
-      notifications.show({
-        title: 'Sync started',
-        message: 'Sync job has been queued',
-        color: 'green',
-      });
-    } catch (error) {
-      setErrorBanner({ title: 'Failed to start sync', body: getHumanReadableErrorMessage(error) });
     }
   };
 
@@ -587,20 +533,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
   const getFolderName = (id: string) => allFolders.find((f) => f.id === id)?.name || 'Unknown';
 
-  const scheduleOptions = useMemo(
-    () => (isDevToolsEnabled ? [...SCHEDULE_OPTIONS, DEV_ONLY_SCHEDULE_OPTION] : SCHEDULE_OPTIONS),
-    [isDevToolsEnabled],
-  );
-
-  const renderScheduleOption = ({ option }: { option: ScheduleOption }) => (
-    <Group gap="sm" wrap="nowrap" justify="space-between" w="100%">
-      <Text size="sm" c={option.disabled ? 'dimmed' : option.value === EVERY_MINUTE ? 'violet.6' : undefined}>
-        {option.label}
-      </Text>
-      {option.disabled && <ComingSoonBadge />}
-    </Group>
-  );
-
   // Loading state
   if (!isNew && !existingSync) {
     return (
@@ -612,90 +544,24 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
   return (
     <Stack h="100%" gap={0}>
-      {/* Header */}
-      <Group
-        h={48}
-        px="md"
-        justify="space-between"
-        style={{
-          borderBottom: '1px solid var(--fg-divider)',
-          flexShrink: 0,
-        }}
-      >
-        <Group gap="sm">
-          <Text13Medium>{isNew ? 'New Sync' : syncName}</Text13Medium>
-          <SegmentedControl
-            size="xs"
-            value={editorMode}
-            onChange={handleModeChange}
-            data={[
-              { value: 'visual', label: 'Visual' },
-              { value: 'json', label: 'JSON' },
-            ]}
-          />
-        </Group>
-        <Group gap="xs">
-          {editorMode === 'json' && (
-            <Tooltip
-              label={
-                hasLinkedFolders
-                  ? 'Copy workbook context for an AI agent'
-                  : 'Link at least one folder before using AI assist'
-              }
-            >
-              <Box>
-                <Button
-                  size="compact-xs"
-                  variant="light"
-                  leftSection={<ClipboardCopy size={12} />}
-                  disabled={!hasLinkedFolders}
-                  loading={aiContextCopying}
-                  onClick={handleCopyAiContext}
-                >
-                  Copy for AI
-                </Button>
-              </Box>
-            </Tooltip>
-          )}
-          {!isNew && (
-            <>
-              <Button
-                size="compact-xs"
-                variant="light"
-                color="blue"
-                leftSection={
-                  isRunning ? (
-                    <RefreshCwIcon size={12} style={{ animation: 'spin 1s linear infinite' }} />
-                  ) : (
-                    <PlayIcon size={12} />
-                  )
-                }
-                onClick={handleRunSync}
-                disabled={isRunning}
-              >
-                {isRunning ? 'Running...' : 'Run Now'}
-              </Button>
-              <Button
-                size="compact-xs"
-                variant="light"
-                color="red"
-                leftSection={<Trash2 size={12} />}
-                onClick={handleDelete}
-              >
-                Delete
-              </Button>
-            </>
-          )}
-          <Button
-            size="compact-xs"
-            onClick={handleSave}
-            loading={saving}
-            disabled={editorMode === 'visual' ? validPairsCount === 0 : !jsonContent.trim()}
-          >
-            {isNew ? 'Create' : 'Save'}
-          </Button>
-        </Group>
-      </Group>
+      {/* Toolbar */}
+      <SyncToolbar
+        workbookId={workbookId}
+        syncId={syncId}
+        syncName={syncName}
+        syncNamePlaceholder={syncNamePlaceholder}
+        onSyncNameChange={setSyncName}
+        schedule={schedule}
+        onScheduleChange={setSchedule}
+        onSave={handleSave}
+        saving={saving}
+        hasUnsavedChanges={hasUnsavedChanges}
+        canSave={editorMode === 'visual' ? validPairsCount > 0 : !!jsonContent.trim()}
+        enableValidation={enableValidation}
+        onEnableValidationChange={setEnableValidation}
+        autoPublish={autoPublish}
+        onAutoPublishChange={setAutoPublish}
+      />
 
       {/* Error Banner */}
       {errorBanner && (
@@ -711,25 +577,24 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         </Alert>
       )}
 
-      {/* Sync Name — visible in both modes */}
-      <Box px="md" py="md" style={{ borderBottom: '1px solid var(--fg-divider)' }}>
-        <TextInput
-          label="Sync Name"
-          placeholder="My Sync"
-          value={syncName}
-          onChange={(e) => {
-            setSyncName(e.currentTarget.value);
-          }}
-        />
-      </Box>
-
       {/* Content */}
       {editorMode === 'visual' ? (
         <ScrollArea style={{ flex: 1 }}>
           <Stack p="md" gap="lg">
             {/* Folder Pairs */}
             <Stack gap="sm">
-              <Text13Medium>Folder Pairs</Text13Medium>
+              <Group justify="space-between">
+                <Text13Medium>Folder Pairs</Text13Medium>
+                <SegmentedControl
+                  size="xs"
+                  value={editorMode}
+                  onChange={handleModeChange}
+                  data={[
+                    { value: 'visual', label: 'Visual' },
+                    { value: 'json', label: 'JSON' },
+                  ]}
+                />
+              </Group>
 
               {folderPairs.map((pair, index) => (
                 <Box
@@ -853,7 +718,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                 color={mapping.transformer ? 'blue' : 'gray'}
                                 onClick={() => openTransformerModal(index, mIndex)}
                               >
-                                <Wand2 size={14} />
+                                <Settings size={14} />
                               </ActionIcon>
                             </Tooltip>
                             {pair.fieldMappings.length > 1 && (
@@ -940,44 +805,44 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                 Add Folder Pair
               </Button>
             </Stack>
-
-            {/* Schedule */}
-            <Select
-              label="Schedule"
-              placeholder="Select schedule"
-              data={scheduleOptions}
-              value={schedule}
-              onChange={(val) => {
-                setSchedule(val || '');
-              }}
-              renderOption={renderScheduleOption}
-              allowDeselect={false}
-            />
-
-            {/* Options */}
-            <Stack gap="xs">
-              <Checkbox
-                label="Validate Mappings"
-                description="Check if source and destination field types are compatible"
-                checked={enableValidation}
-                onChange={(e) => {
-                  setEnableValidation(e.currentTarget.checked);
-                }}
-              />
-              <Checkbox
-                label="Auto-publish changes after sync"
-                checked={autoPublish}
-                disabled
-                onChange={(e) => {
-                  setAutoPublish(e.currentTarget.checked);
-                }}
-              />
-            </Stack>
           </Stack>
         </ScrollArea>
       ) : (
         <Flex style={{ flex: 1, overflow: 'hidden' }}>
           <Stack style={{ flex: 1, overflow: 'hidden' }} gap={0}>
+            <Group px="md" pt="md" pb="sm" justify="space-between">
+              <Group gap="sm">
+                <Tooltip
+                  label={
+                    hasLinkedFolders
+                      ? 'Copy workbook context for an AI agent'
+                      : 'Link at least one folder before using AI assist'
+                  }
+                >
+                  <Box>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      leftSection={<ClipboardCopy size={12} />}
+                      disabled={!hasLinkedFolders}
+                      loading={aiContextCopying}
+                      onClick={handleCopyAiContext}
+                    >
+                      Copy for AI
+                    </Button>
+                  </Box>
+                </Tooltip>
+              </Group>
+              <SegmentedControl
+                size="xs"
+                value={editorMode}
+                onChange={handleModeChange}
+                data={[
+                  { value: 'visual', label: 'Visual' },
+                  { value: 'json', label: 'JSON' },
+                ]}
+              />
+            </Group>
             {jsonError && (
               <Alert color="red" withCloseButton onClose={() => setJsonError(null)} mx="md" mt="md">
                 {jsonError}
@@ -1008,16 +873,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           <SyncJsonReferencePanel jsonContent={jsonContent} allFolders={allFolders} />
         </Flex>
       )}
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
-
-      {/* Confirm Dialog */}
-      <ConfirmDialog {...dialogProps} />
 
       {/* Transformer Config Modal */}
       <TransformerConfigModal
