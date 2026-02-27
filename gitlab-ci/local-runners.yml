@@ -45,7 +45,7 @@ include:
     GIT_STRATEGY: fetch
     # Clean untracked files but preserve node_modules and .yarn caches.
     # If a cache gets corrupted, run `docker volume prune` and retry.
-    GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn"
+    GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn -e .next"
   after_script:
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
@@ -88,6 +88,7 @@ local build and test client:
   extends:
     - .build-and-test-client
     - .local-runner-defaults
+  artifacts: {}
   rules:
     - if: *local-user-if
       changes: !reference [.changes, client]
