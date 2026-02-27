@@ -27,6 +27,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:integration": "jest --config ./test/integration/jest-integration.json",
+    "generate": "prisma generate",
     "postinstall": "prisma generate",
     "migrate": "prisma migrate deploy",
     "genmigration": "prisma migrate dev"
