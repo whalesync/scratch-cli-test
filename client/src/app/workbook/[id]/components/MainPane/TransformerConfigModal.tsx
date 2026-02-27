@@ -129,7 +129,7 @@ export function TransformerConfigModal({
         {type === TransformerTypes.StringToNumber && (
           <Stack gap="xs">
             <Checkbox
-              label="Strip currency symbols ($, €, £, etc.)"
+              label="Strip currency symbols ($, €, £, ¥, etc.)"
               checked={stripCurrency}
               onChange={(e) => setStripCurrency(e.currentTarget.checked)}
             />

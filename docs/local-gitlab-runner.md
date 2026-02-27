@@ -50,13 +50,14 @@ Edit `~/.gitlab-runner/config.toml` and update `[runners.docker]`:
     privileged = true
     pull_policy = ["if-not-present"]
     wait_for_services_timeout = 120
-    volumes = ["/cache", "/var/run/docker.sock:/var/run/docker.sock"]
+    volumes = ["/cache", "/var/run/docker.sock:/var/run/docker.sock", "gitlabbuilds:/builds"]
 ```
 
 - **`privileged = true`** is required for service containers (e.g., postgres for integration tests).
 - **`pull_policy = ["if-not-present"]`** avoids re-pulling cached images on every job, which speeds things up.
 - **`wait_for_services_timeout = 120`** gives service containers more time to start on Docker Desktop.
 - **`/var/run/docker.sock` mount** — Docker image build jobs use the host Docker socket instead of Docker-in-Docker (DinD). DinD service containers have networking issues on Docker Desktop for Mac that prevent health checks from succeeding.
+- **`gitlabbuilds:/builds` volume** — Persists the build directory across job runs so that `GIT_STRATEGY: fetch` can reuse the existing repo and caches (like `node_modules`, `.yarn`, and `.next`) survive between builds. Uses a named Docker volume so `docker volume prune` clears it along with other caches.
 
 ### 5. Install and start the runner
 

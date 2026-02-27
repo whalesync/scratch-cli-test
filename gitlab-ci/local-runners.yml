@@ -43,6 +43,9 @@ include:
     # Reuse the build directory between runs so node_modules and .yarn
     # caches persist, making yarn install near-instant after the first run.
     GIT_STRATEGY: fetch
+    # Disable shallow clones so fetch can always resolve new refs without
+    # falling back to a fresh clone (which wipes cached build artifacts).
+    GIT_DEPTH: 0
     # Clean untracked files but preserve node_modules and .yarn caches.
     # If a cache gets corrupted, run `docker volume prune` and retry.
     GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn -e .next"
@@ -88,7 +91,8 @@ local build and test client:
   extends:
     - .build-and-test-client
     - .local-runner-defaults
-  artifacts: {}
+  artifacts:
+    paths: []
   rules:
     - if: *local-user-if
       changes: !reference [.changes, client]
