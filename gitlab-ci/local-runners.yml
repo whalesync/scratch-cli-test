@@ -13,6 +13,18 @@
 # 2. Add your username to the regex below (&local-user-if)
 # 3. Add your username to .rules.skip_for_local_runner_users in
 #    gitlab-ci/stages/01-build-and-test.yml
+#
+# ⚠️  STALE CACHE TROUBLESHOOTING
+#
+# Local runners persist node_modules and .yarn caches between runs via Docker
+# volumes. If you see errors like "module not found", mismatched dependency
+# versions, or other node_modules/yarn cache corruption, clear the volumes:
+#
+#   gitlab-runner stop
+#   docker volume prune
+#   gitlab-runner start
+#
+# See docs/local-gitlab-runner.md for full details.
 # =============================================================================
 
 include:
@@ -33,6 +45,21 @@ include:
     # Clean untracked files but preserve node_modules and .yarn caches.
     # If a cache gets corrupted, run `docker volume prune` and retry.
     GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn"
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        echo ""
+        echo "============================================================"
+        echo "  LOCAL RUNNER: If this failure looks like a stale cache"
+        echo "  (module not found, mismatched deps, yarn errors), run:"
+        echo ""
+        echo "    gitlab-runner stop"
+        echo "    docker volume prune"
+        echo "    gitlab-runner start"
+        echo ""
+        echo "  See docs/local-gitlab-runner.md for details."
+        echo "============================================================"
+      fi
 
 # Docker image build jobs use the host Docker socket (mounted in config.toml)
 # instead of Docker-in-Docker. DinD service containers have networking issues
