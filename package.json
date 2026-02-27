@@ -7,6 +7,7 @@
     "client",
     "server",
     "scratch-git",
+    "scratch-git-2-http-backend",
     "scratch-git-tests",
     "packages/*"
   ],
