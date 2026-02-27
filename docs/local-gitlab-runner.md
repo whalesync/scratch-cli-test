@@ -107,6 +107,15 @@ Remove your username from the two opt-in lists (`.rules.skip_for_local_runner_us
 - Check `gitlab-runner --debug run` for detailed logs.
 - Verify your local Docker environment matches what the CI image provides.
 
+**Corrupted yarn cache / node_modules**
+
+- Local runner jobs preserve `node_modules` and `.yarn` between runs for speed. If a job fails with a corrupt cache error, clear the Docker build volumes and retry:
+  ```bash
+  gitlab-runner stop
+  docker volume prune
+  gitlab-runner start
+  ```
+
 **Integration test DB connection refused**
 
 - The Postgres service container should start automatically. Check Docker logs for the job's service containers.

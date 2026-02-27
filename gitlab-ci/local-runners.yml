@@ -27,10 +27,12 @@ include:
     # uses legacy --link networking which has connectivity issues on
     # Docker Desktop for Mac.
     FF_NETWORK_PER_BUILD: "true"
-    # Force a fresh clone every time. Local runner Docker volumes persist
-    # the build directory between jobs, which can leave stale .yarn caches
-    # and other artifacts that cause corruption.
-    GIT_STRATEGY: clone
+    # Reuse the build directory between runs so node_modules and .yarn
+    # caches persist, making yarn install near-instant after the first run.
+    GIT_STRATEGY: fetch
+    # Clean untracked files but preserve node_modules and .yarn caches.
+    # If a cache gets corrupted, run `docker volume prune` and retry.
+    GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn"
 
 # Docker image build jobs use the host Docker socket (mounted in config.toml)
 # instead of Docker-in-Docker. DinD service containers have networking issues
