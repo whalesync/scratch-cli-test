@@ -4,6 +4,7 @@ import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
+import { useFolderFileList } from '@/hooks/use-folder-file-list';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { scheduleApi } from '@/lib/api/schedule';
 import { syncApi } from '@/lib/api/sync';
@@ -23,8 +24,8 @@ import {
   Divider,
   Flex,
   Group,
+  Loader,
   ScrollArea,
-  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -33,7 +34,9 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type {
+  ColumnMapping,
   DataFolderId,
+  PreviewFieldResult,
   SaveSyncBody,
   SyncId,
   SyncMapping,
@@ -42,12 +45,23 @@ import type {
 } from '@spinner/shared-types';
 import { getTransformerLabel, ScheduleAction } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
-import { ArrowRight, ClipboardCopy, Plus, Search, Settings, Trash2 } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  CircleCheck,
+  CornerDownRight,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddFolderMappingModal } from './AddFolderMappingModal';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
-import { SyncPreviewPanel } from './SyncPreviewPanel';
 import { SyncToolbar } from './SyncToolbar';
 import { TablePairSelector } from './TablePairSelector';
 import { TransformerConfigModal } from './TransformerConfigModal';
@@ -173,6 +187,91 @@ const renderAutocompleteOption = ({ option }: any) => (
   </Group>
 );
 
+const LINE_HEIGHT = 18;
+const MAX_COLLAPSED_LINES = 3;
+const MAX_COLLAPSED_HEIGHT = LINE_HEIGHT * MAX_COLLAPSED_LINES;
+
+const formatPreviewValue = (value: unknown): string => {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+};
+
+function PreviewValueBox({ sourceValue, transformedValue }: { sourceValue: unknown; transformedValue: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const sourceRef = useRef<HTMLDivElement>(null);
+  const destRef = useRef<HTMLDivElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const sourceOverflows = (sourceRef.current?.scrollHeight ?? 0) > MAX_COLLAPSED_HEIGHT;
+    const destOverflows = (destRef.current?.scrollHeight ?? 0) > MAX_COLLAPSED_HEIGHT;
+    setIsOverflowing(sourceOverflows || destOverflows);
+  }, [sourceValue, transformedValue]);
+
+  return (
+    <Box
+      style={{
+        border: '1px solid var(--mantine-color-default-border)',
+        borderRadius: 'var(--mantine-radius-sm)',
+        background: 'var(--mantine-color-white)',
+        width: '100%',
+        overflow: 'hidden',
+      }}
+    >
+      <Box
+        ref={sourceRef}
+        style={{
+          padding: '6px 10px',
+          maxHeight: expanded ? undefined : MAX_COLLAPSED_HEIGHT,
+          overflow: 'hidden',
+        }}
+      >
+        <Text fz="xs" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px` }}>
+          {formatPreviewValue(sourceValue)}
+        </Text>
+      </Box>
+      <Divider />
+      <Box
+        ref={destRef}
+        style={{
+          padding: '6px 10px',
+          maxHeight: expanded ? undefined : MAX_COLLAPSED_HEIGHT,
+          overflow: 'hidden',
+        }}
+      >
+        <Group gap={6} wrap="nowrap" align="flex-start">
+          <CornerDownRight size={12} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0, marginTop: 3 }} />
+          <Text fz="xs" c="dimmed" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px` }}>
+            {formatPreviewValue(transformedValue)}
+          </Text>
+        </Group>
+      </Box>
+      {isOverflowing && (
+        <>
+          <Divider />
+          <Box
+            style={{ padding: '3px 10px', cursor: 'pointer', textAlign: 'center' }}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <Group gap={4} justify="center">
+              {expanded ? (
+                <ChevronUp size={12} color="var(--mantine-color-dimmed)" />
+              ) : (
+                <ChevronDown size={12} color="var(--mantine-color-dimmed)" />
+              )}
+              <Text fz={10} c="dimmed">
+                {expanded ? 'Show less' : 'Show more'}
+              </Text>
+            </Group>
+          </Box>
+        </>
+      )}
+    </Box>
+  );
+}
+
 export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const router = useRouter();
   const { dataFolderGroups } = useDataFolders();
@@ -202,6 +301,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     mappingIndex: number;
   } | null>(null);
 
+  // Preview & row interaction state
+  const [hoveredMappingIndex, setHoveredMappingIndex] = useState<number | null>(null);
+  const [selectedPreviewFile, setSelectedPreviewFile] = useState<string | null>(null);
+  const [previewResults, setPreviewResults] = useState<PreviewFieldResult[] | null>(null);
+  const [previewRecordId, setPreviewRecordId] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
   // JSON editor mode
   type EditorMode = 'visual' | 'json';
   const [editorMode, setEditorMode] = useState<EditorMode>('visual');
@@ -224,6 +331,17 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   // Derive active pair from selection
   const activePairIndex = Math.min(selectedPairIndex, folderPairs.length - 1);
   const activePair = folderPairs[activePairIndex];
+
+  // Preview: folder file list
+  const { files: previewFiles } = useFolderFileList(workbookId, (activePair?.sourceId || null) as DataFolderId | null);
+
+  const previewFileOptions = useMemo(
+    () =>
+      previewFiles
+        .filter((f) => f.type === 'file' && f.path.endsWith('.json'))
+        .map((f) => ({ value: f.path, label: f.name || f.path })),
+    [previewFiles],
+  );
 
   // Fetch schema paths if not in cache
   const ensureSchemaPaths = async (folderId: string) => {
@@ -362,6 +480,85 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       return () => clearTimeout(timer);
     }
   }, [isNew, existingSync, getCurrentStateSnapshot]);
+
+  // Preview: reset when active pair changes
+  useEffect(() => {
+    setSelectedPreviewFile(null);
+    setPreviewResults(null);
+    setPreviewRecordId(null);
+    setPreviewError(null);
+  }, [activePair?.id]);
+
+  // Preview: auto-select first file
+  useEffect(() => {
+    if (!selectedPreviewFile && previewFileOptions.length > 0) {
+      setSelectedPreviewFile(previewFileOptions[0].value);
+    }
+    if (
+      selectedPreviewFile &&
+      previewFileOptions.length > 0 &&
+      !previewFileOptions.some((f) => f.value === selectedPreviewFile)
+    ) {
+      setSelectedPreviewFile(null);
+    }
+  }, [previewFileOptions, selectedPreviewFile]);
+
+  // Preview: debounced auto-run
+  const previewMappingsFingerprint = JSON.stringify(activePair?.fieldMappings);
+  const canPreview =
+    !!activePair?.sourceId &&
+    activePair.fieldMappings.some((m) => m.sourceField && m.destField) &&
+    !!selectedPreviewFile;
+
+  useEffect(() => {
+    if (!canPreview || !activePair) return;
+    const abortController = new AbortController();
+    const capturedMappings = JSON.parse(previewMappingsFingerprint) as FieldMapping[];
+    const timer = setTimeout(async () => {
+      setPreviewLoading(true);
+      setPreviewError(null);
+      try {
+        const columnMappings: ColumnMapping[] = capturedMappings
+          .filter((m) => m.sourceField && m.destField)
+          .map((m) => ({
+            sourceColumnId: m.sourceField,
+            destinationColumnId: m.destField,
+            ...(m.transformer ? { transformer: m.transformer } : {}),
+          }));
+        const response = await syncApi.previewRecord(
+          workbookId,
+          activePair.sourceId,
+          selectedPreviewFile!,
+          columnMappings,
+        );
+        if (abortController.signal.aborted) return;
+        setPreviewResults(response.fields);
+        setPreviewRecordId(response.recordId);
+      } catch (err) {
+        if (abortController.signal.aborted) return;
+        setPreviewError(getHumanReadableErrorMessage(err));
+      } finally {
+        if (!abortController.signal.aborted) setPreviewLoading(false);
+      }
+    }, 500);
+    return () => {
+      clearTimeout(timer);
+      abortController.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canPreview, previewMappingsFingerprint, selectedPreviewFile, activePair?.sourceId, workbookId]);
+
+  // Preview helpers
+  const getPreviewForMapping = (mapping: FieldMapping): PreviewFieldResult | null =>
+    previewResults?.find((r) => r.sourceField === mapping.sourceField && r.destinationField === mapping.destField) ??
+    null;
+
+  const getMatchStatus = (): 'matched' | 'error' | 'unmatched' => {
+    if (previewError) return 'error';
+    if (!activePair?.matchingSourceField || !activePair?.matchingDestinationField) return 'unmatched';
+    if (previewRecordId) return 'matched';
+    return 'unmatched';
+  };
 
   // Compute a placeholder from the first folder pair (used when syncName is empty)
   const syncNamePlaceholder = useMemo(() => {
@@ -561,6 +758,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         onEnableValidationChange={setEnableValidation}
         autoPublish={autoPublish}
         onAutoPublishChange={setAutoPublish}
+        editorMode={editorMode}
+        onEditorModeChange={handleModeChange}
       />
 
       {/* Error Banner */}
@@ -581,45 +780,32 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       {editorMode === 'visual' ? (
         <ScrollArea style={{ flex: 1 }}>
           <Stack p="md" gap="lg">
-            <Group justify="space-between">
+            {folderPairs.length > 0 && (
               <Group gap="sm">
-                {folderPairs.length > 0 && (
-                  <>
-                    <TablePairSelector
-                      folderPairs={folderPairs.map((p) => ({
-                        id: p.id,
-                        sourceId: p.sourceId,
-                        destId: p.destId,
-                        fieldMappingCount: p.fieldMappings.filter((m) => m.sourceField && m.destField).length,
-                        sourceConnectorService: getFolderConnectorService(p.sourceId),
-                        destConnectorService: getFolderConnectorService(p.destId),
-                      }))}
-                      selectedIndex={activePairIndex}
-                      onSelect={setSelectedPairIndex}
-                      onAddPair={addPair}
-                      getFolderName={getFolderName}
-                    />
-                    <ActionIcon color="red" variant="subtle" onClick={() => removePair(activePairIndex)}>
-                      <Trash2 size={14} />
-                    </ActionIcon>
-                    {activePair && (
-                      <Text12Regular c="dimmed">
-                        {activePair.fieldMappings.filter((m) => m.sourceField && m.destField).length} column mappings
-                      </Text12Regular>
-                    )}
-                  </>
+                <TablePairSelector
+                  folderPairs={folderPairs.map((p) => ({
+                    id: p.id,
+                    sourceId: p.sourceId,
+                    destId: p.destId,
+                    fieldMappingCount: p.fieldMappings.filter((m) => m.sourceField && m.destField).length,
+                    sourceConnectorService: getFolderConnectorService(p.sourceId),
+                    destConnectorService: getFolderConnectorService(p.destId),
+                  }))}
+                  selectedIndex={activePairIndex}
+                  onSelect={setSelectedPairIndex}
+                  onAddPair={addPair}
+                  getFolderName={getFolderName}
+                />
+                <ActionIcon color="red" variant="subtle" onClick={() => removePair(activePairIndex)}>
+                  <Trash2 size={14} />
+                </ActionIcon>
+                {activePair && (
+                  <Text12Regular c="dimmed">
+                    {activePair.fieldMappings.filter((m) => m.sourceField && m.destField).length} column mappings
+                  </Text12Regular>
                 )}
               </Group>
-              <SegmentedControl
-                size="xs"
-                value={editorMode}
-                onChange={handleModeChange}
-                data={[
-                  { value: 'visual', label: 'Visual' },
-                  { value: 'json', label: 'JSON' },
-                ]}
-              />
-            </Group>
+            )}
 
             {folderPairs.length === 0 ? (
               <Stack align="center" gap="md" py="xl">
@@ -631,142 +817,276 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
             ) : (
               <>
                 {activePair && (
-                  <Stack key={activePair.id} gap="md">
-                    <Stack gap={4}>
-                      <Divider />
-                      <Group gap="xs">
-                        <Text12Regular c="dimmed" tt="uppercase" style={{ flex: 1 }}>
-                          Source field
-                        </Text12Regular>
-                        {/* Spacer for arrow icon */}
-                        <Box w={14} />
-                        <Text12Regular c="dimmed" tt="uppercase" style={{ flex: 1 }}>
-                          Dest field
-                        </Text12Regular>
-                        {/* Spacer for action icons */}
-                        <Box w={58} />
-                      </Group>
-                      <Divider />
-                    </Stack>
-
-                    <Stack gap="xs">
-                      {activePair.fieldMappings.map((mapping, mIndex) => (
-                        <Group key={mapping.id} gap="xs">
-                          <Autocomplete
-                            placeholder="Source field"
-                            style={{ flex: 1 }}
-                            value={mapping.sourceField}
-                            onChange={(val) => {
-                              updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
-                              const field = (schemaCache[activePair.sourceId] || []).find((f) => f.path === val);
-                              if (
-                                field?.suggestedTransformer &&
-                                !folderPairs[activePairIndex].fieldMappings[mIndex].transformer
-                              ) {
-                                updateFieldMappingTransformer(activePairIndex, mIndex, field.suggestedTransformer);
-                              }
-                            }}
-                            data={(schemaCache[activePair.sourceId] || []).map((f) => {
-                              if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                              return { value: f.path, label: f.path, type: f.type };
-                            })}
-                            renderOption={renderAutocompleteOption}
-                            rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
-                          />
-                          <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
-                          <Autocomplete
-                            placeholder="Dest field"
-                            style={{ flex: 1 }}
-                            value={mapping.destField}
-                            onChange={(val) => updateFieldMapping(activePairIndex, mIndex, 'destField', val)}
-                            data={(schemaCache[activePair.destId] || []).map((f) => {
-                              if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                              return { value: f.path, label: f.path, type: f.type };
-                            })}
-                            renderOption={renderAutocompleteOption}
-                            rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
-                          />
-                          <Tooltip
-                            label={mapping.transformer ? getTransformerLabel(mapping.transformer.type) : 'Transform'}
-                          >
-                            <ActionIcon
-                              variant="subtle"
-                              color={mapping.transformer ? 'blue' : 'gray'}
-                              onClick={() => openTransformerModal(activePairIndex, mIndex)}
-                            >
-                              <Settings size={14} />
-                            </ActionIcon>
-                          </Tooltip>
-                          {activePair.fieldMappings.length > 1 && (
-                            <ActionIcon
-                              variant="subtle"
-                              color="gray"
-                              onClick={() => removeFieldMapping(activePairIndex, mIndex)}
-                            >
-                              <Trash2 size={14} />
-                            </ActionIcon>
-                          )}
-                        </Group>
-                      ))}
-                      <Button
-                        variant="light"
-                        size="xs"
-                        leftSection={<Plus size={14} />}
-                        onClick={() => addFieldMapping(activePairIndex)}
-                      >
-                        Add Field Mapping
-                      </Button>
-                    </Stack>
-
-                    <Select
-                      label={
-                        <>
-                          Record matching{' '}
-                          <Anchor href={DocsUrls.recordMatching} target="_blank" size="xs" fw="normal">
-                            How does this work?
-                          </Anchor>
-                        </>
-                      }
-                      description="Select a field that is unique, so we know which record to sync changes to."
-                      placeholder="Select matching pair"
-                      data={activePair.fieldMappings
-                        .filter((m) => m.sourceField && m.destField)
-                        .reduce<{ value: string; label: string }[]>((acc, m) => {
-                          const value = `${m.sourceField}::${m.destField}`;
-                          if (!acc.some((item) => item.value === value)) {
-                            acc.push({ value, label: `${m.sourceField} <-> ${m.destField}` });
-                          }
-                          return acc;
-                        }, [])}
-                      value={
-                        activePair.matchingSourceField && activePair.matchingDestinationField
-                          ? `${activePair.matchingSourceField}::${activePair.matchingDestinationField}`
-                          : null
-                      }
-                      error={
-                        activePair.fieldMappings.every(
-                          (mapping) =>
-                            mapping.sourceField !== activePair.matchingSourceField ||
-                            mapping.destField !== activePair.matchingDestinationField,
-                        ) && 'Record matching must use one of the current field mappings'
-                      }
-                      onChange={(val) => {
-                        const [sourceField, destField] = val?.split('::') ?? [];
-                        updatePair(activePairIndex, {
-                          matchingSourceField: sourceField || '',
-                          matchingDestinationField: destField || '',
-                        });
+                  <Stack
+                    key={activePair.id}
+                    gap={0}
+                    style={{ position: 'relative', marginLeft: -16, marginRight: -16 }}
+                  >
+                    {/* Preview background column — absolutely positioned so the border is perfectly straight */}
+                    <Box
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        bottom: 0,
+                        right: 0,
+                        width: '33.333%',
+                        background: 'var(--bg-panel)',
+                        borderLeft: '1px solid var(--fg-divider)',
+                        pointerEvents: 'none',
+                        zIndex: 0,
                       }}
-                      searchable
-                      clearable
                     />
 
-                    <SyncPreviewPanel
-                      key={activePair.id}
-                      workbookId={workbookId}
-                      sourceId={activePair.sourceId}
-                      fieldMappings={activePair.fieldMappings}
-                    />
+                    {/* Column header row */}
+                    <Divider style={{ position: 'relative', zIndex: 1 }} />
+                    <Box style={{ display: 'flex', width: '100%', position: 'relative', zIndex: 1 }}>
+                      <Box style={{ width: '66.666%', display: 'flex', alignItems: 'center' }}>
+                        <Group gap="xs" py={8} px={16} style={{ flex: 1 }}>
+                          <Text12Regular c="dimmed" tt="uppercase" style={{ flex: 1 }}>
+                            Source field
+                          </Text12Regular>
+                          <Box w={14} />
+                          <Text12Regular c="dimmed" tt="uppercase" style={{ flex: 1 }}>
+                            Dest field
+                          </Text12Regular>
+                          <Box w={58} />
+                        </Group>
+                      </Box>
+                      <Box
+                        style={{
+                          width: '33.333%',
+                          padding: '8px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Group gap={8} wrap="nowrap" style={{ flex: 1 }}>
+                          <Text12Regular c="dimmed" tt="uppercase" style={{ whiteSpace: 'nowrap' }}>
+                            Record preview
+                          </Text12Regular>
+                          <Select
+                            size="xs"
+                            placeholder="Select file"
+                            data={previewFileOptions}
+                            value={selectedPreviewFile}
+                            onChange={setSelectedPreviewFile}
+                            searchable
+                            allowDeselect={false}
+                            nothingFoundMessage="No JSON files"
+                            style={{ flex: 1 }}
+                          />
+                          {(() => {
+                            const matchStatus = getMatchStatus();
+                            return (
+                              <>
+                                {matchStatus === 'matched' && (
+                                  <Tooltip label="Record matched">
+                                    <CircleCheck size={16} color="var(--mantine-color-green-6)" />
+                                  </Tooltip>
+                                )}
+                                {matchStatus === 'error' && (
+                                  <Tooltip label={previewError || 'Preview error'}>
+                                    <AlertCircle size={16} color="var(--mantine-color-red-6)" />
+                                  </Tooltip>
+                                )}
+                                {matchStatus === 'unmatched' && (
+                                  <Tooltip label="No record matching configured">
+                                    <Circle size={16} color="var(--mantine-color-gray-5)" />
+                                  </Tooltip>
+                                )}
+                              </>
+                            );
+                          })()}
+                          {previewLoading && <Loader size={14} />}
+                        </Group>
+                      </Box>
+                    </Box>
+                    <Divider style={{ position: 'relative', zIndex: 1 }} />
+
+                    {/* Field mapping rows */}
+                    {activePair.fieldMappings.map((mapping, mIndex) => {
+                      const preview = getPreviewForMapping(mapping);
+                      const hasWarning = !!preview?.warning;
+                      const isHovered = hoveredMappingIndex === mIndex;
+                      return (
+                        <Box key={mapping.id}>
+                          <Box
+                            style={{
+                              display: 'flex',
+                              width: '100%',
+                              position: 'relative',
+                              zIndex: 1,
+                              background: isHovered ? 'var(--mantine-color-gray-0)' : undefined,
+                              borderLeft: isHovered ? '3px solid var(--mantine-color-dark-7)' : '3px solid transparent',
+                            }}
+                            onMouseEnter={() => setHoveredMappingIndex(mIndex)}
+                            onMouseLeave={() => setHoveredMappingIndex(null)}
+                          >
+                            {/* Left: mapping controls */}
+                            <Box
+                              style={{
+                                width: '66.666%',
+                                padding: '10px 16px 10px 13px',
+                                display: 'flex',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <Stack gap={2} style={{ flex: 1 }}>
+                                <Group gap="xs" wrap="nowrap">
+                                  <Autocomplete
+                                    placeholder="Source field"
+                                    style={{ flex: 1 }}
+                                    value={mapping.sourceField}
+                                    onChange={(val) => {
+                                      updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
+                                      const field = (schemaCache[activePair.sourceId] || []).find(
+                                        (f) => f.path === val,
+                                      );
+                                      if (
+                                        field?.suggestedTransformer &&
+                                        !folderPairs[activePairIndex].fieldMappings[mIndex].transformer
+                                      ) {
+                                        updateFieldMappingTransformer(
+                                          activePairIndex,
+                                          mIndex,
+                                          field.suggestedTransformer,
+                                        );
+                                      }
+                                    }}
+                                    data={(schemaCache[activePair.sourceId] || []).map((f) => {
+                                      if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
+                                      return { value: f.path, label: f.path, type: f.type };
+                                    })}
+                                    renderOption={renderAutocompleteOption}
+                                    rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
+                                  />
+                                  <ArrowRight size={14} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
+                                  <Autocomplete
+                                    placeholder="Dest field"
+                                    style={{ flex: 1 }}
+                                    value={mapping.destField}
+                                    onChange={(val) => updateFieldMapping(activePairIndex, mIndex, 'destField', val)}
+                                    data={(schemaCache[activePair.destId] || []).map((f) => {
+                                      if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
+                                      return { value: f.path, label: f.path, type: f.type };
+                                    })}
+                                    renderOption={renderAutocompleteOption}
+                                    rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
+                                  />
+                                  <Tooltip
+                                    label={
+                                      mapping.transformer ? getTransformerLabel(mapping.transformer.type) : 'Transform'
+                                    }
+                                  >
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color={mapping.transformer ? 'blue' : 'gray'}
+                                      onClick={() => openTransformerModal(activePairIndex, mIndex)}
+                                    >
+                                      <Settings size={14} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                  {activePair.fieldMappings.length > 1 && (
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color="gray"
+                                      onClick={() => removeFieldMapping(activePairIndex, mIndex)}
+                                    >
+                                      <Trash2 size={14} />
+                                    </ActionIcon>
+                                  )}
+                                </Group>
+                                {hasWarning && (
+                                  <Text12Regular c="var(--mantine-color-orange-6)">⚠ {preview!.warning}</Text12Regular>
+                                )}
+                              </Stack>
+                            </Box>
+                            {/* Right: preview values */}
+                            <Box
+                              style={{
+                                width: '33.333%',
+                                padding: '8px 12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                background: isHovered ? 'var(--mantine-color-gray-1)' : undefined,
+                              }}
+                            >
+                              <Box style={{ width: '100%', visibility: preview ? 'visible' : 'hidden' }}>
+                                <PreviewValueBox
+                                  sourceValue={preview?.sourceValue}
+                                  transformedValue={preview?.transformedValue}
+                                />
+                              </Box>
+                            </Box>
+                          </Box>
+                          <Divider />
+                        </Box>
+                      );
+                    })}
+
+                    {/* Footer row */}
+                    <Box style={{ display: 'flex', width: '100%', position: 'relative', zIndex: 1 }}>
+                      <Box style={{ width: '66.666%', padding: '8px 16px' }}>
+                        <Stack gap={0}>
+                          <Button
+                            variant="subtle"
+                            color="gray"
+                            size="xs"
+                            leftSection={<Plus size={14} />}
+                            onClick={() => addFieldMapping(activePairIndex)}
+                            style={{ alignSelf: 'flex-start' }}
+                          >
+                            Add column mapping
+                          </Button>
+
+                          <Box pt={16} pb={16}>
+                            <Select
+                              label={
+                                <>
+                                  Record matching{' '}
+                                  <Anchor href={DocsUrls.recordMatching} target="_blank" size="xs" fw="normal">
+                                    How does this work?
+                                  </Anchor>
+                                </>
+                              }
+                              description="Select a field that is unique, so we know which record to sync changes to."
+                              placeholder="Select matching pair"
+                              data={activePair.fieldMappings
+                                .filter((m) => m.sourceField && m.destField)
+                                .reduce<{ value: string; label: string }[]>((acc, m) => {
+                                  const value = `${m.sourceField}::${m.destField}`;
+                                  if (!acc.some((item) => item.value === value)) {
+                                    acc.push({ value, label: `${m.sourceField} <-> ${m.destField}` });
+                                  }
+                                  return acc;
+                                }, [])}
+                              value={
+                                activePair.matchingSourceField && activePair.matchingDestinationField
+                                  ? `${activePair.matchingSourceField}::${activePair.matchingDestinationField}`
+                                  : null
+                              }
+                              error={
+                                activePair.fieldMappings.every(
+                                  (mapping) =>
+                                    mapping.sourceField !== activePair.matchingSourceField ||
+                                    mapping.destField !== activePair.matchingDestinationField,
+                                ) && 'Record matching must use one of the current field mappings'
+                              }
+                              onChange={(val) => {
+                                const [sourceField, destField] = val?.split('::') ?? [];
+                                updatePair(activePairIndex, {
+                                  matchingSourceField: sourceField || '',
+                                  matchingDestinationField: destField || '',
+                                });
+                              }}
+                              searchable
+                              clearable
+                            />
+                          </Box>
+                        </Stack>
+                      </Box>
+                      <Box style={{ width: '33.333%' }} />
+                    </Box>
                   </Stack>
                 )}
               </>
@@ -776,39 +1096,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       ) : (
         <Flex style={{ flex: 1, overflow: 'hidden' }}>
           <Stack style={{ flex: 1, overflow: 'hidden' }} gap={0}>
-            <Group px="md" pt="md" pb="sm" justify="space-between">
-              <Group gap="sm">
-                <Tooltip
-                  label={
-                    hasLinkedFolders
-                      ? 'Copy workbook context for an AI agent'
-                      : 'Link at least one folder before using AI assist'
-                  }
-                >
-                  <Box>
-                    <Button
-                      size="compact-xs"
-                      variant="light"
-                      leftSection={<ClipboardCopy size={12} />}
-                      disabled={!hasLinkedFolders}
-                      loading={aiContextCopying}
-                      onClick={handleCopyAiContext}
-                    >
-                      Copy for AI
-                    </Button>
-                  </Box>
-                </Tooltip>
-              </Group>
-              <SegmentedControl
-                size="xs"
-                value={editorMode}
-                onChange={handleModeChange}
-                data={[
-                  { value: 'visual', label: 'Visual' },
-                  { value: 'json', label: 'JSON' },
-                ]}
-              />
-            </Group>
             {jsonError && (
               <Alert color="red" withCloseButton onClose={() => setJsonError(null)} mx="md" mt="md">
                 {jsonError}
@@ -836,7 +1123,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
               />
             </Box>
           </Stack>
-          <SyncJsonReferencePanel jsonContent={jsonContent} allFolders={allFolders} />
+          <SyncJsonReferencePanel
+            jsonContent={jsonContent}
+            allFolders={allFolders}
+            hasLinkedFolders={hasLinkedFolders}
+            aiContextCopying={aiContextCopying}
+            onCopyAiContext={handleCopyAiContext}
+          />
         </Flex>
       )}
 

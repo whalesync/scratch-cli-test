@@ -43,9 +43,7 @@ export function DataFolderSchemaModal({ opened, onClose, folder, mode = 'view' }
   }, [opened, folder.id, mode]);
 
   const lastUpdated = refreshedAt ?? folder.lastSchemaRefreshAt;
-  const lastUpdatedLabel = lastUpdated
-    ? `Last updated ${new Date(lastUpdated).toLocaleString()}`
-    : null;
+  const lastUpdatedLabel = lastUpdated ? `Last updated ${new Date(lastUpdated).toLocaleString()}` : null;
 
   const extensions = useMemo(() => [json(), EditorView.lineWrapping], []);
   const schemaText = useMemo(() => (schema ? JSON.stringify(schema, null, 2) : ''), [schema]);

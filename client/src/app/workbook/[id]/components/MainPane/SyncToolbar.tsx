@@ -9,11 +9,12 @@ import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { syncApi } from '@/lib/api/sync';
 import { useSyncStore } from '@/stores/sync-store';
 import { timeAgo } from '@/utils/helpers';
-import { ActionIcon, Box, Group, Menu } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import type { SyncId, WorkbookId } from '@spinner/shared-types';
 import {
+  BracesIcon,
   CheckIcon,
   CloudUploadIcon,
   EllipsisVertical,
@@ -42,6 +43,8 @@ interface SyncToolbarProps {
   onEnableValidationChange: (enabled: boolean) => void;
   autoPublish: boolean;
   onAutoPublishChange: (enabled: boolean) => void;
+  editorMode: 'visual' | 'json';
+  onEditorModeChange: (mode: string) => void;
 }
 
 // Shared styles for the title input and static text to prevent layout shift
@@ -66,6 +69,8 @@ export function SyncToolbar({
   onEnableValidationChange,
   autoPublish,
   onAutoPublishChange,
+  editorMode,
+  onEditorModeChange,
 }: SyncToolbarProps) {
   const router = useRouter();
   const syncs = useSyncStore((state) => state.syncs);
@@ -317,6 +322,17 @@ export function SyncToolbar({
         <ButtonSecondaryOutline size="compact-sm" onClick={onSave} loading={saving} disabled={!canSave}>
           {isNew ? 'Create' : 'Save'}
         </ButtonSecondaryOutline>
+
+        <Tooltip label={editorMode === 'visual' ? 'Edit as JSON' : 'Edit visually'}>
+          <ActionIcon
+            variant={editorMode === 'json' ? 'light' : 'subtle'}
+            color={editorMode === 'json' ? 'blue' : 'gray'}
+            aria-label="Toggle JSON editor"
+            onClick={() => onEditorModeChange(editorMode === 'visual' ? 'json' : 'visual')}
+          >
+            <StyledLucideIcon Icon={BracesIcon} size="sm" />
+          </ActionIcon>
+        </Tooltip>
 
         <Menu position="bottom-end" withinPortal>
           <Menu.Target>
