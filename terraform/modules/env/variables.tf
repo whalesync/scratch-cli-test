@@ -256,3 +256,21 @@ variable "enable_scratch_git" {
   default     = false
   description = "Whether to enable the scratch-git GCE instance."
 }
+
+variable "scratch_git_disk_size_gb" {
+  type        = number
+  default     = 50
+  description = "Size of the persistent data disk for the scratch-git GCE instance in GB."
+}
+
+variable "scratch_git_boot_disk_size_gb" {
+  type        = number
+  default     = 30
+  description = "Size of the boot disk for the scratch-git GCE instance in GB."
+}
+
+variable "scratch_git_snapshot_hours_in_cycle" {
+  type        = number
+  default     = 4
+  description = "Hours between each disk snapshot for the scratch-git data disk (1, 2, 3, 4, 6, 8, 12, or 24)."
+}

@@ -28,13 +28,16 @@ module "eu_test" {
   enable_pagerduty_notifications = false
 
   # Scratch Git
-  enable_scratch_git = true
+  enable_scratch_git                  = true
+  scratch_git_boot_disk_size_gb       = 30
+  scratch_git_snapshot_hours_in_cycle = 12
+  scratch_git_disk_size_gb            = 50
 
   # Services
-  force_reload_services = var.force_reload_services
+  force_reload_services          = var.force_reload_services
   api_service_min_instance_count = 2
   api_service_max_instance_count = 2
-  worker_concurrency    = 10
+  worker_concurrency             = 10
 }
 
 variable "as_gitlab" {

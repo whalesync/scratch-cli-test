@@ -24,13 +24,16 @@ module "eu_production" {
   enable_pagerduty_notifications = true
 
   # Scratch Git
-  enable_scratch_git = true
+  enable_scratch_git                  = true
+  scratch_git_boot_disk_size_gb       = 20
+  scratch_git_snapshot_hours_in_cycle = 1
+  scratch_git_disk_size_gb            = 50
 
   # Services
-  force_reload_services = var.force_reload_services
+  force_reload_services          = var.force_reload_services
   api_service_min_instance_count = 4
   api_service_max_instance_count = 4
-  worker_concurrency    = 10
+  worker_concurrency             = 10
 }
 
 variable "as_gitlab" {

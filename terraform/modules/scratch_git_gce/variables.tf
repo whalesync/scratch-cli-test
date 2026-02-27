@@ -77,3 +77,33 @@ variable "disk_type" {
   type        = string
   default     = "pd-ssd"
 }
+
+variable "boot_disk_size_gb" {
+  description = "Size of the boot disk in GB"
+  type        = number
+  default     = 30
+}
+
+variable "snapshot_schedule_enabled" {
+  description = "Whether to enable automated disk snapshot backups"
+  type        = bool
+  default     = true
+}
+
+variable "snapshot_hours_in_cycle" {
+  description = "Hours between each snapshot (e.g. 4 = every 4 hours)"
+  type        = number
+  default     = 4
+}
+
+variable "snapshot_start_time" {
+  description = "Time in UTC (HH:MM) when the first snapshot of the cycle begins"
+  type        = string
+  default     = "05:00"
+}
+
+variable "snapshot_retention_days" {
+  description = "Number of days to retain disk snapshots"
+  type        = number
+  default     = 14
+}

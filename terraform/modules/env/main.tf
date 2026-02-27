@@ -299,16 +299,19 @@ module "scratch_git_gce" {
     google.no_labels = google.no_labels
   }
 
-  instance_name         = "scratch-git"
-  zone                  = var.gcp_zone
-  region                = var.gcp_region
-  network               = module.vpc.network
-  subnetwork            = module.vpc.subnets_id[0]
-  gcp_project_id        = var.gcp_project_id
-  service_account_email = module.iam-sa.service_accounts["scratch-git-service-account"].email
-  docker_image          = "${local.artifact_registry_url}/spinner-scratch-git:latest"
-  network_name          = local.vpc_network_name
-  vpc_cidr_ranges       = [for s in local.custom_subnetworks : s.ip_cidr_range]
+  instance_name           = "scratch-git"
+  zone                    = var.gcp_zone
+  region                  = var.gcp_region
+  network                 = module.vpc.network
+  subnetwork              = module.vpc.subnets_id[0]
+  gcp_project_id          = var.gcp_project_id
+  service_account_email   = module.iam-sa.service_accounts["scratch-git-service-account"].email
+  docker_image            = "${local.artifact_registry_url}/spinner-scratch-git:latest"
+  network_name            = local.vpc_network_name
+  vpc_cidr_ranges         = [for s in local.custom_subnetworks : s.ip_cidr_range]
+  boot_disk_size_gb      = var.scratch_git_boot_disk_size_gb
+  disk_size_gb           = var.scratch_git_disk_size_gb
+  snapshot_hours_in_cycle = var.scratch_git_snapshot_hours_in_cycle
 
   depends_on = [module.vpc, module.iam-sa]
 }

@@ -23,6 +23,50 @@ resource "google_compute_disk" "data" {
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
+## Disk Snapshot Schedule
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "google_compute_resource_policy" "snapshot_schedule" {
+  count = var.snapshot_schedule_enabled ? 1 : 0
+
+  name    = "${var.instance_name}-data-snapshot-schedule"
+  project = var.gcp_project_id
+  region  = var.region
+
+  snapshot_schedule_policy {
+    schedule {
+      hourly_schedule {
+        hours_in_cycle = var.snapshot_hours_in_cycle
+        start_time     = var.snapshot_start_time
+      }
+    }
+
+    retention_policy {
+      max_retention_days    = var.snapshot_retention_days
+      on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"
+    }
+
+    snapshot_properties {
+      labels = {
+        "service"   = "scratch-git"
+        "terraform" = "true"
+        "type"      = "automated-backup"
+      }
+      storage_locations = [var.region]
+    }
+  }
+}
+
+resource "google_compute_disk_resource_policy_attachment" "snapshot_attachment" {
+  count = var.snapshot_schedule_enabled ? 1 : 0
+
+  name    = google_compute_resource_policy.snapshot_schedule[0].name
+  disk    = google_compute_disk.data.name
+  zone    = var.zone
+  project = var.gcp_project_id
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
 ## Static Internal IP
 ## ---------------------------------------------------------------------------------------------------------------------
 
@@ -51,7 +95,7 @@ resource "google_compute_instance" "scratch_git" {
   boot_disk {
     initialize_params {
       image = "debian-cloud/debian-12"
-      size  = 20
+      size  = var.boot_disk_size_gb
     }
   }
 
@@ -135,6 +179,9 @@ resource "google_compute_instance" "scratch_git" {
 
     # Clean up old Docker images to prevent boot disk from filling up
     docker system prune -af
+
+    # Also clean up journal logs that may have filled the disk
+    journalctl --vacuum-size=100M 2>/dev/null || true
 
     # Pull the latest image
     docker pull ${var.docker_image}
