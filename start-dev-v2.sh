@@ -31,6 +31,15 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
+# Verify cargo (Rust) is available
+if ! command -v cargo &> /dev/null; then
+    echo -e "${YELLOW}Rust/Cargo not found. Installing via Homebrew...${NC}"
+    brew install rust || {
+        echo -e "${RED}Failed to install Rust. Please install manually: https://rustup.rs${NC}"
+        exit 1
+    }
+fi
+
 echo -e "${YELLOW}Using Node $(node --version)${NC}"
 
 # Build shared-types package first
