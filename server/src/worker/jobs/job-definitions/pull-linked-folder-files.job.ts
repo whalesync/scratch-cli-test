@@ -339,7 +339,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       // After download, remove files from main that no longer exist in remote
       // This ensures deleted items don't keep showing up in future diffs
-      const folderPath = dataFolder.path ?? dataFolder.name;
+      const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
       try {
         const mainFiles = (await this.scratchGitService.listRepoFiles(
           dataFolder.workbookId as WorkbookId,
