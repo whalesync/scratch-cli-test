@@ -45,14 +45,15 @@ include:
 # =============================================================================
 # Local runner user list
 #
-# Add your GitLab username here when you register a local runner.
-# This skips the shared-runner MR jobs for these users; their MR jobs
-# run on their local runner instead (see gitlab-ci/local-runners.yml).
+# This skips the shared-runner MR jobs for local-runner users so they don't
+# get duplicate runs. See gitlab-ci/local-runners.yml for the local variants.
 # =============================================================================
 
+# ✏️  ADD YOUR USERNAME HERE (2 of 2 — you must also update
+#    .rules.local_runner_users in gitlab-ci/local-runners.yml)
 .rules:
   skip_for_local_runner_users:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger)$/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola)$/'
       when: never
 
 # =============================================================================

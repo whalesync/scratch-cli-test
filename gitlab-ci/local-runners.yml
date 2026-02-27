@@ -10,9 +10,10 @@
 #
 # To opt in:
 # 1. Register a local runner (see docs/local-gitlab-runner.md)
-# 2. Add your username to the regex below (&local-user-if)
-# 3. Add your username to .rules.skip_for_local_runner_users in
-#    gitlab-ci/stages/01-build-and-test.yml
+# 2. Add your username to BOTH regexes (see step 6 in the doc):
+#    a. .rules.local_runner_users below (routes jobs to your runner)
+#    b. .rules.skip_for_local_runner_users in 01-build-and-test.yml
+#       (disables shared-runner duplicates)
 #
 # ⚠️  STALE CACHE TROUBLESHOOTING
 #
@@ -73,8 +74,8 @@ include:
     # Pin the API version to avoid "client version X is too old" errors.
     DOCKER_API_VERSION: "1.44"
 
-# Add your GitLab username to this regex when you register a local runner.
-# The YAML anchor (&local-user-if) lets every job below reuse this condition.
+# ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
+#    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
 .rules:
   local_runner_users:
     - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola)$/'
