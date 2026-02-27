@@ -1,6 +1,6 @@
 'use client';
 
-import { Text13Medium } from '@/app/components/base/text';
+import { Text12Regular } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
@@ -20,7 +20,7 @@ import {
   Badge,
   Box,
   Button,
-  Collapse,
+  Divider,
   Flex,
   Group,
   ScrollArea,
@@ -42,22 +42,13 @@ import type {
 } from '@spinner/shared-types';
 import { getTransformerLabel, ScheduleAction } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
-import {
-  ArrowRight,
-  ChevronDown,
-  ChevronUp,
-  ClipboardCopy,
-  Database,
-  Plus,
-  Search,
-  Settings,
-  Trash2,
-} from 'lucide-react';
+import { ArrowRight, ClipboardCopy, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
 import { SyncPreviewPanel } from './SyncPreviewPanel';
 import { SyncToolbar } from './SyncToolbar';
+import { TablePairSelector } from './TablePairSelector';
 import { TransformerConfigModal } from './TransformerConfigModal';
 
 interface SyncEditorProps {
@@ -79,7 +70,6 @@ interface FolderPair {
   fieldMappings: FieldMapping[];
   matchingDestinationField: string;
   matchingSourceField: string;
-  expanded: boolean;
 }
 
 // Helpers
@@ -99,7 +89,6 @@ const createPair = (): FolderPair => ({
   fieldMappings: [createMapping()],
   matchingDestinationField: '',
   matchingSourceField: '',
-  expanded: true,
 });
 
 const folderPairsToSyncMapping = (pairs: FolderPair[]): SyncMapping => {
@@ -152,7 +141,6 @@ const syncMappingToFolderPairs = (mapping: SyncMapping): FolderPair[] => {
       fieldMappings: fieldMappings.length ? fieldMappings : [createMapping()],
       matchingDestinationField: tm.recordMatching?.destinationColumnId || '',
       matchingSourceField: tm.recordMatching?.sourceColumnId || '',
-      expanded: true,
     };
   });
 };
@@ -201,6 +189,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const existingSync = useMemo(() => syncs.find((s) => s.id === syncId), [syncs, syncId]);
 
   const [folderPairs, setFolderPairs] = useState<FolderPair[]>([createPair()]);
+  const [selectedPairIndex, setSelectedPairIndex] = useState(0);
   const [syncName, setSyncName] = useState('');
   const [schedule, setSchedule] = useState('');
   const [autoPublish, setAutoPublish] = useState(false);
@@ -236,6 +225,10 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
   // Flatten folders for easy selection
   const allFolders = dataFolderGroups.flatMap((g) => g.dataFolders);
+
+  // Derive active pair from selection
+  const activePairIndex = Math.min(selectedPairIndex, folderPairs.length - 1);
+  const activePair = folderPairs[activePairIndex];
 
   // Fetch schema paths if not in cache
   const ensureSchemaPaths = async (folderId: string) => {
@@ -273,6 +266,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         }
         const pairs = syncMappingToFolderPairs(parsed);
         setFolderPairs(pairs.length ? pairs : [createPair()]);
+        setSelectedPairIndex(0);
         // Ensure schema paths for all referenced folders
         const folderIds = new Set<string>();
         parsed.tableMappings.forEach((tm: { sourceDataFolderId: string; destinationDataFolderId: string }) => {
@@ -339,10 +333,10 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           fieldMappings: fieldMappings.length ? fieldMappings : [createMapping()],
           matchingDestinationField: tm.recordMatching?.destinationColumnId || '',
           matchingSourceField: tm.recordMatching?.sourceColumnId || '',
-          expanded: true,
         };
       });
       setFolderPairs(pairs.length ? pairs : [createPair()]);
+      setSelectedPairIndex(0);
       uniqueFolderIds.forEach((id) => ensureSchemaPaths(id));
     } else if (existingSync.syncTablePairs) {
       const pairs: FolderPair[] = existingSync.syncTablePairs.map((p) => ({
@@ -352,7 +346,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         fieldMappings: [createMapping()],
         matchingDestinationField: '',
         matchingSourceField: '',
-        expanded: true,
       }));
       setFolderPairs(pairs.length ? pairs : [createPair()]);
     } else {
@@ -478,14 +471,19 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     setFolderPairs(next);
   };
 
-  const togglePairExpanded = (index: number) => {
-    updatePair(index, { expanded: !folderPairs[index].expanded });
-  };
-
   const removePair = (index: number) => {
     if (folderPairs.length > 1) {
       setFolderPairs(folderPairs.filter((_, i) => i !== index));
+      if (selectedPairIndex >= index && selectedPairIndex > 0) {
+        setSelectedPairIndex(selectedPairIndex - 1);
+      }
     }
+  };
+
+  const addPair = () => {
+    const newPairs = [...folderPairs, createPair()];
+    setFolderPairs(newPairs);
+    setSelectedPairIndex(newPairs.length - 1);
   };
 
   const addFieldMapping = (pairIndex: number) => {
@@ -532,6 +530,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   };
 
   const getFolderName = (id: string) => allFolders.find((f) => f.id === id)?.name || 'Unknown';
+  const getFolderConnectorService = (id: string) => allFolders.find((f) => f.id === id)?.connectorService;
 
   // Loading state
   if (!isNew && !existingSync) {
@@ -581,230 +580,222 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       {editorMode === 'visual' ? (
         <ScrollArea style={{ flex: 1 }}>
           <Stack p="md" gap="lg">
-            {/* Folder Pairs */}
-            <Stack gap="sm">
-              <Group justify="space-between">
-                <Text13Medium>Folder Pairs</Text13Medium>
-                <SegmentedControl
-                  size="xs"
-                  value={editorMode}
-                  onChange={handleModeChange}
-                  data={[
-                    { value: 'visual', label: 'Visual' },
-                    { value: 'json', label: 'JSON' },
-                  ]}
+            <Group justify="space-between">
+              <Group gap="sm">
+                <TablePairSelector
+                  folderPairs={folderPairs.map((p) => ({
+                    id: p.id,
+                    sourceId: p.sourceId,
+                    destId: p.destId,
+                    fieldMappingCount: p.fieldMappings.filter((m) => m.sourceField && m.destField).length,
+                  }))}
+                  selectedIndex={activePairIndex}
+                  onSelect={setSelectedPairIndex}
+                  onAddPair={addPair}
+                  getFolderName={getFolderName}
                 />
+                {folderPairs.length > 1 && (
+                  <ActionIcon color="red" variant="subtle" onClick={() => removePair(activePairIndex)}>
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                )}
+                {activePair && (
+                  <Text12Regular c="dimmed">
+                    {activePair.fieldMappings.filter((m) => m.sourceField && m.destField).length} column mappings
+                  </Text12Regular>
+                )}
               </Group>
+              <SegmentedControl
+                size="xs"
+                value={editorMode}
+                onChange={handleModeChange}
+                data={[
+                  { value: 'visual', label: 'Visual' },
+                  { value: 'json', label: 'JSON' },
+                ]}
+              />
+            </Group>
 
-              {folderPairs.map((pair, index) => (
-                <Box
-                  key={pair.id}
-                  style={{
-                    border: '1px solid var(--mantine-color-default-border)',
-                    borderRadius: 'var(--mantine-radius-md)',
-                  }}
-                >
-                  {/* Header */}
-                  <Group
-                    p="xs"
-                    bg="var(--mantine-color-gray-0)"
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => togglePairExpanded(index)}
-                  >
-                    <ActionIcon variant="transparent" size="sm">
-                      {pair.expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </ActionIcon>
-                    <Database size={14} color="var(--mantine-color-dimmed)" />
-                    <Text13Medium style={{ flex: 1 }}>
-                      {pair.sourceId && pair.destId
-                        ? `${getFolderName(pair.sourceId)} → ${getFolderName(pair.destId)}`
-                        : `Folder Pair ${index + 1}`}
-                    </Text13Medium>
-                    {folderPairs.length > 1 && (
-                      <ActionIcon
-                        color="red"
-                        variant="subtle"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removePair(index);
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </ActionIcon>
-                    )}
-                  </Group>
+            <Divider />
 
-                  {/* Body */}
-                  <Collapse in={pair.expanded}>
-                    <Stack p="md" gap="md">
-                      <Group grow>
-                        <Select
-                          label="Source Folder"
-                          placeholder="Select source"
-                          data={allFolders
-                            .filter((f) => f.id !== pair.destId)
-                            .map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }))}
-                          value={pair.sourceId}
-                          onChange={(val) => {
-                            updatePair(index, { sourceId: val || '' });
-                            if (val) ensureSchemaPaths(val);
-                          }}
-                          renderOption={renderFolderOption}
-                          searchable
-                        />
-                        <Select
-                          label="Destination Folder"
-                          placeholder="Select destination"
-                          data={allFolders
-                            .filter((f) => f.id !== pair.sourceId)
-                            .map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }))}
-                          value={pair.destId}
-                          onChange={(val) => {
-                            updatePair(index, { destId: val || '' });
-                            if (val) ensureSchemaPaths(val);
-                          }}
-                          renderOption={renderFolderOption}
-                          searchable
-                        />
-                      </Group>
+            {activePair && (
+              <Stack key={activePair.id} gap="md">
+                <Group grow>
+                  <Select
+                    label="Source Folder"
+                    placeholder="Select source"
+                    data={allFolders
+                      .filter((f) => f.id !== activePair.destId)
+                      .map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }))}
+                    value={activePair.sourceId}
+                    onChange={(val) => {
+                      updatePair(activePairIndex, { sourceId: val || '' });
+                      if (val) ensureSchemaPaths(val);
+                    }}
+                    renderOption={renderFolderOption}
+                    leftSection={
+                      getFolderConnectorService(activePair.sourceId) ? (
+                        <ConnectorIcon connector={getFolderConnectorService(activePair.sourceId)!} size={16} p={0} />
+                      ) : undefined
+                    }
+                    searchable
+                  />
+                  <Select
+                    label="Destination Folder"
+                    placeholder="Select destination"
+                    data={allFolders
+                      .filter((f) => f.id !== activePair.sourceId)
+                      .map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }))}
+                    value={activePair.destId}
+                    onChange={(val) => {
+                      updatePair(activePairIndex, { destId: val || '' });
+                      if (val) ensureSchemaPaths(val);
+                    }}
+                    renderOption={renderFolderOption}
+                    leftSection={
+                      getFolderConnectorService(activePair.destId) ? (
+                        <ConnectorIcon connector={getFolderConnectorService(activePair.destId)!} size={16} p={0} />
+                      ) : undefined
+                    }
+                    searchable
+                  />
+                </Group>
 
-                      <Stack gap="xs">
-                        <Text13Medium>Field Mappings</Text13Medium>
-                        <Text size="xs" c="dimmed">
-                          Use dot notation for nested fields.
-                        </Text>
+                <Divider />
+                <Group gap="xs">
+                  <Text12Regular c="dimmed" tt="uppercase" style={{ flex: 1 }}>
+                    Source field
+                  </Text12Regular>
+                  {/* Spacer for arrow icon */}
+                  <Box w={14} />
+                  <Text12Regular c="dimmed" tt="uppercase" style={{ flex: 1 }}>
+                    Dest field
+                  </Text12Regular>
+                  {/* Spacer for action icons */}
+                  <Box w={58} />
+                </Group>
+                <Divider />
 
-                        {pair.fieldMappings.map((mapping, mIndex) => (
-                          <Group key={mapping.id} gap="xs">
-                            <Autocomplete
-                              placeholder="Source field"
-                              style={{ flex: 1 }}
-                              value={mapping.sourceField}
-                              onChange={(val) => {
-                                updateFieldMapping(index, mIndex, 'sourceField', val);
-                                const field = (schemaCache[pair.sourceId] || []).find((f) => f.path === val);
-                                if (
-                                  field?.suggestedTransformer &&
-                                  !folderPairs[index].fieldMappings[mIndex].transformer
-                                ) {
-                                  updateFieldMappingTransformer(index, mIndex, field.suggestedTransformer);
-                                }
-                              }}
-                              data={(schemaCache[pair.sourceId] || []).map((f) => {
-                                if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                                return { value: f.path, label: f.path, type: f.type };
-                              })}
-                              renderOption={renderAutocompleteOption}
-                              rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
-                            />
-                            <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
-                            <Autocomplete
-                              placeholder="Dest field"
-                              style={{ flex: 1 }}
-                              value={mapping.destField}
-                              onChange={(val) => updateFieldMapping(index, mIndex, 'destField', val)}
-                              data={(schemaCache[pair.destId] || []).map((f) => {
-                                if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                                return { value: f.path, label: f.path, type: f.type };
-                              })}
-                              renderOption={renderAutocompleteOption}
-                              rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
-                            />
-                            <Tooltip
-                              label={mapping.transformer ? getTransformerLabel(mapping.transformer.type) : 'Transform'}
-                            >
-                              <ActionIcon
-                                variant="subtle"
-                                color={mapping.transformer ? 'blue' : 'gray'}
-                                onClick={() => openTransformerModal(index, mIndex)}
-                              >
-                                <Settings size={14} />
-                              </ActionIcon>
-                            </Tooltip>
-                            {pair.fieldMappings.length > 1 && (
-                              <ActionIcon
-                                variant="subtle"
-                                color="gray"
-                                onClick={() => removeFieldMapping(index, mIndex)}
-                              >
-                                <Trash2 size={14} />
-                              </ActionIcon>
-                            )}
-                          </Group>
-                        ))}
-                        <Button
-                          variant="light"
-                          size="xs"
-                          leftSection={<Plus size={14} />}
-                          onClick={() => addFieldMapping(index)}
-                        >
-                          Add Field Mapping
-                        </Button>
-                      </Stack>
+                <Stack gap="xs">
 
-                      <Select
-                        label={
-                          <>
-                            Record matching{' '}
-                            <Anchor href={DocsUrls.recordMatching} target="_blank" size="xs" fw="normal">
-                              How does this work?
-                            </Anchor>
-                          </>
-                        }
-                        description="Select a field that is unique, so we know which record to sync changes to."
-                        placeholder="Select matching pair"
-                        data={pair.fieldMappings
-                          .filter((m) => m.sourceField && m.destField)
-                          .reduce<{ value: string; label: string }[]>((acc, m) => {
-                            const value = `${m.sourceField}::${m.destField}`;
-                            if (!acc.some((item) => item.value === value)) {
-                              acc.push({ value, label: `${m.sourceField} <-> ${m.destField}` });
-                            }
-                            return acc;
-                          }, [])}
-                        value={
-                          pair.matchingSourceField && pair.matchingDestinationField
-                            ? `${pair.matchingSourceField}::${pair.matchingDestinationField}`
-                            : null
-                        }
-                        error={
-                          pair.fieldMappings.every(
-                            (mapping) =>
-                              mapping.sourceField !== pair.matchingSourceField ||
-                              mapping.destField !== pair.matchingDestinationField,
-                          ) && 'Record matching must use one of the current field mappings'
-                        }
+                  {activePair.fieldMappings.map((mapping, mIndex) => (
+                    <Group key={mapping.id} gap="xs">
+                      <Autocomplete
+                        placeholder="Source field"
+                        style={{ flex: 1 }}
+                        value={mapping.sourceField}
                         onChange={(val) => {
-                          const [sourceField, destField] = val?.split('::') ?? [];
-                          updatePair(index, {
-                            matchingSourceField: sourceField || '',
-                            matchingDestinationField: destField || '',
-                          });
+                          updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
+                          const field = (schemaCache[activePair.sourceId] || []).find((f) => f.path === val);
+                          if (
+                            field?.suggestedTransformer &&
+                            !folderPairs[activePairIndex].fieldMappings[mIndex].transformer
+                          ) {
+                            updateFieldMappingTransformer(activePairIndex, mIndex, field.suggestedTransformer);
+                          }
                         }}
-                        searchable
-                        clearable
+                        data={(schemaCache[activePair.sourceId] || []).map((f) => {
+                          if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
+                          return { value: f.path, label: f.path, type: f.type };
+                        })}
+                        renderOption={renderAutocompleteOption}
+                        rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
                       />
-
-                      <SyncPreviewPanel
-                        workbookId={workbookId}
-                        sourceId={pair.sourceId}
-                        fieldMappings={pair.fieldMappings}
+                      <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
+                      <Autocomplete
+                        placeholder="Dest field"
+                        style={{ flex: 1 }}
+                        value={mapping.destField}
+                        onChange={(val) => updateFieldMapping(activePairIndex, mIndex, 'destField', val)}
+                        data={(schemaCache[activePair.destId] || []).map((f) => {
+                          if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
+                          return { value: f.path, label: f.path, type: f.type };
+                        })}
+                        renderOption={renderAutocompleteOption}
+                        rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
                       />
-                    </Stack>
-                  </Collapse>
-                </Box>
-              ))}
+                      <Tooltip
+                        label={mapping.transformer ? getTransformerLabel(mapping.transformer.type) : 'Transform'}
+                      >
+                        <ActionIcon
+                          variant="subtle"
+                          color={mapping.transformer ? 'blue' : 'gray'}
+                          onClick={() => openTransformerModal(activePairIndex, mIndex)}
+                        >
+                          <Settings size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                      {activePair.fieldMappings.length > 1 && (
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          onClick={() => removeFieldMapping(activePairIndex, mIndex)}
+                        >
+                          <Trash2 size={14} />
+                        </ActionIcon>
+                      )}
+                    </Group>
+                  ))}
+                  <Button
+                    variant="light"
+                    size="xs"
+                    leftSection={<Plus size={14} />}
+                    onClick={() => addFieldMapping(activePairIndex)}
+                  >
+                    Add Field Mapping
+                  </Button>
+                </Stack>
 
-              <Button
-                variant="outline"
-                leftSection={<Plus size={14} />}
-                onClick={() => {
-                  setFolderPairs([...folderPairs, createPair()]);
-                }}
-              >
-                Add Folder Pair
-              </Button>
-            </Stack>
+                <Select
+                  label={
+                    <>
+                      Record matching{' '}
+                      <Anchor href={DocsUrls.recordMatching} target="_blank" size="xs" fw="normal">
+                        How does this work?
+                      </Anchor>
+                    </>
+                  }
+                  description="Select a field that is unique, so we know which record to sync changes to."
+                  placeholder="Select matching pair"
+                  data={activePair.fieldMappings
+                    .filter((m) => m.sourceField && m.destField)
+                    .reduce<{ value: string; label: string }[]>((acc, m) => {
+                      const value = `${m.sourceField}::${m.destField}`;
+                      if (!acc.some((item) => item.value === value)) {
+                        acc.push({ value, label: `${m.sourceField} <-> ${m.destField}` });
+                      }
+                      return acc;
+                    }, [])}
+                  value={
+                    activePair.matchingSourceField && activePair.matchingDestinationField
+                      ? `${activePair.matchingSourceField}::${activePair.matchingDestinationField}`
+                      : null
+                  }
+                  error={
+                    activePair.fieldMappings.every(
+                      (mapping) =>
+                        mapping.sourceField !== activePair.matchingSourceField ||
+                        mapping.destField !== activePair.matchingDestinationField,
+                    ) && 'Record matching must use one of the current field mappings'
+                  }
+                  onChange={(val) => {
+                    const [sourceField, destField] = val?.split('::') ?? [];
+                    updatePair(activePairIndex, {
+                      matchingSourceField: sourceField || '',
+                      matchingDestinationField: destField || '',
+                    });
+                  }}
+                  searchable
+                  clearable
+                />
+
+                <SyncPreviewPanel
+                  workbookId={workbookId}
+                  sourceId={activePair.sourceId}
+                  fieldMappings={activePair.fieldMappings}
+                />
+              </Stack>
+            )}
           </Stack>
         </ScrollArea>
       ) : (

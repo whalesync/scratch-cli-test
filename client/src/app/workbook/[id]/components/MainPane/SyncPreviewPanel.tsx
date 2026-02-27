@@ -39,7 +39,6 @@ export function SyncPreviewPanel({ workbookId, sourceId, fieldMappings }: SyncPr
   const [error, setError] = useState<string | null>(null);
 
   const selectRef = useRef<HTMLInputElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
   const prevSourceIdRef = useRef(sourceId);
 
   const { files, isLoading: filesLoading } = useFolderFileList(workbookId, (sourceId || null) as DataFolderId | null);
@@ -110,9 +109,6 @@ export function SyncPreviewPanel({ workbookId, sourceId, fieldMappings }: SyncPr
         if (abortController.signal.aborted) return;
         setResults(response.fields);
         setRecordId(response.recordId);
-        requestAnimationFrame(() => {
-          resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        });
       } catch (err) {
         if (abortController.signal.aborted) return;
         setError(getHumanReadableErrorMessage(err));
@@ -200,7 +196,7 @@ export function SyncPreviewPanel({ workbookId, sourceId, fieldMappings }: SyncPr
           )}
 
           {results && (
-            <Box ref={resultsRef} style={{ overflowX: 'auto' }}>
+            <Box style={{ overflowX: 'auto' }}>
               {recordId && (
                 <Text13Regular mb={4}>
                   Record: <Code fz="xs">{recordId}</Code>
