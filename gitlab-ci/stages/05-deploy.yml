@@ -66,16 +66,11 @@ deploy scratch-git to test environment:
 
 notify slack on failure test environment:
   stage: deployment notifications
-  needs:
-    [
-      "deploy api service to Cloud Run test environment",
-      "deploy client service to Cloud Run test environment",
-      "deploy scratch-git to test environment",
-    ]
+  dependencies: []
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Test (EU)\"}" \
+      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Test (EU)\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
       ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_master]
@@ -84,12 +79,7 @@ notify slack on failure test environment:
 
 notify slack on success test environment:
   stage: deployment notifications
-  needs:
-    [
-      "deploy api service to Cloud Run test environment",
-      "deploy client service to Cloud Run test environment",
-      "deploy scratch-git to test environment",
-    ]
+  dependencies: []
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
@@ -151,16 +141,11 @@ deploy scratch-git to production environment:
 
 notify slack on failure production environment:
   stage: deployment notifications
-  needs:
-    [
-      "deploy api service to Cloud Run production environment",
-      "deploy client service to Cloud Run production environment",
-      "deploy scratch-git to production environment",
-    ]
+  dependencies: []
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Production (EU)\"}" \
+      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Production (EU)\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
       ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_prod]
@@ -169,12 +154,7 @@ notify slack on failure production environment:
 
 notify slack on success production environment:
   stage: deployment notifications
-  needs:
-    [
-      "deploy api service to Cloud Run production environment",
-      "deploy client service to Cloud Run production environment",
-      "deploy scratch-git to production environment",
-    ]
+  dependencies: []
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
