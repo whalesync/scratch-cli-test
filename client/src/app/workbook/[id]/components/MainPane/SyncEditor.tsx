@@ -667,6 +667,23 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   };
 
+  // Cmd+S / Ctrl+S keyboard shortcut to save
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const canSave = editorMode === 'visual' ? validPairsCount > 0 : !!jsonContent.trim();
+        if (hasUnsavedChanges && canSave && !saving) {
+          handleSaveRef.current();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [editorMode, validPairsCount, jsonContent, hasUnsavedChanges, saving]);
+
   const hasLinkedFolders = allFolders.some((f) => f.connectorAccountId);
 
   const handleCopyAiContext = async () => {
