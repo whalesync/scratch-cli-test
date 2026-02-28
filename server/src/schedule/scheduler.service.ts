@@ -57,6 +57,17 @@ export class SchedulerService {
           continue;
         }
 
+        const exists = await this.scheduleService.entityExists(schedule.workbookId, schedule.action, schedule.entityId);
+        if (!exists) {
+          WSLogger.error({
+            source: 'SchedulerService.evaluateSchedules',
+            message: `Entity ${schedule.entityId} for ${schedule.action} schedule ${schedule.id} no longer exists. Disabling schedule.`,
+          });
+          await this.scheduleService.disableSchedule(schedule.id);
+          skipped++;
+          continue;
+        }
+
         await this.enqueueJob(schedule);
         triggered++;
       } catch (error) {

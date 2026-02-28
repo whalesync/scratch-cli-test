@@ -26,6 +26,7 @@ export interface Sync {
   syncState: SyncState;
   syncStateLastChanged: string | null;
   lastSyncTime: string | null;
+  publishAfterSync: boolean;
   syncTablePairs: SyncTablePair[];
 }
 

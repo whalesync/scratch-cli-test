@@ -84,6 +84,7 @@ export const saveSyncBodySchema = z
     mappings: syncMappingSchema,
     validateMappings: z.boolean().optional(),
     schedule: z.string().optional(),
+    publishAfterSync: z.boolean().optional(),
   })
   .strict();
 

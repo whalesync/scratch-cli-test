@@ -7,6 +7,8 @@ export interface SaveSyncBody {
   validateMappings: boolean;
   /** Optional cron expression for a sync schedule. Empty string means "no schedule". */
   schedule?: string;
+  /** Whether to automatically trigger publish after a successful sync. Ignored on create. */
+  publishAfterSync?: boolean;
 }
 
 /** POST body for preview-record endpoint */

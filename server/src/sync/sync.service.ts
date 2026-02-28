@@ -118,6 +118,7 @@ export class SyncService {
         id: syncId,
         displayName: body.displayName,
         mappings: body.mappings as unknown as Prisma.InputJsonValue,
+        publishAfterSync: false,
         syncTablePairs: {
           create: body.mappings.tableMappings.map((tm) => ({
             id: createSyncId(),
@@ -222,6 +223,7 @@ export class SyncService {
         data: {
           displayName: body.displayName,
           mappings: body.mappings as unknown as Prisma.InputJsonValue,
+          ...(body.publishAfterSync !== undefined && { publishAfterSync: body.publishAfterSync }),
           syncTablePairs: {
             create: body.mappings.tableMappings.map((tm) => ({
               id: createSyncId(),
@@ -356,6 +358,14 @@ export class SyncService {
     });
     if (!sync) {
       throw new NotFoundException('Sync not found');
+    }
+
+    // Delete associated schedules
+    const schedules = await this.db.client.schedule.findMany({
+      where: { workbookId, action: 'SYNC', entityId: syncId },
+    });
+    for (const schedule of schedules) {
+      await this.scheduleService.delete(workbookId, schedule.id, actor);
     }
 
     await this.db.client.sync.delete({

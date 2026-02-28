@@ -1,7 +1,9 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
 import { TransformerTypes } from '@spinner/shared-types';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
 import { ScratchGitService } from '../../../scratch-git/scratch-git.service';
 import { SyncService } from '../../../sync/sync.service';
@@ -55,6 +57,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     private readonly syncService: SyncService,
     private readonly workbookEventService: WorkbookEventService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly bullEnqueuerService: BullEnqueuerService,
+    private readonly publishPlanBuildService: PublishPlanBuildService,
   ) {}
 
   async run(params: {
@@ -311,6 +315,62 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         where: { id: data.syncId },
         data: { lastSyncTime: new Date() },
       });
+
+      // Trigger publish jobs for destination connectors if enabled
+      if (sync.publishAfterSync && totalFilesSynced > 0) {
+        WSLogger.info({
+          source: 'SyncDataFoldersJob',
+          message: 'Triggering publish-after-sync',
+          syncId: data.syncId,
+          workbookId: data.workbookId,
+          totalFilesSynced,
+        });
+
+        const uniqueConnectorAccountIds = new Set<string>();
+        for (const pair of sync.syncTablePairs) {
+          const connectorAccountId = pair.destinationDataFolder.connectorAccountId;
+          if (connectorAccountId) {
+            uniqueConnectorAccountIds.add(connectorAccountId);
+          }
+        }
+
+        for (const connectorAccountId of uniqueConnectorAccountIds) {
+          try {
+            const { pipelineId } = await this.publishPlanBuildService.createPipeline(
+              data.workbookId,
+              data.userId,
+              connectorAccountId,
+            );
+
+            const job = await this.bullEnqueuerService.enqueuePlanPipelineJob(
+              data.workbookId,
+              actor,
+              pipelineId,
+              connectorAccountId,
+              true, // runAfterPlan
+            );
+
+            await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
+
+            WSLogger.info({
+              source: 'SyncDataFoldersJob',
+              message: 'Enqueued publish-after-sync job',
+              syncId: data.syncId,
+              connectorAccountId,
+              pipelineId,
+              jobId: job.id,
+            });
+          } catch (error) {
+            WSLogger.error({
+              source: 'SyncDataFoldersJob',
+              message: 'Failed to enqueue publish-after-sync job',
+              syncId: data.syncId,
+              connectorAccountId,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+          }
+        }
+      }
     }
 
     this.workbookEventService.sendWorkbookEvent(data.workbookId, {

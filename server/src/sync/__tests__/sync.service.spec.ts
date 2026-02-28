@@ -86,7 +86,7 @@ describe('SyncService', () => {
           delete: jest.fn(),
         },
         syncTablePair: { deleteMany: jest.fn() },
-        schedule: { findFirst: jest.fn() },
+        schedule: { findFirst: jest.fn(), findMany: jest.fn() },
         dataFolder: { findUnique: jest.fn() },
         $transaction: jest.fn(),
       },
@@ -665,11 +665,38 @@ describe('SyncService', () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.sync.delete as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([]);
 
       await service.deleteSync(WORKBOOK_ID, SYNC_ID, ACTOR);
 
       expect(dbService.client.sync.delete).toHaveBeenCalledWith({ where: { id: SYNC_ID } });
       expect(posthogService.trackRemoveSync).toHaveBeenCalledWith(ACTOR, MOCK_SYNC);
+    });
+
+    it('deletes associated schedules when sync is deleted', async () => {
+      const mockSchedule = { id: 'schedule-1', workbookId: WORKBOOK_ID, action: 'SYNC', entityId: SYNC_ID };
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      (dbService.client.sync.delete as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([mockSchedule]);
+
+      await service.deleteSync(WORKBOOK_ID, SYNC_ID, ACTOR);
+
+      expect(dbService.client.schedule.findMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, action: 'SYNC', entityId: SYNC_ID },
+      });
+      expect(scheduleService.delete).toHaveBeenCalledWith(WORKBOOK_ID, 'schedule-1', ACTOR);
+    });
+
+    it('handles no associated schedules gracefully', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      (dbService.client.sync.delete as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.deleteSync(WORKBOOK_ID, SYNC_ID, ACTOR);
+
+      expect(scheduleService.delete).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when workbook not found', async () => {

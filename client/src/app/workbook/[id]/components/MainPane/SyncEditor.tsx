@@ -342,8 +342,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   // Track unsaved changes — snapshot the last-saved state
   const [lastSavedState, setLastSavedState] = useState<string>('');
   const getCurrentStateSnapshot = useCallback(() => {
-    return JSON.stringify({ syncName, schedule, folderPairs, editorMode, jsonContent });
-  }, [syncName, schedule, folderPairs, editorMode, jsonContent]);
+    return JSON.stringify({ syncName, schedule, folderPairs, editorMode, jsonContent, autoPublish });
+  }, [syncName, schedule, folderPairs, editorMode, jsonContent, autoPublish]);
 
   const hasUnsavedChanges = isNew ? true : getCurrentStateSnapshot() !== lastSavedState;
 
@@ -434,6 +434,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     if (!existingSync) return;
 
     setSyncName(existingSync.displayName);
+    setAutoPublish(existingSync.publishAfterSync ?? false);
     setEditorMode('visual');
 
     // Fetch the SYNC schedule for this entity
@@ -635,6 +636,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         mappings,
         validateMappings: enableValidation,
         schedule,
+        ...(!isNew && { publishAfterSync: autoPublish }),
       };
 
       if (isNew) {

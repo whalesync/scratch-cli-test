@@ -85,6 +85,8 @@ export class JobHandlerService {
           this.syncService,
           this.workbookEventService,
           this.scratchGitService,
+          this.bullEnqueuerService,
+          this.pipelinePlanService,
         ) as JobHandler<JobDefinition>;
 
       case 'publish':

@@ -351,7 +351,6 @@ export function SyncToolbar({
             <Menu.Item
               leftSection={<CloudUploadIcon size={16} />}
               rightSection={autoPublish ? <CheckIcon size={14} /> : null}
-              disabled
               onClick={() => onAutoPublishChange(!autoPublish)}
             >
               Auto-publish after sync

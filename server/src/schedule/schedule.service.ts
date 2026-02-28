@@ -162,6 +162,32 @@ export class ScheduleService {
     }
   }
 
+  /** Checks whether the entity referenced by a schedule still exists. */
+  async entityExists(workbookId: string, action: string, entityId: string): Promise<boolean> {
+    if (action === 'PULL' || action === 'PUBLISH') {
+      const folder = await this.db.client.dataFolder.findFirst({
+        where: { id: entityId, workbookId },
+        select: { id: true },
+      });
+      return folder !== null;
+    } else if (action === 'SYNC') {
+      const sync = await this.db.client.sync.findFirst({
+        where: { id: entityId, syncTablePairs: { some: { sourceDataFolder: { workbookId } } } },
+        select: { id: true },
+      });
+      return sync !== null;
+    }
+    return false;
+  }
+
+  /** Disables a schedule (used when the referenced entity no longer exists). */
+  async disableSchedule(scheduleId: string): Promise<void> {
+    await this.db.client.schedule.update({
+      where: { id: scheduleId },
+      data: { enabled: false },
+    });
+  }
+
   /** Validates that the entityId refers to a valid entity for the given action within the workbook. */
   private async validateEntityId(workbookId: string, action: string, entityId: string): Promise<void> {
     if (action === 'PULL' || action === 'PUBLISH') {

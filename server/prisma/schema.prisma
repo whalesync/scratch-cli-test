@@ -559,6 +559,9 @@ model Sync {
   /// The time the most recent full sync was run.
   lastSyncTime         DateTime?
 
+  /// Whether to automatically trigger a publish after a successful sync.
+  publishAfterSync Boolean @default(false)
+
   syncTablePairs    SyncTablePair[]
   foreignKeyRecords SyncForeignKeyRecord[]
   remoteIdMappings  SyncRemoteIdMapping[]
