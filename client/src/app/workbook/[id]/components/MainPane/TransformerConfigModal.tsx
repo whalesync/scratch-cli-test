@@ -1,8 +1,22 @@
 'use client';
 
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
+import { DocsUrls } from '@/utils/docs-urls';
 import type { ComboboxItem } from '@mantine/core';
-import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
+import {
+  ActionIcon,
+  Anchor,
+  Button,
+  Checkbox,
+  Divider,
+  Group,
+  Modal,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+  Tooltip,
+} from '@mantine/core';
 import type {
   AutoConvertOptions,
   DataFolder,
@@ -11,106 +25,129 @@ import type {
   TransformerType,
 } from '@spinner/shared-types';
 import { TRANSFORMER_TYPES, TransformerTypes } from '@spinner/shared-types';
+import { Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface TransformerConfigModalProps {
   opened: boolean;
   onClose: () => void;
-  currentConfig: TransformerConfig | undefined;
-  onSave: (config: TransformerConfig | undefined) => void;
+  currentConfigs: TransformerConfig[];
+  onSave: (configs: TransformerConfig[]) => void;
   allFolders: DataFolder[];
 }
 
-const TRANSFORMER_OPTIONS = [
-  { value: '', label: 'None' },
-  ...TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label })),
-];
+const TRANSFORMER_OPTIONS = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label }));
+
+/** Internal per-step form state */
+interface StepState {
+  id: number;
+  type: TransformerType | '';
+  stripCurrency: boolean;
+  parseInteger: boolean;
+  referencedDataFolderId: DataFolderId | '';
+  referencedFieldPath: string;
+  targetType: AutoConvertOptions['targetType'];
+}
+
+let stepIdCounter = 0;
+
+function configToStepState(config: TransformerConfig): StepState {
+  return {
+    id: ++stepIdCounter,
+    type: config.type,
+    stripCurrency: config.type === TransformerTypes.StringToNumber ? (config.options?.stripCurrency ?? false) : false,
+    parseInteger: config.type === TransformerTypes.StringToNumber ? (config.options?.parseInteger ?? false) : false,
+    referencedDataFolderId:
+      config.type === TransformerTypes.SourceFkToDestFk || config.type === TransformerTypes.LookupField
+        ? config.options.referencedDataFolderId
+        : ('' as DataFolderId | ''),
+    referencedFieldPath: config.type === TransformerTypes.LookupField ? config.options.referencedFieldPath : '',
+    targetType: config.type === TransformerTypes.AutoConvert ? config.options.targetType : 'string',
+  };
+}
+
+function createEmptyStep(): StepState {
+  return {
+    id: ++stepIdCounter,
+    type: '',
+    stripCurrency: false,
+    parseInteger: false,
+    referencedDataFolderId: '' as DataFolderId | '',
+    referencedFieldPath: '',
+    targetType: 'string',
+  };
+}
+
+function stepStateToConfig(step: StepState): TransformerConfig | null {
+  if (!step.type) return null;
+  switch (step.type) {
+    case TransformerTypes.AutoConvert:
+      return { type: step.type, options: { targetType: step.targetType } };
+    case TransformerTypes.StringToNumber:
+      return { type: step.type, options: { stripCurrency: step.stripCurrency, parseInteger: step.parseInteger } };
+    case TransformerTypes.SourceFkToDestFk:
+      return { type: step.type, options: { referencedDataFolderId: step.referencedDataFolderId as DataFolderId } };
+    case TransformerTypes.LookupField:
+      return {
+        type: step.type,
+        options: {
+          referencedDataFolderId: step.referencedDataFolderId as DataFolderId,
+          referencedFieldPath: step.referencedFieldPath,
+        },
+      };
+    default:
+      return { type: step.type } as TransformerConfig;
+  }
+}
+
+function isStepValid(step: StepState): boolean {
+  if (!step.type) return false;
+  if (step.type === TransformerTypes.SourceFkToDestFk && !step.referencedDataFolderId) return false;
+  if (step.type === TransformerTypes.LookupField && (!step.referencedDataFolderId || !step.referencedFieldPath))
+    return false;
+  return true;
+}
 
 export function TransformerConfigModal({
   opened,
   onClose,
-  currentConfig,
+  currentConfigs,
   onSave,
   allFolders,
 }: TransformerConfigModalProps) {
-  const [type, setType] = useState<TransformerType | ''>(currentConfig?.type ?? '');
-  const [stripCurrency, setStripCurrency] = useState(
-    currentConfig?.type === TransformerTypes.StringToNumber ? (currentConfig.options?.stripCurrency ?? false) : false,
-  );
-  const [parseInteger, setParseInteger] = useState(
-    currentConfig?.type === TransformerTypes.StringToNumber ? (currentConfig.options?.parseInteger ?? false) : false,
-  );
-  const [referencedDataFolderId, setReferencedDataFolderId] = useState<DataFolderId | ''>(
-    currentConfig?.type === TransformerTypes.SourceFkToDestFk || currentConfig?.type === TransformerTypes.LookupField
-      ? currentConfig.options.referencedDataFolderId
-      : '',
-  );
-  const [referencedFieldPath, setReferencedFieldPath] = useState(
-    currentConfig?.type === TransformerTypes.LookupField ? currentConfig.options.referencedFieldPath : '',
-  );
-  const [targetType, setTargetType] = useState<AutoConvertOptions['targetType']>(
-    currentConfig?.type === TransformerTypes.AutoConvert ? currentConfig.options.targetType : 'string',
-  );
+  const [steps, setSteps] = useState<StepState[]>([]);
 
   // Sync form state whenever the modal opens
   useEffect(() => {
     if (opened) {
-      setType(currentConfig?.type ?? '');
-      setStripCurrency(
-        currentConfig?.type === TransformerTypes.StringToNumber
-          ? (currentConfig.options?.stripCurrency ?? false)
-          : false,
-      );
-      setParseInteger(
-        currentConfig?.type === TransformerTypes.StringToNumber
-          ? (currentConfig.options?.parseInteger ?? false)
-          : false,
-      );
-      setReferencedDataFolderId(
-        currentConfig?.type === TransformerTypes.SourceFkToDestFk ||
-          currentConfig?.type === TransformerTypes.LookupField
-          ? currentConfig.options.referencedDataFolderId
-          : ('' as DataFolderId | ''),
-      );
-      setReferencedFieldPath(
-        currentConfig?.type === TransformerTypes.LookupField ? currentConfig.options.referencedFieldPath : '',
-      );
-      setTargetType(currentConfig?.type === TransformerTypes.AutoConvert ? currentConfig.options.targetType : 'string');
+      if (currentConfigs.length > 0) {
+        setSteps(currentConfigs.map(configToStepState));
+      } else {
+        setSteps([createEmptyStep()]);
+      }
     }
-  }, [opened, currentConfig]);
+  }, [opened, currentConfigs]);
+
+  const updateStep = (index: number, changes: Partial<StepState>) => {
+    setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, ...changes } : s)));
+  };
+
+  const removeStep = (index: number) => {
+    setSteps((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const addStep = () => {
+    setSteps((prev) => [...prev, createEmptyStep()]);
+  };
 
   const handleSave = () => {
-    if (!type) {
-      onSave(undefined);
-      onClose();
-      return;
-    }
-
-    let config: TransformerConfig;
-    switch (type) {
-      case TransformerTypes.AutoConvert:
-        config = { type, options: { targetType } };
-        break;
-      case TransformerTypes.StringToNumber:
-        config = { type, options: { stripCurrency, parseInteger } };
-        break;
-      case TransformerTypes.SourceFkToDestFk:
-        config = { type, options: { referencedDataFolderId: referencedDataFolderId as DataFolderId } };
-        break;
-      case TransformerTypes.LookupField:
-        config = {
-          type,
-          options: { referencedDataFolderId: referencedDataFolderId as DataFolderId, referencedFieldPath },
-        };
-        break;
-      default:
-        config = { type } as TransformerConfig;
-        break;
-    }
-
-    onSave(config);
+    const configs = steps.map(stepStateToConfig).filter((c): c is TransformerConfig => c !== null);
+    onSave(configs);
     onClose();
   };
+
+  const nonEmptySteps = steps.filter((s) => s.type !== '');
+  const isSaveDisabled = nonEmptySteps.length > 0 && nonEmptySteps.some((s) => !isStepValid(s));
 
   const folderSelectData = allFolders.map((f) => ({
     value: f.id,
@@ -125,85 +162,112 @@ export function TransformerConfigModal({
     </Group>
   );
 
-  const isSaveDisabled =
-    (type === TransformerTypes.SourceFkToDestFk && !referencedDataFolderId) ||
-    (type === TransformerTypes.LookupField && (!referencedDataFolderId || !referencedFieldPath));
-
   return (
-    <Modal opened={opened} onClose={onClose} title="Configure Transformer" size="md">
+    <Modal opened={opened} onClose={onClose} title="Configure Transformers" size="md">
       <Stack gap="md">
-        <Select
-          label="Transformer Type"
-          data={TRANSFORMER_OPTIONS}
-          value={type}
-          onChange={(val) => setType((val as TransformerType) || '')}
-        />
+        {steps.map((step, index) => (
+          <Stack key={step.id} gap="xs">
+            {index > 0 && <Divider />}
+            <Group gap="xs" justify="space-between">
+              <Text size="sm" fw={500} c="dimmed">
+                Step {index + 1}
+              </Text>
+              {steps.length > 1 && (
+                <Tooltip label="Remove step">
+                  <ActionIcon variant="subtle" color="gray" size="sm" onClick={() => removeStep(index)}>
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </Group>
 
-        {type === TransformerTypes.AutoConvert && (
-          <Select
-            label="Target Type"
-            description="The data type to convert the source value to"
-            data={[
-              { value: 'string', label: 'String' },
-              { value: 'number', label: 'Number' },
-              { value: 'integer', label: 'Integer' },
-              { value: 'boolean', label: 'Boolean' },
-              { value: 'array', label: 'Array' },
-            ]}
-            value={targetType}
-            onChange={(val) => setTargetType((val as AutoConvertOptions['targetType']) || 'string')}
-          />
-        )}
-
-        {type === TransformerTypes.StringToNumber && (
-          <Stack gap="xs">
-            <Checkbox
-              label="Strip currency symbols ($, €, £, ¥, etc.)"
-              checked={stripCurrency}
-              onChange={(e) => setStripCurrency(e.currentTarget.checked)}
-            />
-            <Checkbox
-              label="Parse as integer (truncate decimals)"
-              checked={parseInteger}
-              onChange={(e) => setParseInteger(e.currentTarget.checked)}
-            />
-          </Stack>
-        )}
-
-        {type === TransformerTypes.SourceFkToDestFk && (
-          <Select
-            label="Referenced Folder"
-            description="The folder containing the records referenced by this foreign key"
-            placeholder="Select folder"
-            data={folderSelectData}
-            value={referencedDataFolderId}
-            onChange={(val) => setReferencedDataFolderId((val || '') as DataFolderId | '')}
-            renderOption={renderFolderOption}
-            searchable
-          />
-        )}
-
-        {type === TransformerTypes.LookupField && (
-          <>
             <Select
-              label="Referenced Folder"
-              description="The folder containing the records referenced by this foreign key"
-              placeholder="Select folder"
-              data={folderSelectData}
-              value={referencedDataFolderId}
-              onChange={(val) => setReferencedDataFolderId((val || '') as DataFolderId | '')}
-              renderOption={renderFolderOption}
-              searchable
+              label="Transformer Type"
+              placeholder="None"
+              data={TRANSFORMER_OPTIONS}
+              value={step.type || null}
+              onChange={(val) => updateStep(index, { type: (val as TransformerType) || '' })}
+              clearable
             />
-            <TextInput
-              label="Field Path"
-              description="The field to extract from the referenced record (e.g. 'name' or 'company.displayName')"
-              placeholder="e.g. name"
-              value={referencedFieldPath}
-              onChange={(e) => setReferencedFieldPath(e.currentTarget.value)}
-            />
-          </>
-        )}
+
+            {step.type === TransformerTypes.AutoConvert && (
+              <Select
+                label="Target Type"
+                description="The data type to convert the source value to"
+                data={[
+                  { value: 'string', label: 'String' },
+                  { value: 'number', label: 'Number' },
+                  { value: 'integer', label: 'Integer' },
+                  { value: 'boolean', label: 'Boolean' },
+                  { value: 'array', label: 'Array' },
+                ]}
+                value={step.targetType}
+                onChange={(val) =>
+                  updateStep(index, { targetType: (val as AutoConvertOptions['targetType']) || 'string' })
+                }
+              />
+            )}
+
+            {step.type === TransformerTypes.StringToNumber && (
+              <Stack gap="xs">
+                <Checkbox
+                  label="Strip currency symbols ($, €, £, ¥, etc.)"
+                  checked={step.stripCurrency}
+                  onChange={(e) => updateStep(index, { stripCurrency: e.currentTarget.checked })}
+                />
+                <Checkbox
+                  label="Parse as integer (truncate decimals)"
+                  checked={step.parseInteger}
+                  onChange={(e) => updateStep(index, { parseInteger: e.currentTarget.checked })}
+                />
+              </Stack>
+            )}
+
+            {step.type === TransformerTypes.SourceFkToDestFk && (
+              <Select
+                label="Referenced Folder"
+                description="The folder containing the records referenced by this foreign key"
+                placeholder="Select folder"
+                data={folderSelectData}
+                value={step.referencedDataFolderId || null}
+                onChange={(val) => updateStep(index, { referencedDataFolderId: (val || '') as DataFolderId | '' })}
+                renderOption={renderFolderOption}
+                searchable
+              />
+            )}
+
+            {step.type === TransformerTypes.LookupField && (
+              <>
+                <Select
+                  label="Referenced Folder"
+                  description="The folder containing the records referenced by this foreign key"
+                  placeholder="Select folder"
+                  data={folderSelectData}
+                  value={step.referencedDataFolderId || null}
+                  onChange={(val) => updateStep(index, { referencedDataFolderId: (val || '') as DataFolderId | '' })}
+                  renderOption={renderFolderOption}
+                  searchable
+                />
+                <TextInput
+                  label="Field Path"
+                  description="The field to extract from the referenced record (e.g. 'name' or 'company.displayName')"
+                  placeholder="e.g. name"
+                  value={step.referencedFieldPath}
+                  onChange={(e) => updateStep(index, { referencedFieldPath: e.currentTarget.value })}
+                />
+              </>
+            )}
+          </Stack>
+        ))}
+
+        <Group gap="xs">
+          <Button variant="subtle" color="gray" size="xs" leftSection={<Plus size={14} />} onClick={addStep}>
+            Add transformer step
+          </Button>
+          <Anchor href={DocsUrls.transformerPipeline} target="_blank" size="xs">
+            How does this work?
+          </Anchor>
+        </Group>
 
         <Group justify="flex-end" mt="md">
           <Button variant="default" onClick={onClose}>

@@ -76,9 +76,8 @@ interface FieldMapping {
   id: string;
   sourceField: string;
   destField: string;
-  transformer?: TransformerConfig;
-  /** Optional pipeline of transformers (mutually exclusive with `transformer`) */
-  transformers?: TransformerConfig[];
+  /** Pipeline of transformers applied sequentially */
+  transformers: TransformerConfig[];
   /** True when the transformer was auto-applied (can be replaced when fields change) */
   transformerAutoApplied?: boolean;
   /** True when the user has explicitly cleared the transformer (opt-out of auto-applied transformer) */
@@ -96,11 +95,11 @@ interface FolderPair {
 
 // Helpers
 let mappingIdCounter = 0;
-const createMapping = (sourceField = '', destField = '', transformer?: TransformerConfig): FieldMapping => ({
+const createMapping = (sourceField = '', destField = '', transformers: TransformerConfig[] = []): FieldMapping => ({
   id: `mapping-${++mappingIdCounter}`,
   sourceField,
   destField,
-  transformer,
+  transformers,
 });
 
 let pairIdCounter = 0;
@@ -127,8 +126,7 @@ const folderPairsToSyncMapping = (pairs: FolderPair[]): SyncMapping => {
         .map((m) => ({
           sourceColumnId: m.sourceField,
           destinationColumnId: m.destField,
-          ...(m.transformer ? { transformer: m.transformer } : {}),
-          ...(m.transformers ? { transformers: m.transformers } : {}),
+          ...(m.transformers.length > 0 ? { transformers: m.transformers } : {}),
         }));
 
       return {
@@ -154,8 +152,7 @@ const syncMappingToFolderPairs = (mapping: SyncMapping): FolderPair[] => {
       id: `mapping-${++mappingIdCounter}`,
       sourceField: cm.sourceColumnId,
       destField: cm.destinationColumnId,
-      transformer: cm.transformer,
-      ...(cm.transformers ? { transformers: cm.transformers } : {}),
+      transformers: cm.transformers ?? (cm.transformer ? [cm.transformer] : []),
     }));
 
     return {
@@ -459,8 +456,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           id: `mapping-${++mappingIdCounter}`,
           sourceField: cm.sourceColumnId,
           destField: cm.destinationColumnId,
-          transformer: cm.transformer,
-          ...(cm.transformers ? { transformers: cm.transformers } : {}),
+          transformers: cm.transformers ?? (cm.transformer ? [cm.transformer] : []),
         }));
 
         return {
@@ -547,8 +543,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           .map((m) => ({
             sourceColumnId: m.sourceField,
             destinationColumnId: m.destField,
-            ...(m.transformer ? { transformer: m.transformer } : {}),
-            ...(m.transformers ? { transformers: m.transformers } : {}),
+            ...(m.transformers?.length > 0 ? { transformers: m.transformers } : {}),
           }));
         const response = await syncApi.previewRecord(
           workbookId,
@@ -752,16 +747,16 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   };
 
-  const updateFieldMappingTransformer = (
+  const updateFieldMappingTransformers = (
     pairIndex: number,
     mappingIndex: number,
-    transformer: TransformerConfig | undefined,
+    transformers: TransformerConfig[],
     options?: { cleared?: boolean; autoApplied?: boolean },
   ) => {
     const next = [...folderPairs];
     next[pairIndex].fieldMappings[mappingIndex] = {
       ...next[pairIndex].fieldMappings[mappingIndex],
-      transformer,
+      transformers,
       transformerClearedManually: options?.cleared ?? false,
       transformerAutoApplied: options?.autoApplied ?? false,
     };
@@ -779,13 +774,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
    */
   const clearAutoAppliedTransformer = (pairIndex: number, mappingIndex: number): boolean => {
     const mapping = folderPairs[pairIndex].fieldMappings[mappingIndex];
-    const clearTransformer = (mapping.transformer && mapping.transformerAutoApplied) ?? false;
+    const clearTransformer = (mapping.transformers.length > 0 && mapping.transformerAutoApplied) ?? false;
 
     const next = [...folderPairs];
     const previous = next[pairIndex].fieldMappings[mappingIndex];
     next[pairIndex].fieldMappings[mappingIndex] = {
       ...previous,
-      transformer: clearTransformer ? undefined : previous.transformer,
+      transformers: clearTransformer ? [] : previous.transformers,
       transformerAutoApplied: clearTransformer ? false : true,
       transformerClearedManually: false,
     };
@@ -811,7 +806,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     if (!sourceField || !destField) return;
     if (mapping.transformerClearedManually) return;
     // If there's a non-auto-applied transformer, don't override it
-    if (mapping.transformer && !mapping.transformerAutoApplied && !wasAutoCleared) return;
+    if (mapping.transformers.length > 0 && !mapping.transformerAutoApplied && !wasAutoCleared) return;
 
     const sourceSchema = schemaCache[pair.sourceId] || [];
     const destSchema = schemaCache[pair.destId] || [];
@@ -826,10 +821,10 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     const validTargets: AutoConvertOptions['targetType'][] = ['string', 'number', 'integer', 'boolean', 'array'];
     if (!validTargets.includes(targetType)) return;
 
-    updateFieldMappingTransformer(
+    updateFieldMappingTransformers(
       pairIndex,
       mappingIndex,
-      { type: TransformerTypes.AutoConvert, options: { targetType } },
+      [{ type: TransformerTypes.AutoConvert, options: { targetType } }],
       { autoApplied: true },
     );
   };
@@ -1047,16 +1042,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                       updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
                                       const wasAutoCleared = clearAutoAppliedTransformer(activePairIndex, mIndex);
                                       const currentMapping = folderPairs[activePairIndex].fieldMappings[mIndex];
-                                      const hasTransformer = currentMapping.transformer && !wasAutoCleared;
+                                      const hasTransformer = currentMapping.transformers.length > 0 && !wasAutoCleared;
                                       const field = (schemaCache[activePair.sourceId] || []).find(
                                         (f) => f.path === val,
                                       );
                                       if (field?.suggestedTransformer && !hasTransformer) {
-                                        updateFieldMappingTransformer(
-                                          activePairIndex,
-                                          mIndex,
+                                        updateFieldMappingTransformers(activePairIndex, mIndex, [
                                           field.suggestedTransformer,
-                                        );
+                                        ]);
                                       } else {
                                         maybeAutoConvert(
                                           activePairIndex,
@@ -1099,12 +1092,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                   />
                                   <Tooltip
                                     label={
-                                      mapping.transformer ? getTransformerLabel(mapping.transformer.type) : 'Transform'
+                                      mapping.transformers.length > 0
+                                        ? mapping.transformers.map((t) => getTransformerLabel(t.type)).join(' → ')
+                                        : 'Transform'
                                     }
                                   >
                                     <ActionIcon
                                       variant="subtle"
-                                      color={mapping.transformer ? 'blue' : 'gray'}
+                                      color={mapping.transformers.length > 0 ? 'blue' : 'gray'}
                                       onClick={() => openTransformerModal(activePairIndex, mIndex)}
                                     >
                                       <Settings size={14} />
@@ -1270,19 +1265,19 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           setTransformerModalOpen(false);
           setEditingTransformerTarget(null);
         }}
-        currentConfig={
+        currentConfigs={
           editingTransformerTarget
-            ? folderPairs[editingTransformerTarget.pairIndex]?.fieldMappings[editingTransformerTarget.mappingIndex]
-                ?.transformer
-            : undefined
+            ? (folderPairs[editingTransformerTarget.pairIndex]?.fieldMappings[editingTransformerTarget.mappingIndex]
+                ?.transformers ?? [])
+            : []
         }
-        onSave={(config) => {
+        onSave={(configs) => {
           if (editingTransformerTarget) {
-            updateFieldMappingTransformer(
+            updateFieldMappingTransformers(
               editingTransformerTarget.pairIndex,
               editingTransformerTarget.mappingIndex,
-              config,
-              !config ? { cleared: true } : undefined, // mark as cleared when user sets to "None"
+              configs,
+              configs.length === 0 ? { cleared: true } : undefined, // mark as cleared when user removes all
             );
           }
         }}
