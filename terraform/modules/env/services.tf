@@ -73,6 +73,13 @@ resource "google_cloud_run_v2_service" "client_service" {
           value = local.force_reload_uuid
         }
       }
+      dynamic "env" {
+        for_each = var.maintenance_mode_enabled ? [1] : []
+        content {
+          name  = "MAINTENANCE_MODE_ENABLED"
+          value = "true"
+        }
+      }
 
       startup_probe {
         http_get {

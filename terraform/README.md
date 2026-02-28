@@ -20,14 +20,12 @@ terraform
 
 - **envs:**
   Contains the main Terraform configuration files for each environment. Each environment (`test`, `staging`, `production`) corresponds to a distinct GCP project.
-
   - `test`: Config files for the test environment.
   - `staging`: Config files for the staging environment.
   - `production`: Config files for the production environment.
 
 - **modules:**
   Each subdirectory represents a reusable GCP module written in Terraform, which can be used across multiple environments.
-
   - `env`: Wrapper module for defining a full environment.
   - `iam_service_accounts`: Module for managing Identity and Access Management (IAM) service accounts.
   - `gitlab_oidc`: Module for managing OIDC auth for Gitlab CI.
@@ -121,6 +119,21 @@ gcloud compute addresses describe nat-egress-ip \
 # Via Terraform output
 cd terraform/envs/production
 terraform output nat_egress_ip
+```
+
+## Maintenance Mode
+
+To enable maintenance mode for the client service, run `terraform apply` with the `maintenance_mode_enabled` variable set to `true`. This sets the `MAINTENANCE_MODE_ENABLED` environment variable on the client Cloud Run service, which causes it to serve the static maintenance page instead of the normal app.
+
+```bash
+cd terraform/envs/eu-production
+terraform apply -var maintenance_mode_enabled=true
+```
+
+To disable maintenance mode, run `terraform apply` again without the flag (it defaults to `false`):
+
+```bash
+terraform apply
 ```
 
 ## DNS Management

@@ -35,6 +35,7 @@ module "eu_test" {
 
   # Services
   force_reload_services          = var.force_reload_services
+  maintenance_mode_enabled       = var.maintenance_mode_enabled
   api_service_min_instance_count = 2
   api_service_max_instance_count = 2
   worker_concurrency             = 10
@@ -50,4 +51,10 @@ variable "force_reload_services" {
   type        = bool
   default     = false
   description = "When set to true, forces all google_cloud_run_v2_service resources to be reloaded by setting an env var to a randomly generated value."
+}
+
+variable "maintenance_mode_enabled" {
+  type        = bool
+  default     = false
+  description = "When set to true, sets the MAINTENANCE_MODE_ENABLED environment variable on the client Cloud Run service."
 }

@@ -41,6 +41,12 @@ variable "force_reload_services" {
   description = "When set to true, forces all google_cloud_run_v2_service resources to be reloaded by setting an env var to a randomly generated value."
 }
 
+variable "maintenance_mode_enabled" {
+  type        = bool
+  default     = false
+  description = "When set to true, sets the MAINTENANCE_MODE_ENABLED environment variable on the client Cloud Run service."
+}
+
 variable "db_version" {
   type    = string
   default = "POSTGRES_17"
