@@ -16,6 +16,7 @@ export interface User {
   organization?: Organization;
   settings?: Record<string, string | number | boolean>;
   lastWorkbookId?: string;
+  serverBuildVersion?: string;
 }
 
 export type { SubscriptionInfo } from '@spinner/shared-types';

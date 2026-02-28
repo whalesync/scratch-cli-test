@@ -203,7 +203,15 @@ const formatPreviewValue = (value: unknown): string => {
   return JSON.stringify(value, null, 2);
 };
 
-function PreviewValueBox({ sourceValue, transformedValue }: { sourceValue: unknown; transformedValue: unknown }) {
+function PreviewValueBox({
+  sourceValue,
+  transformedValue,
+  warning,
+}: {
+  sourceValue: unknown;
+  transformedValue: unknown;
+  warning?: string;
+}) {
   const [expanded, setExpanded] = useState(false);
   const sourceRef = useRef<HTMLDivElement>(null);
   const destRef = useRef<HTMLDivElement>(null);
@@ -252,6 +260,11 @@ function PreviewValueBox({ sourceValue, transformedValue }: { sourceValue: unkno
             {formatPreviewValue(transformedValue)}
           </Text>
         </Group>
+        {warning && (
+          <Text fz={10} c="var(--mantine-color-orange-6)" mt={2}>
+            ⚠ {warning}
+          </Text>
+        )}
       </Box>
       {isOverflowing && (
         <>
@@ -975,7 +988,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                     {/* Field mapping rows */}
                     {activePair.fieldMappings.map((mapping, mIndex) => {
                       const preview = getPreviewForMapping(mapping);
-                      const hasWarning = !!preview?.warning;
                       const isHovered = hoveredMappingIndex === mIndex;
                       return (
                         <Box key={mapping.id}>
@@ -1083,9 +1095,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                     </ActionIcon>
                                   )}
                                 </Group>
-                                {hasWarning && (
-                                  <Text12Regular c="var(--mantine-color-orange-6)">⚠ {preview!.warning}</Text12Regular>
-                                )}
                               </Stack>
                             </Box>
                             {/* Right: preview values */}
@@ -1102,6 +1111,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                 <PreviewValueBox
                                   sourceValue={preview?.sourceValue}
                                   transformedValue={preview?.transformedValue}
+                                  warning={preview?.warning}
                                 />
                               </Box>
                             </Box>

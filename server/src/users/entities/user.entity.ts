@@ -6,6 +6,7 @@ import { WSLogger } from 'src/logger';
 import { SubscriptionPlanFeaturesEntity } from 'src/payment/entities/subscription-plan';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { getFreePlan, getPlan, getPlanTypeFromString } from 'src/payment/plans';
+import { BUILD_VERSION } from 'src/version';
 import { Organization } from './organization.entity';
 
 export type { SubscriptionInfo } from '@spinner/shared-types';
@@ -37,6 +38,8 @@ export class User {
   // The ID of the last workbook the user was viewing (for quick redirect on home page)
   lastWorkbookId?: string;
 
+  serverBuildVersion: string;
+
   constructor(user: UserCluster.User, experiments?: UserFlagValues, billableActions?: BillableActions) {
     this.id = user.id;
     this.createdAt = user.createdAt;
@@ -61,6 +64,7 @@ export class User {
     );
     this.organization = user.organization ? new Organization(user.organization) : undefined;
     this.settings = user.settings as Record<string, string | number | boolean>;
+    this.serverBuildVersion = BUILD_VERSION;
   }
 }
 

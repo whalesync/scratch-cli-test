@@ -36,11 +36,24 @@ export default function UserSettingsPage() {
                 {isAdmin && <Badge>Admin</Badge>}
               </Group>
               <Group wrap="nowrap" gap="xs">
-                <Text13Regular miw={150}>Build</Text13Regular>
+                <Text13Regular miw={150}>Client build</Text13Regular>
                 <Text13Regular>{BUILD_VERSION}</Text13Regular>
                 <CopyButton value={BUILD_VERSION} timeout={2000}>
                   {({ copied, copy }) => (
                     <Tooltip label={copied ? 'Copied' : BUILD_VERSION} withArrow position="right">
+                      <ActionIcon color={copied ? 'teal' : 'gray'} variant="subtle" onClick={copy}>
+                        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </CopyButton>
+              </Group>
+              <Group wrap="nowrap" gap="xs">
+                <Text13Regular miw={150}>Server build</Text13Regular>
+                <Text13Regular>{user?.serverBuildVersion || '—'}</Text13Regular>
+                <CopyButton value={user?.serverBuildVersion || ''} timeout={2000}>
+                  {({ copied, copy }) => (
+                    <Tooltip label={copied ? 'Copied' : user?.serverBuildVersion || '—'} withArrow position="right">
                       <ActionIcon color={copied ? 'teal' : 'gray'} variant="subtle" onClick={copy}>
                         {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
                       </ActionIcon>
