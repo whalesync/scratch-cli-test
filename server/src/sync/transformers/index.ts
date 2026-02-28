@@ -9,6 +9,9 @@ export {
   registerTransformer,
 } from './transformer-registry';
 
+// Pipeline
+export { applyTransformerPipeline, findTransformerConfigs, getTransformerConfigs } from './transformer-pipeline';
+
 // Lookup tools
 export { createLookupTools } from './lookup-tools';
 

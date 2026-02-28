@@ -47,8 +47,12 @@ const columnMappingSchema = z
     sourceColumnId: z.string().min(1),
     destinationColumnId: z.string().min(1),
     transformer: transformerConfigSchema.optional(),
+    transformers: z.array(transformerConfigSchema).min(1).optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => !(data.transformer && data.transformers), {
+    message: 'Cannot set both "transformer" and "transformers" — use one or the other',
+  });
 
 const tableMappingSchema = z
   .object({

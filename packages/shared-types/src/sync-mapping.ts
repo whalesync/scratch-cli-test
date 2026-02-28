@@ -40,6 +40,9 @@ export interface ColumnMapping {
 
   /** Optional transformer to apply to the value during sync */
   transformer?: TransformerConfig;
+
+  /** Optional pipeline of transformers applied sequentially (mutually exclusive with `transformer`) */
+  transformers?: TransformerConfig[];
 }
 
 // ============================================================================

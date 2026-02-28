@@ -33,12 +33,13 @@ import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.ser
 import { validateSchemaMapping } from 'src/sync/schema-validator';
 import { previewRecordBodySchema, saveSyncBodySchema } from 'src/sync/sync-mapping.schema';
 import {
+  applyTransformerPipeline,
   createLookupTools,
-  getTransformer,
+  findTransformerConfigs,
+  getTransformerConfigs,
   LookupTools,
   SyncPhase,
   SyncRecord,
-  TransformContext,
 } from 'src/sync/transformers';
 import { Actor } from 'src/users/types';
 import { formatJsonWithPrettier } from 'src/utils/json-formatter';
@@ -797,16 +798,19 @@ export class SyncService {
     sourceRecords: SyncRecord[],
     fkValuesByFolder: Map<DataFolderId, Set<string>>,
   ): void {
-    const lookupFieldMappings = tableMapping.columnMappings.filter(
-      (m) => m.transformer?.type === TransformerTypes.LookupField,
-    );
-    if (lookupFieldMappings.length === 0) {
+    // Collect all lookup_field configs across all column mappings
+    const lookupEntries: { mapping: ColumnMapping; opts: LookupFieldOptions }[] = [];
+    for (const mapping of tableMapping.columnMappings) {
+      for (const config of findTransformerConfigs(mapping, TransformerTypes.LookupField)) {
+        lookupEntries.push({ mapping, opts: config.options as LookupFieldOptions });
+      }
+    }
+    if (lookupEntries.length === 0) {
       return;
     }
 
     let collectedCount = 0;
-    for (const mapping of lookupFieldMappings) {
-      const opts = mapping.transformer!.options as LookupFieldOptions;
+    for (const { mapping, opts } of lookupEntries) {
       if (!fkValuesByFolder.has(opts.referencedDataFolderId)) {
         fkValuesByFolder.set(opts.referencedDataFolderId, new Set());
       }
@@ -1170,32 +1174,27 @@ export class SyncService {
       let transformedValue: unknown = sourceValue;
       let warning: string | undefined;
 
-      if (mapping.transformer) {
-        const transformer = getTransformer(mapping.transformer.type);
-        if (transformer) {
-          try {
-            const ctx: TransformContext = {
-              sourceRecord: record,
-              sourceFieldPath: mapping.sourceColumnId,
-              sourceValue,
-              lookupTools: previewLookupTools,
-              options: mapping.transformer.options ?? {},
-              phase: 'DATA',
-            };
-            const result = await transformer.transform(ctx);
-            if (result.success) {
-              transformedValue = result.skip ? 'Not available in preview' : result.value;
-            } else {
-              warning = result.error;
-              transformedValue = sourceValue;
-            }
-          } catch (err) {
-            if (err === notAvailableInPreviewError) {
-              transformedValue = notAvailableInPreviewError.message;
-            } else {
-              warning = `Transform failed: ${err instanceof Error ? err.message : String(err)}`;
-              transformedValue = '';
-            }
+      const configs = getTransformerConfigs(mapping);
+      if (configs.length > 0) {
+        try {
+          const result = await applyTransformerPipeline(configs, sourceValue, {
+            sourceRecord: record,
+            sourceFieldPath: mapping.sourceColumnId,
+            lookupTools: previewLookupTools,
+            phase: 'DATA',
+          });
+          if (result.success) {
+            transformedValue = result.skip ? 'Not available in preview' : result.value;
+          } else {
+            warning = result.error;
+            transformedValue = sourceValue;
+          }
+        } catch (err) {
+          if (err === notAvailableInPreviewError) {
+            transformedValue = notAvailableInPreviewError.message;
+          } else {
+            warning = `Transform failed: ${err instanceof Error ? err.message : String(err)}`;
+            transformedValue = '';
           }
         }
       }
@@ -1205,7 +1204,7 @@ export class SyncService {
         destinationField: mapping.destinationColumnId,
         sourceValue,
         transformedValue,
-        transformerType: mapping.transformer?.type,
+        transformerType: configs[0]?.type,
         warning,
       });
     }
@@ -1622,53 +1621,38 @@ export async function transformRecordAsync(
     let transformedValue: unknown = sourceValue;
     let skip = false;
 
-    // Apply transformer if configured
-    if (mapping.transformer) {
-      const transformer = getTransformer(mapping.transformer.type);
-      if (transformer) {
-        // Create transform context
-        const ctx: TransformContext = {
-          sourceRecord,
-          sourceFieldPath: mapping.sourceColumnId,
-          sourceValue,
-          lookupTools: lookupTools ?? {
-            getDestinationMappingForSourceFk: () => Promise.resolve(null),
-            lookupFieldFromFkRecord: () => Promise.resolve(null),
-          },
-          destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
-          options: mapping.transformer.options ?? {},
-          phase,
-        };
+    // Apply transformer pipeline if configured
+    const configs = getTransformerConfigs(mapping);
+    if (configs.length > 0) {
+      const result = await applyTransformerPipeline(configs, sourceValue, {
+        sourceRecord,
+        sourceFieldPath: mapping.sourceColumnId,
+        lookupTools: lookupTools ?? {
+          getDestinationMappingForSourceFk: () => Promise.resolve(null),
+          lookupFieldFromFkRecord: () => Promise.resolve(null),
+        },
+        destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
+        phase,
+      });
 
-        const result = await transformer.transform(ctx);
-
-        if (result.success) {
-          if (result.skip) {
-            skip = true;
-          }
-          transformedValue = result.value;
-        } else {
-          if (result.useOriginal) {
-            transformedValue = sourceValue;
-          }
-          WSLogger.error({
-            source: 'transformRecordAsync',
-            message: 'Failed to transform field',
-            error: result.error,
-            transformerType: mapping.transformer.type,
-            sourceColumnId: mapping.sourceColumnId,
-            sourceRecordId: sourceRecord.id,
-          });
-          throw new Error(`Failed to transform field "${mapping.sourceColumnId}": ${result.error}`);
+      if (result.success) {
+        if (result.skip) {
+          skip = true;
         }
+        transformedValue = result.value;
       } else {
+        if (result.useOriginal) {
+          transformedValue = sourceValue;
+        }
         WSLogger.error({
           source: 'transformRecordAsync',
-          message: `Unknown transformer type: ${mapping.transformer.type}`,
-          transformerType: mapping.transformer.type,
+          message: 'Failed to transform field',
+          error: result.error,
+          transformerType: result.failedTransformerType,
           sourceColumnId: mapping.sourceColumnId,
           sourceRecordId: sourceRecord.id,
         });
+        throw new Error(`Failed to transform field "${mapping.sourceColumnId}": ${result.error}`);
       }
     }
 

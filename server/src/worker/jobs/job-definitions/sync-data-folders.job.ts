@@ -5,6 +5,7 @@ import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WSLogger } from '../../../logger';
 import { ScratchGitService } from '../../../scratch-git/scratch-git.service';
 import { SyncService } from '../../../sync/sync.service';
+import { findTransformerConfigs } from '../../../sync/transformers';
 import { Actor } from '../../../users/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
@@ -241,7 +242,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     for (let i = 0; i < tableMappings.length; i++) {
       const tableMapping = tableMappings[i];
       const hasFkColumns = tableMapping.columnMappings.some(
-        (m) => m.transformer?.type === TransformerTypes.SourceFkToDestFk,
+        (m) => findTransformerConfigs(m, TransformerTypes.SourceFkToDestFk).length > 0,
       );
       if (hasFkColumns) {
         try {

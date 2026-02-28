@@ -77,6 +77,8 @@ interface FieldMapping {
   sourceField: string;
   destField: string;
   transformer?: TransformerConfig;
+  /** Optional pipeline of transformers (mutually exclusive with `transformer`) */
+  transformers?: TransformerConfig[];
   /** True when the transformer was auto-applied (can be replaced when fields change) */
   transformerAutoApplied?: boolean;
   /** True when the user has explicitly cleared the transformer (opt-out of auto-applied transformer) */
@@ -126,6 +128,7 @@ const folderPairsToSyncMapping = (pairs: FolderPair[]): SyncMapping => {
           sourceColumnId: m.sourceField,
           destinationColumnId: m.destField,
           ...(m.transformer ? { transformer: m.transformer } : {}),
+          ...(m.transformers ? { transformers: m.transformers } : {}),
         }));
 
       return {
@@ -152,6 +155,7 @@ const syncMappingToFolderPairs = (mapping: SyncMapping): FolderPair[] => {
       sourceField: cm.sourceColumnId,
       destField: cm.destinationColumnId,
       transformer: cm.transformer,
+      ...(cm.transformers ? { transformers: cm.transformers } : {}),
     }));
 
     return {
@@ -455,6 +459,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           sourceField: cm.sourceColumnId,
           destField: cm.destinationColumnId,
           transformer: cm.transformer,
+          ...(cm.transformers ? { transformers: cm.transformers } : {}),
         }));
 
         return {
@@ -542,6 +547,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
             sourceColumnId: m.sourceField,
             destinationColumnId: m.destField,
             ...(m.transformer ? { transformer: m.transformer } : {}),
+            ...(m.transformers ? { transformers: m.transformers } : {}),
           }));
         const response = await syncApi.previewRecord(
           workbookId,
