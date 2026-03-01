@@ -41,6 +41,8 @@ import type {
   SaveSyncBody,
   SyncId,
   SyncMapping,
+  SyncTablePair,
+  TableMapping,
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -448,7 +450,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
     if (existingSync.mappings && existingSync.mappings.tableMappings) {
       const uniqueFolderIds = new Set<string>();
-      const pairs: FolderPair[] = existingSync.mappings.tableMappings.map((tm) => {
+      const pairs: FolderPair[] = existingSync.mappings.tableMappings.map((tm: TableMapping) => {
         uniqueFolderIds.add(tm.sourceDataFolderId);
         uniqueFolderIds.add(tm.destinationDataFolderId);
 
@@ -472,7 +474,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       setSelectedPairIndex(0);
       uniqueFolderIds.forEach((id) => ensureSchemaPaths(id));
     } else if (existingSync.syncTablePairs) {
-      const pairs: FolderPair[] = existingSync.syncTablePairs.map((p) => ({
+      const pairs: FolderPair[] = existingSync.syncTablePairs.map((p: SyncTablePair) => ({
         id: `pair-${++pairIdCounter}`,
         sourceId: p.sourceDataFolderId,
         destId: p.destinationDataFolderId,
@@ -547,7 +549,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           }));
         const response = await syncApi.previewRecord(
           workbookId,
-          activePair.sourceId,
+          activePair.sourceId as DataFolderId,
+          activePair.destId as DataFolderId,
           selectedPreviewFile!,
           columnMappings,
         );

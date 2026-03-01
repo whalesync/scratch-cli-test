@@ -1,8 +1,15 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
+import { TransformerTypes } from '@spinner/shared-types';
 import _ from 'lodash';
 import { Webflow } from 'webflow-api';
-import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
+import {
+  CONNECTOR_DATA_TYPE,
+  FOREIGN_KEY_OPTIONS,
+  ForeignKeyOptionSchema,
+  READONLY_FLAG,
+  SUGGESTED_TRANSFORMER,
+} from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 
 /**
@@ -72,7 +79,12 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       if (options.length > 0) {
         schema = Type.Union(
           options.map((opt) => Type.Literal(opt.id, { title: opt.name })),
-          { description },
+          {
+            description,
+            [SUGGESTED_TRANSFORMER]: {
+              type: TransformerTypes.WebflowOption,
+            },
+          },
         );
       } else {
         schema = Type.String({ description });

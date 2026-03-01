@@ -1,4 +1,5 @@
 import { DataFolderId, TransformerOptions, TransformerType } from '@spinner/shared-types';
+import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 
 export type SyncPhase = 'DATA' | 'FOREIGN_KEY_MAPPING';
 
@@ -67,11 +68,20 @@ export interface TransformContext {
   /** The extracted value from the source field */
   sourceValue: unknown;
 
-  /** Tools for FK lookups (only available for lookup-based transformers) */
-  lookupTools: LookupTools;
+  /** The JSON Schema for the source field */
+  sourceTableSpec: BaseJsonTableSpec | null;
+
+  /** Target path for the field being transformed in the destination folder (e.g. 'company.name'). */
+  destinationFieldPath: string;
 
   /** The current destination value for the mapped field (if record already exists) */
   destinationValue?: unknown;
+
+  /** The JSON Schema for the destination field */
+  destinationTableSpec: BaseJsonTableSpec | null;
+
+  /** Tools for FK lookups (only available for lookup-based transformers) */
+  lookupTools: LookupTools;
 
   /** Transformer-specific configuration options */
   options: TransformerOptions;

@@ -1,4 +1,5 @@
 import { ColumnMapping, TransformerConfig, TransformerType } from '@spinner/shared-types';
+import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { getTransformer } from './transformer-registry';
 import { LookupTools, SyncPhase, SyncRecord, TransformContext } from './transformer.types';
 
@@ -27,6 +28,9 @@ export function findTransformerConfigs(mapping: ColumnMapping, type: Transformer
 export interface PipelineBaseContext {
   sourceRecord: SyncRecord;
   sourceFieldPath: string;
+  sourceTableSpec: BaseJsonTableSpec | null;
+  destinationFieldPath: string;
+  destinationTableSpec: BaseJsonTableSpec | null;
   lookupTools: LookupTools;
   destinationValue?: unknown;
   phase: SyncPhase;
@@ -64,6 +68,9 @@ export async function applyTransformerPipeline(
       sourceRecord: baseCtx.sourceRecord,
       sourceFieldPath: baseCtx.sourceFieldPath,
       sourceValue: currentValue,
+      sourceTableSpec: baseCtx.sourceTableSpec,
+      destinationFieldPath: baseCtx.destinationFieldPath,
+      destinationTableSpec: baseCtx.destinationTableSpec,
       lookupTools: baseCtx.lookupTools,
       destinationValue: baseCtx.destinationValue,
       options: (config.options ?? {}) as TransformContext['options'],

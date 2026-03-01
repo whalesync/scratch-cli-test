@@ -55,6 +55,9 @@ function createBaseCtx(overrides?: Partial<PipelineBaseContext>): PipelineBaseCo
   return {
     sourceRecord,
     sourceFieldPath: 'name',
+    sourceTableSpec: null,
+    destinationFieldPath: 'name',
+    destinationTableSpec: null,
     lookupTools,
     phase: 'DATA',
     ...overrides,

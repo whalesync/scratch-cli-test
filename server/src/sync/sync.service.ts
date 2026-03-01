@@ -418,9 +418,12 @@ export class SyncService {
       throw new NotFoundException(`Destination DataFolder ${tableMapping.destinationDataFolderId} not found`);
     }
 
+    const sourceTableSpec = sourceFolder.schema as BaseJsonTableSpec | null;
+    const destinationTableSpec = destinationFolder.schema as BaseJsonTableSpec | null;
+
     // Get idColumnRemoteId from schemas
-    const sourceIdColumn = this.getIdColumnFromSchema(sourceFolder.schema);
-    const destinationIdColumn = this.getIdColumnFromSchema(destinationFolder.schema);
+    const sourceIdColumn = this.getIdColumnFromSchema(sourceTableSpec);
+    const destinationIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
     // ===========================================================================================
     // Pass 1: Populate caches (match keys, FK records, remote ID mappings)
@@ -521,10 +524,7 @@ export class SyncService {
     const destinationFolderPath = destinationFolder.path?.replace(/^\//, '') ?? '';
 
     // Get the destination idColumnRemoteId from schema
-    const destIdColumn = this.getIdColumnFromSchema(destinationFolder.schema);
-
-    // Get destination table spec for slug resolution
-    const destTableSpec = destinationFolder.schema as BaseJsonTableSpec | null;
+    const destIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
     // Create lookup tools for transformers that need FK resolution
     const lookupTools = createLookupTools(this.db, syncId);
@@ -605,6 +605,8 @@ export class SyncService {
             transformedFields = await transformRecordAsync(
               sourceRecord,
               tableMapping.columnMappings,
+              sourceTableSpec,
+              destinationTableSpec,
               lookupTools,
               phase,
             );
@@ -620,8 +622,8 @@ export class SyncService {
             }
 
             // Resolve filename: prefer slug from destination schema, fall back to temp ID
-            const slugValue = destTableSpec?.slugColumnRemoteId
-              ? (get(transformedFields, destTableSpec.slugColumnRemoteId) as string | undefined)
+            const slugValue = destinationTableSpec?.slugColumnRemoteId
+              ? (get(transformedFields, destinationTableSpec.slugColumnRemoteId) as string | undefined)
               : undefined;
             const baseName = resolveBaseFileName({ slugValue, idValue: tempId });
             const fileName = deduplicateFileName(baseName, '.json', usedDestFileNames, tempId);
@@ -646,6 +648,8 @@ export class SyncService {
             transformedFields = await transformRecordAsync(
               sourceRecord,
               tableMapping.columnMappings,
+              sourceTableSpec,
+              destinationTableSpec,
               lookupTools,
               phase,
               existingRecord?.fields,
@@ -1151,10 +1155,10 @@ export class SyncService {
       throw new NotFoundException('Workbook not found');
     }
 
-    const sourceId = body.sourceId as DataFolderId;
+    const sourceId = body.sourceFolderId;
     const sourceFolder = await this.db.client.dataFolder.findUnique({ where: { id: sourceId } });
     if (!sourceFolder) {
-      throw new NotFoundException(`Source folder ${body.sourceId} not found`);
+      throw new NotFoundException(`Source folder ${body.sourceFolderId} not found`);
     }
 
     const sourceIdColumn = this.getIdColumnFromSchema(sourceFolder.schema);
@@ -1178,6 +1182,16 @@ export class SyncService {
       lookupFieldFromFkRecord: () => Promise.reject(notAvailableInPreviewError),
     };
 
+    // Schemas
+    const sourceTableSpec = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
+    if (!sourceTableSpec) {
+      throw new NotFoundException(`Schema not found for source folder`);
+    }
+    const destinationTableSpec = await this.dataFolderService.fetchSchemaSpec(body.destFolderId, actor);
+    if (!destinationTableSpec) {
+      throw new NotFoundException(`Schema not found for destination folder ${body.destFolderId}`);
+    }
+
     const fields: PreviewFieldResult[] = [];
     for (const mapping of columnMappings) {
       const sourceValue = get(record.fields, mapping.sourceColumnId);
@@ -1190,6 +1204,9 @@ export class SyncService {
           const result = await applyTransformerPipeline(configs, sourceValue, {
             sourceRecord: record,
             sourceFieldPath: mapping.sourceColumnId,
+            sourceTableSpec,
+            destinationFieldPath: mapping.destinationColumnId,
+            destinationTableSpec,
             lookupTools: previewLookupTools,
             phase: 'DATA',
           });
@@ -1613,6 +1630,8 @@ function parseFileToRecord(file: FileContent, idColumnRemoteId: string): SyncRec
 export async function transformRecordAsync(
   sourceRecord: SyncRecord,
   columnMappings: ColumnMapping[],
+  sourceTableSpec: BaseJsonTableSpec | null,
+  destinationTableSpec: BaseJsonTableSpec | null,
   lookupTools?: LookupTools,
   phase: SyncPhase = 'DATA',
   baseFields?: Record<string, unknown>,
@@ -1637,6 +1656,9 @@ export async function transformRecordAsync(
       const result = await applyTransformerPipeline(configs, sourceValue, {
         sourceRecord,
         sourceFieldPath: mapping.sourceColumnId,
+        sourceTableSpec,
+        destinationFieldPath: mapping.destinationColumnId,
+        destinationTableSpec,
         lookupTools: lookupTools ?? {
           getDestinationMappingForSourceFk: () => Promise.resolve(null),
           lookupFieldFromFkRecord: () => Promise.resolve(null),

@@ -1,6 +1,7 @@
 import {
   AiContextResponse,
   ColumnMapping,
+  DataFolderId,
   PreviewRecordResponse,
   SaveSyncBody,
   Sync,
@@ -59,14 +60,16 @@ export const syncApi = {
   },
   previewRecord: async (
     workbookId: WorkbookId,
-    sourceId: string,
+    sourceFolderId: DataFolderId,
+    destFolderId: DataFolderId,
     filePath: string,
     columnMappings: ColumnMapping[],
   ): Promise<PreviewRecordResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<PreviewRecordResponse>(`/workbooks/${workbookId}/syncs/preview-record`, {
-        sourceId,
+        sourceFolderId,
+        destFolderId,
         filePath,
         columnMappings,
       });

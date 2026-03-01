@@ -1,3 +1,4 @@
+import { DataFolderId } from '../../ids';
 import type { ColumnMapping, SyncMapping, TransformerType } from '../../sync-mapping';
 
 /** POST/PATCH body for creating or updating a sync */
@@ -13,7 +14,8 @@ export interface SaveSyncBody {
 
 /** POST body for preview-record endpoint */
 export interface PreviewRecordBody {
-  sourceId: string;
+  sourceFolderId: DataFolderId;
+  destFolderId: DataFolderId;
   filePath: string;
   columnMappings: ColumnMapping[];
 }
