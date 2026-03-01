@@ -37,91 +37,103 @@ A new endpoint in `api/bottlenose/` that exports a sync's full configuration as 
 
 The export flattens Whalesync's internal model (CoreBase → CoreTable → CoreColumn → ColumnMapping → ExternalColumn) into a simpler structure organized by table pairs and column pairs, with all remote IDs included.
 
-#### Export Shape (Draft)
+#### Export Shape
 
 ```typescript
-interface WhalesyncSyncExport {
+type WhalesyncSyncExport = {
   version: 1;
   exportedAt: string; // ISO 8601
 
   sync: {
     id: string;
     name: string;
-    syncState: "on" | "off";
-    lastSyncTime: string | null;
+    syncState: string;
   };
 
-  /** The two sides of the Whalesync sync */
   sources: {
-    left: WhalesyncExportSource;
-    right: WhalesyncExportSource;
+    left: WhalesyncExportSource | null;
+    right: WhalesyncExportSource | null;
   };
 
-  /** Table pairs with their column mappings */
   tablePairs: WhalesyncExportTablePair[];
-}
+};
 
-interface WhalesyncExportSource {
+type WhalesyncExportSource = {
   connectorType: string; // e.g., 'airtable', 'webflow', 'notion'
   displayName: string;
-  browserUrl?: string;
+  browserUrl: string | null;
   remoteBaseId: string; // Remote ID of the base/site/workspace
 
   tables: WhalesyncExportTable[];
-}
+};
 
-interface WhalesyncExportTable {
+type WhalesyncExportTable = {
   id: string; // Whalesync ExternalTable ID
   name: string;
   remoteId: string; // Remote ID of the table in the external service
   connectorType: string;
   supportsWrite: boolean;
-  category?: string;
 
   columns: WhalesyncExportColumn[];
-}
+};
 
-interface WhalesyncExportColumn {
+type WhalesyncExportColumn = {
   id: string; // Whalesync ExternalColumn ID
   name: string;
   remoteId: string; // Remote ID of the column in the external service
+  connectorType: string;
   dataType: string;
-  typeMetadata?: unknown; // Preserved for reference
-}
+  typeMetadata: unknown;
+};
 
-interface WhalesyncExportTablePair {
+type WhalesyncExportTablePair = {
   leftTableId: string; // References WhalesyncExportTable.id
   rightTableId: string;
 
-  syncDirection: "left" | "right" | "both";
-  recordDeleteBehavior: {
-    left: "sync" | "do_nothing";
-    right: "sync" | "do_nothing";
-  };
+  syncDirection: "left" | "right" | "both" | "invalid";
+  leftDeleteBehavior: "sync" | "do_nothing";
+  rightDeleteBehavior: "sync" | "do_nothing";
+
+  /** Connector-specific table config (e.g., subtable selection) */
+  leftSelectedConfigExtras: Record<string, unknown> | null;
+  rightSelectedConfigExtras: Record<string, unknown> | null;
 
   /** Filter conditions, if any */
-  filter?: unknown;
-
-  /** Selective sync column ID, if any */
-  syncEnabledExternalColumnId?: {
-    left: string | null;
-    right: string | null;
-  };
+  filter: SyncFilterConditionGroup | null;
 
   columnPairs: WhalesyncExportColumnPair[];
-}
+};
 
-interface WhalesyncExportColumnPair {
+type WhalesyncExportColumnPair = {
   leftColumnId: string; // References WhalesyncExportColumn.id
   rightColumnId: string;
 
-  syncDirection: "left" | "right" | "both";
-  initializeOnMergeWinner?: "left" | "right" | "either";
+  syncDirection: "left" | "right" | "both" | "invalid";
+  initializeOnMergeWinner: "left" | "right" | "either";
 
-  /** Transform info — may not always be populated */
-  syncToCoreTransforms?: unknown;
-  syncToExternalTransforms?: unknown;
-}
+  /** Transform arrays — currently unused/empty in practice */
+  transforms: {
+    leftToCoreTransforms: string[];
+    leftToExternalTransforms: string[];
+    rightToCoreTransforms: string[];
+    rightToExternalTransforms: string[];
+  };
+};
+
+type SyncFilterConditionGroup = {
+  readonly type: "group";
+  id: string;
+  logicalOperator: "AND" | "OR";
+  conditions: (SyncFilterCondition | SyncFilterConditionGroup)[];
+};
+
+type SyncFilterCondition = {
+  readonly type: "condition";
+  id: string;
+  columnMappingId: string;
+  operator: string;
+  value: unknown;
+};
 ```
 
 #### Implementation Notes (Bottlenose)
@@ -141,22 +153,28 @@ A service in `spinner/server/src/sync/whalesync-import/` that converts the Whale
 
 #### Conversion Logic
 
+Bidirectional Whalesync syncs produce **two** Scratch syncs (one per direction). One-way syncs produce one.
+
 ```typescript
 class WhalesyncImportService {
   async convertSync(
     workbookId: WorkbookId,
     whalesyncExport: WhalesyncSyncExport,
-    options: {
-      /** When Whalesync sync is bidirectional, which side becomes the source? */
-      preferredSourceSide: "left" | "right";
-    },
   ): Promise<{
-    syncBody: SaveSyncBody;
+    /** One sync for one-way, two syncs for bidirectional (left→right + right→left) */
+    syncs: SaveSyncBody[];
     caveats: Caveat[];
     unmatchedFolders: UnmatchedFolder[];
   }>;
 }
 ```
+
+For bidirectional table pairs (`syncDirection: 'both'`), two Scratch syncs are created:
+
+- **Left→Right sync**: includes column pairs with direction `'left'` or `'both'`
+- **Right→Left sync**: includes column pairs with direction `'right'` or `'both'`
+
+One-way table pairs (`'left'` or `'right'`) only appear in the corresponding sync. When multiple DataFolders match the same remote ID, the first match is used.
 
 #### DataFolder Resolution
 
@@ -174,16 +192,17 @@ Both systems store the same remote IDs from external services (e.g., Airtable ba
 
 The converter should flag:
 
-| Caveat                                        | Severity | When                                                                                |
-| --------------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
-| Bidirectional sync converted to one-way       | warning  | `syncDirection: 'both'` on any table pair                                           |
-| Column had per-column direction that was lost | warning  | Column direction differs from table direction                                       |
-| Delete behavior not supported                 | warning  | `recordDeleteBehavior: 'sync'` on either side                                       |
-| Filter conditions not migrated                | warning  | Table pair has a `filter`                                                           |
-| Selective sync not migrated                   | info     | Table pair has `syncEnabledExternalColumnId`                                        |
-| Transform could not be mapped                 | warning  | `syncToCoreTransforms`/`syncToExternalTransforms` present but no Scratch equivalent |
-| Table was read-only in Whalesync too          | info     | `supportsWrite: false` — one-way isn't a limitation                                 |
-| Continuous sync → discrete runs               | info     | Always — fundamental difference                                                     |
+| Caveat                                          | Severity | When                                                            |
+| ----------------------------------------------- | -------- | --------------------------------------------------------------- |
+| Bidirectional sync split into two one-way syncs | warning  | `syncDirection: 'both'` on any table pair                       |
+| Delete behavior not supported                   | warning  | `leftDeleteBehavior` or `rightDeleteBehavior` is `'sync'`       |
+| Filter conditions not migrated                  | warning  | Table pair has a non-null `filter`                              |
+| Non-empty transforms found (cannot be mapped)   | warning  | Any transform array is non-empty (currently unused in practice) |
+| Invalid sync direction on table or column pair  | warning  | `syncDirection: 'invalid'`                                      |
+| Connector type not supported in Scratch         | error    | Whalesync connectorType has no Scratch Service equivalent       |
+| Table was read-only in Whalesync too            | info     | `supportsWrite: false` — one-way isn't a limitation             |
+| Continuous sync → discrete runs                 | info     | Always — fundamental difference                                 |
+| First-run data behavior requires user attention | info     | Always — existing data may need matching field configuration    |
 
 #### Unmatched Folder Output
 
@@ -224,14 +243,15 @@ interface UnmatchedFolder {
 1. **Whalesync export endpoint** — Build and test independently against real syncs. Validate the export shape has everything needed.
 2. **WhalesyncSyncExport type definition** — Define the input type in `spinner/packages/shared-types/` or `spinner/server/src/sync/whalesync-import/`.
 3. **Scratch conversion service** — Build the mapping logic with unit tests using fixture data from the export endpoint.
-4. **Scratch API endpoint** — `POST /api/syncs/import-from-whalesync` that accepts the export JSON and returns the converted sync + caveats.
+4. **Scratch API endpoint** — Scratch server calls bottlenose export endpoint directly (server-to-server). User provides Whalesync API token + core base ID. Endpoint returns converted syncs + caveats as a dry run; does not create the syncs automatically.
 5. **(Future) UI** — Import flow in Scratch's client.
 
-## Open Questions
+## Resolved Questions
 
-- Should the Scratch import endpoint call the Whalesync export endpoint directly (server-to-server), or should the user/client pass the export JSON to Scratch?
-- What happens when the user's Scratch workbook has multiple DataFolders that could match a single Whalesync ExternalTable? (e.g., they pulled the same Airtable table twice)
-- Should we support importing a bidirectional Whalesync sync as two separate Scratch syncs (one per direction)?
+- **Server-to-server vs. client-passes-JSON?** → Server-to-server. Scratch calls bottlenose directly with user's Whalesync API token.
+- **Duplicate DataFolder matches?** → Use first match. Rare case, not worth complicating.
+- **Bidirectional → one or two syncs?** → Two separate Scratch syncs (one per direction), with column pairs distributed by direction.
+- **Transform mapping?** → Not needed. Whalesync transform arrays are unused legacy fields (always empty in practice). Flag a caveat if non-empty.
 
 ## References
 

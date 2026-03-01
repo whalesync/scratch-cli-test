@@ -15,6 +15,7 @@ export * from './file-types';
 export * from './ids';
 export * from './subscription';
 export * from './sync-mapping';
+export * from './whalesync-import';
 export * from './workbook-events';
 
 // DTOs
