@@ -94,7 +94,7 @@ export interface TransformContext {
  * Result of a field transformation.
  */
 export type TransformResult =
-  | { success: true; value?: unknown; skip?: boolean }
+  | { success: true; value?: unknown; skip?: boolean; warnings?: string[] }
   | { success: false; error: string; useOriginal?: boolean };
 
 /**

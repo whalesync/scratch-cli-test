@@ -1,4 +1,5 @@
 import { SourceFkToDestFkOptions, TransformerTypes } from '@spinner/shared-types';
+import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } from '../transformer.types';
 
@@ -8,6 +9,7 @@ import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } 
  *
  * Options:
  * - referencedDataFolderId: The source DataFolder ID of the referenced table mapping
+ * - onUnresolved: 'fail' (default) stops the sync; 'ignore' skips unresolved FKs with a warning
  *
  * Handles scalars, arrays, and null/undefined values.
  * Skips transformation when the destination already has the correct value.
@@ -23,6 +25,7 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
 
     const { sourceValue, lookupTools, options, destinationValue } = ctx;
     const typedOptions = options as SourceFkToDestFkOptions;
+    const ignoreUnresolved = typedOptions.onUnresolved === 'ignore';
 
     // Handle null/undefined
     if (sourceValue === null || sourceValue === undefined) {
@@ -48,6 +51,7 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
         : undefined;
 
     const resolved: string[] = [];
+    const warnings: string[] = [];
     let allMatch = destElements !== undefined;
 
     for (let i = 0; i < elements.length; i++) {
@@ -64,6 +68,17 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
       const fkStr = String(element);
       const mapping = await lookupTools.getDestinationMappingForSourceFk(fkStr, typedOptions.referencedDataFolderId);
       if (mapping === null) {
+        if (ignoreUnresolved) {
+          const msg = `Skipped unresolved foreign key "${fkStr}" in DataFolder ${typedOptions.referencedDataFolderId}`;
+          warnings.push(msg);
+          WSLogger.warn({
+            source: 'sourceFkToDestFkTransformer',
+            message: msg,
+            sourceRecordId: ctx.sourceRecord.id,
+            sourceFieldPath: ctx.sourceFieldPath,
+          });
+          continue;
+        }
         return {
           success: false,
           error: `Could not resolve foreign key "${fkStr}" to a destination path in DataFolder ${typedOptions.referencedDataFolderId}`,
@@ -80,10 +95,11 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
 
     // If all resolved elements match the existing destination value (and lengths match), skip
     if (allMatch && destElements !== undefined && resolved.length === destElements.length) {
-      return { success: true, skip: true };
+      return warnings.length > 0 ? { success: true, skip: true, warnings } : { success: true, skip: true };
     }
 
-    return { success: true, value: isScalar ? resolved[0] : resolved };
+    const value = isScalar ? (resolved[0] ?? null) : resolved;
+    return warnings.length > 0 ? { success: true, value, warnings } : { success: true, value };
   },
 };
 

@@ -821,7 +821,7 @@ describe('transformRecordAsync', () => {
         { sourceColumnId: 'Link', destinationColumnId: 'fieldData.link' },
       ];
 
-      const result = await transformRecordAsync(
+      const { fields: result } = await transformRecordAsync(
         sourceRecord,
         columnMappings,
         null,
@@ -872,7 +872,7 @@ describe('transformRecordAsync', () => {
         { sourceColumnId: 'slug', destinationColumnId: 'fieldData.slug' },
       ];
 
-      const result = await transformRecordAsync(sourceRecord, columnMappings, null, null);
+      const { fields: result } = await transformRecordAsync(sourceRecord, columnMappings, null, null);
 
       expect((result as any).fieldData.name).toBe('New Item');
       expect((result as any).fieldData.slug).toBe('new-item');

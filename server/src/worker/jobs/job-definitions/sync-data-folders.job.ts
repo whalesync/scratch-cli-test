@@ -209,6 +209,15 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         tableProgress.status = result.errors.length > 0 ? 'failed' : 'completed';
         totalFilesSynced += result.recordsCreated + result.recordsUpdated;
 
+        // Surface warnings as errors with "Warning:" prefix so they appear in the Runs page
+        if (result.warnings.length > 0) {
+          const warningErrors = result.warnings.map((w) => ({
+            sourceRemoteId: w.sourceRemoteId,
+            error: `Warning: ${w.warning}`,
+          }));
+          tableProgress.errors = [...tableProgress.errors, ...warningErrors].slice(0, MAX_PROGRESS_ERRORS);
+        }
+
         // Log any errors
         if (result.errors.length > 0) {
           WSLogger.warn({
@@ -266,6 +275,15 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
             recordsUpdated: fkResult.recordsUpdated,
             errorCount: fkResult.errors.length,
           });
+
+          // Surface FK resolution warnings in progress
+          if (fkResult.warnings.length > 0) {
+            const warningErrors = fkResult.warnings.map((w) => ({
+              sourceRemoteId: w.sourceRemoteId,
+              error: `Warning: ${w.warning}`,
+            }));
+            tablesProgress[i].errors = [...tablesProgress[i].errors, ...warningErrors].slice(0, MAX_PROGRESS_ERRORS);
+          }
 
           if (fkResult.errors.length > 0) {
             WSLogger.warn({

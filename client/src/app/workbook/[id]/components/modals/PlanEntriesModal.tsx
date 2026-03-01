@@ -187,9 +187,11 @@ export function PlanEntriesModal({
               <Table stickyHeader highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th style={{ whiteSpace: 'nowrap' }}>Phase</Table.Th>
+                    <Table.Th w={100} style={{ whiteSpace: 'nowrap' }}>
+                      Phase
+                    </Table.Th>
                     <Table.Th>File</Table.Th>
-                    <Table.Th>Status</Table.Th>
+                    <Table.Th w={100}>Status</Table.Th>
                     <Table.Th>Error</Table.Th>
                     <Table.Th>Operation</Table.Th>
                   </Table.Tr>

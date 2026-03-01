@@ -66,6 +66,7 @@ export interface SyncTableMappingResult {
   createdPaths: string[];
   updatedPaths: string[];
   errors: Array<{ sourceRemoteId: string; error: string }>;
+  warnings: Array<{ sourceRemoteId: string; warning: string }>;
 }
 
 @Injectable()
@@ -399,6 +400,7 @@ export class SyncService {
       createdPaths: [],
       updatedPaths: [],
       errors: [],
+      warnings: [],
     };
 
     // 1. Fetch source and destination DataFolders with their schemas
@@ -602,7 +604,7 @@ export class SyncService {
 
           if (mapping.destinationFilePath === null) {
             // This is a new record
-            transformedFields = await transformRecordAsync(
+            const transformResult = await transformRecordAsync(
               sourceRecord,
               tableMapping.columnMappings,
               sourceTableSpec,
@@ -610,6 +612,10 @@ export class SyncService {
               lookupTools,
               phase,
             );
+            transformedFields = transformResult.fields;
+            for (const w of transformResult.warnings) {
+              result.warnings.push({ sourceRemoteId, warning: w });
+            }
 
             // Generate a temporary ID for the new record so it can be matched on subsequent syncs,
             // but only if the column mappings haven't already set the destination ID column.
@@ -645,7 +651,7 @@ export class SyncService {
             destinationPath = mapping.destinationFilePath;
             const existingRecord = destinationRecordsByPath.get(mapping.destinationFilePath);
 
-            transformedFields = await transformRecordAsync(
+            const transformResult = await transformRecordAsync(
               sourceRecord,
               tableMapping.columnMappings,
               sourceTableSpec,
@@ -654,6 +660,10 @@ export class SyncService {
               phase,
               existingRecord?.fields,
             );
+            transformedFields = transformResult.fields;
+            for (const w of transformResult.warnings) {
+              result.warnings.push({ sourceRemoteId, warning: w });
+            }
 
             // Skip writing if the transformed fields are identical to the existing record —
             // this avoids unnecessary file writes that produce only whitespace changes.
@@ -1627,6 +1637,11 @@ function parseFileToRecord(file: FileContent, idColumnRemoteId: string): SyncRec
  *   key ordering. When omitted (new records), builds a fresh object with zipObjectDeep.
  * @returns Transformed fields for the destination record
  */
+export interface TransformRecordResult {
+  fields: Record<string, unknown>;
+  warnings: string[];
+}
+
 export async function transformRecordAsync(
   sourceRecord: SyncRecord,
   columnMappings: ColumnMapping[],
@@ -1635,9 +1650,10 @@ export async function transformRecordAsync(
   lookupTools?: LookupTools,
   phase: SyncPhase = 'DATA',
   baseFields?: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+): Promise<TransformRecordResult> {
   const definedPaths: string[] = [];
   const definedValues: unknown[] = [];
+  const warnings: string[] = [];
 
   for (const mapping of columnMappings) {
     const sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
@@ -1671,6 +1687,9 @@ export async function transformRecordAsync(
         if (result.skip) {
           skip = true;
         }
+        if (result.warnings) {
+          warnings.push(...result.warnings);
+        }
         transformedValue = result.value;
       } else {
         if (result.useOriginal) {
@@ -1699,14 +1718,14 @@ export async function transformRecordAsync(
   // the original key ordering of the JSON file. Do NOT replace this with merge/spread/
   // Object.assign — those approaches reorder keys and corrupt the destination file layout.
   if (baseFields) {
-    const result = structuredClone(baseFields);
+    const fields = structuredClone(baseFields);
     for (let i = 0; i < definedPaths.length; i++) {
-      set(result, definedPaths[i], definedValues[i]);
+      set(fields, definedPaths[i], definedValues[i]);
     }
-    return result;
+    return { fields, warnings };
   }
 
-  return zipObjectDeep(definedPaths, definedValues) as Record<string, unknown>;
+  return { fields: zipObjectDeep(definedPaths, definedValues) as Record<string, unknown>, warnings };
 }
 
 /**

@@ -102,6 +102,8 @@ export interface StringToNumberOptions {
 export interface SourceFkToDestFkOptions {
   /** The DataFolder ID containing the referenced records */
   referencedDataFolderId: DataFolderId;
+  /** What to do when a referenced record cannot be found. Default: 'fail' */
+  onUnresolved?: 'fail' | 'ignore';
 }
 
 /** Options for the lookup_field transformer */

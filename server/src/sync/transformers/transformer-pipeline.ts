@@ -37,7 +37,7 @@ export interface PipelineBaseContext {
 }
 
 export type PipelineResult =
-  | { success: true; value?: unknown; skip?: boolean }
+  | { success: true; value?: unknown; skip?: boolean; warnings?: string[] }
   | { success: false; error: string; useOriginal?: boolean; failedTransformerType?: TransformerType };
 
 /**
@@ -53,6 +53,7 @@ export async function applyTransformerPipeline(
   baseCtx: PipelineBaseContext,
 ): Promise<PipelineResult> {
   let currentValue: unknown = initialValue;
+  const accumulatedWarnings: string[] = [];
 
   for (const config of configs) {
     const transformer = getTransformer(config.type);
@@ -83,12 +84,18 @@ export async function applyTransformerPipeline(
       return { ...result, failedTransformerType: config.type };
     }
 
+    if (result.warnings) {
+      accumulatedWarnings.push(...result.warnings);
+    }
+
     if (result.skip) {
-      return result;
+      return accumulatedWarnings.length > 0 ? { ...result, warnings: accumulatedWarnings } : result;
     }
 
     currentValue = result.value;
   }
 
-  return { success: true, value: currentValue };
+  return accumulatedWarnings.length > 0
+    ? { success: true, value: currentValue, warnings: accumulatedWarnings }
+    : { success: true, value: currentValue };
 }

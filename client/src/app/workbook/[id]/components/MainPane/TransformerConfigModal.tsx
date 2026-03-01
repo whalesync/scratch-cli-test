@@ -21,6 +21,7 @@ import type {
   AutoConvertOptions,
   DataFolder,
   DataFolderId,
+  SourceFkToDestFkOptions,
   TransformerConfig,
   TransformerType,
 } from '@spinner/shared-types';
@@ -38,6 +39,11 @@ interface TransformerConfigModalProps {
 
 const TRANSFORMER_OPTIONS = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label }));
 
+const ON_UNRESOLVED_OPTIONS: { value: NonNullable<SourceFkToDestFkOptions['onUnresolved']>; label: string }[] = [
+  { value: 'fail', label: 'Stop and fail the sync' },
+  { value: 'ignore', label: 'Ignore missing record and sync the rest' },
+];
+
 /** Internal per-step form state */
 interface StepState {
   id: number;
@@ -47,6 +53,7 @@ interface StepState {
   referencedDataFolderId: DataFolderId | '';
   referencedFieldPath: string;
   targetType: AutoConvertOptions['targetType'];
+  onUnresolved: NonNullable<SourceFkToDestFkOptions['onUnresolved']>;
 }
 
 let stepIdCounter = 0;
@@ -63,6 +70,7 @@ function configToStepState(config: TransformerConfig): StepState {
         : ('' as DataFolderId | ''),
     referencedFieldPath: config.type === TransformerTypes.LookupField ? config.options.referencedFieldPath : '',
     targetType: config.type === TransformerTypes.AutoConvert ? config.options.targetType : 'string',
+    onUnresolved: config.type === TransformerTypes.SourceFkToDestFk ? (config.options.onUnresolved ?? 'fail') : 'fail',
   };
 }
 
@@ -75,6 +83,7 @@ function createEmptyStep(): StepState {
     referencedDataFolderId: '' as DataFolderId | '',
     referencedFieldPath: '',
     targetType: 'string',
+    onUnresolved: 'fail',
   };
 }
 
@@ -86,7 +95,13 @@ function stepStateToConfig(step: StepState): TransformerConfig | null {
     case TransformerTypes.StringToNumber:
       return { type: step.type, options: { stripCurrency: step.stripCurrency, parseInteger: step.parseInteger } };
     case TransformerTypes.SourceFkToDestFk:
-      return { type: step.type, options: { referencedDataFolderId: step.referencedDataFolderId as DataFolderId } };
+      return {
+        type: step.type,
+        options: {
+          referencedDataFolderId: step.referencedDataFolderId as DataFolderId,
+          ...(step.onUnresolved !== 'fail' ? { onUnresolved: step.onUnresolved } : {}),
+        },
+      };
     case TransformerTypes.LookupField:
       return {
         type: step.type,
@@ -224,16 +239,28 @@ export function TransformerConfigModal({
             )}
 
             {step.type === TransformerTypes.SourceFkToDestFk && (
-              <Select
-                label="Referenced Folder"
-                description="The folder containing the records referenced by this foreign key"
-                placeholder="Select folder"
-                data={folderSelectData}
-                value={step.referencedDataFolderId || null}
-                onChange={(val) => updateStep(index, { referencedDataFolderId: (val || '') as DataFolderId | '' })}
-                renderOption={renderFolderOption}
-                searchable
-              />
+              <>
+                <Select
+                  label="Referenced Folder"
+                  description="The folder containing the records referenced by this foreign key"
+                  placeholder="Select folder"
+                  data={folderSelectData}
+                  value={step.referencedDataFolderId || null}
+                  onChange={(val) => updateStep(index, { referencedDataFolderId: (val || '') as DataFolderId | '' })}
+                  renderOption={renderFolderOption}
+                  searchable
+                />
+                <Select
+                  label="When a referenced record cannot be found"
+                  data={ON_UNRESOLVED_OPTIONS}
+                  value={step.onUnresolved}
+                  onChange={(val) =>
+                    updateStep(index, {
+                      onUnresolved: (val as SourceFkToDestFkOptions['onUnresolved']) || 'fail',
+                    })
+                  }
+                />
+              </>
             )}
 
             {step.type === TransformerTypes.LookupField && (
