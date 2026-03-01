@@ -39,6 +39,8 @@ include:
     - gitlab-ci/**/*
     - .vscode/**/*
     - experimental/**/*
+    - scratch-git-2-http-backend/**/*
+    - scratch-git-2/**/*
     - "*"
     - docs/**/*
 
