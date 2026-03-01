@@ -54,6 +54,7 @@ interface StepState {
   referencedFieldPath: string;
   targetType: AutoConvertOptions['targetType'];
   onUnresolved: NonNullable<SourceFkToDestFkOptions['onUnresolved']>;
+  outputType: NonNullable<SourceFkToDestFkOptions['outputType']>;
 }
 
 let stepIdCounter = 0;
@@ -71,6 +72,7 @@ function configToStepState(config: TransformerConfig): StepState {
     referencedFieldPath: config.type === TransformerTypes.LookupField ? config.options.referencedFieldPath : '',
     targetType: config.type === TransformerTypes.AutoConvert ? config.options.targetType : 'string',
     onUnresolved: config.type === TransformerTypes.SourceFkToDestFk ? (config.options.onUnresolved ?? 'fail') : 'fail',
+    outputType: config.type === TransformerTypes.SourceFkToDestFk ? (config.options.outputType ?? 'array') : 'array',
   };
 }
 
@@ -84,6 +86,7 @@ function createEmptyStep(): StepState {
     referencedFieldPath: '',
     targetType: 'string',
     onUnresolved: 'fail',
+    outputType: 'array',
   };
 }
 
@@ -100,6 +103,7 @@ function stepStateToConfig(step: StepState): TransformerConfig | null {
         options: {
           referencedDataFolderId: step.referencedDataFolderId as DataFolderId,
           ...(step.onUnresolved !== 'fail' ? { onUnresolved: step.onUnresolved } : {}),
+          ...(step.outputType !== 'array' ? { outputType: step.outputType } : {}),
         },
       };
     case TransformerTypes.LookupField:
@@ -249,6 +253,20 @@ export function TransformerConfigModal({
                   onChange={(val) => updateStep(index, { referencedDataFolderId: (val || '') as DataFolderId | '' })}
                   renderOption={renderFolderOption}
                   searchable
+                />
+                <Select
+                  label="Output type"
+                  description="Whether to output multiple values (array) or a single value"
+                  data={[
+                    { value: 'array', label: 'Multiple values (array)' },
+                    { value: 'single', label: 'Single value (first item)' },
+                  ]}
+                  value={step.outputType}
+                  onChange={(val) =>
+                    updateStep(index, {
+                      outputType: (val as SourceFkToDestFkOptions['outputType']) || 'array',
+                    })
+                  }
                 />
                 <Select
                   label="When a referenced record cannot be found"

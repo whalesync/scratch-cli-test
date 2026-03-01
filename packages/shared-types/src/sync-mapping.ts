@@ -104,6 +104,8 @@ export interface SourceFkToDestFkOptions {
   referencedDataFolderId: DataFolderId;
   /** What to do when a referenced record cannot be found. Default: 'fail' */
   onUnresolved?: 'fail' | 'ignore';
+  /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to the first element or null */
+  outputType?: 'array' | 'single';
 }
 
 /** Options for the lookup_field transformer */

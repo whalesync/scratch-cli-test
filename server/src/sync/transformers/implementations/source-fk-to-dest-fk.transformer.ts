@@ -33,14 +33,14 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
     }
 
     // Normalize scalar to array for uniform processing
-    const isScalar = !Array.isArray(sourceValue);
-    if (isScalar && typeof sourceValue !== 'string' && typeof sourceValue !== 'number') {
+    const isSourceScalar = !Array.isArray(sourceValue);
+    if (isSourceScalar && typeof sourceValue !== 'string' && typeof sourceValue !== 'number') {
       return {
         success: false,
         error: `Expected string, number, or array for FK value, got ${typeof sourceValue}`,
       };
     }
-    const elements: unknown[] = isScalar ? [sourceValue] : sourceValue;
+    const elements: unknown[] = isSourceScalar ? [sourceValue] : sourceValue;
 
     // Normalize destination value for comparison
     const destElements: unknown[] | undefined =
@@ -98,7 +98,8 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
       return warnings.length > 0 ? { success: true, skip: true, warnings } : { success: true, skip: true };
     }
 
-    const value = isScalar ? (resolved[0] ?? null) : resolved;
+    const isDestScalar = isSourceScalar || typedOptions.outputType === 'single';
+    const value = isDestScalar ? (resolved[0] ?? null) : resolved;
     return warnings.length > 0 ? { success: true, value, warnings } : { success: true, value };
   },
 };

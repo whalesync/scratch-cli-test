@@ -21,6 +21,7 @@ const sourceFkToDestFkOptionsSchema = z
   .object({
     referencedDataFolderId: z.string().min(1),
     onUnresolved: z.enum(['fail', 'ignore']).optional(),
+    outputType: z.enum(['array', 'single']).optional(),
   })
   .strict();
 

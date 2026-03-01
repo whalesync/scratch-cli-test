@@ -223,4 +223,41 @@ describe('sourceFkToDestFkTransformer', () => {
       });
     });
   });
+
+  describe('outputType: single', () => {
+    const singleOpts: SourceFkToDestFkOptions = {
+      referencedDataFolderId: REFERENCED_FOLDER,
+      outputType: 'single',
+    };
+
+    it('should unwrap array input to first resolved value', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup, singleOpts));
+      expect(result).toEqual({ success: true, value: '@/authors/alice.json' });
+    });
+
+    it('should return null for empty array after ignoring unresolved', async () => {
+      const lookup = createSimpleLookupTools();
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext(['missing'], lookup, { ...singleOpts, onUnresolved: 'ignore' }),
+      );
+      expect(result).toEqual({
+        success: true,
+        value: null,
+        warnings: [expect.stringContaining('Skipped unresolved foreign key "missing"')],
+      });
+    });
+
+    it('should behave the same as default for scalar input', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json' });
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup, singleOpts));
+      expect(result).toEqual({ success: true, value: '@/authors/alice.json' });
+    });
+
+    it('should preserve default array behavior when outputType is not set', async () => {
+      const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
+      const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup));
+      expect(result).toEqual({ success: true, value: ['@/authors/alice.json', '@/authors/bob.json'] });
+    });
+  });
 });
