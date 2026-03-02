@@ -1,17 +1,49 @@
 import { Injectable } from '@nestjs/common';
+import { WorkbookId } from '@spinner/shared-types';
 import { DbService } from '../db/db.service';
 
-// Define minimal interface if BaseJsonTableSpec is not easily available or to avoid circular deps,
-// but better to import it if possible.
-// It comes from '../remote-service/connectors/types' or similar.
-// Let's use 'any' or imported type if I can find the import path.
-// pipeline-run imports from types. Let me check pipeline-run imports.
+import { WSLogger } from 'src/logger';
 import { Schema } from 'src/utils/objects';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
+import { ScratchGitService } from '../scratch-git/scratch-git.service';
 
 @Injectable()
 export class SchemaHelperService {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly scratchGitService: ScratchGitService,
+  ) {}
+
+  /**
+   * Reads schema from git first, falling back to the DB value.
+   */
+  private async readSchemaWithFallback(
+    workbookId: string,
+    connectorAccountId: string | null,
+    folderPath: string | null,
+    dbSchema: unknown,
+  ): Promise<BaseJsonTableSpec | null> {
+    if (folderPath) {
+      try {
+        const repoId = await this.scratchGitService.resolveRepoId(
+          workbookId as WorkbookId,
+          connectorAccountId ?? undefined,
+        );
+        const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
+        if (gitSchema) return gitSchema;
+      } catch (error) {
+        WSLogger.error({
+          source: 'SchemaHelperService.readSchemaWithFallback',
+          message: 'Failed to read schema from git, falling back to DB',
+          error,
+          workbookId,
+          folderPath,
+        });
+      }
+    }
+    // Fallback to DB schema
+    return (dbSchema as BaseJsonTableSpec) || null;
+  }
 
   /**
    * Look up the DataFolder for a given path and return its TableSpec.
@@ -32,16 +64,25 @@ export class SchemaHelperService {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
         },
-        select: { schema: true },
+        select: { schema: true, connectorAccountId: true, path: true },
       });
 
-      const spec = (dataFolder?.schema as unknown as BaseJsonTableSpec) || null;
+      const spec = await this.readSchemaWithFallback(
+        workbookId,
+        dataFolder?.connectorAccountId ?? null,
+        dataFolder?.path ?? null,
+        dataFolder?.schema,
+      );
       if (cache) {
         cache.set(folderPath, spec);
       }
       return spec;
     } catch (error) {
-      console.error(`Error fetching table spec for folder: ${folderPath}`, error);
+      WSLogger.error({
+        source: 'SchemaHelperService.getTableSpec',
+        message: `Error fetching table spec for folder: ${folderPath}`,
+        error,
+      });
       if (cache) {
         cache.set(folderPath, null);
       }
@@ -79,7 +120,7 @@ export class SchemaHelperService {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
         },
-        select: { id: true, tableId: true, schema: true },
+        select: { id: true, tableId: true, schema: true, connectorAccountId: true, path: true },
       });
 
       if (!dataFolder) {
@@ -89,14 +130,23 @@ export class SchemaHelperService {
         return null;
       }
 
-      const spec = (dataFolder.schema as unknown as BaseJsonTableSpec) || null;
-      const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec };
+      const spec = await this.readSchemaWithFallback(
+        workbookId,
+        dataFolder.connectorAccountId,
+        dataFolder.path,
+        dataFolder.schema,
+      );
+      const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec: spec! };
       if (cache) {
         cache.set(folderPath, result);
       }
       return result;
     } catch (error) {
-      console.error(`Error fetching data folder info for: ${folderPath}`, error);
+      WSLogger.error({
+        source: 'SchemaHelperService.getDataFolderInfo',
+        message: `Error fetching data folder info for: ${folderPath}`,
+        error,
+      });
       if (cache) {
         cache.set(folderPath, null);
       }
@@ -117,16 +167,25 @@ export class SchemaHelperService {
     try {
       const dataFolder = await this.db.client.dataFolder.findUnique({
         where: { id: dataFolderId },
-        select: { schema: true },
+        select: { schema: true, connectorAccountId: true, path: true, workbookId: true },
       });
 
-      const spec = (dataFolder?.schema as unknown as BaseJsonTableSpec) || null;
+      const spec = await this.readSchemaWithFallback(
+        dataFolder?.workbookId ?? '',
+        dataFolder?.connectorAccountId ?? null,
+        dataFolder?.path ?? null,
+        dataFolder?.schema,
+      );
       if (cache) {
         cache.set(dataFolderId, spec);
       }
       return spec;
     } catch (error) {
-      console.error(`Error fetching table spec for dataFolderId: ${dataFolderId}`, error);
+      WSLogger.error({
+        source: 'SchemaHelperService.getTableSpecById',
+        message: `Error fetching table spec for dataFolderId: ${dataFolderId}`,
+        error,
+      });
       if (cache) {
         cache.set(dataFolderId, null);
       }

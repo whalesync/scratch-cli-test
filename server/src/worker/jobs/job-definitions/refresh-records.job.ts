@@ -92,7 +92,22 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
       throw new Error(`DataFolder ${data.dataFolderId} does not have a connector service`);
     }
 
-    const tableSpec = dataFolder.schema as BaseJsonTableSpec;
+    // Read schema from git first, fall back to DB
+    let tableSpec: BaseJsonTableSpec;
+    if (dataFolder.path) {
+      try {
+        const repoId = await this.scratchGitService.resolveRepoId(
+          dataFolder.workbookId as WorkbookId,
+          dataFolder.connectorAccountId ?? undefined,
+        );
+        const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, dataFolder.path);
+        tableSpec = gitSchema ?? (dataFolder.schema as BaseJsonTableSpec);
+      } catch {
+        tableSpec = dataFolder.schema as BaseJsonTableSpec;
+      }
+    } else {
+      tableSpec = dataFolder.schema as BaseJsonTableSpec;
+    }
 
     const publicProgress: RefreshRecordsPublicProgress = {
       status: 'active',

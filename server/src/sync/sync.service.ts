@@ -81,6 +81,36 @@ export class SyncService {
   ) {}
 
   /**
+   * Reads schema from git first, falling back to the DB value.
+   */
+  private async readSchemaWithFallback(
+    workbookId: string,
+    connectorAccountId: string | null,
+    folderPath: string | null,
+    dbSchema: unknown,
+  ): Promise<BaseJsonTableSpec | null> {
+    if (folderPath) {
+      try {
+        const repoId = await this.scratchGitService.resolveRepoId(
+          workbookId as WorkbookId,
+          connectorAccountId ?? undefined,
+        );
+        const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
+        if (gitSchema) return gitSchema;
+      } catch (error) {
+        WSLogger.error({
+          source: 'SyncService.readSchemaWithFallback',
+          message: 'Failed to read schema from git, falling back to DB',
+          error,
+          workbookId,
+          folderPath,
+        });
+      }
+    }
+    return (dbSchema as BaseJsonTableSpec) || null;
+  }
+
+  /**
    * Creates a new sync.
    */
   async createSync(workbookId: WorkbookId, body: SaveSyncBody, actor: Actor): Promise<unknown> {
@@ -420,8 +450,19 @@ export class SyncService {
       throw new NotFoundException(`Destination DataFolder ${tableMapping.destinationDataFolderId} not found`);
     }
 
-    const sourceTableSpec = sourceFolder.schema as BaseJsonTableSpec | null;
-    const destinationTableSpec = destinationFolder.schema as BaseJsonTableSpec | null;
+    // Read schema from git first, fall back to DB
+    const sourceTableSpec = await this.readSchemaWithFallback(
+      workbookId,
+      sourceFolder.connectorAccountId,
+      sourceFolder.path,
+      sourceFolder.schema,
+    );
+    const destinationTableSpec = await this.readSchemaWithFallback(
+      workbookId,
+      destinationFolder.connectorAccountId,
+      destinationFolder.path,
+      destinationFolder.schema,
+    );
 
     // Get idColumnRemoteId from schemas
     const sourceIdColumn = this.getIdColumnFromSchema(sourceTableSpec);
@@ -1293,8 +1334,13 @@ export class SyncService {
       const service = folder.connectorService ? (folder.connectorService as Service) : null;
       if (service) allServices.add(service);
 
-      // Extract fields from the cached schema JSON (stored from the last pull)
-      const schemaJson = folder.schema as BaseJsonTableSpec | null;
+      // Read schema from git first, fall back to DB
+      const schemaJson = await this.readSchemaWithFallback(
+        workbookId,
+        folder.connectorAccountId,
+        folder.path,
+        folder.schema,
+      );
       const fields = schemaJson?.schema ? extractSchemaFields(schemaJson.schema) : [];
 
       const accountId = folder.connectorAccountId;

@@ -181,7 +181,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       throw new Error(`DataFolder ${dataFolderId} does not have a connector service`);
     }
 
-    const tableSpec = dataFolder.schema as BaseJsonTableSpec;
+    // Read schema from git first, fall back to DB
+    let tableSpec: BaseJsonTableSpec;
+    if (dataFolder.path) {
+      const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, dataFolder.path);
+      tableSpec = gitSchema ?? (dataFolder.schema as BaseJsonTableSpec);
+    } else {
+      tableSpec = dataFolder.schema as BaseJsonTableSpec;
+    }
 
     const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
 
@@ -441,6 +448,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           lastSyncTime: new Date(),
         },
       });
+
+      // Write schema to git repo after successful pull
+      if (dataFolder.path && dataFolder.schema) {
+        await this.scratchGitService.writeSchemaToGit(repoId, dataFolder.path, dataFolder.schema as BaseJsonTableSpec);
+      }
 
       WSLogger.debug({
         source: 'PullLinkedFolderFilesJob',

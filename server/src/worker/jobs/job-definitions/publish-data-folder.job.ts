@@ -189,7 +189,22 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
         continue;
       }
 
-      const tableSpec = dataFolder.schema as BaseJsonTableSpec;
+      // Read schema from git first, fall back to DB
+      let tableSpec: BaseJsonTableSpec;
+      if (dataFolder.path && dataFolder.connectorAccountId) {
+        try {
+          const schemaRepoId = await this.scratchGitService.resolveRepoId(
+            data.workbookId,
+            dataFolder.connectorAccountId,
+          );
+          const gitSchema = await this.scratchGitService.readSchemaFromGit(schemaRepoId, dataFolder.path);
+          tableSpec = gitSchema ?? (dataFolder.schema as BaseJsonTableSpec);
+        } catch {
+          tableSpec = dataFolder.schema as BaseJsonTableSpec;
+        }
+      } else {
+        tableSpec = dataFolder.schema as BaseJsonTableSpec;
+      }
 
       // Mark folder as in_progress
       currentFolder.status = 'in_progress';

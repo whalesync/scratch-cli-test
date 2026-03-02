@@ -62,6 +62,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       listRepoFiles: jest.fn(),
       deleteFilesFromBranch: jest.fn(),
       runGitGc: jest.fn().mockResolvedValue(undefined),
+      readSchemaFromGit: jest.fn().mockResolvedValue(null),
+      writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     mockFileIndexService = {

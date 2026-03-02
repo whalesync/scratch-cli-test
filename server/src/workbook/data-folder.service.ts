@@ -274,6 +274,20 @@ export class DataFolderService {
         include: DataFolderCluster._validator.include,
       });
 
+      // Write schema to git repo
+      try {
+        const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+        await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
+      } catch (error) {
+        WSLogger.error({
+          source: 'DataFolderService.createFolder',
+          message: 'Failed to write schema to git',
+          error,
+          workbookId,
+          dataFolderId,
+        });
+      }
+
       this.workbookEventService.sendWorkbookEvent(workbookId, {
         type: 'folder-created',
         data: { source: 'user', entityId: dataFolderId, message: 'Folder created' },
@@ -671,12 +685,19 @@ export class DataFolderService {
         decryptedCredentials: connectorAccount as unknown as DecryptedCredentials,
       });
 
-      if (!dataFolder.schema) {
+      const schema = await this.readSchema(
+        dataFolder.workbookId as WorkbookId,
+        dataFolder.connectorAccountId,
+        dataFolder.path,
+        dataFolder.schema ? (dataFolder.schema as Record<string, unknown>) : null,
+      );
+
+      if (!schema) {
         // Fallback if no schema is present (shouldn't happen for valid connected folders but safe to handle)
         return {};
       }
 
-      return await connector.getNewFile(dataFolder.schema as BaseJsonTableSpec);
+      return await connector.getNewFile(schema);
     }
 
     // Default for scratch folders or if no connector logic applies
@@ -837,11 +858,37 @@ export class DataFolderService {
   }
 
   /**
+   * Reads schema from git first, falling back to the DB value.
+   */
+  async readSchema(
+    workbookId: WorkbookId,
+    connectorAccountId: string | null | undefined,
+    folderPath: string | null,
+    dbSchema: Record<string, unknown> | null,
+  ): Promise<BaseJsonTableSpec | null> {
+    if (!folderPath) return (dbSchema as BaseJsonTableSpec) ?? null;
+    try {
+      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId ?? undefined);
+      const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
+      if (gitSchema) return gitSchema;
+    } catch (error) {
+      WSLogger.error({
+        source: 'DataFolderService.readSchema',
+        message: 'Failed to read schema from git, falling back to DB',
+        error,
+        workbookId,
+        folderPath,
+      });
+    }
+    return (dbSchema as BaseJsonTableSpec) ?? null;
+  }
+
+  /**
    * Returns the schema already stored in the DB for a data folder, without calling the connector.
    */
   async getStoredSchema(id: DataFolderId, actor: Actor): Promise<Record<string, unknown> | null> {
     const folder = await this.findOne(id, actor);
-    return folder.schema;
+    return await this.readSchema(folder.workbookId, folder.connectorAccountId, folder.path, folder.schema);
   }
 
   /**
@@ -888,6 +935,22 @@ export class DataFolderService {
         where: { id },
         data: { schema: tableSpec, lastSchemaRefreshAt: new Date() },
       });
+
+      // Write schema to git repo
+      try {
+        const repoId = await this.scratchGitService.resolveRepoId(
+          folder.workbookId,
+          folder.connectorAccountId ?? undefined,
+        );
+        await this.scratchGitService.writeSchemaToGit(repoId, folder.path!, tableSpec);
+      } catch (error) {
+        WSLogger.error({
+          source: 'DataFolderService.fetchSchemaSpec',
+          message: 'Failed to write schema to git',
+          error,
+          dataFolderId: id,
+        });
+      }
 
       return tableSpec;
     } catch (error) {

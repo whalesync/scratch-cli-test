@@ -20,6 +20,7 @@ export class DataFolderEntity implements DataFolder {
   connectorDisplayName: string | null;
   parentId: string | null;
   path: string | null;
+  /** @deprecated Read from git via ScratchGitService.readSchemaFromGit() instead. DB column retained for fallback. */
   schema: Record<string, unknown> | null;
   lastSchemaRefreshAt: string | null;
   lock: string | null;

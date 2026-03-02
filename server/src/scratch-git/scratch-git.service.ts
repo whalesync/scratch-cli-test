@@ -7,6 +7,8 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { WSLogger } from 'src/logger';
+import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { ScratchGitClient } from './scratch-git.client';
 
 // The object returned by listRepoFiles
@@ -18,6 +20,7 @@ export interface RepoFileRef {
 
 export const MAIN_BRANCH = 'main';
 export const DIRTY_BRANCH = 'dirty';
+export const SCHEMA_JSON_FILENAME = '.schema.json';
 
 /** Separator used in V2 composite repo IDs (must match Rust constant in state.rs) */
 const V2_ID_SEPARATOR = '--';
@@ -262,5 +265,50 @@ export class ScratchGitService {
   async deleteAllFilesInDataFolder(repoId: string, folderPath: string): Promise<void> {
     // Delete the folder from dirty branch only to ensure a diff is generated
     await this.deleteFolder(repoId, folderPath, `Delete all records in ${folderPath}`, DIRTY_BRANCH);
+  }
+
+  /**
+   * Writes a BaseJsonTableSpec as `.schema.json` into the git repo on both branches.
+   * Commits to both main and dirty to keep them in sync without needing a rebase.
+   * Non-throwing — failures are logged but do not block callers.
+   */
+  async writeSchemaToGit(repoId: string, folderPath: string, schema: BaseJsonTableSpec): Promise<void> {
+    try {
+      const gitPath = folderPath.replace(/^\//, '') + '/' + SCHEMA_JSON_FILENAME;
+      const file = { path: gitPath, content: JSON.stringify(schema, null, 2) };
+      const message = `Update ${SCHEMA_JSON_FILENAME} for ${folderPath}`;
+      await this.commitFilesToBranch(repoId, MAIN_BRANCH, [file], message);
+      await this.commitFilesToBranch(repoId, DIRTY_BRANCH, [file], message);
+    } catch (error) {
+      WSLogger.error({
+        source: 'ScratchGitService.writeSchemaToGit',
+        message: 'Failed to write .schema.json to git',
+        repoId,
+        folderPath,
+        error,
+      });
+    }
+  }
+
+  /**
+   * Reads `.schema.json` from the git repo on the main branch.
+   * Returns the parsed BaseJsonTableSpec or null if missing/invalid.
+   */
+  async readSchemaFromGit(repoId: string, folderPath: string): Promise<BaseJsonTableSpec | null> {
+    try {
+      const gitPath = folderPath.replace(/^\//, '') + '/' + SCHEMA_JSON_FILENAME;
+      const file = await this.getRepoFile(repoId, MAIN_BRANCH, gitPath);
+      if (!file) return null;
+      return JSON.parse(file.content) as BaseJsonTableSpec;
+    } catch (error) {
+      WSLogger.error({
+        source: 'ScratchGitService.readSchemaFromGit',
+        message: 'Failed to read .schema.json from git',
+        repoId,
+        folderPath,
+        error,
+      });
+      return null;
+    }
   }
 }
