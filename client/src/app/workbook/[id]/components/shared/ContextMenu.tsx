@@ -1,11 +1,12 @@
 'use client';
 
-import { Box, Menu } from '@mantine/core';
+import { Box, Menu, UnstyledButton } from '@mantine/core';
+import { ChevronRightIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { isValidElement } from 'react';
+import { isValidElement, useRef, useState } from 'react';
 
 export interface ContextMenuItem {
-  type?: 'item' | 'divider';
+  type?: 'item' | 'divider' | 'submenu';
   label?: string;
   onClick?: () => void;
   color?: string;
@@ -13,6 +14,8 @@ export interface ContextMenuItem {
   icon?: LucideIcon | React.ReactNode;
   delete?: boolean;
   devtool?: boolean;
+  /** Child items rendered in a hover submenu (only used when type === 'submenu') */
+  children?: ContextMenuItem[];
 }
 
 interface ContextMenuProps {
@@ -35,6 +38,131 @@ function renderIcon(icon: LucideIcon | React.ReactNode | undefined) {
   return <Icon size={16} />;
 }
 
+function SubmenuItem({ item, onClose }: { item: ContextMenuItem; onClose: () => void }) {
+  const [submenuOpen, setSubmenuOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openSubmenu = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setSubmenuOpen(true);
+  };
+
+  const scheduleClose = () => {
+    closeTimer.current = setTimeout(() => setSubmenuOpen(false), 150);
+  };
+
+  return (
+    <div style={{ position: 'relative' }} onMouseEnter={openSubmenu} onMouseLeave={scheduleClose}>
+      <Menu.Item
+        leftSection={renderIcon(item.icon)}
+        rightSection={<ChevronRightIcon size={14} />}
+        data-devtool={item.devtool || undefined}
+      >
+        {item.label}
+      </Menu.Item>
+
+      {submenuOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: '100%',
+            zIndex: 300,
+            background: 'var(--mantine-color-white)',
+            border: '1px solid var(--mantine-color-gray-2)',
+            borderRadius: 'var(--mantine-radius-sm)',
+            boxShadow: 'var(--mantine-shadow-md)',
+            padding: '4px',
+            minWidth: 180,
+          }}
+          onMouseEnter={openSubmenu}
+          onMouseLeave={scheduleClose}
+        >
+          {item.children?.map((child, idx) => {
+            if (child.type === 'divider') {
+              return (
+                <div
+                  key={idx}
+                  style={{ borderTop: '1px solid var(--mantine-color-gray-2)', margin: '4px 0' }}
+                />
+              );
+            }
+            return (
+              <UnstyledButton
+                key={idx}
+                disabled={child.disabled}
+                data-delete={child.delete || undefined}
+                data-devtool={child.devtool || undefined}
+                onClick={() => {
+                  child.onClick?.();
+                  onClose();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 10px',
+                  borderRadius: 'var(--mantine-radius-sm)',
+                  width: '100%',
+                  fontSize: 'var(--mantine-font-size-sm)',
+                  color: child.delete
+                    ? 'var(--mantine-color-red-7)'
+                    : child.devtool
+                      ? 'var(--mantine-color-devTool-8)'
+                      : 'var(--mantine-color-dark-9)',
+                  opacity: child.disabled ? 0.5 : 1,
+                  cursor: child.disabled ? 'default' : 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  if (!child.disabled)
+                    (e.currentTarget as HTMLElement).style.backgroundColor =
+                      'var(--mantine-color-gray-1)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                }}
+              >
+                {renderIcon(child.icon)}
+                {child.label}
+              </UnstyledButton>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContextMenuItems({ items, onClose }: { items: ContextMenuItem[]; onClose: () => void }) {
+  return (
+    <>
+      {items.map((item, index) => {
+        if (item.type === 'divider') {
+          return <Menu.Divider key={index} />;
+        }
+        if (item.type === 'submenu' && item.children) {
+          return <SubmenuItem key={index} item={item} onClose={onClose} />;
+        }
+        return (
+          <Menu.Item
+            key={index}
+            leftSection={renderIcon(item.icon)}
+            disabled={item.disabled}
+            data-delete={item.delete || undefined}
+            data-devtool={item.devtool || undefined}
+            onClick={() => {
+              item.onClick?.();
+              onClose();
+            }}
+          >
+            {item.label}
+          </Menu.Item>
+        );
+      })}
+    </>
+  );
+}
+
 export function ContextMenu({ opened, onClose, position, items }: ContextMenuProps) {
   return (
     <Menu opened={opened} onChange={(o) => !o && onClose()} position="bottom-start" withinPortal>
@@ -51,26 +179,7 @@ export function ContextMenu({ opened, onClose, position, items }: ContextMenuPro
         />
       </Menu.Target>
       <Menu.Dropdown>
-        {items.map((item, index) => {
-          if (item.type === 'divider') {
-            return <Menu.Divider key={index} />;
-          }
-          return (
-            <Menu.Item
-              key={index}
-              leftSection={renderIcon(item.icon)}
-              disabled={item.disabled}
-              data-delete={item.delete || undefined}
-              data-devtool={item.devtool || undefined}
-              onClick={() => {
-                item.onClick?.();
-                onClose();
-              }}
-            >
-              {item.label}
-            </Menu.Item>
-          );
-        })}
+        <ContextMenuItems items={items} onClose={onClose} />
       </Menu.Dropdown>
     </Menu>
   );

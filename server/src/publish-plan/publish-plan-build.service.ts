@@ -6,7 +6,7 @@ import { ParsedContent, Schema } from 'src/utils/objects';
 import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
-import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService, getRepoId } from '../scratch-git/scratch-git.service';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefCleanerService } from './ref-cleaner.service';
@@ -24,6 +24,22 @@ export class PublishPlanBuildService {
     private readonly refCleanerService: RefCleanerService,
     private readonly schemaService: SchemaHelperService,
   ) {}
+
+  /** Returns all relevant repo IDs for a workbook. For V2 without a connectorAccountId, returns one per connection. */
+  private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
+    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
+    if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
+    if (workbook.version < 2 || connectorAccountId) {
+      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+      return [repoId];
+    }
+    const connAccounts = await this.db.client.connectorAccount.findMany({
+      where: { workbookId },
+      select: { id: true },
+    });
+    if (connAccounts.length === 0) return [workbookId];
+    return connAccounts.map((ca) => getRepoId(workbook.version, workbookId, workbook.organizationId, ca.id));
+  }
 
   /**
    * Creates a new pipeline record in the database.
@@ -80,7 +96,11 @@ export class PublishPlanBuildService {
     filePath?: string,
   ): Promise<boolean> {
     const wkbId = workbookId as WorkbookId;
-    let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{ path: string; status: string }>;
+    const repoIds = await this.resolveAllRepoIds(wkbId, connectorAccountId);
+    const allStatuses = await Promise.all(
+      repoIds.map((id) => this.scratchGitService.getRepoStatus(id) as Promise<Array<{ path: string; status: string }>>),
+    );
+    let changes = allStatuses.flat();
     if (changes.length === 0) return false;
 
     if (filePath) {
@@ -91,18 +111,7 @@ export class PublishPlanBuildService {
       changes = changes.filter((c) => c.path.startsWith(prefix));
     }
 
-    if (changes.length === 0) return false;
-    if (!connectorAccountId) return true;
-
-    const dataFolders = await this.db.client.dataFolder.findMany({ where: { workbookId: wkbId, connectorAccountId } });
-    const prefixes = dataFolders
-      .map((df) => df.path)
-      .filter((p): p is string => !!p)
-      .map((p) => (p.startsWith('/') ? p.substring(1) : p))
-      .map((p) => (p.endsWith('/') ? p : p + '/'));
-
-    if (prefixes.length === 0) return false;
-    return changes.some((c) => prefixes.some((prefix) => c.path.startsWith(prefix)));
+    return changes.length > 0;
   }
 
   /**
@@ -143,8 +152,7 @@ export class PublishPlanBuildService {
     }
 
     const wkbId = workbookId as WorkbookId;
-
-    console.log(`[DEBUG] buildPipeline called with folderPath: ${folderPath}, filePath: ${filePath}`);
+    const repoId = await this.scratchGitService.resolveRepoId(wkbId, connectorAccountId);
 
     // Running counts — updated as each entry is planned and passed to onProgress
     const liveCounts = {
@@ -158,7 +166,7 @@ export class PublishPlanBuildService {
       await onProgress?.({ ...liveCounts, step });
     };
 
-    let changes = (await this.scratchGitService.getRepoStatus(wkbId)) as Array<{
+    let changes = (await this.scratchGitService.getRepoStatus(repoId)) as Array<{
       path: string;
       status: FileDiffStatus;
     }>;
@@ -199,7 +207,7 @@ export class PublishPlanBuildService {
 
     // Cache table specs to avoid repeated reads
     // Cache table specs to avoid repeated reads
-    const dataFolderCache = new Map<string, { id: string; spec: BaseJsonTableSpec } | null>();
+    const dataFolderCache = new Map<string, { id: string; tableId: string[]; spec: BaseJsonTableSpec } | null>();
 
     const getDataFolderInfo = async (folderPath: string) => {
       return this.schemaService.getDataFolderInfo(workbookId, folderPath, dataFolderCache);
@@ -224,15 +232,19 @@ export class PublishPlanBuildService {
 
     const deletedRecordIds = new Set<string>();
     const deletedFileRecordIds = new Map<string, string | null>();
-    const targetsForRefCheck: Array<{ folderPath: string; fileName: string; recordId?: string }> = [];
+    const targetsForRefCheck: Array<{ remoteTableId?: string; recordId?: string }> = [];
 
     for (const del of deletedFiles) {
       const { folderPath, filename: fileName } = parsePath(del.path);
       const recordId = recordIdMap.get(`${folderPath}:${fileName}`) ?? null;
+      const folderInfo = await getDataFolderInfo(folderPath);
+      // Use the last segment of the remote tableId path as the remote table identifier
+      const tableIdArr: string[] = folderInfo?.tableId ?? [];
+      const remoteTableId: string | undefined = tableIdArr.length ? tableIdArr[tableIdArr.length - 1] : undefined;
 
       if (recordId) deletedRecordIds.add(recordId);
       deletedFileRecordIds.set(del.path, recordId);
-      targetsForRefCheck.push({ folderPath, fileName, recordId: recordId ?? undefined });
+      targetsForRefCheck.push({ remoteTableId, recordId: recordId ?? undefined });
     }
 
     // 2. Identify Inbound Refs to Deleted Files
@@ -286,13 +298,13 @@ export class PublishPlanBuildService {
 
     for (const editBatch of chunk(Array.from(filesToProcessInEditPhase), 100)) {
       // Bulk fetch from dirty; fall back to main for any missing paths
-      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', editBatch);
+      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(repoId, 'dirty', editBatch);
       const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
 
       const missingPaths = editBatch.filter((p) => !dirtyMap.get(p));
       const mainMap = new Map<string, string | null>();
       if (missingPaths.length > 0) {
-        const mainResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'main', missingPaths);
+        const mainResults = await this.scratchGitService.readRepoFilesByFolder(repoId, 'main', missingPaths);
         for (const r of mainResults) mainMap.set(r.path, r.content);
       }
 
@@ -400,7 +412,7 @@ export class PublishPlanBuildService {
 
     for (const createBatch of chunk(addedFiles, 100)) {
       const batchPaths = createBatch.map((f) => f.path);
-      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(wkbId, 'dirty', batchPaths);
+      const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(repoId, 'dirty', batchPaths);
       const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
 
       for (const add of createBatch) {

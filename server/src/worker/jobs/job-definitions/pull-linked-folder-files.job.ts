@@ -9,7 +9,7 @@ import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
-import { MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { getRepoId, MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
@@ -96,6 +96,21 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     }
 
     const connectionName = folders[0]?.connectorAccount?.displayName ?? 'Unknown connection';
+    const connectorAccountId = folders[0]?.connectorAccountId ?? null;
+
+    // Look up workbook version to determine which repo path to use
+    const workbook = await this.prisma.workbook.findUnique({ where: { id: data.workbookId } });
+    const workbookVersion = workbook?.version ?? 1;
+
+    const repoId =
+      workbookVersion >= 2 && connectorAccountId
+        ? getRepoId(workbookVersion, data.workbookId, data.organizationId, connectorAccountId)
+        : data.workbookId;
+
+    // For V2 workbooks, ensure the repo exists (e.g. new connection added after migration)
+    if (workbookVersion >= 2 && connectorAccountId) {
+      await this.scratchGitService.initRepo(repoId as WorkbookId);
+    }
 
     const totalFilesAccumulator = { count: 0 };
     for (const dataFolderId of data.dataFolderIds) {
@@ -104,6 +119,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         dataFolderId,
         folderCount,
         connectionName,
+        repoId,
         totalFilesAccumulator,
         data,
         checkpoint,
@@ -117,6 +133,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     dataFolderId: DataFolderId;
     folderCount: number;
     connectionName: string;
+    repoId: string;
     totalFilesAccumulator: { count: number };
     data: PullLinkedFolderFilesJobDefinition['data'];
     progress: Progress<
@@ -133,8 +150,17 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       >,
     ) => Promise<void>;
   }) {
-    const { jobId, dataFolderId, folderCount, connectionName, totalFilesAccumulator, data, checkpoint, progress } =
-      params;
+    const {
+      jobId,
+      dataFolderId,
+      folderCount,
+      connectionName,
+      repoId,
+      totalFilesAccumulator,
+      data,
+      checkpoint,
+      progress,
+    } = params;
 
     const dataFolder = await this.prisma.dataFolder.findUnique({
       where: { id: dataFolderId },
@@ -261,13 +287,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         gitFiles = gitFiles.concat(batchGitFiles);
 
         await this.scratchGitService.commitFilesToBranch(
-          dataFolder.workbookId as WorkbookId,
+          repoId as WorkbookId,
           'main',
           batchGitFiles,
           `Sync batch of ${builtFiles.length} files`,
         );
 
-        await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
+        await this.scratchGitService.rebaseDirty(repoId as WorkbookId);
 
         // Update File Index & References (Best effort, after commit)
         try {
@@ -355,7 +381,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
       try {
         const mainFiles = (await this.scratchGitService.listRepoFiles(
-          dataFolder.workbookId as WorkbookId,
+          repoId as WorkbookId,
           MAIN_BRANCH,
           folderPath,
         )) as RepoFileRef[];
@@ -379,13 +405,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           });
 
           await this.scratchGitService.deleteFilesFromBranch(
-            dataFolder.workbookId as WorkbookId,
+            repoId as WorkbookId,
             MAIN_BRANCH,
             filesToDelete,
             `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
           );
 
-          await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
+          await this.scratchGitService.rebaseDirty(repoId as WorkbookId);
         }
       } catch (err) {
         WSLogger.error({
@@ -444,7 +470,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       });
 
       try {
-        await this.scratchGitService.runGitGc(dataFolder.workbookId as WorkbookId);
+        await this.scratchGitService.runGitGc(repoId as WorkbookId);
       } catch (err) {
         WSLogger.warn({
           source: 'PullLinkedFolderFilesJob',

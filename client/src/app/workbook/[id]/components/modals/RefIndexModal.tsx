@@ -10,9 +10,8 @@ interface RefIndexEntry {
   id: string;
   workbookId: string;
   sourceFilePath: string;
-  targetFolderPath: string;
-  targetFileName: string | null;
-  targetFileRecordId: string | null;
+  targetRemoteTableId: string | null;
+  targetRemoteId: string | null;
   branch: string;
 }
 
@@ -60,17 +59,16 @@ export function RefIndexModal({ opened, onClose, workbookId }: RefIndexModalProp
           <Table stickyHeader highlightOnHover>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Source</Table.Th>
-                <Table.Th>Target Folder</Table.Th>
-                <Table.Th>Target File</Table.Th>
-                <Table.Th>Target Record ID</Table.Th>
-                <Table.Th>Branch</Table.Th>
+                <Table.Th tt="none">sourceFilePath</Table.Th>
+                <Table.Th tt="none">targetRemoteTableId</Table.Th>
+                <Table.Th tt="none">targetRemoteId</Table.Th>
+                <Table.Th tt="none">branch</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {rows.length === 0 ? (
                 <Table.Tr>
-                  <Table.Td colSpan={5}>
+                  <Table.Td colSpan={4}>
                     <Text size="sm" c="dimmed" ta="center" py="md">
                       No entries.
                     </Text>
@@ -86,17 +84,12 @@ export function RefIndexModal({ opened, onClose, workbookId }: RefIndexModalProp
                     </Table.Td>
                     <Table.Td>
                       <Text size="xs" ff="monospace">
-                        {r.targetFolderPath}
+                        {r.targetRemoteTableId ?? '—'}
                       </Text>
                     </Table.Td>
                     <Table.Td>
                       <Text size="xs" ff="monospace">
-                        {r.targetFileName ?? '—'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" ff="monospace">
-                        {r.targetFileRecordId ?? '—'}
+                        {r.targetRemoteId ?? '—'}
                       </Text>
                     </Table.Td>
                     <Table.Td>

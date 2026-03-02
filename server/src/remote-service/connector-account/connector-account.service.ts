@@ -20,6 +20,7 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { WSLogger } from 'src/logger';
 import { OAuthService } from 'src/oauth/oauth.service';
+import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor } from 'src/users/types';
 import { DbService } from '../../db/db.service';
@@ -44,6 +45,7 @@ export class ConnectorAccountService {
     private readonly posthogService: PostHogService,
     private readonly auditLogService: AuditLogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
+    private readonly scratchGitService: ScratchGitService,
   ) {}
 
   private async getDecryptedAccount(account: ConnectorAccount): Promise<ConnectorAccount & DecryptedCredentials> {
@@ -117,6 +119,12 @@ export class ConnectorAccountService {
         authType: connectorAccount.authType,
       },
     });
+
+    // For V2 workbooks, init the connection's dedicated git repo immediately
+    if (workbook.version >= 2) {
+      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccount.id);
+      await this.scratchGitService.initRepo(repoId as WorkbookId);
+    }
 
     // Re-fetch to include health status set by testConnection()
     return this.db.client.connectorAccount.findUniqueOrThrow({
@@ -265,6 +273,64 @@ export class ConnectorAccountService {
       eventType: 'delete',
       message: `Deleted connection ${account.displayName}`,
       entityId: account.id as ConnectorAccountId,
+    });
+  }
+
+  /**
+   * Resets a single connection: deletes all its data folders and (for V2 workbooks)
+   * deletes and re-initializes its git repository.
+   */
+  async resetConnection(workbookId: WorkbookId, id: string, actor: Actor): Promise<void> {
+    const account = await this.findOne(workbookId, id, actor);
+    if (!account) {
+      throw new NotFoundException('ConnectorAccount not found');
+    }
+
+    // Delete all data folders for this connection
+    await this.db.client.dataFolder.deleteMany({
+      where: { workbookId, connectorAccountId: id },
+    });
+
+    // Delete all publish plans for this connection
+    await this.db.client.publishPlan.deleteMany({
+      where: { workbookId, connectorAccountId: id },
+    });
+
+    // For V2 workbooks, delete and re-init the connection's dedicated git repo
+    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId }, select: { version: true } });
+    if (workbook && workbook.version >= 2) {
+      try {
+        const repoId = await this.scratchGitService.resolveRepoId(workbookId, id);
+        try {
+          await this.scratchGitService.deleteRepo(repoId as WorkbookId);
+        } catch (err) {
+          WSLogger.error({
+            source: 'ConnectorAccountService.resetConnection',
+            message: 'Failed to delete git repo during connection reset',
+            error: err,
+            workbookId,
+            connectorAccountId: id,
+          });
+        }
+        await this.scratchGitService.initRepo(repoId as WorkbookId);
+      } catch (err) {
+        WSLogger.error({
+          source: 'ConnectorAccountService.resetConnection',
+          message: 'Failed to reset git repo during connection reset',
+          error: err,
+          workbookId,
+          connectorAccountId: id,
+        });
+        throw err;
+      }
+    }
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Reset connection ${account.displayName}`,
+      entityId: account.id as ConnectorAccountId,
+      context: { action: 'reset_connection' },
     });
   }
 

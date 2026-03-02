@@ -46,18 +46,18 @@ export class RefCleanerService {
     return result;
   }
 
-  private fkPathsCache = new Map<string, Array<{ path: string[]; targetFolderId: string; map?: string }>>();
+  private fkPathsCache = new Map<string, Array<{ path: string[]; targetRemoteTableId: string; map?: string }>>();
 
   /**
    * Traverses the schema to find all paths that are marked as foreign keys.
    */
-  extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetFolderId: string; map?: string }> {
+  extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string; map?: string }> {
     const schemaId = schema.$id as string | undefined;
     if (typeof schemaId === 'string' && this.fkPathsCache.has(schemaId)) {
       return this.fkPathsCache.get(schemaId)!;
     }
 
-    const results: Array<{ path: string[]; targetFolderId: string; map?: string }> = [];
+    const results: Array<{ path: string[]; targetRemoteTableId: string; map?: string }> = [];
 
     const walk = (schemaNode: any, currentPath: string[]) => {
       if (!schemaNode || typeof schemaNode !== 'object') return;
@@ -83,7 +83,7 @@ export class RefCleanerService {
         if (linkedTableId) {
           results.push({
             path: currentPath,
-            targetFolderId: linkedTableId,
+            targetRemoteTableId: linkedTableId,
             map: map,
           });
         }

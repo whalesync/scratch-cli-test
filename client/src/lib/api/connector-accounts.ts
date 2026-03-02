@@ -115,4 +115,15 @@ export const connectorAccountsApi = {
       handleAxiosError(error, 'Failed to test connection');
     }
   },
+
+  // POST to reset a connection (deletes data folders and V2 git repo)
+  reset: async (workbookId: string, id: string): Promise<void> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.post(`/workbooks/${workbookId}/connections/${id}/reset`);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to reset connection');
+      throw error;
+    }
+  },
 };

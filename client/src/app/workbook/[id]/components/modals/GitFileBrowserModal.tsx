@@ -8,9 +8,10 @@ interface GitFileBrowserModalProps {
   workbookId: WorkbookId;
   opened: boolean;
   onClose: () => void;
+  connectorAccountId?: string;
 }
 
-export const GitFileBrowserModal = ({ workbookId, opened, onClose }: GitFileBrowserModalProps) => {
+export const GitFileBrowserModal = ({ workbookId, opened, onClose, connectorAccountId }: GitFileBrowserModalProps) => {
   const [branch, setBranch] = useState<'main' | 'dirty'>('main');
   const [currentPath, setCurrentPath] = useState('');
   const [currentFile, setCurrentFile] = useState<string | null>(null);
@@ -23,7 +24,7 @@ export const GitFileBrowserModal = ({ workbookId, opened, onClose }: GitFileBrow
     async (path: string, br: string) => {
       setLoading(true);
       try {
-        const list = await workbookApi.listRepoFiles(workbookId, br, path);
+        const list = await workbookApi.listRepoFiles(workbookId, br, path, connectorAccountId);
         setFiles(
           list.sort((a: GitFile, b: GitFile) => {
             if (a.type === b.type) return a.name.localeCompare(b.name);
@@ -39,7 +40,7 @@ export const GitFileBrowserModal = ({ workbookId, opened, onClose }: GitFileBrow
         setLoading(false);
       }
     },
-    [workbookId],
+    [workbookId, connectorAccountId],
   );
 
   const loadFileContent = useCallback(
@@ -47,7 +48,7 @@ export const GitFileBrowserModal = ({ workbookId, opened, onClose }: GitFileBrow
       const filePath = path ? `${path}/${filename}` : filename;
       setLoading(true);
       try {
-        const res = await workbookApi.getRepoFile(workbookId, filePath, br);
+        const res = await workbookApi.getRepoFile(workbookId, filePath, br, connectorAccountId);
         setFileContent(res.content);
       } catch (err) {
         console.error(err);
@@ -56,7 +57,7 @@ export const GitFileBrowserModal = ({ workbookId, opened, onClose }: GitFileBrow
         setLoading(false);
       }
     },
-    [workbookId],
+    [workbookId, connectorAccountId],
   );
 
   // Main Effect: React to state changes (Navigation & Branch Switch)

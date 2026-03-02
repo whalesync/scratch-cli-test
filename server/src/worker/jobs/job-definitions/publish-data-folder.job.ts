@@ -6,6 +6,7 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
 import { DataFolderPublishingService } from '../../../workbook/data-folder-publishing.service';
@@ -63,6 +64,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
     private readonly workbookEventService: WorkbookEventService,
     private readonly dataFolderPublishingService: DataFolderPublishingService,
     private readonly bullEnqueuerService: BullEnqueuerService,
+    private readonly scratchGitService: ScratchGitService,
   ) {}
 
   async run(params: {
@@ -242,17 +244,24 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
       try {
         const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
 
+        // Resolve the correct repo ID (V1: plain workbookId, V2: composite ID per connection)
+        const repoId = await this.scratchGitService.resolveRepoId(
+          data.workbookId,
+          dataFolder.connectorAccountId ?? undefined,
+        );
+
         WSLogger.debug({
           source: 'PublishDataFolderJob',
           message: 'Publishing data folder using scratch-git',
           workbookId: data.workbookId,
+          repoId,
           dataFolderId: dataFolder.id,
           folderPath,
         });
 
         // Use the DataFolderPublishingService which reads from scratch-git
         const publishResult = await this.dataFolderPublishingService.publishAll(
-          data.workbookId,
+          repoId,
           folderPath,
           // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           connector,

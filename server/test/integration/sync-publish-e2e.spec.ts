@@ -26,7 +26,7 @@ import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
-import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, getRepoId, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
@@ -101,6 +101,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
 
     // ---- Mock: ScratchGitService ----
     scratchGitService = {
+      resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_wkbId: WorkbookId, branch: string, files: { path: string; content: string }[]) => {
@@ -641,6 +642,490 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(scratchGitService.rebaseDirty).toHaveBeenCalled();
   }, 60_000); // 60s timeout for integration test
+});
+
+describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', () => {
+  let prisma: PrismaClient;
+  let vfs: VirtualGitFs;
+
+  // Services
+  let dbService: DbService;
+  let syncService: SyncService;
+  let fileIndexService: FileIndexService;
+  let publishPlanService: PublishPlanBuildService;
+  let publishRunService: PublishPlanRunService;
+  let publishSchemaService: SchemaHelperService;
+  let publishRefResolverService: RefResolverService;
+  let refCleanerService: RefCleanerService;
+  let fileReferenceService: FileReferenceService;
+
+  // Mocks
+  let scratchGitService: ScratchGitService;
+  let dataFolderService: DataFolderService;
+  let connectorsService: ConnectorsService;
+  let credentialEncryptionService: CredentialEncryptionService;
+  let mockConnector: {
+    getBatchSize: jest.Mock;
+    createRecords: jest.Mock;
+    updateRecords: jest.Mock;
+    deleteRecords: jest.Mock;
+  };
+
+  // Entity IDs
+  let orgId: string;
+  let userId: string;
+  let workbookId: WorkbookId;
+  let syncId: SyncId;
+  let connectorAccountId: string;
+  let destTagsFolderId: DataFolderId;
+  let destPostsFolderId: DataFolderId;
+  let sourceTagsFolderId: DataFolderId;
+  let sourcePostsFolderId: DataFolderId;
+
+  // Actor
+  let actor: Actor;
+
+  // Data folder path map for the DataFolderService mock
+  const folderPathMap = new Map<string, string>();
+
+  beforeAll(() => {
+    prisma = new PrismaClient();
+  });
+
+  beforeEach(async () => {
+    vfs = new VirtualGitFs();
+
+    // ---- DB Service (real) ----
+    dbService = { client: prisma } as unknown as DbService;
+
+    // ---- Real services ----
+    fileIndexService = new FileIndexService(dbService);
+    publishSchemaService = new SchemaHelperService(dbService);
+    refCleanerService = new RefCleanerService();
+    publishRefResolverService = new RefResolverService(fileIndexService);
+    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
+
+    // ---- Mock: ScratchGitService (V2-aware) ----
+    // resolveRepoId returns the composite ID for V2 workbooks
+    scratchGitService = {
+      resolveRepoId: jest
+        .fn()
+        .mockImplementation((wkbId: WorkbookId, connAcctId?: string) =>
+          Promise.resolve(connAcctId ? getRepoId(2, wkbId, orgId, connAcctId) : wkbId),
+        ),
+      commitFilesToBranch: jest
+        .fn()
+        .mockImplementation((_repoId: string, branch: string, files: { path: string; content: string }[]) => {
+          vfs.commitFiles(branch, files);
+          return Promise.resolve();
+        }),
+      deleteFilesFromBranch: jest.fn().mockImplementation((_repoId: string, branch: string, paths: string[]) => {
+        vfs.deleteFiles(branch, paths);
+        return Promise.resolve();
+      }),
+      getRepoStatus: jest.fn().mockImplementation(() => {
+        return Promise.resolve(vfs.getStatus());
+      }),
+      readRepoFilesByFolder: jest.fn().mockImplementation((_repoId: string, branch: string, paths: string[]) => {
+        return Promise.resolve(vfs.readFiles(branch, paths));
+      }),
+      rebaseDirty: jest.fn().mockImplementation(() => {
+        vfs.rebaseDirty();
+        return Promise.resolve();
+      }),
+    } as unknown as ScratchGitService;
+
+    // ---- Mock: DataFolderService ----
+    folderPathMap.clear();
+
+    dataFolderService = {
+      getAllFileContentsByFolderId: jest
+        .fn()
+        .mockImplementation(
+          (_wkbId: WorkbookId, folderId: DataFolderId, _actor: Actor, branch: string = DIRTY_BRANCH) => {
+            const folderPath = folderPathMap.get(folderId);
+            if (!folderPath) return Promise.resolve([]);
+            const files = vfs.getFilesByFolder(branch, folderPath);
+            return Promise.resolve(files.map((f) => ({ folderId, path: f.path, content: f.content })));
+          },
+        ),
+      getFileContentsByFolderIdPaginated: jest
+        .fn()
+        .mockImplementation(
+          (_wkbId: WorkbookId, folderId: DataFolderId, _actor: Actor, branch: string = DIRTY_BRANCH) => {
+            const folderPath = folderPathMap.get(folderId);
+            if (!folderPath) return Promise.resolve({ files: [], nextCursor: undefined });
+            const files = vfs.getFilesByFolder(branch, folderPath);
+            return Promise.resolve({
+              files: files.map((f) => ({ folderId, path: f.path, content: f.content })),
+              nextCursor: undefined,
+            });
+          },
+        ),
+      findOne: jest.fn().mockImplementation((id: DataFolderId) => {
+        const path = folderPathMap.get(id);
+        return Promise.resolve(path ? { id, path: `/${path}` } : null);
+      }),
+    } as unknown as DataFolderService;
+
+    // ---- Mock: WordPress Connector ----
+    let nextWpId = 2001;
+    mockConnector = {
+      getBatchSize: jest.fn().mockReturnValue(25),
+      createRecords: jest.fn().mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
+        const idField = tableSpec.idColumnRemoteId;
+        for (const file of files) {
+          if (idField in file) {
+            throw new Error(
+              `createRecords: ID column "${idField}" should not be set on create, but got: ${JSON.stringify(file[idField])}`,
+            );
+          }
+        }
+        return Promise.resolve(
+          files.map((file) => ({
+            ...file,
+            [tableSpec.idColumnRemoteId]: nextWpId++,
+          })),
+        );
+      }),
+      updateRecords: jest.fn().mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
+        const idField = tableSpec.idColumnRemoteId;
+        for (const file of files) {
+          const idValue = file[idField];
+          const numericValue = Number(idValue);
+          if (!Number.isFinite(numericValue) || numericValue <= 0 || !Number.isInteger(numericValue)) {
+            throw new Error(
+              `updateRecords: ID column "${idField}" should be a positive integer (number or numeric string), but got: ${JSON.stringify(idValue)}`,
+            );
+          }
+        }
+        return Promise.resolve(undefined);
+      }),
+      deleteRecords: jest.fn().mockResolvedValue(undefined),
+    };
+
+    connectorsService = {
+      getConnector: jest.fn().mockResolvedValue(mockConnector),
+    } as unknown as ConnectorsService;
+
+    credentialEncryptionService = {
+      decryptCredentials: jest.fn().mockResolvedValue({}),
+    } as unknown as CredentialEncryptionService;
+
+    // ---- Instantiate SyncService ----
+    const scheduleService = {
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as unknown as ScheduleService;
+    syncService = new SyncService(
+      dbService,
+      dataFolderService,
+      {} as PostHogService,
+      scheduleService,
+      scratchGitService,
+      {} as WorkbookService,
+    );
+
+    // ---- Instantiate Publish services ----
+    publishPlanService = new PublishPlanBuildService(
+      dbService,
+      scratchGitService,
+      fileIndexService,
+      fileReferenceService,
+      refCleanerService,
+      publishSchemaService,
+    );
+
+    publishRunService = new PublishPlanRunService(
+      dbService,
+      connectorsService,
+      credentialEncryptionService,
+      fileIndexService,
+      fileReferenceService,
+      scratchGitService,
+      publishSchemaService,
+      publishRefResolverService,
+    );
+
+    // ---- Create DB entities ----
+    orgId = createOrganizationId();
+    userId = createUserId();
+    workbookId = createWorkbookId();
+    syncId = createSyncId();
+    connectorAccountId = createConnectorAccountId();
+    sourceTagsFolderId = createDataFolderId();
+    destTagsFolderId = createDataFolderId();
+    sourcePostsFolderId = createDataFolderId();
+    destPostsFolderId = createDataFolderId();
+
+    await prisma.organization.create({
+      data: { id: orgId, name: 'E2E V2 Test Org', clerkId: `clerk_${orgId}` },
+    });
+
+    await prisma.user.create({
+      data: { id: userId, email: `e2e-v2-${Date.now()}@test.com`, organizationId: orgId },
+    });
+
+    // V2 workbook: version: 2
+    await prisma.workbook.create({
+      data: { id: workbookId, name: 'E2E V2 Test Workbook', userId, organizationId: orgId, version: 2 },
+    });
+
+    await prisma.connectorAccount.create({
+      data: {
+        id: connectorAccountId,
+        service: Service.WORDPRESS,
+        displayName: 'Test V2 WordPress',
+        workbookId,
+        userId,
+        encryptedCredentials: {},
+      },
+    });
+
+    // Source Tags folder (no connector)
+    await prisma.dataFolder.create({
+      data: {
+        id: sourceTagsFolderId,
+        name: 'Source Tags',
+        workbookId,
+        path: '/src-tags',
+        schema: { idColumnRemoteId: 'id' },
+        lastSchemaRefreshAt: new Date(),
+      },
+    });
+    folderPathMap.set(sourceTagsFolderId, 'src-tags');
+
+    // Destination Tags folder (with connector)
+    await prisma.dataFolder.create({
+      data: {
+        id: destTagsFolderId,
+        name: 'Dest Tags',
+        workbookId,
+        path: '/dest-tags',
+        connectorAccountId,
+        schema: { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
+        lastSchemaRefreshAt: new Date(),
+      },
+    });
+    folderPathMap.set(destTagsFolderId, 'dest-tags');
+
+    // Source Posts folder (no connector)
+    await prisma.dataFolder.create({
+      data: {
+        id: sourcePostsFolderId,
+        name: 'Source Posts',
+        workbookId,
+        path: '/src-posts',
+        schema: { idColumnRemoteId: 'id' },
+        lastSchemaRefreshAt: new Date(),
+      },
+    });
+    folderPathMap.set(sourcePostsFolderId, 'src-posts');
+
+    // Destination Posts folder (with connector, FK on tags)
+    await prisma.dataFolder.create({
+      data: {
+        id: destPostsFolderId,
+        name: 'Dest Posts',
+        workbookId,
+        path: '/dest-posts',
+        connectorAccountId,
+        schema: {
+          idColumnRemoteId: 'id',
+          slugColumnRemoteId: 'slug',
+          schema: {
+            type: 'object',
+            properties: {
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                'x-scratch-foreign-key': { linkedTableId: destTagsFolderId },
+              },
+            },
+          },
+        },
+        lastSchemaRefreshAt: new Date(),
+      },
+    });
+    folderPathMap.set(destPostsFolderId, 'dest-posts');
+
+    // Sync record
+    await prisma.sync.create({
+      data: { id: syncId, displayName: 'E2E V2 Test Sync', mappings: [] },
+    });
+
+    actor = { userId, organizationId: orgId };
+  });
+
+  afterEach(async () => {
+    await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
+    await prisma.publishPlan.deleteMany({ where: { workbookId } });
+    await prisma.fileIndex.deleteMany({ where: { workbookId } });
+    await prisma.fileReference.deleteMany({ where: { workbookId } });
+    await prisma.syncMatchKeys.deleteMany({ where: { syncId } });
+    await prisma.syncRemoteIdMapping.deleteMany({ where: { syncId } });
+    await prisma.syncForeignKeyRecord.deleteMany({ where: { syncId } });
+    await prisma.sync.delete({ where: { id: syncId } });
+    await prisma.connectorAccount.deleteMany({ where: { workbookId } });
+    await prisma.dataFolder.deleteMany({ where: { workbookId } });
+    await prisma.workbook.delete({ where: { id: workbookId } });
+    await prisma.user.delete({ where: { id: userId } });
+    await prisma.organization.delete({ where: { id: orgId } });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('should resolve composite V2 repo ID (orgId--workbookId--connAccountId) when building pipeline', async () => {
+    const { sourceTags, destTags } = generateTagData();
+    const { sourcePosts, destPosts } = generatePostData();
+
+    vfs.seed(MAIN_BRANCH, destTags);
+    vfs.seed(MAIN_BRANCH, destPosts);
+    vfs.seed(DIRTY_BRANCH, destTags);
+    vfs.seed(DIRTY_BRANCH, destPosts);
+    vfs.seed(DIRTY_BRANCH, sourceTags);
+    vfs.seed(DIRTY_BRANCH, sourcePosts);
+
+    // Pre-populate FileIndex for matched dest records
+    const destFileIndexEntries: FileIndexEntry[] = [];
+    for (let i = 0; i < MATCH_COUNT; i++) {
+      destFileIndexEntries.push({
+        workbookId,
+        folderPath: 'dest-tags',
+        recordId: `${100 + i}`,
+        filename: `tag-match-${i}.json`,
+      });
+      destFileIndexEntries.push({
+        workbookId,
+        folderPath: 'dest-posts',
+        recordId: `${200 + i}`,
+        filename: `post-match-${i}.json`,
+      });
+    }
+    for (let i = 0; i < ORPHAN_DEST_COUNT; i++) {
+      destFileIndexEntries.push({
+        workbookId,
+        folderPath: 'dest-tags',
+        recordId: `${900 + i}`,
+        filename: `tag-orphan-${i}.json`,
+      });
+      destFileIndexEntries.push({
+        workbookId,
+        folderPath: 'dest-posts',
+        recordId: `${950 + i}`,
+        filename: `post-orphan-${i}.json`,
+      });
+    }
+    await fileIndexService.upsertBatch(destFileIndexEntries);
+
+    // Sync tags
+    const tagsTableMapping: TableMapping = {
+      sourceDataFolderId: sourceTagsFolderId,
+      destinationDataFolderId: destTagsFolderId,
+      columnMappings: [
+        { sourceColumnId: 'fields.Name', destinationColumnId: 'name' },
+        { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+      ] as ColumnMapping[],
+      recordMatching: { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+    };
+    const tagsResult = await syncService.syncTableMapping(syncId, tagsTableMapping, workbookId, actor, 'DATA');
+    expect(tagsResult.errors).toEqual([]);
+    expect(tagsResult.recordsCreated).toBe(CREATE_COUNT);
+    expect(tagsResult.recordsUpdated).toBe(MATCH_COUNT);
+
+    // Sync posts DATA phase
+    const postsTableMapping: TableMapping = {
+      sourceDataFolderId: sourcePostsFolderId,
+      destinationDataFolderId: destPostsFolderId,
+      columnMappings: [
+        { sourceColumnId: 'fields.Title', destinationColumnId: 'title' },
+        { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+        {
+          sourceColumnId: 'fields.Tags',
+          destinationColumnId: 'tags',
+          transformer: {
+            type: 'source_fk_to_dest_fk' as const,
+            options: { referencedDataFolderId: sourceTagsFolderId },
+          },
+        },
+      ] as ColumnMapping[],
+      recordMatching: { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+    };
+    const postsDataResult = await syncService.syncTableMapping(syncId, postsTableMapping, workbookId, actor, 'DATA');
+    expect(postsDataResult.errors).toEqual([]);
+
+    // Sync posts FK phase
+    const postsFkResult = await syncService.syncTableMapping(
+      syncId,
+      postsTableMapping,
+      workbookId,
+      actor,
+      'FOREIGN_KEY_MAPPING',
+    );
+    expect(postsFkResult.errors).toEqual([]);
+
+    // Build pipeline with connectorAccountId (V2 path)
+    const buildResult = await publishPlanService.buildPipeline(workbookId, userId, connectorAccountId);
+    expect(buildResult.status).toBe('planned');
+
+    // Verify resolveRepoId was called with the connectorAccountId
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(scratchGitService.resolveRepoId).toHaveBeenCalledWith(workbookId, connectorAccountId);
+
+    // Verify the composite repo ID was computed correctly
+    const expectedRepoId = getRepoId(2, workbookId, orgId, connectorAccountId);
+    expect(expectedRepoId).toBe(`${orgId}--${workbookId}--${connectorAccountId}`);
+
+    // Run pipeline
+    const runResult = await publishRunService.runPipeline(buildResult.pipelineId);
+    expect(runResult.status).toBe('completed');
+
+    expect(mockConnector.createRecords).toHaveBeenCalled();
+    expect(mockConnector.updateRecords).toHaveBeenCalled();
+
+    const finalEntries = await prisma.publishPlanOperation.findMany({
+      where: { planId: buildResult.pipelineId },
+    });
+    for (const entry of finalEntries) {
+      expect(entry.status).toBe('success');
+    }
+
+    // Created files on main branch should have real numeric IDs
+    for (let i = 0; i < CREATE_COUNT; i++) {
+      const tagFile = vfs.getAllFiles(MAIN_BRANCH).get(`dest-tags/tag-create-${i}.json`);
+      expect(tagFile).toBeDefined();
+      const tagParsed = JSON.parse(tagFile!) as ParsedRecord;
+      expect(typeof tagParsed.id).toBe('number');
+      expect(tagParsed.id).toBeGreaterThanOrEqual(2001);
+    }
+
+    // rebaseDirty should have been called
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(scratchGitService.rebaseDirty).toHaveBeenCalled();
+  }, 60_000);
+
+  it('should use composite V2 repo IDs when checking for diffs without a connectorAccountId', async () => {
+    // hasDiffs without connectorAccountId for a V2 workbook calls resolveAllRepoIds,
+    // which uses getRepoId for each connector account — not resolveRepoId.
+    // Verify getRepoStatus is called with the composite {orgId}--{workbookId}--{connAccountId} ID.
+    const hasDiffs = await publishPlanService.hasDiffs(workbookId, undefined);
+
+    // hasDiffs should complete without throwing (empty VFS = no diffs)
+    expect(hasDiffs).toBe(false);
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const getRepoStatusMock = scratchGitService.getRepoStatus as jest.Mock;
+    expect(getRepoStatusMock).toHaveBeenCalled();
+
+    // The repoId passed to getRepoStatus should be the composite V2 ID
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const calledWith = getRepoStatusMock.mock.calls[0][0] as string;
+    const expectedRepoId = getRepoId(2, workbookId, orgId, connectorAccountId);
+    expect(calledWith).toBe(expectedRepoId);
+  }, 30_000);
 });
 
 // #region fakes

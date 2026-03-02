@@ -11,7 +11,6 @@ import {
   CreditCardIcon,
   DatabaseIcon,
   FolderSyncIcon,
-  GridIcon,
   LayoutGridIcon,
   UserIcon,
   UsersIcon,
@@ -84,12 +83,6 @@ const devNavItems: NavItem[] = [
     label: 'Sync Data Folders',
     icon: FolderSyncIcon,
     href: '/settings/dev/sync-data-folders',
-  },
-  {
-    id: 'grid',
-    label: 'Grid Playground',
-    icon: GridIcon,
-    href: '/settings/dev/grid',
   },
   {
     id: 'workbooks',

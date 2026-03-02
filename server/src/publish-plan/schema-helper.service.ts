@@ -62,13 +62,13 @@ export class SchemaHelperService {
   }
 
   /**
-   * Look up the DataFolder for a given path and return its ID and TableSpec.
+   * Look up the DataFolder for a given path and return its ID, tableId, and TableSpec.
    */
   async getDataFolderInfo(
     workbookId: string,
     folderPath: string,
-    cache?: Map<string, { id: string; spec: BaseJsonTableSpec } | null>,
-  ): Promise<{ id: string; spec: BaseJsonTableSpec } | null> {
+    cache?: Map<string, { id: string; tableId: string[]; spec: BaseJsonTableSpec } | null>,
+  ): Promise<{ id: string; tableId: string[]; spec: BaseJsonTableSpec } | null> {
     if (cache && cache.has(folderPath)) {
       return cache.get(folderPath) ?? null;
     }
@@ -79,7 +79,7 @@ export class SchemaHelperService {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
         },
-        select: { id: true, schema: true },
+        select: { id: true, tableId: true, schema: true },
       });
 
       if (!dataFolder) {
@@ -90,7 +90,7 @@ export class SchemaHelperService {
       }
 
       const spec = (dataFolder.schema as unknown as BaseJsonTableSpec) || null;
-      const result = { id: dataFolder.id, spec };
+      const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec };
       if (cache) {
         cache.set(folderPath, result);
       }

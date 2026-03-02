@@ -15,11 +15,17 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { DecryptedCredentials, GetAllJobsResponseDto } from '@spinner/shared-types';
+import type {
+  AdminWorkbookConnectionDto,
+  AdminWorkbookDto,
+  DecryptedCredentials,
+  GetAllJobsResponseDto,
+} from '@spinner/shared-types';
 import {
   ChangeUserOrganizationDto,
   createSubscriptionId,
   ScratchPlanType,
+  Service,
   SyncId,
   UpdateDevSubscriptionDto,
   UpdateSettingsDto,
@@ -330,6 +336,80 @@ export class DevToolsController {
       limit: limitNum,
       offset: offsetNum,
     };
+  }
+
+  /* Admin workbooks listing (cross-org) */
+  @Get('workbooks')
+  async getAllWorkbooks(
+    @Query('search') search?: string,
+    @Query('services') services?: string,
+    @Query('serviceMode') serviceMode?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Req() req?: RequestWithUser,
+  ): Promise<{ workbooks: AdminWorkbookDto[]; total: number }> {
+    if (!hasAdminToolsPermission(req!.user)) {
+      throw new UnauthorizedException('Only admins can list all workbooks');
+    }
+
+    const limitNum = limit ? parseInt(limit, 10) : 25;
+    const offsetNum = offset ? parseInt(offset, 10) : 0;
+    const serviceList = services ? services.split(',').filter(Boolean) : [];
+    const isAnd = serviceMode === 'AND';
+
+    const where: Record<string, unknown> = {};
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { organization: { name: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    if (serviceList.length > 0) {
+      if (isAnd) {
+        // AND: workbook must have at least one connection for each requested service
+        where.AND = serviceList.map((s) => ({ connectorAccounts: { some: { service: s } } }));
+      } else {
+        // OR: workbook must have at least one connection whose service is in the list
+        where.connectorAccounts = { some: { service: { in: serviceList } } };
+      }
+    }
+
+    const [workbooks, total] = await Promise.all([
+      this.dbService.client.workbook.findMany({
+        where,
+        include: {
+          organization: { select: { name: true } },
+          connectorAccounts: { select: { id: true, displayName: true, service: true, createdAt: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limitNum,
+        skip: offsetNum,
+      }),
+      this.dbService.client.workbook.count({ where }),
+    ]);
+
+    const result: AdminWorkbookDto[] = workbooks.map((w) => {
+      const org = (w as unknown as { organization: { name: string } }).organization;
+      const connections: AdminWorkbookConnectionDto[] = w.connectorAccounts.map((ca) => ({
+        id: ca.id,
+        displayName: ca.displayName,
+        service: ca.service as Service,
+        createdAt: ca.createdAt.toISOString(),
+      }));
+      return {
+        id: w.id as WorkbookId,
+        name: w.name,
+        version: w.version,
+        createdAt: w.createdAt.toISOString(),
+        updatedAt: w.updatedAt.toISOString(),
+        organizationId: w.organizationId,
+        organizationName: org.name,
+        userId: w.userId,
+        connections,
+      };
+    });
+
+    return { total, workbooks: result };
   }
 
   /* Sync data folders job trigger */

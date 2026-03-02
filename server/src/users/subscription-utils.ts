@@ -10,11 +10,11 @@ export function canCreateDataSource(
   existingDataSources: number,
 ): boolean {
   if (!subscriptionStatus || !isSubscriptionActive(subscriptionStatus)) {
-    // // START HACK: Allow in dev
+    // START HACK: Allow in dev
     // if (process.env.NODE_ENV !== 'production') {
     //   return true;
     // }
-    // // END HACK
+    // END HACK
     return false;
   }
 

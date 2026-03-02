@@ -125,4 +125,14 @@ export class ConnectorAccountController {
   ): Promise<void> {
     return this.service.remove(workbookId as WorkbookId, id, userToActor(req.user));
   }
+
+  @Post(':id/reset')
+  @HttpCode(204)
+  async reset(
+    @Param('workbookId') workbookId: string,
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    return this.service.resetConnection(workbookId as WorkbookId, id, userToActor(req.user));
+  }
 }

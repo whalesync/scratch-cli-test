@@ -61,6 +61,12 @@ export class PublishPlanRunService {
       throw new Error('Pipeline plan not found');
     }
 
+    // Resolve the correct git repo ID for this plan (V2 uses per-connection repos)
+    const repoId = await this.scratchGitService.resolveRepoId(
+      plan.workbookId as WorkbookId,
+      plan.connectorAccountId ?? undefined,
+    );
+
     // Resolve connector
     const connector = await this.resolveConnector(plan.connectorAccountId);
 
@@ -236,6 +242,7 @@ export class PublishPlanRunService {
               tableSpec,
               plan.workbookId,
               plan.id,
+              repoId,
             );
             if (batchHadError) {
               cumulativeErrorCount += batch.length;
@@ -291,6 +298,7 @@ export class PublishPlanRunService {
               tableSpec,
               plan.workbookId,
               plan.id,
+              repoId,
             );
             if (retryHadError) {
               // Individual retry failed — this entry stays as failed-batch
@@ -359,7 +367,7 @@ export class PublishPlanRunService {
         message: 'Rebasing dirty on main',
         workbookId: plan.workbookId,
       });
-      await this.scratchGitService.rebaseDirty(plan.workbookId as WorkbookId);
+      await this.scratchGitService.rebaseDirty(repoId);
 
       return {
         pipelineId: plan.id,
@@ -458,21 +466,22 @@ export class PublishPlanRunService {
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
+    repoId: string,
   ): Promise<boolean> {
     try {
       switch (phase) {
         case 'edit':
         case 'backfill':
-          await this.dispatchUpdateBatch(phase, entries, connector, tableSpec, workbookId, planId);
+          await this.dispatchUpdateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
           break;
         case 'create':
-          await this.dispatchCreateBatch(phase, entries, connector, tableSpec, workbookId, planId);
+          await this.dispatchCreateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
           break;
         case 'delete':
-          await this.dispatchDeleteBatch(entries, connector, tableSpec, workbookId, planId);
+          await this.dispatchDeleteBatch(entries, connector, tableSpec, workbookId, planId, repoId);
           break;
         case 'rename-files':
-          await this.dispatchRenameBatch(entries, workbookId);
+          await this.dispatchRenameBatch(entries, workbookId, repoId);
           break;
         default:
           throw new Error(`Unknown phase: ${phase}`);
@@ -512,6 +521,7 @@ export class PublishPlanRunService {
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
+    repoId: string,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
     const rawContents = entries.map((e) => e.content).filter(Boolean);
@@ -561,7 +571,7 @@ export class PublishPlanRunService {
     // Git Commit (Main)
     const gitFiles = refUpdates.map((u) => ({ path: u.path, content: JSON.stringify(u.content, null, 2) }));
     await this.scratchGitService.commitFilesToBranch(
-      workbookId as WorkbookId,
+      repoId,
       'main',
       gitFiles,
       `Publish V2 ${phase} batch (${entries.length})`,
@@ -572,7 +582,7 @@ export class PublishPlanRunService {
       filePath: entry.filePath,
       content: JSON.stringify(resolvedOp, null, 2),
     }));
-    await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch);
+    await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
   }
 
   private async dispatchCreateBatch(
@@ -582,6 +592,7 @@ export class PublishPlanRunService {
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
+    repoId: string,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
 
@@ -663,7 +674,7 @@ export class PublishPlanRunService {
     await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
 
     await this.scratchGitService.commitFilesToBranch(
-      workbookId as WorkbookId,
+      repoId,
       'main',
       gitFiles,
       `Publish V2 create batch (${entries.length})`,
@@ -677,7 +688,7 @@ export class PublishPlanRunService {
         content: JSON.stringify(returned, null, 2),
       };
     });
-    await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch);
+    await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
   }
 
   private async dispatchDeleteBatch(
@@ -686,6 +697,7 @@ export class PublishPlanRunService {
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
+    repoId: string,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
     const filters: { [key: string]: string }[] = [];
@@ -725,7 +737,7 @@ export class PublishPlanRunService {
 
     // 3. Git
     await this.scratchGitService.deleteFilesFromBranch(
-      workbookId as WorkbookId,
+      repoId,
       'main',
       filesToDelete,
       `Publish V2 delete batch (${filesToDelete.length})`,
@@ -736,10 +748,10 @@ export class PublishPlanRunService {
       filePath: entry.filePath,
       content: null,
     }));
-    await this.syncBatchToDirtyIfFinal(workbookId, planId, 'delete', dirtySyncBatch);
+    await this.syncBatchToDirtyIfFinal(workbookId, planId, 'delete', dirtySyncBatch, repoId);
   }
 
-  private async dispatchRenameBatch(entries: PublishOperation[], workbookId: string): Promise<void> {
+  private async dispatchRenameBatch(entries: PublishOperation[], workbookId: string, repoId: string): Promise<void> {
     if (entries.length === 0) return;
 
     // Group operations by folderPath
@@ -791,7 +803,7 @@ export class PublishPlanRunService {
       if (renames.length > 0) {
         // Apply batch rename directly via Git
         await this.scratchGitService.renameFiles(
-          workbookId as WorkbookId,
+          repoId,
           folderPath,
           renames,
           `Publish V2 rename batch (${renames.length})`,
@@ -823,6 +835,7 @@ export class PublishPlanRunService {
     planId: string,
     currentPhase: string,
     items: { filePath: string; content: string | null }[],
+    repoId: string,
   ): Promise<void> {
     if (items.length === 0) return;
 
@@ -872,7 +885,7 @@ export class PublishPlanRunService {
     // Execute batch writes
     if (finalDeletes.length > 0) {
       await this.scratchGitService.deleteFilesFromBranch(
-        workbookId as WorkbookId,
+        repoId,
         'dirty',
         finalDeletes,
         `Sync published deletes to dirty (${finalDeletes.length})`,
@@ -881,7 +894,7 @@ export class PublishPlanRunService {
 
     if (finalCommits.length > 0) {
       await this.scratchGitService.commitFilesToBranch(
-        workbookId as WorkbookId,
+        repoId,
         'dirty',
         finalCommits,
         `Sync published content to dirty (${finalCommits.length})`,

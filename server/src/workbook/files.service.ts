@@ -74,7 +74,14 @@ export class FilesService {
 
     const fullPath = (parentPath === '/' ? '' : parentPath) + '/' + createFileDto.name;
 
-    await this.scratchGitService.commitFile(workbookId, fullPath, content, `Create file ${createFileDto.name}`);
+    const parentFolderId = createFileDto.parentFolderId;
+    const repoId = parentFolderId
+      ? await this.db.client.dataFolder
+          .findUnique({ where: { id: parentFolderId as string }, select: { connectorAccountId: true } })
+          .then((df) => this.scratchGitService.resolveRepoId(workbookId, df?.connectorAccountId ?? undefined))
+      : await this.scratchGitService.resolveRepoId(workbookId);
+
+    await this.scratchGitService.commitFile(repoId, fullPath, content, `Create file ${createFileDto.name}`);
 
     this.posthogService.trackRecordCreated(actor, workbook, fullPath);
 
@@ -101,16 +108,13 @@ export class FilesService {
       throw new InternalServerErrorException(`Path missing from DataFolder ${folderId}`);
     }
 
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
     const folderPath = folder.path.replace(/^\//, ''); // remove preceding / for git paths
-    const repoFiles = (await this.scratchGitService.listRepoFiles(
-      workbookId,
-      DIRTY_BRANCH,
-      folderPath,
-    )) as RepoFileRef[];
+    const repoFiles = (await this.scratchGitService.listRepoFiles(repoId, DIRTY_BRANCH, folderPath)) as RepoFileRef[];
 
     // TODO: this solution is too simplistic.
     // We need to do a more active diff between main and dirty to show pending deletes
-    const diffs = await this.scratchGitService.getFolderDiff(workbookId, folderPath);
+    const diffs = await this.scratchGitService.getFolderDiff(repoId, folderPath);
 
     const checkDirty = (path: string): boolean => {
       return diffs.some((d) => d.path === path);
@@ -140,12 +144,20 @@ export class FilesService {
   async getFileByPathGit(workbookId: WorkbookId, path: string, actor: Actor): Promise<FileDetailsResponseDto> {
     await this.verifyWorkbookAccess(workbookId, actor);
 
-    const mainResponse = await this.scratchGitService.getRepoFile(workbookId, MAIN_BRANCH, path);
-    const dirtyResponse = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, path);
+    // Resolve the correct repo ID for this file's folder
+    const folderPath = path.substring(0, path.lastIndexOf('/')) || '.';
+    const gitFolderPath = folderPath === '.' ? '' : folderPath.replace(/^\//, '');
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: `/${gitFolderPath}` },
+      select: { connectorAccountId: true },
+    });
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+
+    const mainResponse = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, path);
+    const dirtyResponse = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, path);
 
     // Check if file is dirty by comparing main and dirty branches
-    const folderPath = path.substring(0, path.lastIndexOf('/')) || '.';
-    const diffs = await this.scratchGitService.getFolderDiff(workbookId, folderPath);
+    const diffs = await this.scratchGitService.getFolderDiff(repoId, gitFolderPath || '.');
     const fileDiff = diffs.find((d) => d.path === path);
     const isDirty = !!fileDiff;
     const status = fileDiff?.status;
@@ -181,7 +193,14 @@ export class FilesService {
     if (!existingFile) {
       throw new NotFoundException(`Unable to find ${path}`);
     }
-    await this.scratchGitService.deleteFile(workbookId, [path], `Delete ${path}`);
+
+    const folderPathRaw = path.substring(0, path.lastIndexOf('/'));
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: folderPathRaw || '/' },
+      select: { connectorAccountId: true },
+    });
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    await this.scratchGitService.deleteFile(repoId, [path], `Delete ${path}`);
 
     // this.workbookEventService.sendWorkbookEvent(workbookId, {
     //   type: 'folder-contents-changed',
@@ -202,13 +221,21 @@ export class FilesService {
   ): Promise<void> {
     const workbook = await this.verifyWorkbookAccess(workbookId, actor);
 
+    const folderPathRaw = path.substring(0, path.lastIndexOf('/'));
+    const folderPath = folderPathRaw ? (folderPathRaw.startsWith('/') ? folderPathRaw : `/${folderPathRaw}`) : '/';
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: folderPath },
+      select: { connectorAccountId: true },
+    });
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+
     if (updateFileDto.name) {
       const newPath = path.substring(0, path.lastIndexOf('/')) + '/' + updateFileDto.name;
       await this.renameFileGit(workbookId, path, newPath, actor);
       // We don't support content update at the same time as rename in this simplified version,
       // though we could. Assuming rename is a standalone operation for now.
     } else if (updateFileDto.content !== undefined && updateFileDto.content !== null) {
-      await this.scratchGitService.commitFile(workbookId, path, updateFileDto.content, `Update ${path}`);
+      await this.scratchGitService.commitFile(repoId, path, updateFileDto.content, `Update ${path}`);
       this.posthogService.trackRecordEdited(actor, workbook, path);
     }
   }
@@ -224,11 +251,18 @@ export class FilesService {
 
     const oldFilename = extractFilenameFromPath(oldPath);
     const newFilename = extractFilenameFromPath(newPath);
-    const folderPath = oldPath.substring(0, oldPath.lastIndexOf('/')) || '';
+    const folderPathRaw = oldPath.substring(0, oldPath.lastIndexOf('/'));
+    const folderPath = folderPathRaw ? (folderPathRaw.startsWith('/') ? folderPathRaw : `/${folderPathRaw}`) : '/';
+
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: folderPath },
+      select: { connectorAccountId: true },
+    });
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
 
     try {
       await this.scratchGitService.renameFiles(
-        workbookId,
+        repoId,
         folderPath,
         [{ oldName: oldFilename, newName: newFilename }],
         `Rename ${oldPath} to ${newPath}`,

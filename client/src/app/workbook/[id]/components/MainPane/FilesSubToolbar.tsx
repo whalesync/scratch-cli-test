@@ -21,7 +21,7 @@ interface FilesSubToolbarProps {
 export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { pullFolders } = useActiveWorkbook();
+  const { pullFolders, workbook } = useActiveWorkbook();
   const { dataFolderGroups } = useDataFolders(workbookId as WorkbookId);
 
   const searchParams = useSearchParams();
@@ -97,7 +97,7 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
           Pull all
         </ButtonSecondaryOutline>
 
-        <DebugMenu workbookId={workbookId as WorkbookId} />
+        <DebugMenu workbookId={workbookId as WorkbookId} workbookVersion={workbook?.version} />
       </Group>
 
       {/* Connection Modal */}

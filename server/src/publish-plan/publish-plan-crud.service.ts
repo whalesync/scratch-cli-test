@@ -87,7 +87,7 @@ export class PublishPlanCrudService {
   async listRefIndex(workbookId: string) {
     return await this.db.client.fileReference.findMany({
       where: { workbookId },
-      orderBy: [{ sourceFilePath: 'asc' }, { targetFolderPath: 'asc' }],
+      orderBy: [{ sourceFilePath: 'asc' }],
     });
   }
 

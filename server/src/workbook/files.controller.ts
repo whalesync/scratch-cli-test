@@ -25,6 +25,7 @@ import {
 } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
+import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { userToActor } from '../users/types';
@@ -37,6 +38,7 @@ export class FilesController {
   constructor(
     private readonly filesService: FilesService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly db: DbService,
   ) {}
 
   /**
@@ -84,6 +86,18 @@ export class FilesController {
    * Delete a file by path (like `rm`).
    * DELETE /workbooks/:workbookId/files/by-path?path=/folder/file.md
    */
+  /** Resolve the repoId for a file path by looking up the owning DataFolder's connectorAccountId. */
+  private async resolveRepoIdForPath(workbookId: WorkbookId, path: string): Promise<string> {
+    const rawFolder = path.substring(0, path.lastIndexOf('/'));
+    // DataFolder.path always starts with '/'; normalize incoming path accordingly
+    const folderPath = rawFolder ? (rawFolder.startsWith('/') ? rawFolder : `/${rawFolder}`) : '/';
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: folderPath },
+      select: { connectorAccountId: true },
+    });
+    return this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+  }
+
   @Delete('by-path')
   @HttpCode(204)
   async deleteFileByPath(
@@ -91,11 +105,11 @@ export class FilesController {
     @Query('path') path: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    // Verify user has access to this workbook
     await this.filesService.verifyWorkbookAccess(workbookId, userToActor(req.user));
 
     try {
-      await this.scratchGitService.deleteFile(workbookId, [path], `Delete ${path}`);
+      const repoId = await this.resolveRepoIdForPath(workbookId, path);
+      await this.scratchGitService.deleteFile(repoId, [path], `Delete ${path}`);
     } catch (e) {
       WSLogger.error({
         source: 'FilesController.deleteFileByPath',
@@ -119,22 +133,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<FileRefEntity> {
     const dto = createFileDto as ValidatedCreateFileDto;
-    const file = await this.filesService.createFile(workbookId, dto, userToActor(req.user));
-
-    if (file.type === 'file') {
-      try {
-        await this.scratchGitService.commitFile(workbookId, file.path, dto.content || '', `Create ${file.path}`);
-      } catch (e) {
-        WSLogger.error({
-          source: 'FilesController.createFile',
-          message: 'Failed to auto-commit file creation',
-          error: e,
-          workbookId,
-        });
-      }
-    }
-
-    return file;
+    return this.filesService.createFile(workbookId, dto, userToActor(req.user));
   }
 
   /**
@@ -147,14 +146,14 @@ export class FilesController {
     const { path } = body;
 
     try {
-      // Fetch current content from dirty branch directly from git
-      const fileContent = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, path);
+      const repoId = await this.resolveRepoIdForPath(workbookId, path);
+      const fileContent = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, path);
 
       if (!fileContent) {
         throw new Error('File not found in git dirty branch');
       }
 
-      await this.scratchGitService.publishFile(workbookId, path, fileContent.content, `Publish ${path}`);
+      await this.scratchGitService.publishFile(repoId, path, fileContent.content, `Publish ${path}`);
     } catch (e) {
       WSLogger.error({
         source: 'FilesController.publishFile',

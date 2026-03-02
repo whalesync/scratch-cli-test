@@ -13,10 +13,8 @@ import { parsePath } from './utils';
 
 export interface ExtractedRef {
   sourceFilePath: string;
-  targetFolderPath: string;
-  targetFileName?: string;
-  targetFileRecordId?: string;
-  targetFolderId?: string;
+  targetRemoteTableId?: string;
+  targetRemoteId?: string;
 }
 
 @Injectable()
@@ -34,12 +32,10 @@ export class FileReferenceService {
   extractReferences(sourceFilePath: string, content: ParsedContent, schema?: Schema): ExtractedRef[] {
     const refs: ExtractedRef[] = [];
 
-    // Pass 2: Use schema paths to find x-scratch-foreign-key refs
     if (schema) {
       const fkPaths = this.refCleanerService.extractForeignKeyPaths(schema);
 
       for (const fk of fkPaths) {
-        // Get all nodes at this path (handles arrays)
         const nodes = this.getNodesByPath(content, fk.path);
 
         for (const node of nodes) {
@@ -47,9 +43,8 @@ export class FileReferenceService {
           for (const id of ids) {
             refs.push({
               sourceFilePath,
-              targetFolderPath: '', // will be resolved later
-              targetFileRecordId: id,
-              targetFolderId: fk.targetFolderId,
+              targetRemoteId: id,
+              targetRemoteTableId: fk.targetRemoteTableId,
             });
           }
         }
@@ -59,7 +54,7 @@ export class FileReferenceService {
     // Deduplicate
     const uniqueRefs = new Map<string, ExtractedRef>();
     for (const ref of refs) {
-      const key = `${ref.targetFolderId || ref.targetFolderPath}|${ref.targetFileName || ''}|${ref.targetFileRecordId || ''}`;
+      const key = `${ref.targetRemoteTableId || ''}|${ref.targetRemoteId || ''}`;
       if (!uniqueRefs.has(key)) {
         uniqueRefs.set(key, ref);
       }
@@ -108,7 +103,6 @@ export class FileReferenceService {
   private extractIds(value: any, map?: string): string[] {
     if (!value) return [];
 
-    // Normalize to array
     const items = Array.isArray(value) ? value : [value];
     const ids: string[] = [];
 
@@ -116,13 +110,11 @@ export class FileReferenceService {
       if (!item) continue;
 
       if (map) {
-        // expect object with key `map`
         if (typeof item === 'object' && item !== null && item[map] !== undefined) {
           const val = item[map];
           if (typeof val === 'string' || typeof val === 'number') ids.push(String(val));
         }
       } else {
-        // use item directly if string or number
         if (typeof item === 'string' || typeof item === 'number') {
           ids.push(String(item));
         }
@@ -163,7 +155,6 @@ export class FileReferenceService {
     for (const file of files) {
       let fileSchema = schema;
       if (!fileSchema) {
-        // Determine folder path
         const { folderPath } = parsePath(file.path);
         fileSchema = (await this.schemaService.getJsonSchema(workbookId, folderPath, schemaCache)) ?? undefined;
       }
@@ -174,36 +165,14 @@ export class FileReferenceService {
 
     if (allRefs.length === 0) return;
 
-    // 2b. Resolve targetFolderIds to targetFolderPath
-    const folderIdsToResolve = new Set(allRefs.filter((r) => r.targetFolderId).map((r) => r.targetFolderId as string));
-
-    const folderIdToNameMap = new Map<string, string>();
-    if (folderIdsToResolve.size > 0) {
-      const folders = await this.db.client.dataFolder.findMany({
-        where: { id: { in: Array.from(folderIdsToResolve) } },
-        select: { id: true, path: true },
-      });
-      for (const folder of folders) {
-        folderIdToNameMap.set(folder.id, folder.path || '');
-      }
-    }
-
     // 3. Insert in chunks to avoid Postgres parameter limits (65,535 max)
-    const recordsToInsert = allRefs.map((ref) => {
-      let folderPath = ref.targetFolderPath;
-      if (ref.targetFolderId && folderIdToNameMap.has(ref.targetFolderId)) {
-        folderPath = folderIdToNameMap.get(ref.targetFolderId)!;
-      }
-
-      return {
-        workbookId,
-        branch,
-        sourceFilePath: ref.sourceFilePath,
-        targetFolderPath: folderPath,
-        targetFileName: ref.targetFileName,
-        targetFileRecordId: ref.targetFileRecordId,
-      };
-    });
+    const recordsToInsert = allRefs.map((ref) => ({
+      workbookId,
+      branch,
+      sourceFilePath: ref.sourceFilePath,
+      targetRemoteTableId: ref.targetRemoteTableId,
+      targetRemoteId: ref.targetRemoteId,
+    }));
 
     const chunks = chunk(recordsToInsert, 2000);
     for (const c of chunks) {
@@ -219,21 +188,15 @@ export class FileReferenceService {
    */
   async findRefsToFiles(
     workbookId: string,
-    targets: Array<{ folderPath: string; fileName?: string; recordId?: string }>,
+    targets: Array<{ remoteTableId?: string; recordId?: string }>,
     branches: string[] = ['main', 'dirty'],
     onProgress?: (step: string) => Promise<void>,
-  ): Promise<
-    {
-      sourceFilePath: string;
-      branch: string;
-    }[]
-  > {
-    if (targets.length === 0) {
+  ): Promise<{ sourceFilePath: string; branch: string }[]> {
+    const recordIdTargets = targets.filter((t) => t.recordId && t.remoteTableId);
+    if (recordIdTargets.length === 0) {
       return [];
     }
 
-    // Split into two flat queries instead of nested ORs per target.
-    // A single IN clause on an indexed column is far faster than thousands of nested OR conditions.
     const results: { sourceFilePath: string; branch: string }[] = [];
     const seen = new Set<string>();
 
@@ -247,60 +210,27 @@ export class FileReferenceService {
       }
     };
 
-    // Query 1: Match by recordId using a flat IN clause (hits targetFileRecordId index)
-    const recordIds = targets.map((t) => t.recordId).filter((id): id is string => !!id);
-    if (recordIds.length > 0) {
-      const recordIdChunks = chunk(recordIds, 10000);
-      for (let i = 0; i < recordIdChunks.length; i++) {
-        await onProgress?.(
-          `Finding inbound references by record ID (${Math.min((i + 1) * 10000, recordIds.length)}/${recordIds.length})`,
-        );
-        const chunkResults = await this.db.client.fileReference.findMany({
-          where: {
-            workbookId,
-            branch: { in: branches },
-            targetFileRecordId: { in: recordIdChunks[i] },
-          },
-          select: { sourceFilePath: true, branch: true },
-        });
-        addResults(chunkResults);
-      }
-    }
-
-    // Query 2: Match by (folderPath, fileName) pairs using flat OR conditions
-    const fileNameTargets = targets.filter((t) => t.fileName && t.folderPath);
-    if (fileNameTargets.length > 0) {
-      const fileNameChunks = chunk(fileNameTargets, 2000);
-      for (let i = 0; i < fileNameChunks.length; i++) {
-        await onProgress?.(
-          `Finding inbound references by file name (${Math.min((i + 1) * 2000, fileNameTargets.length)}/${fileNameTargets.length})`,
-        );
-        const chunkResults = await this.db.client.fileReference.findMany({
-          where: {
-            workbookId,
-            branch: { in: branches },
-            OR: fileNameChunks[i].map((t) => ({
-              targetFolderPath: t.folderPath,
-              targetFileName: t.fileName,
-            })),
-          },
-          select: { sourceFilePath: true, branch: true },
-        });
-        addResults(chunkResults);
-      }
+    const chunks = chunk(recordIdTargets, 2000);
+    for (let i = 0; i < chunks.length; i++) {
+      await onProgress?.(
+        `Finding inbound references by record ID (${Math.min((i + 1) * 2000, recordIdTargets.length)}/${recordIdTargets.length})`,
+      );
+      const chunkResults = await this.db.client.fileReference.findMany({
+        where: {
+          workbookId,
+          branch: { in: branches },
+          OR: chunks[i].map((t) => ({
+            targetRemoteTableId: t.remoteTableId,
+            targetRemoteId: t.recordId,
+          })),
+        },
+        select: { sourceFilePath: true, branch: true },
+      });
+      addResults(chunkResults);
     }
 
     return results;
   }
-
-  /**
-   * Strip references that point to any of the paths in the set.
-   * Returns a deep copy of content with matching refs replaced by null.
-   */
-  /**
-   * Strip references that point to any of the paths in the set or are unresolvable pseudo-refs.
-   * Returns a deep copy of content with matching refs replaced by null.
-   */
 
   async deleteForWorkbook(workbookId: string): Promise<void> {
     await this.db.client.fileReference.deleteMany({

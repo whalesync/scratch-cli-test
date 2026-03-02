@@ -6,6 +6,7 @@ import {
   HasDirtyFilesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
+import { DbService } from 'src/db/db.service';
 import { ScratchGitClient } from './scratch-git.client';
 
 // The object returned by listRepoFiles
@@ -18,9 +19,54 @@ export interface RepoFileRef {
 export const MAIN_BRANCH = 'main';
 export const DIRTY_BRANCH = 'dirty';
 
+/** Separator used in V2 composite repo IDs (must match Rust constant in state.rs) */
+const V2_ID_SEPARATOR = '--';
+
+/**
+ * Returns the repo ID to pass to scratch-git for a given workbook.
+ *
+ * - V1: plain `workbookId`  →  `repos/{workbookId}.git`
+ * - V2: `{orgId}--{workbookId}--{connAccountId}`  →  `repos-v2/{orgId}/{workbookId}/{connAccountId}.git`
+ *
+ * The Rust backend splits on `--` and constructs the nested directory path.
+ */
+export function getRepoId(
+  workbookVersion: number,
+  workbookId: WorkbookId,
+  orgId?: string,
+  connAccountId?: string,
+): string {
+  if (workbookVersion >= 2) {
+    if (!orgId || !connAccountId) {
+      throw new Error(`V2 repo ID requires orgId and connAccountId (workbookId=${workbookId})`);
+    }
+    return [orgId, workbookId, connAccountId].join(V2_ID_SEPARATOR);
+  }
+  return workbookId;
+}
+
 @Injectable()
 export class ScratchGitService {
-  constructor(private readonly scratchGitClient: ScratchGitClient) {}
+  constructor(
+    private readonly scratchGitClient: ScratchGitClient,
+    private readonly db: DbService,
+  ) {}
+
+  /**
+   * Resolves the effective repo ID for a workbook.
+   * For V1 workbooks returns workbookId directly.
+   * For V2 workbooks returns the composite `{orgId}--{workbookId}--{connAccountId}` ID.
+   * Throws if connectorAccountId is missing for a V2 workbook.
+   */
+  async resolveRepoId(workbookId: WorkbookId, connectorAccountId?: string): Promise<string> {
+    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
+    if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
+    if (workbook.version < 2) return workbookId;
+    if (!connectorAccountId) throw new Error(`connectorAccountId required for V2 workbook ${workbookId}`);
+    const orgId = workbook.organizationId;
+    if (!orgId) throw new Error(`Workbook ${workbookId} has no organizationId`);
+    return getRepoId(workbook.version, workbookId, orgId, connectorAccountId);
+  }
 
   async initRepo(workbookId: WorkbookId): Promise<void> {
     await this.scratchGitClient.initRepo(workbookId);
@@ -30,47 +76,47 @@ export class ScratchGitService {
     await this.scratchGitClient.deleteRepo(workbookId);
   }
 
-  async discardChanges(workbookId: WorkbookId, path?: string): Promise<void> {
-    await this.scratchGitClient.resetRepo(workbookId, path);
+  async discardChanges(repoId: string, path?: string): Promise<void> {
+    await this.scratchGitClient.resetRepo(repoId, path);
   }
 
-  async rebaseDirty(workbookId: WorkbookId) {
-    await this.scratchGitClient.rebaseDirty(workbookId);
+  async rebaseDirty(repoId: string) {
+    await this.scratchGitClient.rebaseDirty(repoId);
   }
 
-  async runGitGc(workbookId: WorkbookId, aggressive?: boolean) {
-    return this.scratchGitClient.gc(workbookId, aggressive);
+  async runGitGc(repoId: string, aggressive?: boolean) {
+    return this.scratchGitClient.gc(repoId, aggressive);
   }
 
-  async getObjectCounts(workbookId: WorkbookId): Promise<GitObjectCountsResponse> {
-    return this.scratchGitClient.getObjectCounts(workbookId);
+  async getObjectCounts(repoId: string): Promise<GitObjectCountsResponse> {
+    return this.scratchGitClient.getObjectCounts(repoId);
   }
 
   async commitFilesToBranch(
-    workbookId: WorkbookId,
+    repoId: string,
     branch: string,
     files: { path: string; content: string }[],
     message: string,
   ) {
-    await this.commitFilesBatch(workbookId, branch, files, message);
+    await this.commitFilesBatch(repoId, branch, files, message);
   }
 
   private async commitFilesBatch(
-    workbookId: WorkbookId,
+    repoId: string,
     branch: string,
     files: { path: string; content: string }[],
     message: string,
   ) {
     if (files.length === 0) return;
-    await this.scratchGitClient.commitFiles(workbookId, branch, files, message);
+    await this.scratchGitClient.commitFiles(repoId, branch, files, message);
   }
 
-  async listRepoFiles(workbookId: WorkbookId, branch: string, folder: string): Promise<any[]> {
-    return this.scratchGitClient.list(workbookId, branch, folder);
+  async listRepoFiles(repoId: string, branch: string, folder: string): Promise<any[]> {
+    return this.scratchGitClient.list(repoId, branch, folder);
   }
 
-  async getRepoFile(workbookId: WorkbookId, branch: string, path: string): Promise<{ content: string } | null> {
-    return this.scratchGitClient.getFile(workbookId, branch, path);
+  async getRepoFile(repoId: string, branch: string, path: string): Promise<{ content: string } | null> {
+    return this.scratchGitClient.getFile(repoId, branch, path);
   }
 
   async getRepoFilesPaginated(
@@ -103,7 +149,7 @@ export class ScratchGitService {
   // Groups paths by their parent folder and calls readFilesFromFolder per group,
   // which uses a single optimized tree walk per folder instead of one per file.
   async readRepoFilesByFolder(
-    workbookId: WorkbookId,
+    workbookId: string,
     branch: string,
     paths: string[],
   ): Promise<Array<{ path: string; content: string | null }>> {
@@ -134,70 +180,67 @@ export class ScratchGitService {
     return this.scratchGitClient.readBlobsByOid(workbookId, oids);
   }
 
-  async commitFile(workbookId: WorkbookId, path: string, content: string, message: string): Promise<void> {
-    await this.scratchGitClient.commitFiles(workbookId, 'dirty', [{ path, content }], message);
+  async commitFile(repoId: string, path: string, content: string, message: string): Promise<void> {
+    await this.scratchGitClient.commitFiles(repoId, 'dirty', [{ path, content }], message);
   }
 
-  async deleteFile(workbookId: WorkbookId, paths: string[], message: string): Promise<void> {
-    await this.deleteFilesFromBranch(workbookId, DIRTY_BRANCH, paths, message);
+  async deleteFile(repoId: string, paths: string[], message: string): Promise<void> {
+    await this.deleteFilesFromBranch(repoId, DIRTY_BRANCH, paths, message);
   }
 
-  async deleteFilesFromBranch(workbookId: WorkbookId, branch: string, paths: string[], message: string): Promise<void> {
-    await this.scratchGitClient.deleteFiles(workbookId, branch, paths, message);
+  async deleteFilesFromBranch(repoId: string, branch: string, paths: string[], message: string): Promise<void> {
+    await this.scratchGitClient.deleteFiles(repoId, branch, paths, message);
   }
 
   async renameFiles(
-    workbookId: WorkbookId,
+    repoId: string,
     folderPath: string,
     renames: { oldName: string; newName: string }[],
     message: string,
   ): Promise<void> {
-    await this.scratchGitClient.renameFiles(workbookId, folderPath, renames, message);
+    await this.scratchGitClient.renameFiles(repoId, folderPath, renames, message);
   }
 
-  async deleteFolder(workbookId: WorkbookId, folderPath: string, message: string, branch?: string): Promise<void> {
-    await this.scratchGitClient.deleteFolder(workbookId, folderPath, message, branch);
+  async deleteFolder(repoId: string, folderPath: string, message: string, branch?: string): Promise<void> {
+    await this.scratchGitClient.deleteFolder(repoId, folderPath, message, branch);
   }
 
-  async deleteFolderFromAllBranches(workbookId: WorkbookId, folderPath: string, message: string): Promise<void> {
+  async deleteFolderFromAllBranches(repoId: string, folderPath: string, message: string): Promise<void> {
     // Delete from both main and dirty branches to avoid orphaned files in git status
-    await this.scratchGitClient.deleteFolder(workbookId, folderPath, message, MAIN_BRANCH);
-    await this.scratchGitClient.deleteFolder(workbookId, folderPath, message, DIRTY_BRANCH);
+    await this.scratchGitClient.deleteFolder(repoId, folderPath, message, MAIN_BRANCH);
+    await this.scratchGitClient.deleteFolder(repoId, folderPath, message, DIRTY_BRANCH);
   }
 
-  async removeDataFolder(workbookId: WorkbookId, folderPath: string): Promise<void> {
-    await this.scratchGitClient.removeDataFolder(workbookId, folderPath);
+  async removeDataFolder(repoId: string, folderPath: string): Promise<void> {
+    await this.scratchGitClient.removeDataFolder(repoId, folderPath);
   }
 
-  async publishFile(workbookId: WorkbookId, path: string, content: string, message: string): Promise<void> {
-    await this.scratchGitClient.publishFile(workbookId, { path, content }, message);
+  async publishFile(repoId: string, path: string, content: string, message: string): Promise<void> {
+    await this.scratchGitClient.publishFile(repoId, { path, content }, message);
   }
 
-  async getRepoStatus(workbookId: WorkbookId): Promise<any> {
-    return this.scratchGitClient.getStatus(workbookId);
+  async getRepoStatus(repoId: string): Promise<any> {
+    return this.scratchGitClient.getStatus(repoId);
   }
 
-  async hasDirtyFiles(workbookId: WorkbookId): Promise<HasDirtyFilesResponse> {
-    return this.scratchGitClient.hasDirtyFiles(workbookId);
+  async hasDirtyFiles(repoId: string): Promise<HasDirtyFilesResponse> {
+    return this.scratchGitClient.hasDirtyFiles(repoId);
   }
 
-  async getRepoStatusCount(workbookId: WorkbookId): Promise<DirtyFileCountResponse> {
-    return this.scratchGitClient.getStatusCount(workbookId);
+  async getRepoStatusCount(repoId: string): Promise<DirtyFileCountResponse> {
+    return this.scratchGitClient.getStatusCount(repoId);
   }
 
-  async getFileDiff(workbookId: WorkbookId, path: string): Promise<any> {
-    return this.scratchGitClient.getDiff(workbookId, path);
+  async getFileDiff(repoId: string, path: string): Promise<any> {
+    return this.scratchGitClient.getDiff(repoId, path);
   }
 
-  async getFolderDiff(
-    workbookId: WorkbookId,
-    folderPath: string,
-  ): Promise<Array<{ path: string; status: FileDiffStatus }>> {
-    return this.scratchGitClient.getFolderDiff(workbookId, folderPath);
+  async getFolderDiff(repoId: string, folderPath: string): Promise<Array<{ path: string; status: FileDiffStatus }>> {
+    return this.scratchGitClient.getFolderDiff(repoId, folderPath);
   }
 
-  async getGraph(workbookId: WorkbookId): Promise<any> {
-    return this.scratchGitClient.getGraph(workbookId);
+  async getGraph(repoId: string): Promise<any> {
+    return this.scratchGitClient.getGraph(repoId);
   }
 
   async createCheckpoint(workbookId: WorkbookId, name: string): Promise<void> {
@@ -216,8 +259,8 @@ export class ScratchGitService {
     await this.scratchGitClient.deleteCheckpoint(workbookId, name);
   }
 
-  async deleteAllFilesInDataFolder(workbookId: WorkbookId, folderPath: string): Promise<void> {
+  async deleteAllFilesInDataFolder(repoId: string, folderPath: string): Promise<void> {
     // Delete the folder from dirty branch only to ensure a diff is generated
-    await this.deleteFolder(workbookId, folderPath, `Delete all records in ${folderPath}`, DIRTY_BRANCH);
+    await this.deleteFolder(repoId, folderPath, `Delete all records in ${folderPath}`, DIRTY_BRANCH);
   }
 }

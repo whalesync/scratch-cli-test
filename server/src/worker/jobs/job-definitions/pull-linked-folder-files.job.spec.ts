@@ -38,6 +38,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      workbook: {
+        findUnique: jest.fn().mockResolvedValue({ version: 1 }),
+      },
     } as unknown as jest.Mocked<PrismaClient>;
 
     mockConnectorService = {
@@ -53,10 +56,12 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     } as unknown as jest.Mocked<WorkbookEventService>;
 
     mockScratchGitService = {
+      initRepo: jest.fn().mockResolvedValue(undefined),
       commitFilesToBranch: jest.fn(),
       rebaseDirty: jest.fn(),
       listRepoFiles: jest.fn(),
       deleteFilesFromBranch: jest.fn(),
+      runGitGc: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     mockFileIndexService = {

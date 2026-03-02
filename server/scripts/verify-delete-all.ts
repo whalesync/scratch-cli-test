@@ -24,7 +24,7 @@ async function main() {
   } as any;
 
   const client = new ScratchGitClient(config);
-  const service = new ScratchGitService(client);
+  const service = new ScratchGitService(client, null as any);
 
   console.log(`Initializing repo for ${workbookId}...`);
   await service.initRepo(workbookId);

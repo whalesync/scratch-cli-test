@@ -3,12 +3,14 @@
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDevTools } from '@/hooks/use-dev-tools';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { GitGcResponse, GitObjectCountsResponse, WorkbookId } from '@spinner/shared-types';
 import {
+  ArrowUpCircleIcon,
   ChevronRightIcon,
   DatabaseIcon,
   EllipsisVertical,
@@ -29,10 +31,13 @@ import { RefIndexModal } from '../modals/RefIndexModal';
 
 interface DebugMenuProps {
   workbookId: WorkbookId;
+  workbookVersion?: number;
 }
 
-export function DebugMenu({ workbookId }: DebugMenuProps) {
+export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
   const { isDevToolsEnabled } = useDevTools();
+  const { user } = useScratchPadUser();
+  const isAdmin = user?.isAdmin ?? false;
   const [gitGraphOpen, setGitGraphOpen] = useState(false);
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
@@ -62,6 +67,30 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
         }
       },
     });
+  };
+
+  const [isMigratingToV2, setIsMigratingToV2] = useState(false);
+
+  const handleMigrateToV2 = async () => {
+    setIsMigratingToV2(true);
+    try {
+      await workbookApi.migrateToV2(workbookId);
+      notifications.show({
+        title: 'Success',
+        message: 'Workbook migrated to V2',
+        color: 'green',
+      });
+      window.location.reload();
+    } catch (e) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to migrate workbook to V2',
+        color: 'red',
+      });
+      console.error(e);
+    } finally {
+      setIsMigratingToV2(false);
+    }
   };
 
   const handleManualRebase = async () => {
@@ -145,6 +174,16 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
         </Menu.Target>
 
         <Menu.Dropdown>
+          {isAdmin && workbookVersion < 2 && (
+            <Menu.Item
+              data-devtool
+              leftSection={<ArrowUpCircleIcon size={16} />}
+              onClick={handleMigrateToV2}
+              disabled={isMigratingToV2}
+            >
+              Migrate to V2
+            </Menu.Item>
+          )}
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleResetWorkbook}>
             Reset Workbook
           </Menu.Item>

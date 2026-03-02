@@ -474,16 +474,14 @@ model FileIndex {
 
 // Tracks dependencies between files
 model FileReference {
-  id                 String  @id @default(cuid())
-  workbookId         String
-  sourceFilePath     String // The file containing the reference
-  targetFolderPath   String // The folder being referenced
-  targetFileName     String? // Set for @/ refs
-  targetFileRecordId String? // Set for resolved ID refs
-  branch             String // "main" or "dirty/..."
+  id                  String  @id @default(cuid())
+  workbookId          String
+  sourceFilePath      String // The file containing the reference
+  targetRemoteTableId String? // The remote table ID from the FK schema (e.g. Airtable table ID)
+  targetRemoteId      String? // The remote record ID value from the FK field
+  branch              String // "main" or "dirty/..."
 
-  @@index([workbookId, targetFolderPath, targetFileName])
-  @@index([workbookId, targetFolderPath, targetFileRecordId])
+  @@index([workbookId, targetRemoteTableId, targetRemoteId])
   @@index([workbookId, sourceFilePath, branch])
 }
 

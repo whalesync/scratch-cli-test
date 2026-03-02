@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Service, WorkbookId } from '@spinner/shared-types';
+import type { Service } from '@spinner/shared-types';
 import { isScratchPendingPublishId } from '@spinner/shared-types';
 import _ from 'lodash';
 import { WSLogger } from '../logger';
@@ -60,15 +60,11 @@ export class DataFolderPublishingService {
    * Analyzes a data folder to determine which files need to be published.
    * Uses git diff between dirty and main branches.
    *
-   * @param workbookId - The workbook ID (used as repo ID in scratch-git)
+   * @param repoId - The resolved repo ID to pass to scratch-git (V1: workbookId, V2: composite ID)
    * @param folderPath - The folder path within the repo (e.g., "/BLOG - Blog Posts Premium")
    * @param tableSpec - The table spec to extract ID field name
    */
-  async getFilesToPublish(
-    workbookId: WorkbookId,
-    folderPath: string,
-    tableSpec: BaseJsonTableSpec,
-  ): Promise<FilesToPublish> {
+  async getFilesToPublish(repoId: string, folderPath: string, tableSpec: BaseJsonTableSpec): Promise<FilesToPublish> {
     const result: FilesToPublish = {
       creates: [],
       updates: [],
@@ -76,12 +72,12 @@ export class DataFolderPublishingService {
     };
 
     // Get the diff for this folder (branch vs main)
-    const diff = await this.scratchGitService.getFolderDiff(workbookId, folderPath);
+    const diff = await this.scratchGitService.getFolderDiff(repoId, folderPath);
 
     WSLogger.debug({
       source: 'DataFolderPublishingService',
       message: 'Got folder diff',
-      workbookId,
+      repoId,
       folderPath,
       diffCount: diff.length,
       diff: diff.map((d) => ({ path: d.path, status: d.status })),
@@ -97,7 +93,7 @@ export class DataFolderPublishingService {
 
       if (file.status === 'added') {
         // New file - read from dirty branch
-        const fileData = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, file.path);
+        const fileData = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, file.path);
         if (fileData) {
           try {
             const content = JSON.parse(fileData.content) as Record<string, unknown>;
@@ -113,7 +109,7 @@ export class DataFolderPublishingService {
         }
       } else if (file.status === 'modified') {
         // Modified file - read from dirty branch, get ID from content
-        const fileData = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, file.path);
+        const fileData = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, file.path);
         if (fileData) {
           try {
             const content = JSON.parse(fileData.content) as Record<string, unknown>;
@@ -139,7 +135,7 @@ export class DataFolderPublishingService {
         }
       } else if (file.status === 'deleted') {
         // Deleted file - read from main branch to get the remote ID
-        const fileData = await this.scratchGitService.getRepoFile(workbookId, 'main', file.path);
+        const fileData = await this.scratchGitService.getRepoFile(repoId, 'main', file.path);
         if (fileData) {
           try {
             const content = JSON.parse(fileData.content) as Record<string, unknown>;
@@ -168,7 +164,7 @@ export class DataFolderPublishingService {
     WSLogger.info({
       source: 'DataFolderPublishingService',
       message: 'Files to publish',
-      workbookId,
+      repoId,
       folderPath,
       creates: result.creates.length,
       updates: result.updates.length,
@@ -184,7 +180,7 @@ export class DataFolderPublishingService {
    * and renames them to use the remote ID as the filename.
    */
   async publishCreates<S extends Service>(
-    workbookId: WorkbookId,
+    repoId: string,
     connector: Connector<S>,
     tableSpec: BaseJsonTableSpec,
     files: FileToCreate[],
@@ -266,11 +262,11 @@ export class DataFolderPublishingService {
         WSLogger.info({
           source: 'DataFolderPublishingService',
           message: 'Deleting old files before rename',
-          workbookId,
+          repoId,
           filesToDelete,
         });
         await this.scratchGitService.deleteFilesFromBranch(
-          workbookId,
+          repoId,
           DIRTY_BRANCH,
           filesToDelete,
           `Renamed ${filesToDelete.length} files after publish`,
@@ -282,11 +278,11 @@ export class DataFolderPublishingService {
         WSLogger.info({
           source: 'DataFolderPublishingService',
           message: 'Committing new/renamed files',
-          workbookId,
+          repoId,
           filesToCommit: filesToCommit.map((f) => f.path),
         });
         await this.scratchGitService.commitFilesToBranch(
-          workbookId,
+          repoId,
           DIRTY_BRANCH,
           filesToCommit,
           `Published ${filesToCommit.length} new records`,
@@ -302,7 +298,7 @@ export class DataFolderPublishingService {
    * The files are already updated in the dirty branch, we just need to send to connector.
    */
   async publishUpdates<S extends Service>(
-    workbookId: WorkbookId,
+    repoId: string,
     connector: Connector<S>,
     tableSpec: BaseJsonTableSpec,
     files: FileToUpdate[],
@@ -342,7 +338,7 @@ export class DataFolderPublishingService {
    * (that's how we detected them as deleted).
    */
   async publishDeletes<S extends Service>(
-    workbookId: WorkbookId,
+    repoId: string,
     connector: Connector<S>,
     tableSpec: BaseJsonTableSpec,
     files: FileToDelete[],
@@ -381,7 +377,7 @@ export class DataFolderPublishingService {
    * Processes creates, updates, and deletes in order.
    */
   async publishAll<S extends Service>(
-    workbookId: WorkbookId,
+    repoId: string,
     folderPath: string,
     connector: Connector<S>,
     tableSpec: BaseJsonTableSpec,
@@ -395,20 +391,20 @@ export class DataFolderPublishingService {
     deletedPaths: string[];
   }> {
     // Get files to publish
-    const filesToPublish = await this.getFilesToPublish(workbookId, folderPath, tableSpec);
+    const filesToPublish = await this.getFilesToPublish(repoId, folderPath, tableSpec);
 
     // Publish creates
-    await this.publishCreates(workbookId, connector, tableSpec, filesToPublish.creates, (count) =>
+    await this.publishCreates(repoId, connector, tableSpec, filesToPublish.creates, (count) =>
       onProgress('creates', count),
     );
 
     // Publish updates
-    await this.publishUpdates(workbookId, connector, tableSpec, filesToPublish.updates, (count) =>
+    await this.publishUpdates(repoId, connector, tableSpec, filesToPublish.updates, (count) =>
       onProgress('updates', count),
     );
 
     // Publish deletes
-    await this.publishDeletes(workbookId, connector, tableSpec, filesToPublish.deletes, (count) =>
+    await this.publishDeletes(repoId, connector, tableSpec, filesToPublish.deletes, (count) =>
       onProgress('deletes', count),
     );
 

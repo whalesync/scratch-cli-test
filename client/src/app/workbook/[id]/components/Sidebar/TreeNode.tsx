@@ -5,11 +5,14 @@ import { PulsingIcon } from '@/app/components/Icons/PulsingIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
+import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
+import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
+import { workbookApi } from '@/lib/api/workbook';
 import { trackRefreshRecords } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
@@ -19,6 +22,7 @@ import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { initiateOAuth } from '@/utils/oauth';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { notifications } from '@mantine/notifications';
 import {
   AuthType,
   type ConnectorAccount,
@@ -27,6 +31,8 @@ import {
   type DataFolderId,
   type FileDiffStatus,
   type FileRefEntity,
+  type GitGcResponse,
+  type GitObjectCountsResponse,
   type WorkbookId,
 } from '@spinner/shared-types';
 import {
@@ -36,13 +42,15 @@ import {
   CloudCogIcon,
   DownloadIcon,
   Edit2Icon,
+  FileCodeIcon,
   FileJsonIcon,
   FilePlusIcon,
   FlaskRoundIcon,
   FolderIcon,
+  GitGraphIcon,
+  GitMergeIcon,
   MoreHorizontalIcon,
   RefreshCwIcon,
-  RocketIcon,
   RouteIcon,
   SettingsIcon,
   StickyNoteIcon,
@@ -53,6 +61,10 @@ import {
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState, type MouseEvent } from 'react';
+import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
+import { GitGcModal } from '../modals/GitGcModal';
+import { GitGraphModal } from '../modals/GitGraphModal';
+import { GitObjectCountsModal } from '../modals/GitObjectCountsModal';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
 import { TestTransformerModal } from '../modals/TestTransformerModal';
 import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsModal';
@@ -146,7 +158,81 @@ export function ConnectionNode({
     useDisclosure(false);
 
   // Publish V2 modal state
-  const [publishV2ModalOpened, { open: openPublishV2Modal, close: closePublishV2Modal }] = useDisclosure(false);
+  const [publishV2ModalOpened, { close: closePublishV2Modal }] = useDisclosure(false);
+
+  // Git Tools state (V2 workbooks only — repo belongs to the connection)
+  const { isDevToolsEnabled } = useDevTools();
+  const [gitGraphOpen, setGitGraphOpen] = useState(false);
+  const [gitFileBrowserOpen, setGitFileBrowserOpen] = useState(false);
+  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
+  const [gcModalOpen, setGcModalOpen] = useState(false);
+  const [isGcing, setIsGcing] = useState(false);
+  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
+  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
+  const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
+  const [isRebasing, setIsRebasing] = useState(false);
+
+  const handleGitGc = async (aggressive: boolean = false) => {
+    if (!connectorAccount) return;
+    setIsGcing(true);
+    try {
+      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccount.id);
+      setGcData(result);
+      setGcModalOpen(true);
+      notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to run Git GC', color: 'red' });
+    } finally {
+      setIsGcing(false);
+    }
+  };
+
+  const handleGetObjectCounts = async () => {
+    if (!connectorAccount) return;
+    setIsLoadingObjectCounts(true);
+    try {
+      const result = await workbookApi.getObjectCounts(workbookId, connectorAccount.id);
+      setObjectCountsData(result);
+      setObjectCountsModalOpen(true);
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to get object counts', color: 'red' });
+    } finally {
+      setIsLoadingObjectCounts(false);
+    }
+  };
+
+  const handleManualRebase = async () => {
+    if (!connectorAccount) return;
+    setIsRebasing(true);
+    try {
+      await workbookApi.rebaseDirty(workbookId, connectorAccount.id);
+      notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
+    } finally {
+      setIsRebasing(false);
+    }
+  };
+
+  const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
+  const handleResetConnection = () => {
+    if (!connectorAccount) return;
+    openResetConnectionDialog({
+      title: 'Reset Connection',
+      message:
+        'This will delete all data folders and the git repository for this connection. Any unpublished changes will be lost. This action cannot be undone.',
+      confirmLabel: 'Reset',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await connectorAccountsApi.reset(workbookId, connectorAccount.id);
+          window.location.reload();
+        } catch {
+          notifications.show({ title: 'Error', message: 'Failed to reset connection', color: 'red' });
+        }
+      },
+    });
+  };
 
   // Reauthorize handler (OAuth connections)
   const handleReauthorize = async () => {
@@ -349,13 +435,61 @@ export function ConnectionNode({
                 ]
               : []),
             { type: 'divider' as const },
-            ...(connectorAccount
+            ...(isDevToolsEnabled && connectorAccount && (workbook?.version ?? 1) >= 2
               ? [
                   {
-                    label: 'Test Publish V2',
-                    icon: RocketIcon,
-                    onClick: openPublishV2Modal,
-                    color: 'var(--mantine-color-devTool-9)',
+                    type: 'submenu' as const,
+                    label: 'Git',
+                    icon: GitGraphIcon,
+                    devtool: true,
+                    children: [
+                      { label: 'Git Graph', icon: GitGraphIcon, devtool: true, onClick: () => setGitGraphOpen(true) },
+                      {
+                        label: 'Git File Browser',
+                        icon: FileCodeIcon,
+                        devtool: true,
+                        onClick: () => setGitFileBrowserOpen(true),
+                      },
+                      {
+                        label: 'Manual Rebase',
+                        icon: GitMergeIcon,
+                        devtool: true,
+                        onClick: () => void handleManualRebase(),
+                        disabled: isRebasing,
+                      },
+                      {
+                        label: 'Get Object Counts',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleGetObjectCounts(),
+                        disabled: isLoadingObjectCounts,
+                      },
+                      {
+                        label: 'Run Git GC (Standard)',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleGitGc(false),
+                        disabled: isGcing,
+                      },
+                      {
+                        label: 'Run Git GC (Aggressive)',
+                        icon: Trash2Icon,
+                        devtool: true,
+                        onClick: () => void handleGitGc(true),
+                        disabled: isGcing,
+                      },
+                    ],
+                  },
+                ]
+              : []),
+            ...(isDevToolsEnabled && connectorAccount && !isScratch
+              ? [
+                  {
+                    label: 'Reset Connection',
+                    icon: Trash2Icon,
+                    onClick: handleResetConnection,
+                    devtool: true,
+                    delete: true,
                   },
                 ]
               : []),
@@ -365,6 +499,9 @@ export function ConnectionNode({
           ]}
         />
       )}
+
+      {/* Reset Connection Confirm Dialog */}
+      <ConfirmDialog {...resetConnectionDialogProps} />
 
       {/* Choose Tables Modal */}
       {connectorAccount && (
@@ -398,6 +535,30 @@ export function ConnectionNode({
           onClose={closeUpdateConnectionModal}
           connectorAccount={connectorAccount}
         />
+      )}
+
+      {/* Git Tools Modals (V2 workbooks — repo scoped to this connection) */}
+      {connectorAccount && (
+        <>
+          <GitGraphModal
+            opened={gitGraphOpen}
+            onClose={() => setGitGraphOpen(false)}
+            workbookId={workbookId}
+            connectorAccountId={connectorAccount.id}
+          />
+          <GitFileBrowserModal
+            opened={gitFileBrowserOpen}
+            onClose={() => setGitFileBrowserOpen(false)}
+            workbookId={workbookId}
+            connectorAccountId={connectorAccount.id}
+          />
+          <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
+          <GitObjectCountsModal
+            opened={objectCountsModalOpen}
+            onClose={() => setObjectCountsModalOpen(false)}
+            data={objectCountsData}
+          />
+        </>
       )}
     </>
   );
@@ -942,6 +1103,77 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
   const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
   const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
+  const { workbook } = useActiveWorkbook();
+  const { isDevToolsEnabled } = useDevTools();
+
+  // Git Tools state (V2 workbooks only)
+  const [gitGraphOpen, setGitGraphOpen] = useState(false);
+  const [gitFileBrowserOpen, setGitFileBrowserOpen] = useState(false);
+  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
+  const [gcModalOpen, setGcModalOpen] = useState(false);
+  const [isGcing, setIsGcing] = useState(false);
+  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
+  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
+  const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
+  const [isRebasing, setIsRebasing] = useState(false);
+
+  const handleGitGc = async (aggressive: boolean = false) => {
+    setIsGcing(true);
+    try {
+      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccount.id);
+      setGcData(result);
+      setGcModalOpen(true);
+      notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to run Git GC', color: 'red' });
+    } finally {
+      setIsGcing(false);
+    }
+  };
+
+  const handleGetObjectCounts = async () => {
+    setIsLoadingObjectCounts(true);
+    try {
+      const result = await workbookApi.getObjectCounts(workbookId, connectorAccount.id);
+      setObjectCountsData(result);
+      setObjectCountsModalOpen(true);
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to get object counts', color: 'red' });
+    } finally {
+      setIsLoadingObjectCounts(false);
+    }
+  };
+
+  const handleManualRebase = async () => {
+    setIsRebasing(true);
+    try {
+      await workbookApi.rebaseDirty(workbookId, connectorAccount.id);
+      notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
+    } finally {
+      setIsRebasing(false);
+    }
+  };
+
+  const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
+  const handleResetConnection = () => {
+    openResetConnectionDialog({
+      title: 'Reset Connection',
+      message:
+        'This will delete all data folders and the git repository for this connection. Any unpublished changes will be lost. This action cannot be undone.',
+      confirmLabel: 'Reset',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await connectorAccountsApi.reset(workbookId, connectorAccount.id);
+          window.location.reload();
+        } catch {
+          notifications.show({ title: 'Error', message: 'Failed to reset connection', color: 'red' });
+        }
+      },
+    });
+  };
 
   const nodeId = `connection-${connectorAccount.displayName || connectorAccount.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -1108,11 +1340,37 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
             connectorAccount.authType === AuthType.OAUTH
               ? { label: 'Reauthorize', icon: CloudCogIcon, onClick: handleReauthorize }
               : { label: 'Edit Connection', icon: SettingsIcon, onClick: openUpdateConnectionModal },
-            { type: 'divider' },
+            { type: 'divider' as const },
+            ...(isDevToolsEnabled && (workbook?.version ?? 1) >= 2
+              ? [
+                  {
+                    type: 'submenu' as const,
+                    label: 'Git',
+                    icon: GitGraphIcon,
+                    devtool: true,
+                    children: [
+                      { label: 'Git Graph', icon: GitGraphIcon, devtool: true, onClick: () => setGitGraphOpen(true) },
+                      { label: 'Git File Browser', icon: FileCodeIcon, devtool: true, onClick: () => setGitFileBrowserOpen(true) },
+                      { label: 'Manual Rebase', icon: GitMergeIcon, devtool: true, onClick: () => void handleManualRebase(), disabled: isRebasing },
+                      { label: 'Get Object Counts', icon: GitGraphIcon, devtool: true, onClick: () => void handleGetObjectCounts(), disabled: isLoadingObjectCounts },
+                      { label: 'Run Git GC (Standard)', icon: GitGraphIcon, devtool: true, onClick: () => void handleGitGc(false), disabled: isGcing },
+                      { label: 'Run Git GC (Aggressive)', icon: Trash2Icon, devtool: true, onClick: () => void handleGitGc(true), disabled: isGcing },
+                    ],
+                  },
+                  { label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection },
+                ]
+              : []),
             { label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true },
           ]}
         />
       )}
+
+      {/* Git Tools Modals (V2 workbooks) */}
+      <GitGraphModal opened={gitGraphOpen} onClose={() => setGitGraphOpen(false)} workbookId={workbookId} connectorAccountId={connectorAccount.id} />
+      <GitFileBrowserModal opened={gitFileBrowserOpen} onClose={() => setGitFileBrowserOpen(false)} workbookId={workbookId} connectorAccountId={connectorAccount.id} />
+      <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
+      <GitObjectCountsModal opened={objectCountsModalOpen} onClose={() => setObjectCountsModalOpen(false)} data={objectCountsData} />
+      <ConfirmDialog {...resetConnectionDialogProps} />
 
       {/* Choose Tables Modal */}
       <ChooseTablesModal

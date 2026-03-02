@@ -15,6 +15,7 @@ interface GitGraphModalProps {
   workbookId: WorkbookId;
   opened: boolean;
   onClose: () => void;
+  connectorAccountId?: string;
 }
 
 // Helper to build commit info
@@ -57,7 +58,7 @@ interface GraphData {
   refs: RefData[];
 }
 
-export const GitGraphModal = ({ workbookId, opened, onClose }: GitGraphModalProps) => {
+export const GitGraphModal = ({ workbookId, opened, onClose, connectorAccountId }: GitGraphModalProps) => {
   const [data, setData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [renderKey, setRenderKey] = useState(0);
@@ -70,12 +71,12 @@ export const GitGraphModal = ({ workbookId, opened, onClose }: GitGraphModalProp
       fetchGraph();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, workbookId]);
+  }, [opened, workbookId, connectorAccountId]);
 
   const fetchGraph = async () => {
     setLoading(true);
     try {
-      const graphData = await workbookApi.getGraph(workbookId);
+      const graphData = await workbookApi.getGraph(workbookId, connectorAccountId);
       setData(graphData as GraphData);
     } catch (e) {
       console.error(e);

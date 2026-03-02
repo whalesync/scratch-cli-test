@@ -36,6 +36,7 @@ export * from './dto/oauth/oauth-state-payload';
 export * from './dto/payment/create-checkout-session.dto';
 export * from './dto/payment/create-portal.dto';
 export * from './dto/users/update-settings.dto';
+export * from './dto/workbook/admin-workbook.dto';
 export * from './dto/workbook/create-workbook.dto';
 export * from './dto/workbook/file-details.dto';
 export * from './dto/workbook/list-files.dto';

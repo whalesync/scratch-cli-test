@@ -27,12 +27,20 @@ async fn main() {
     let state = AppState::new(&config);
 
     tracing::info!(
-        "[API] Repos directory: {}",
+        "[API] Repos directory (v1): {}",
         config.repos_dir.display()
     );
     tracing::info!(
-        "[API] Repos directory exists: {}",
+        "[API] Repos directory (v1) exists: {}",
         config.repos_dir.exists()
+    );
+    tracing::info!(
+        "[API] Repos directory (v2): {}",
+        config.repos_v2_dir.display()
+    );
+    tracing::info!(
+        "[API] Repos directory (v2) exists: {}",
+        config.repos_v2_dir.exists()
     );
 
     let app = Router::new()

@@ -1,5 +1,6 @@
 import {} from '@/types/server-entities/workbook';
 import {
+  AdminWorkbookDto,
   CreateWorkbookDto,
   DataFolderGroup,
   DirtyFileCountResponse,
@@ -150,11 +151,16 @@ export const workbookApi = {
       throw error;
     }
   },
-  listRepoFiles: async (workbookId: WorkbookId, branch = 'main', folder = ''): Promise<GitFile[]> => {
+  listRepoFiles: async (
+    workbookId: WorkbookId,
+    branch = 'main',
+    folder = '',
+    connectorAccountId?: string,
+  ): Promise<GitFile[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<GitFile[]>(`/scratch-git/${workbookId}/list`, {
-        params: { branch, folder },
+        params: { branch, folder, connectorAccountId },
       });
       return res.data;
     } catch (error) {
@@ -162,11 +168,16 @@ export const workbookApi = {
       throw error;
     }
   },
-  getRepoFile: async (workbookId: WorkbookId, path: string, branch = 'main'): Promise<{ content: string }> => {
+  getRepoFile: async (
+    workbookId: WorkbookId,
+    path: string,
+    branch = 'main',
+    connectorAccountId?: string,
+  ): Promise<{ content: string }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<{ content: string }>(`/scratch-git/${workbookId}/file`, {
-        params: { branch, path },
+        params: { branch, path, connectorAccountId },
       });
       return res.data;
     } catch (error) {
@@ -199,10 +210,15 @@ export const workbookApi = {
     }
   },
 
-  getGraph: async (workbookId: WorkbookId): Promise<{ commits: unknown[]; refs: unknown[] }> => {
+  getGraph: async (
+    workbookId: WorkbookId,
+    connectorAccountId?: string,
+  ): Promise<{ commits: unknown[]; refs: unknown[] }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<{ commits: unknown[]; refs: unknown[] }>(`/scratch-git/${workbookId}/graph`);
+      const res = await axios.get<{ commits: unknown[]; refs: unknown[] }>(`/scratch-git/${workbookId}/graph`, {
+        params: { connectorAccountId },
+      });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to get git graph');
@@ -210,29 +226,35 @@ export const workbookApi = {
     }
   },
 
-  rebaseDirty: async (workbookId: WorkbookId): Promise<void> => {
+  rebaseDirty: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<void> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      await axios.post(`/scratch-git/${workbookId}/rebase`);
+      await axios.post(`/scratch-git/${workbookId}/rebase`, null, { params: { connectorAccountId } });
     } catch (error) {
       handleAxiosError(error, 'Failed to rebase dirty branch');
       throw error;
     }
   },
-  runGitGc: async (workbookId: WorkbookId, aggressive?: boolean): Promise<GitGcResponse> => {
+  runGitGc: async (workbookId: WorkbookId, aggressive?: boolean, connectorAccountId?: string): Promise<GitGcResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<GitGcResponse>(`/scratch-git/${workbookId}/gc`, { aggressive });
+      const res = await axios.post<GitGcResponse>(
+        `/scratch-git/${workbookId}/gc`,
+        { aggressive },
+        { params: { connectorAccountId } },
+      );
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to run git gc');
       throw error;
     }
   },
-  getObjectCounts: async (workbookId: WorkbookId): Promise<GitObjectCountsResponse> => {
+  getObjectCounts: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<GitObjectCountsResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<GitObjectCountsResponse>(`/scratch-git/${workbookId}/object-counts`);
+      const res = await axios.get<GitObjectCountsResponse>(`/scratch-git/${workbookId}/object-counts`, {
+        params: { connectorAccountId },
+      });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to get object counts');
@@ -475,6 +497,42 @@ export const workbookApi = {
       await axios.delete(`/workbook/${workbookId}/publish-v2/${publishPlanId}`);
     } catch (error) {
       handleAxiosError(error, 'Failed to delete publish plan');
+      throw error;
+    }
+  },
+
+  adminListWorkbooks: async (params: {
+    search?: string;
+    services?: string[];
+    serviceMode?: 'AND' | 'OR';
+    limit?: number;
+    offset?: number;
+  }): Promise<{ workbooks: AdminWorkbookDto[]; total: number }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<{ workbooks: AdminWorkbookDto[]; total: number }>('/dev-tools/workbooks', {
+        params: {
+          search: params.search || undefined,
+          services: params.services?.length ? params.services.join(',') : undefined,
+          serviceMode: params.serviceMode,
+          limit: params.limit,
+          offset: params.offset,
+        },
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to list workbooks');
+      throw error;
+    }
+  },
+
+  migrateToV2: async (workbookId: WorkbookId): Promise<{ success: boolean }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ success: boolean }>(`/scratch-git/${workbookId}/migrate-to-v2`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to migrate workbook to v2');
       throw error;
     }
   },

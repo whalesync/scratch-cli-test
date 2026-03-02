@@ -77,6 +77,7 @@ export class JobHandlerService {
           this.workbookEventService,
           this.dataFolderPublishingService,
           this.bullEnqueuerService,
+          this.scratchGitService,
         ) as JobHandler<JobDefinition>;
 
       case 'sync-data-folders':
