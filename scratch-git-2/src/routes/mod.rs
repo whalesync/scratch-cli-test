@@ -5,3 +5,4 @@ pub mod manage;
 pub mod read;
 pub mod system;
 pub mod write;
+pub mod smart_http;

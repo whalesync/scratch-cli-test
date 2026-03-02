@@ -156,9 +156,18 @@ async fn main() {
         )
         .layer(CorsLayer::permissive())
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
+        .with_state(state.clone());
+
+    let git_app = Router::new()
+        .route("/", get(routes::system::root))
+        .route("/health", get(routes::system::health))
+        .route("/{*repo_id_and_path}", axum::routing::any(routes::smart_http::git_backend))
+        .layer(CorsLayer::permissive())
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.port);
+    let git_addr = format!("0.0.0.0:{}", config.git_backend_port);
+    
     tracing::info!(
         "ScratchGit API listening at http://localhost:{} (build: {}, repos: {}, env: {})",
         config.port,
@@ -166,7 +175,22 @@ async fn main() {
         config.repos_dir.display(),
         std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string()),
     );
+    tracing::info!(
+        "ScratchGit Git Backend listening at http://localhost:{} (build: {}, repos: {}, env: {})",
+        config.git_backend_port,
+        config.build_version,
+        config.repos_dir.display(),
+        std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string()),
+    );
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let git_listener = tokio::net::TcpListener::bind(&git_addr).await.unwrap();
+
+    let api_server = axum::serve(listener, app);
+    let git_server = axum::serve(git_listener, git_app);
+
+    tokio::select! {
+        _ = api_server => {},
+        _ = git_server => {},
+    }
 }

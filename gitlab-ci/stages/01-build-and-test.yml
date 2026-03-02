@@ -27,10 +27,10 @@ include:
     - scratch-cli/**/*
     - gitlab-ci/stages/01-build-and-test.yml
   scratch-git:
-    - scratch-git/**/*
+    - scratch-git-2/**/*
     - gitlab-ci/stages/01-build-and-test.yml
   scratch-git-docker:
-    - scratch-git/Dockerfile
+    - scratch-git-2/Dockerfile
     - gitlab-ci/stages/01-build-and-test.yml
     - gitlab-ci/stages/03-push-images.yml
   dummy:
@@ -39,7 +39,6 @@ include:
     - gitlab-ci/**/*
     - .vscode/**/*
     - experimental/**/*
-    - scratch-git-2-http-backend/**/*
     - scratch-git-2/**/*
     - "*"
     - docs/**/*
@@ -317,15 +316,14 @@ build and test scratch-git:
       - scratch-git/image.tar
     expire_in: 1 hour
   script:
-    - cd scratch-git
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
     - echo "Labelling this build as $BUILD_VERSION"
     - >
       docker build
       --build-arg BUILD_VERSION="${BUILD_VERSION}"
       -t spinner/spinner-scratch-git
-      -f Dockerfile .
-    - docker save spinner/spinner-scratch-git > image.tar
+      -f scratch-git-2/Dockerfile .
+    - docker save spinner/spinner-scratch-git > scratch-git/image.tar
 
 build scratch-git docker image:
   extends: .build-scratch-git-docker-image

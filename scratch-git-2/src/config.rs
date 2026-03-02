@@ -4,6 +4,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub port: u16,
+    pub git_backend_port: u16,
     pub repos_dir: PathBuf,
     pub repos_v2_dir: PathBuf,
     pub build_version: String,
@@ -15,6 +16,11 @@ impl Config {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(3100);
+
+        let git_backend_port = env::var("GIT_BACKEND_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3101);
 
         let repos_dir = env::var("GIT_REPOS_DIR")
             .map(PathBuf::from)
@@ -41,6 +47,7 @@ impl Config {
 
         Self {
             port,
+            git_backend_port,
             repos_dir,
             repos_v2_dir,
             build_version,
