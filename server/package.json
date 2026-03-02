@@ -19,7 +19,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
     "lint-fix": "eslint \"src/**/*.ts\" --fix",
     "lint-strict": "eslint \"src/**/*.ts\" --max-warnings=0",
     "test": "jest",

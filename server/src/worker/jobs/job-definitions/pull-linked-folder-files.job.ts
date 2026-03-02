@@ -393,7 +393,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           folderPath,
         )) as RepoFileRef[];
         const downloadedFilePaths = gitFiles.map((f) => f.path);
-        const filesToDelete = mainFiles.filter((f) => !downloadedFilePaths.includes(f.path)).map((f) => f.path);
+        const filesToDelete = mainFiles
+          .filter((f) => !f.name.startsWith('.')) // Exclude dotfiles (e.g. .schema.json) from deletion
+          .filter((f) => !downloadedFilePaths.includes(f.path))
+          .map((f) => f.path);
 
         if (filesToDelete.length > 0) {
           // Track deleted file paths

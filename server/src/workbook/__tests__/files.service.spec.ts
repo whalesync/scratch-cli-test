@@ -68,5 +68,18 @@ describe('FilesService', () => {
 
       await expect(service.listByFolderId(WORKBOOK_ID, FOLDER_ID, ACTOR)).rejects.toThrow(NotFoundException);
     });
+
+    it('includes dotfiles like .schema.json in the file list', async () => {
+      (scratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+        { name: 'record-1.json', path: 'my-folder/record-1.json', type: 'file' },
+        { name: '.schema.json', path: 'my-folder/.schema.json', type: 'file' },
+        { name: 'record-2.json', path: 'my-folder/record-2.json', type: 'file' },
+      ]);
+
+      const result = await service.listByFolderId(WORKBOOK_ID, FOLDER_ID, ACTOR);
+
+      expect(result.items).toHaveLength(3);
+      expect(result.items.map((f) => f.name)).toEqual(['record-1.json', '.schema.json', 'record-2.json']);
+    });
   });
 });

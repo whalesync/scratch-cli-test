@@ -387,7 +387,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const previewFileOptions = useMemo(
     () =>
       previewFiles
-        .filter((f) => f.type === 'file' && f.path.endsWith('.json'))
+        .filter((f) => f.type === 'file' && f.path.endsWith('.json') && !f.name?.startsWith('.'))
         .map((f) => ({ value: f.path, label: f.name || f.path })),
     [previewFiles],
   );

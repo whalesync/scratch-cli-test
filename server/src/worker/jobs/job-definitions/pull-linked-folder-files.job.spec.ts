@@ -603,6 +603,45 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       );
     });
 
+    it('should not delete dotfiles like .schema.json during pull cleanup', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+        await callback({
+          files: [{ id: 'rec1', slug: 'post-1' }],
+          connectorProgress: {},
+        });
+      });
+
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
+      // Git has a regular file, a dotfile (.schema.json), and a stale file
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+        { path: 'test-folder/post-1.json', name: 'post-1.json', type: 'file' },
+        { path: 'test-folder/.schema.json', name: '.schema.json', type: 'file' },
+        { path: 'test-folder/stale-post.json', name: 'stale-post.json', type: 'file' },
+      ]);
+      (mockScratchGitService.deleteFilesFromBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // Should delete the stale file but NOT the .schema.json dotfile
+      expect(mockScratchGitService.deleteFilesFromBranch).toHaveBeenCalledWith(
+        'wkb_123',
+        MAIN_BRANCH,
+        ['test-folder/stale-post.json'],
+        expect.stringContaining('Remove'),
+      );
+    });
+
     it('should handle missing connector account', async () => {
       const dataFolder = createMockDataFolder();
       const params = createMockParams();

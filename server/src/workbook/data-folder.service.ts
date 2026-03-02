@@ -773,6 +773,8 @@ export class DataFolderService {
       );
 
       for (const file of page.files) {
+        // Skip dotfiles (e.g. .schema.json) — they are metadata, not data records
+        if (file.name.startsWith('.')) continue;
         allFiles.push({
           folderId,
           path: `${folderPath}/${file.name}`,
@@ -813,11 +815,13 @@ export class DataFolderService {
       cursor,
     );
 
-    const files = page.files.map((file) => ({
-      folderId,
-      path: `${folderPath}/${file.name}`,
-      content: file.content,
-    }));
+    const files = page.files
+      .filter((file) => !file.name.startsWith('.')) // Skip dotfiles (e.g. .schema.json)
+      .map((file) => ({
+        folderId,
+        path: `${folderPath}/${file.name}`,
+        content: file.content,
+      }));
 
     return { files, nextCursor: page.nextCursor };
   }
