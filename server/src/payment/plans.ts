@@ -65,7 +65,7 @@ export const FREE_PLAN: Plan = {
     creditLimit: 5,
     creditReset: 'monthly',
     allowPersonalKeys: false,
-    dataSourcePerServiceLimit: 1,
+    dataSourcePerServiceLimit: 0,
   },
 };
 
@@ -88,7 +88,7 @@ export const PRO_PLAN: Plan = {
     creditLimit: 10,
     creditReset: 'monthly',
     allowPersonalKeys: true,
-    dataSourcePerServiceLimit: 1,
+    dataSourcePerServiceLimit: 0,
   },
 };
 
