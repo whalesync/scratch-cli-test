@@ -3,6 +3,7 @@ import { ValuePointer } from '@sinclair/typebox/value';
 import { isArray } from 'lodash';
 import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
+import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
 /**
@@ -191,8 +192,15 @@ export function buildWordPressJsonTableSpec(
   // Get schema properties from the endpoint OPTIONS response
   const schemaProps = optionsResponse.schema?.properties || {};
 
+  // Detect post type: if status field exists with enum values, this is a post type
+  const statusField = schemaProps.status;
+  const isPostType = statusField?.enum !== undefined && statusField.enum.length > 0;
+
   for (const [fieldId, fieldDef] of Object.entries(schemaProps)) {
     if (!fieldDef || !('type' in fieldDef)) continue;
+
+    // Skip dynamic status field for post types — it will be injected as a static field below
+    if (isPostType && fieldId === WORDPRESS_STATUS_COLUMN_ID) continue;
 
     const fieldSchema = wordpressFieldToJsonSchema(fieldId, fieldDef, false, foreignKeyColumnIds);
 
@@ -212,6 +220,16 @@ export function buildWordPressJsonTableSpec(
     if (fieldId === 'content' && !mainContentColumnRemoteId) {
       mainContentColumnRemoteId = [tableId, fieldId];
     }
+  }
+
+  // Inject static status field for post types using enum values from the OPTIONS response
+  if (isPostType && statusField?.enum) {
+    const statusSchema = Type.Union(
+      statusField.enum.map((val) => Type.Literal(val)),
+      { description: 'Publication status' },
+    );
+    statusSchema[CONNECTOR_DATA_TYPE] = WordPressDataType.ENUM;
+    properties[WORDPRESS_STATUS_COLUMN_ID] = Type.Optional(statusSchema);
   }
 
   // Handle ACF (Advanced Custom Fields) if present

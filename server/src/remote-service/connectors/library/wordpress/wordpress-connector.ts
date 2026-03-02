@@ -1,3 +1,4 @@
+import { TObject } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import TurndownService from 'turndown';
@@ -10,6 +11,7 @@ import {
   WORDPRESS_ORG_V2_PATH,
   WORDPRESS_POLLING_PAGE_SIZE,
   WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS,
+  WORDPRESS_STATUS_COLUMN_ID,
 } from './wordpress-constants';
 import { WordPressHttpClient } from './wordpress-http-client';
 import { buildWordPressJsonTableSpec } from './wordpress-json-schema';
@@ -70,6 +72,16 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     const taxonomyForeignKeys = buildTaxonomyForeignKeys(taxonomiesResponse);
     const foreignKeyColumnIds = [...WORDPRESS_STATIC_FOREIGN_KEY_COLUMN_IDS, ...taxonomyForeignKeys];
     return buildWordPressJsonTableSpec(id, optionsResponse, foreignKeyColumnIds);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async getNewFile(tableSpec: BaseJsonTableSpec): Promise<Record<string, unknown>> {
+    const schema = tableSpec.schema as TObject;
+    const hasStatus = schema.properties?.[WORDPRESS_STATUS_COLUMN_ID] !== undefined;
+    if (hasStatus) {
+      return { status: 'draft' };
+    }
+    return {};
   }
 
   async pullRecordFiles(

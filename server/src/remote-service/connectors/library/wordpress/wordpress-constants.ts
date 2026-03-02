@@ -1,6 +1,7 @@
 // WordPress connector constants
 
 export const WORDPRESS_POLLING_PAGE_SIZE = 100;
+export const WORDPRESS_STATUS_COLUMN_ID = 'status';
 
 // WordPress batch API supports up to 25 requests per batch (default server limit)
 export const WORDPRESS_BATCH_SIZE = 25;
