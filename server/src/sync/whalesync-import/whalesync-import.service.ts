@@ -3,6 +3,7 @@ import type {
   DataFolder,
   SaveSyncBody,
   TableMapping,
+  WhalesyncExportColumn,
   WhalesyncExportColumnPair,
   WhalesyncExportSource,
   WhalesyncExportTable,
@@ -10,7 +11,7 @@ import type {
   WhalesyncSyncExport,
 } from '@spinner/shared-types';
 import { WHALESYNC_TO_SCRATCH_SERVICE } from '@spinner/shared-types';
-import { extractSchemaFields } from 'src/utils/schema-helpers';
+import { extractSchemaFields, type SchemaField } from 'src/utils/schema-helpers';
 import type { Caveat, UnmatchedFolder, WhalesyncImportResult } from './whalesync-import.types';
 
 type Side = 'left' | 'right';
@@ -235,9 +236,8 @@ function resolveColumnMappings(
   const sourceFields = extractSchemaFields(sourceSchema as Parameters<typeof extractSchemaFields>[0]);
   const destFields = extractSchemaFields(destSchema as Parameters<typeof extractSchemaFields>[0]);
 
-  // Build name→path lookup: last path segment → full path (first match)
-  const sourceFieldsByName = buildFieldNameLookup(sourceFields.map((f) => f.path));
-  const destFieldsByName = buildFieldNameLookup(destFields.map((f) => f.path));
+  const sourceFieldLookup = buildFieldLookup(sourceFields);
+  const destFieldLookup = buildFieldLookup(destFields);
 
   const columnMappings: ColumnMapping[] = [];
 
@@ -260,8 +260,8 @@ function resolveColumnMappings(
 
     if (!sourceWsCol || !destWsCol) continue;
 
-    const sourcePath = sourceFieldsByName.get(sourceWsCol.name);
-    const destPath = destFieldsByName.get(destWsCol.name);
+    const sourcePath = resolveFieldPath(sourceWsCol, sourceFieldLookup);
+    const destPath = resolveFieldPath(destWsCol, destFieldLookup);
 
     if (!sourcePath) {
       caveats.push({
@@ -295,17 +295,40 @@ function columnPairMatchesDirection(colPair: WhalesyncExportColumnPair, sourceDi
   return colPair.syncDirection === 'both' || colPair.syncDirection === sourceDirection;
 }
 
-/** Build a lookup from last-segment field name to full dot-notation path (first match wins). */
-function buildFieldNameLookup(paths: string[]): Map<string, string> {
-  const lookup = new Map<string, string>();
-  for (const path of paths) {
-    const segments = path.split('.');
+interface FieldLookup {
+  byRemoteId: Map<string, string>;
+  bySlug: Map<string, string>;
+  byDescription: Map<string, string>;
+}
+
+/** Build lookups for matching Whalesync columns to schema fields by remote ID, slug, or description. */
+function buildFieldLookup(fields: SchemaField[]): FieldLookup {
+  const byRemoteId = new Map<string, string>();
+  const bySlug = new Map<string, string>();
+  const byDescription = new Map<string, string>();
+
+  for (const field of fields) {
+    if (field.remoteFieldId && !byRemoteId.has(field.remoteFieldId)) {
+      byRemoteId.set(field.remoteFieldId, field.path);
+    }
+
+    const segments = field.path.split('.');
     const lastSegment = segments[segments.length - 1];
-    if (!lookup.has(lastSegment)) {
-      lookup.set(lastSegment, path);
+    if (!bySlug.has(lastSegment)) {
+      bySlug.set(lastSegment, field.path);
+    }
+
+    if (field.description && !byDescription.has(field.description)) {
+      byDescription.set(field.description, field.path);
     }
   }
-  return lookup;
+
+  return { byRemoteId, bySlug, byDescription };
+}
+
+/** Resolve a Whalesync column to a schema field path using cascading lookup: remote ID → slug → display name. */
+function resolveFieldPath(wsCol: WhalesyncExportColumn, lookup: FieldLookup): string | undefined {
+  return lookup.byRemoteId.get(wsCol.remoteId) ?? lookup.bySlug.get(wsCol.name) ?? lookup.byDescription.get(wsCol.name);
 }
 
 /** Generate sync-level caveats (continuous mode, etc.). */

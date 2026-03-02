@@ -153,6 +153,46 @@ export function makeWebflowSchema(fieldNames: string[]): Record<string, unknown>
   };
 }
 
+interface SchemaFieldDef {
+  name: string;
+  remoteFieldId?: string;
+  description?: string;
+}
+
+/** Build an Airtable-style schema with optional x-scratch-remote-field-id and description annotations. */
+export function makeAnnotatedAirtableSchema(fields: SchemaFieldDef[]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const f of fields) {
+    const prop: Record<string, unknown> = { type: 'string' };
+    if (f.remoteFieldId) prop['x-scratch-remote-field-id'] = f.remoteFieldId;
+    if (f.description) prop.description = f.description;
+    properties[f.name] = prop;
+  }
+  return {
+    type: 'object',
+    properties: {
+      fields: { type: 'object', properties },
+    },
+  };
+}
+
+/** Build a Webflow-style schema with optional x-scratch-remote-field-id and description annotations. */
+export function makeAnnotatedWebflowSchema(fields: SchemaFieldDef[]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const f of fields) {
+    const prop: Record<string, unknown> = { type: 'string' };
+    if (f.remoteFieldId) prop['x-scratch-remote-field-id'] = f.remoteFieldId;
+    if (f.description) prop.description = f.description;
+    properties[f.name] = prop;
+  }
+  return {
+    type: 'object',
+    properties: {
+      fieldData: { type: 'object', properties },
+    },
+  };
+}
+
 export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
   const id = nextId('dfd') as DataFolderId;
   return {

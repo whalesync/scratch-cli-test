@@ -3,6 +3,8 @@ import { Service } from '@spinner/shared-types';
 import { convertWhalesyncExport } from '../whalesync-import.service';
 import {
   makeAirtableSchema,
+  makeAnnotatedAirtableSchema,
+  makeAnnotatedWebflowSchema,
   makeDataFolder,
   makeWebflowSchema,
   makeWhalesyncColumn,
@@ -1100,6 +1102,165 @@ describe('convertWhalesyncExport', () => {
 
       const mergeCaveat = result.caveats.find((c) => c.message.includes('merge winner'));
       expect(mergeCaveat).toBeUndefined();
+    });
+  });
+
+  describe('column matching cascade', () => {
+    /** Helper to build a one-way left→right scenario with custom schemas and columns. */
+    function buildCascadeScenario(opts: {
+      leftCol: { name: string; remoteId: string };
+      rightCol: { name: string; remoteId: string };
+      leftSchema: Record<string, unknown>;
+      rightSchema: Record<string, unknown>;
+      leftService?: Service;
+      rightService?: Service;
+    }) {
+      const leftCol = makeWhalesyncColumn({ name: opts.leftCol.name, remoteId: opts.leftCol.remoteId });
+      const rightCol = makeWhalesyncColumn({
+        name: opts.rightCol.name,
+        remoteId: opts.rightCol.remoteId,
+        connectorType: 'webflow',
+      });
+
+      const leftTable = makeWhalesyncTable({ remoteId: 'tblPROD', columns: [leftCol] });
+      const rightTable = makeWhalesyncTable({ remoteId: 'col111', connectorType: 'webflow', columns: [rightCol] });
+
+      const wsExport = makeWhalesyncExport({
+        sources: {
+          left: makeWhalesyncSource({ connectorType: 'airtable', remoteBaseId: 'appAAA', tables: [leftTable] }),
+          right: makeWhalesyncSource({ connectorType: 'webflow', remoteBaseId: 'site111', tables: [rightTable] }),
+        },
+        tablePairs: [
+          makeWhalesyncTablePair({
+            leftTableId: leftTable.id,
+            rightTableId: rightTable.id,
+            syncDirection: 'left',
+            columnPairs: [
+              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+            ],
+          }),
+        ],
+      });
+
+      const leftFolder = makeDataFolder({
+        connectorService: opts.leftService ?? Service.AIRTABLE,
+        tableId: ['appAAA', 'tblPROD'],
+        schema: opts.leftSchema,
+      });
+      const rightFolder = makeDataFolder({
+        connectorService: opts.rightService ?? Service.WEBFLOW,
+        tableId: ['site111', 'col111'],
+        schema: opts.rightSchema,
+      });
+
+      return { wsExport, leftFolder, rightFolder };
+    }
+
+    it('matches by remote field ID even when names differ', () => {
+      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+        leftCol: { name: 'Renamed Title', remoteId: 'fldABC' },
+        rightCol: { name: 'Renamed Name', remoteId: 'wf_abc123' },
+        leftSchema: makeAnnotatedAirtableSchema([{ name: 'Title', remoteFieldId: 'fldABC' }]),
+        rightSchema: makeAnnotatedWebflowSchema([{ name: 'name', remoteFieldId: 'wf_abc123' }]),
+      });
+
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+
+      const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
+      expect(mappings).toHaveLength(1);
+      expect(mappings[0].sourceColumnId).toBe('fields.Title');
+      expect(mappings[0].destinationColumnId).toBe('fieldData.name');
+    });
+
+    it('falls back to slug when no remote field ID annotation exists', () => {
+      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+        leftCol: { name: 'Title', remoteId: 'fldABC' },
+        rightCol: { name: 'name', remoteId: 'wf_abc123' },
+        // Plain schemas without annotations — slug matching only
+        leftSchema: makeAirtableSchema(['Title']),
+        rightSchema: makeWebflowSchema(['name']),
+      });
+
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+
+      const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
+      expect(mappings).toHaveLength(1);
+      expect(mappings[0].sourceColumnId).toBe('fields.Title');
+      expect(mappings[0].destinationColumnId).toBe('fieldData.name');
+    });
+
+    it('falls back to description when slug does not match', () => {
+      // Webflow case: WS column name is "Adoption Price", schema key is "adoption-price"
+      // Slug match fails, but description "Adoption Price" matches
+      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+        leftCol: { name: 'Adoption Price', remoteId: 'fldABC' },
+        rightCol: { name: 'Adoption Price', remoteId: 'nomatch' },
+        leftSchema: makeAnnotatedAirtableSchema([{ name: 'Adoption Price', remoteFieldId: 'fldABC' }]),
+        rightSchema: makeAnnotatedWebflowSchema([{ name: 'adoption-price', description: 'Adoption Price' }]),
+      });
+
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+
+      const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
+      expect(mappings).toHaveLength(1);
+      expect(mappings[0].sourceColumnId).toBe('fields.Adoption Price');
+      expect(mappings[0].destinationColumnId).toBe('fieldData.adoption-price');
+    });
+
+    it('prefers remote ID over slug match', () => {
+      // WS column name is "FieldA" and remoteId is "fldB"
+      // Schema has FieldA (remoteId fldA) and FieldB (remoteId fldB)
+      // Should match FieldB by remote ID, not FieldA by name
+      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+        leftCol: { name: 'FieldA', remoteId: 'fldB' },
+        rightCol: { name: 'name', remoteId: 'wf_name' },
+        leftSchema: makeAnnotatedAirtableSchema([
+          { name: 'FieldA', remoteFieldId: 'fldA' },
+          { name: 'FieldB', remoteFieldId: 'fldB' },
+        ]),
+        rightSchema: makeAnnotatedWebflowSchema([{ name: 'name', remoteFieldId: 'wf_name' }]),
+      });
+
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+
+      const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
+      expect(mappings).toHaveLength(1);
+      // Matched FieldB by remote ID, not FieldA by name
+      expect(mappings[0].sourceColumnId).toBe('fields.FieldB');
+    });
+
+    it('skips column with caveat when no cascade level matches', () => {
+      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+        leftCol: { name: 'NoMatch', remoteId: 'fldNOPE' },
+        rightCol: { name: 'name', remoteId: 'wf_name' },
+        leftSchema: makeAnnotatedAirtableSchema([{ name: 'Title', remoteFieldId: 'fldTITLE', description: 'Title' }]),
+        rightSchema: makeAnnotatedWebflowSchema([{ name: 'name', remoteFieldId: 'wf_name' }]),
+      });
+
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+
+      expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
+
+      const caveat = result.caveats.find((c) => c.message.includes('NoMatch'));
+      expect(caveat).toBeDefined();
+      expect(caveat!.severity).toBe('warning');
+    });
+
+    it('matches both sides independently through different cascade levels', () => {
+      // Source matches by remote ID, destination matches by description
+      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+        leftCol: { name: 'Old Name', remoteId: 'fldABC' },
+        rightCol: { name: 'Adoption Price', remoteId: 'nomatch' },
+        leftSchema: makeAnnotatedAirtableSchema([{ name: 'Title', remoteFieldId: 'fldABC' }]),
+        rightSchema: makeAnnotatedWebflowSchema([{ name: 'adoption-price', description: 'Adoption Price' }]),
+      });
+
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+
+      const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
+      expect(mappings).toHaveLength(1);
+      expect(mappings[0].sourceColumnId).toBe('fields.Title');
+      expect(mappings[0].destinationColumnId).toBe('fieldData.adoption-price');
     });
   });
 });

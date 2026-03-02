@@ -545,7 +545,6 @@ function jobStatusBadgeColor(status: string): string {
   return 'gray';
 }
 
-
 function formatCount(count: number): string {
   if (count >= 10000) {
     return (count / 1000).toFixed(1) + 'K';

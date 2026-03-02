@@ -3,6 +3,7 @@ import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { progressApi } from '@/lib/api/progress';
 import { workbookApi } from '@/lib/api/workbook';
+import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import {
   Badge,
   Button,
@@ -38,7 +39,6 @@ import {
   Trash2Icon,
   XIcon,
 } from 'lucide-react';
-import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import { useCallback, useEffect, useState } from 'react';
 import { PlanEntriesModal } from './PlanEntriesModal';
 
@@ -59,7 +59,6 @@ function jobStatusBadgeColor(status: string): string {
   if (status === 'canceled') return 'grape';
   return 'gray';
 }
-
 
 function formatCount(count: number): string {
   if (count >= 10000) {

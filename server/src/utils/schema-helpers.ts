@@ -1,7 +1,12 @@
 import { TSchema } from '@sinclair/typebox';
 import { TransformerConfig } from '@spinner/shared-types';
 import type { ForeignKeyOptionSchema } from '../remote-service/connectors/json-schema';
-import { FOREIGN_KEY_OPTIONS, READONLY_FLAG, SUGGESTED_TRANSFORMER } from '../remote-service/connectors/json-schema';
+import {
+  FOREIGN_KEY_OPTIONS,
+  READONLY_FLAG,
+  REMOTE_FIELD_ID,
+  SUGGESTED_TRANSFORMER,
+} from '../remote-service/connectors/json-schema';
 
 /**
  * Extracts all possible dot-notation paths from a JSON Schema.
@@ -44,6 +49,8 @@ export function extractSchemaPaths(schema: TSchema, parentPath = ''): string[] {
 export interface SchemaField {
   path: string;
   type: string;
+  description?: string;
+  remoteFieldId?: string;
   suggestedTransformer?: TransformerConfig;
   readonly?: boolean;
   foreignKey?: { linkedTableId: string };
@@ -72,6 +79,9 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
   // Base Path (if meaningful)
   if (parentPath) {
     const field: SchemaField = { path: parentPath, type: resolveSchemaType(schema) };
+    if (schema.description) field.description = schema.description;
+    const remoteFieldId = schema[REMOTE_FIELD_ID] as string | undefined;
+    if (remoteFieldId) field.remoteFieldId = remoteFieldId;
     const suggested = schema[SUGGESTED_TRANSFORMER] as TransformerConfig | undefined;
     if (suggested) field.suggestedTransformer = suggested;
     if (schema[READONLY_FLAG] === true) field.readonly = true;
