@@ -252,7 +252,10 @@ function PreviewValueBox({
         }}
       >
         <Group justify="space-between" align="center" wrap="nowrap" gap={6}>
-          <Text fz="xs" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px`, flex: 1 }}>
+          <Text
+            fz="xs"
+            style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: `${LINE_HEIGHT}px`, flex: 1 }}
+          >
             {formatPreviewValue(sourceValue)}
           </Text>
           {sourceValue !== undefined && (
@@ -274,7 +277,11 @@ function PreviewValueBox({
         <Group justify="space-between" align="center" wrap="nowrap" gap={6}>
           <Group gap={6} wrap="nowrap" align="flex-start" style={{ flex: 1 }}>
             <CornerDownRight size={12} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0, marginTop: 3 }} />
-            <Text fz="xs" c="dimmed" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px` }}>
+            <Text
+              fz="xs"
+              c="dimmed"
+              style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: `${LINE_HEIGHT}px` }}
+            >
               {formatPreviewValue(transformedValue)}
             </Text>
           </Group>

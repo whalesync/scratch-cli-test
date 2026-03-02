@@ -19,6 +19,7 @@ export { createLookupTools } from './lookup-tools';
 import './implementations/airmark-to-html.transformer';
 import './implementations/auto-convert.transformer';
 import './implementations/html-to-airmark.transformer';
+import './implementations/jsonpath.transformer';
 import './implementations/lookup-field.transformer';
 import './implementations/notion-to-html.transformer';
 import './implementations/slugify.transformer';

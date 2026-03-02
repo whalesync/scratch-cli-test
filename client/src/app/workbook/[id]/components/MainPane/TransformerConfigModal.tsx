@@ -21,6 +21,7 @@ import type {
   AutoConvertOptions,
   DataFolder,
   DataFolderId,
+  JSONPathArrayHandling,
   SourceFkToDestFkOptions,
   TransformerConfig,
   TransformerType,
@@ -55,6 +56,8 @@ interface StepState {
   targetType: AutoConvertOptions['targetType'];
   onUnresolved: NonNullable<SourceFkToDestFkOptions['onUnresolved']>;
   outputType: NonNullable<SourceFkToDestFkOptions['outputType']>;
+  expression: string;
+  arrayHandling: JSONPathArrayHandling;
 }
 
 let stepIdCounter = 0;
@@ -73,6 +76,8 @@ function configToStepState(config: TransformerConfig): StepState {
     targetType: config.type === TransformerTypes.AutoConvert ? config.options.targetType : 'string',
     onUnresolved: config.type === TransformerTypes.SourceFkToDestFk ? (config.options.onUnresolved ?? 'fail') : 'fail',
     outputType: config.type === TransformerTypes.SourceFkToDestFk ? (config.options.outputType ?? 'array') : 'array',
+    expression: config.type === TransformerTypes.JSONPath ? config.options.expression : '',
+    arrayHandling: config.type === TransformerTypes.JSONPath ? (config.options.arrayHandling ?? 'first') : 'first',
   };
 }
 
@@ -87,6 +92,8 @@ function createEmptyStep(): StepState {
     targetType: 'string',
     onUnresolved: 'fail',
     outputType: 'array',
+    expression: '',
+    arrayHandling: 'first',
   };
 }
 
@@ -114,6 +121,14 @@ function stepStateToConfig(step: StepState): TransformerConfig | null {
           referencedFieldPath: step.referencedFieldPath,
         },
       };
+    case TransformerTypes.JSONPath:
+      return {
+        type: step.type,
+        options: {
+          expression: step.expression,
+          ...(step.arrayHandling !== 'first' ? { arrayHandling: step.arrayHandling } : {}),
+        },
+      };
     default:
       return { type: step.type } as TransformerConfig;
   }
@@ -124,6 +139,7 @@ function isStepValid(step: StepState): boolean {
   if (step.type === TransformerTypes.SourceFkToDestFk && !step.referencedDataFolderId) return false;
   if (step.type === TransformerTypes.LookupField && (!step.referencedDataFolderId || !step.referencedFieldPath))
     return false;
+  if (step.type === TransformerTypes.JSONPath && !step.expression.trim()) return false;
   return true;
 }
 
@@ -299,6 +315,30 @@ export function TransformerConfigModal({
                   placeholder="e.g. name"
                   value={step.referencedFieldPath}
                   onChange={(e) => updateStep(index, { referencedFieldPath: e.currentTarget.value })}
+                />
+              </>
+            )}
+
+            {step.type === TransformerTypes.JSONPath && (
+              <>
+                <TextInput
+                  label="JSONPath Expression"
+                  description="JSONPath expression (e.g. $.store.book[0].title)"
+                  placeholder="$.path.to.value"
+                  value={step.expression}
+                  onChange={(e) => updateStep(index, { expression: e.currentTarget.value })}
+                />
+                <Select
+                  label="Multiple results"
+                  description="How to handle when the expression matches multiple values"
+                  data={[
+                    { value: 'first', label: 'First value' },
+                    { value: 'array', label: 'Array' },
+                    { value: 'join_space', label: 'Join with spaces' },
+                    { value: 'join_comma', label: 'Join with commas' },
+                  ]}
+                  value={step.arrayHandling}
+                  onChange={(val) => updateStep(index, { arrayHandling: (val as JSONPathArrayHandling) || 'first' })}
                 />
               </>
             )}

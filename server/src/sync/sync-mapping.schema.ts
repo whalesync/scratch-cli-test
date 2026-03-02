@@ -32,6 +32,13 @@ const lookupFieldOptionsSchema = z
   })
   .strict();
 
+const jsonpathOptionsSchema = z
+  .object({
+    expression: z.string().min(1),
+    arrayHandling: z.enum(['first', 'array', 'join_space', 'join_comma']).optional(),
+  })
+  .strict();
+
 const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.AutoConvert), options: autoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
@@ -42,6 +49,7 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.HtmlToAirmark), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.WebflowOption), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.Slugify), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.JSONPath), options: jsonpathOptionsSchema }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

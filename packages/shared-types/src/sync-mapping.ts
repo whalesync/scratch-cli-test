@@ -4,6 +4,7 @@ import { DataFolderId } from './ids';
 // Sync Mapping Types
 // ============================================================================
 
+// Make sure to keep the Zod schema up to date with this in @server/src/sync/sync-mapping.schema.ts
 export interface SyncMapping {
   /** Version number for future migrations */
   version: 1;
@@ -60,6 +61,7 @@ export const TransformerTypes = {
   HtmlToAirmark: 'html_to_airmark',
   WebflowOption: 'webflow_option',
   Slugify: 'slugify',
+  JSONPath: 'jsonpath',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -79,6 +81,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.HtmlToAirmark, label: 'HTML to AirMark' },
   { type: TransformerTypes.WebflowOption, label: 'Webflow Option' },
   { type: TransformerTypes.Slugify, label: 'Slugify' },
+  { type: TransformerTypes.JSONPath, label: 'JSONPath' },
 ];
 
 /** Get the display label for a transformer type */
@@ -118,12 +121,24 @@ export interface LookupFieldOptions {
   referencedFieldPath: string;
 }
 
+/** How to handle multiple results from a JSONPath expression */
+export type JSONPathArrayHandling = 'first' | 'array' | 'join_space' | 'join_comma';
+
+/** Options for the jsonpath transformer */
+export interface JSONPathOptions {
+  /** RFC 9535 JSONPath expression to evaluate against the source value */
+  expression: string;
+  /** How to handle multiple matched values. Defaults to 'first'. */
+  arrayHandling?: JSONPathArrayHandling;
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
   | StringToNumberOptions
   | SourceFkToDestFkOptions
-  | LookupFieldOptions;
+  | LookupFieldOptions
+  | JSONPathOptions;
 
 /** Configuration for a field transformer with strictly typed options */
 export type TransformerConfig =
@@ -135,4 +150,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.AirmarkToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.HtmlToAirmark; options?: Record<string, never> }
   | { type: typeof TransformerTypes.WebflowOption; options?: Record<string, never> }
-  | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> };
+  | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions };
