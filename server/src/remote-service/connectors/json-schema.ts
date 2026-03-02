@@ -11,6 +11,9 @@ export const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 // An object describing a foreign key configuration for a field.
 export const FOREIGN_KEY_OPTIONS = 'x-scratch-foreign-key';
 
+// The remote field ID from the external service (e.g. Airtable fldXXX, Webflow hex hash, Notion property ID).
+export const REMOTE_FIELD_ID = 'x-scratch-remote-field-id';
+
 // The suggested transformer to auto-apply when this field is selected as a source in the sync editor.
 export const SUGGESTED_TRANSFORMER = 'x-scratch-suggested-transformer';
 

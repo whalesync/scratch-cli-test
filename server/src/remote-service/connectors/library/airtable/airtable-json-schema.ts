@@ -1,6 +1,12 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
+import {
+  CONNECTOR_DATA_TYPE,
+  FOREIGN_KEY_OPTIONS,
+  ForeignKeyOptionSchema,
+  READONLY_FLAG,
+  REMOTE_FIELD_ID,
+} from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
 
@@ -209,6 +215,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
 
   schema[CONNECTOR_DATA_TYPE] = field.type;
   schema[READONLY_FLAG] = isAirtableColumnReadonly(field) ? true : undefined;
+  schema[REMOTE_FIELD_ID] = field.id;
   return schema;
 }
 

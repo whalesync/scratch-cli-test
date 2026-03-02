@@ -2,7 +2,13 @@ import { DatabaseObjectResponse } from '@notionhq/client';
 import { Type, type TSchema } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
-import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG, SUGGESTED_TRANSFORMER } from '../../json-schema';
+import {
+  CONNECTOR_DATA_TYPE,
+  FOREIGN_KEY_OPTIONS,
+  READONLY_FLAG,
+  REMOTE_FIELD_ID,
+  SUGGESTED_TRANSFORMER,
+} from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 
 /**
@@ -346,5 +352,6 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
 
   schema[CONNECTOR_DATA_TYPE] = property.type;
   schema[READONLY_FLAG] = NOTION_READ_ONLY_PROPERTY_TYPES.has(property.type) ? true : undefined;
+  schema[REMOTE_FIELD_ID] = property.id;
   return schema;
 }

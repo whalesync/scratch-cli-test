@@ -8,6 +8,7 @@ import {
   FOREIGN_KEY_OPTIONS,
   ForeignKeyOptionSchema,
   READONLY_FLAG,
+  REMOTE_FIELD_ID,
   SUGGESTED_TRANSFORMER,
 } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
@@ -130,6 +131,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
 
   schema[CONNECTOR_DATA_TYPE] = field.type;
   schema[READONLY_FLAG] = field.isEditable === false ? true : undefined;
+  schema[REMOTE_FIELD_ID] = field.id;
   return schema;
 }
 
