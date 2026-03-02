@@ -24,7 +24,7 @@ export class RepoReadService extends BaseRepoService {
           if (!folderPath && filepath.includes('/')) return; // Root children only
 
           const relativePath = folderPath ? filepath.slice(folderPath.length + 1) : filepath;
-          if (relativePath === '' || relativePath.startsWith('.')) return;
+          if (relativePath === '' || relativePath === '.') return;
 
           const type = await entry.type();
           if (type === 'blob') files.push({ name: relativePath, path: filepath, type: 'file' });

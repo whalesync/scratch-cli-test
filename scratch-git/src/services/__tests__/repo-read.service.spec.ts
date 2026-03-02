@@ -104,7 +104,7 @@ describe('list', () => {
     expect(files).toEqual([{ name: 'child.md', path: 'dir/child.md', type: 'file' }]);
   });
 
-  it('skips dotfiles and dotfolders', async () => {
+  it('includes dotfiles and dotfolders', async () => {
     const writer = new RepoWriteService(repoId);
     await writer.commitFiles(
       MAIN_BRANCH,
@@ -117,7 +117,25 @@ describe('list', () => {
 
     const reader = new RepoReadService(repoId);
     const files = await reader.list(MAIN_BRANCH, '');
-    expect(files.map((f) => f.name)).toEqual(['visible.md']);
+    const names = files.map((f) => f.name).sort();
+    expect(names).toEqual(['.hidden', 'visible.md']);
+  });
+
+  it('includes dotfiles in subfolders', async () => {
+    const writer = new RepoWriteService(repoId);
+    await writer.commitFiles(
+      MAIN_BRANCH,
+      [
+        { path: 'dir/.schema.json', content: '{}' },
+        { path: 'dir/file.md', content: 'x' },
+      ],
+      'add files',
+    );
+
+    const reader = new RepoReadService(repoId);
+    const files = await reader.list(MAIN_BRANCH, 'dir');
+    const names = files.map((f) => f.name).sort();
+    expect(names).toEqual(['.schema.json', 'file.md']);
   });
 });
 

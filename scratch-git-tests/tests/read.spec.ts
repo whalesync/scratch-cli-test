@@ -56,7 +56,7 @@ describe('Repo Read', () => {
       expect(files[0].type).toBe('directory');
     });
 
-    it('should exclude dotfiles and dot-directories', async () => {
+    it('should include dotfiles and dot-directories', async () => {
       await client.commitFiles(
         repoId,
         [file('.hidden', 'h'), file('.dotdir/f.md', 'f'), file('visible.md', 'v')],
@@ -65,8 +65,8 @@ describe('Repo Read', () => {
 
       const files = await client.listFiles(repoId);
       const names = files.map((f) => f.name);
-      expect(names).not.toContain('.hidden');
-      expect(names).not.toContain('.dotdir');
+      expect(names).toContain('.hidden');
+      expect(names).toContain('.dotdir');
       expect(names).toContain('visible.md');
     });
 

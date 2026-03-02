@@ -42,7 +42,6 @@ pub async fn list(
 
             let files: Vec<_> = entries
                 .into_iter()
-                .filter(|(name, _, _)| !name.starts_with('.'))
                 .map(|(name, _oid, is_tree)| {
                     let path = if folder.is_empty() {
                         name.clone()

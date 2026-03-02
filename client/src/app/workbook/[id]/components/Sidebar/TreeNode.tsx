@@ -42,6 +42,8 @@ import {
   CloudCogIcon,
   DownloadIcon,
   Edit2Icon,
+  EyeIcon,
+  EyeOffIcon,
   FileCodeIcon,
   FileJsonIcon,
   FilePlusIcon,
@@ -581,6 +583,8 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const pathname = usePathname();
   const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
+  const hiddenFileFolders = useNewWorkbookUIStore((state) => state.hiddenFileFolders);
+  const toggleHiddenFiles = useNewWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { pullFolders } = useActiveWorkbook();
 
   const nodeId = `table-${folder.id}`;
@@ -596,7 +600,12 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const urlFolderPath = `/workbook/${workbookId}/${routeBase}/${encodedFolderPath}`;
   const isSelected = pathname === urlFolderPath;
 
-  const { files, isLoading, refreshFiles } = useFolderFileList(workbookId, folder.id);
+  const showHidden = hiddenFileFolders.has(folder.id);
+  const { files: allFiles, isLoading, refreshFiles } = useFolderFileList(workbookId, folder.id);
+  const files = useMemo(
+    () => (showHidden ? allFiles : allFiles.filter((f) => !f.name.startsWith('.'))),
+    [allFiles, showHidden],
+  );
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -677,6 +686,13 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleThreeDotsClick = (e: MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setContextMenu({ x: rect.right, y: rect.bottom });
   };
 
   // Chevron click: just toggle expand/collapse
@@ -765,6 +781,28 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
 
           {/* Active jobs badge */}
           {folder.lock && <ActiveDataFolderJobIndicator folder={folder} />}
+
+          {/* Three dots menu */}
+          {mode === 'files' && (
+            <Box
+              onClick={handleThreeDotsClick}
+              style={{
+                padding: 2,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                opacity: 0.5,
+              }}
+              onMouseOver={(e) => {
+                (e.currentTarget as HTMLElement).style.opacity = '1';
+              }}
+              onMouseOut={(e) => {
+                (e.currentTarget as HTMLElement).style.opacity = '0.5';
+              }}
+            >
+              <StyledLucideIcon Icon={MoreHorizontalIcon} size="sm" c="var(--fg-secondary)" />
+            </Box>
+          )}
         </Group>
       </UnstyledButton>
 
@@ -830,6 +868,14 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
               icon: FilePlusIcon,
               onClick: () => {
                 openNewFileModal();
+                setContextMenu(null);
+              },
+            },
+            {
+              label: showHidden ? 'Hide hidden files' : 'Show hidden files',
+              icon: showHidden ? EyeOffIcon : EyeIcon,
+              onClick: () => {
+                toggleHiddenFiles(folder.id);
                 setContextMenu(null);
               },
             },
@@ -915,6 +961,8 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
   const isDirty = file.status === 'modified' || file.status === 'added' || file.status === 'deleted';
   const isDeleted = file.status === 'deleted';
 
+  const isHiddenFile = file.name.startsWith('.');
+
   // Text color: always primary (the dot indicator is enough)
   const textColor = isDeleted ? 'var(--fg-secondary)' : 'var(--fg-primary)';
 
@@ -961,12 +1009,13 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
     <>
       <UnstyledButton
         onClick={handleFileClick}
-        px="sm"
         py={4}
         onContextMenu={mode === 'files' ? handleContextMenu : undefined}
         style={{
           width: `calc(100% - ${INDENT_PX}px)`,
           marginLeft: INDENT_PX,
+          paddingLeft: 'var(--mantine-spacing-sm)',
+          paddingRight: 0,
           backgroundColor: isSelected ? 'var(--bg-selected)' : 'transparent',
           borderLeft: isSelected ? '3px solid var(--mantine-primary-color-filled)' : '3px solid transparent',
         }}
@@ -1006,7 +1055,7 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
             {isDeleted ? '×' : file.status === 'added' ? '+' : isDirty ? '•' : ''}
           </Box>
 
-          <TextMono12Regular c={textColor} truncate style={{ flex: 1 }}>
+          <TextMono12Regular c={textColor} truncate style={{ flex: 1, opacity: isHiddenFile ? 0.5 : 1 }}>
             {file.name}
           </TextMono12Regular>
 
@@ -1039,10 +1088,10 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
         onClose={() => setContextMenu(null)}
         position={contextMenu ?? { x: 0, y: 0 }}
         items={[
-          ...(showSecretButton
+          ...(showSecretButton && !isHiddenFile
             ? [{ label: 'Test Transformer', icon: FlaskRoundIcon, onClick: openTestTransformer }]
             : []),
-          ...(linkedFolderId
+          ...(linkedFolderId && !isHiddenFile
             ? [{ label: 'Refresh from source', icon: RefreshCwIcon, onClick: () => void handleRefreshFromSource() }]
             : []),
           {
@@ -1050,9 +1099,13 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
             icon: RouteIcon,
             onClick: () => void navigator.clipboard.writeText(`/${filePath}`),
           },
-          { type: 'divider' },
-          { label: 'Rename', icon: Edit2Icon, onClick: openRenameFile },
-          { label: 'Delete', icon: Trash2Icon, onClick: openRemoveFile, delete: true },
+          ...(!isHiddenFile
+            ? [
+                { type: 'divider' as const },
+                { label: 'Rename', icon: Edit2Icon, onClick: openRenameFile },
+                { label: 'Delete', icon: Trash2Icon, onClick: openRemoveFile, delete: true },
+              ]
+            : []),
         ]}
       />
 

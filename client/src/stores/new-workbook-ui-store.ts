@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware';
 export interface NewWorkbookUIState {
   // Selection state is URL-driven (from route params), not stored here
   expandedNodes: Set<string>;
+  hiddenFileFolders: Set<string>;
   sidebarWidth: number;
   tableFilters: Record<string, string>; // folderId -> filter text
 }
@@ -14,6 +15,7 @@ type Actions = {
   collapseNode: (nodeId: string) => void;
   expandAll: (nodeIds: string[]) => void;
   collapseAll: () => void;
+  toggleHiddenFiles: (folderId: string) => void;
   setSidebarWidth: (width: number) => void;
   setTableFilter: (folderId: string, filter: string) => void;
   clearTableFilter: (folderId: string) => void;
@@ -24,6 +26,7 @@ type NewWorkbookUIStore = NewWorkbookUIState & Actions;
 
 const INITIAL_STATE: NewWorkbookUIState = {
   expandedNodes: new Set<string>(),
+  hiddenFileFolders: new Set<string>(),
   sidebarWidth: 320,
   tableFilters: {},
 };
@@ -66,6 +69,17 @@ export const useNewWorkbookUIStore = create<NewWorkbookUIStore>()(
         set({ expandedNodes: new Set() });
       },
 
+      toggleHiddenFiles: (folderId: string) => {
+        const { hiddenFileFolders } = get();
+        const newSet = new Set(hiddenFileFolders);
+        if (newSet.has(folderId)) {
+          newSet.delete(folderId);
+        } else {
+          newSet.add(folderId);
+        }
+        set({ hiddenFileFolders: newSet });
+      },
+
       setSidebarWidth: (width: number) => {
         // Clamp between 220 and 500
         const clampedWidth = Math.min(500, Math.max(220, width));
@@ -101,6 +115,7 @@ export const useNewWorkbookUIStore = create<NewWorkbookUIStore>()(
             state: {
               ...parsed.state,
               expandedNodes: new Set(parsed.state.expandedNodes || []),
+              hiddenFileFolders: new Set(parsed.state.hiddenFileFolders || []),
             },
           };
         },
@@ -110,6 +125,7 @@ export const useNewWorkbookUIStore = create<NewWorkbookUIStore>()(
             state: {
               ...value.state,
               expandedNodes: Array.from(value.state.expandedNodes || []),
+              hiddenFileFolders: Array.from(value.state.hiddenFileFolders || []),
             },
           };
           localStorage.setItem(name, JSON.stringify(toStore));

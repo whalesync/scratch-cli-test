@@ -3,6 +3,7 @@
 import { Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useFileByPath } from '@/hooks/use-file-path';
 import { json } from '@codemirror/lang-json';
+import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { Badge, Box, Button, Group, Stack, useMantineColorScheme } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
@@ -44,12 +45,21 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
     setHasChanges(false);
   }, [filePath]);
 
+  // Extract filename from path
+  const fileName = useMemo(() => {
+    const parts = filePath.split('/');
+    return parts[parts.length - 1] || filePath;
+  }, [filePath]);
+
+  const isHiddenFile = fileName.startsWith('.');
+
   const handleContentChange = useCallback(
     (newContent: string) => {
+      if (isHiddenFile) return;
       setContent(newContent);
       setHasChanges(newContent !== savedContent);
     },
-    [savedContent],
+    [savedContent, isHiddenFile],
   );
 
   const handleSave = useCallback(async () => {
@@ -72,23 +82,21 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        handleSave();
+        if (!isHiddenFile) handleSave();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleSave]);
+  }, [handleSave, isHiddenFile]);
 
   const extensions = useMemo(() => {
-    return [json(), EditorView.lineWrapping];
-  }, []);
-
-  // Extract filename from path
-  const fileName = useMemo(() => {
-    const parts = filePath.split('/');
-    return parts[parts.length - 1] || filePath;
-  }, [filePath]);
+    const exts = [json(), EditorView.lineWrapping];
+    if (isHiddenFile) {
+      exts.push(EditorView.editable.of(false), EditorState.readOnly.of(true));
+    }
+    return exts;
+  }, [isHiddenFile]);
 
   // Determine if file is modified (check dirty flag from endpoint)
   const isModified = fileResponse?.file?.ref?.dirty === true;
@@ -139,7 +147,12 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
               </Badge>
             </Link>
           )}
-          {hasChanges && (
+          {isHiddenFile && (
+            <Badge size="xs" variant="light" color="gray">
+              Read-only
+            </Badge>
+          )}
+          {!isHiddenFile && hasChanges && (
             <Badge size="xs" variant="light" color="blue">
               Unsaved
             </Badge>
@@ -147,7 +160,7 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
         </Group>
 
         <Group gap="xs">
-          {hasChanges && (
+          {!isHiddenFile && hasChanges && (
             <Button size="compact-xs" leftSection={<SaveIcon size={12} />} onClick={handleSave} loading={isSaving}>
               Save
             </Button>
@@ -166,26 +179,26 @@ export function FileViewer({ workbookId, filePath }: FileViewerProps) {
             lineNumbers: true,
             highlightActiveLineGutter: true,
             highlightSpecialChars: true,
-            history: true,
+            history: !isHiddenFile,
             foldGutter: true,
             drawSelection: true,
-            dropCursor: true,
+            dropCursor: !isHiddenFile,
             allowMultipleSelections: true,
-            indentOnInput: true,
+            indentOnInput: !isHiddenFile,
             syntaxHighlighting: true,
             bracketMatching: true,
-            closeBrackets: true,
-            autocompletion: true,
+            closeBrackets: !isHiddenFile,
+            autocompletion: !isHiddenFile,
             rectangularSelection: true,
             crosshairCursor: true,
-            highlightActiveLine: true,
+            highlightActiveLine: !isHiddenFile,
             highlightSelectionMatches: true,
-            closeBracketsKeymap: true,
+            closeBracketsKeymap: !isHiddenFile,
             defaultKeymap: true,
             searchKeymap: true,
-            historyKeymap: true,
+            historyKeymap: !isHiddenFile,
             foldKeymap: true,
-            completionKeymap: true,
+            completionKeymap: !isHiddenFile,
             lintKeymap: true,
           }}
           style={{
