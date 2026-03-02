@@ -8,6 +8,9 @@ let nextConfig: NextConfig = {
   devIndicators: {
     position: 'bottom-right',
   },
+  // Use a separate output directory in dev mode so `yarn build` doesn't clobber
+  // the dev server's webpack chunks (which causes MODULE_NOT_FOUND errors).
+  ...(process.env.NODE_ENV === 'development' && { distDir: '.next-dev' }),
 };
 
 if(process.env.POSTHOG_PROJECT_ID && process.env.POSTHOG_API_KEY) {
