@@ -17,7 +17,7 @@ import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { JobEntity } from '@/types/server-entities/job';
 import { timeAgo } from '@/utils/helpers';
-import { getJobDescription, getJobType, getTypeLabel, JobType } from '@/utils/job-helpers';
+import { getJobDescription, getJobType, getTypeLabel, JobType, publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import {
   ActionIcon,
@@ -545,6 +545,7 @@ function jobStatusBadgeColor(status: string): string {
   return 'gray';
 }
 
+
 function formatCount(count: number): string {
   if (count >= 10000) {
     return (count / 1000).toFixed(1) + 'K';
@@ -657,26 +658,7 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
               </Text>
             </Table.Td>
             <Table.Td>
-              <Badge
-                color={
-                  p.status === 'completed'
-                    ? 'green'
-                    : p.status === 'completed-with-errors'
-                      ? 'orange'
-                      : p.status === 'failed'
-                        ? 'red'
-                        : p.status === 'canceled'
-                          ? 'grape'
-                          : p.status.endsWith('-running')
-                            ? 'blue'
-                            : p.status.endsWith('-completed')
-                              ? 'teal'
-                              : p.status === 'planned'
-                                ? 'yellow'
-                                : 'gray'
-                }
-                size="sm"
-              >
+              <Badge color={publishPlanStatusBadgeColor(p.status)} size="sm">
                 {p.status}
               </Badge>
             </Table.Td>

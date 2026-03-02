@@ -20,7 +20,7 @@ import {
 } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import { ConnectorAccount, PublishPlanEntity, WorkbookId } from '@spinner/shared-types';
+import { ConnectorAccount, PublishPlanEntity, PublishPlanStatus, WorkbookId } from '@spinner/shared-types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import {
@@ -38,6 +38,7 @@ import {
   Trash2Icon,
   XIcon,
 } from 'lucide-react';
+import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import { useCallback, useEffect, useState } from 'react';
 import { PlanEntriesModal } from './PlanEntriesModal';
 
@@ -58,6 +59,7 @@ function jobStatusBadgeColor(status: string): string {
   if (status === 'canceled') return 'grape';
   return 'gray';
 }
+
 
 function formatCount(count: number): string {
   if (count >= 10000) {
@@ -442,26 +444,7 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
                           </Group>
                         </Table.Td>
                         <Table.Td>
-                          <Badge
-                            color={
-                              p.status === 'completed'
-                                ? 'green'
-                                : p.status === 'completed-with-errors'
-                                  ? 'orange'
-                                  : p.status === 'failed'
-                                    ? 'red'
-                                    : p.status === 'canceled'
-                                      ? 'grape'
-                                      : p.status.endsWith('-running')
-                                        ? 'blue'
-                                        : p.status.endsWith('-completed')
-                                          ? 'teal'
-                                          : p.status === 'planned'
-                                            ? 'yellow'
-                                            : 'gray'
-                            }
-                            size="sm"
-                          >
+                          <Badge color={publishPlanStatusBadgeColor(p.status)} size="sm">
                             {p.status}
                           </Badge>
                         </Table.Td>
@@ -539,7 +522,7 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
                             {/* Resume button — visible to all users for canceled publish plans with no active job.
                                 If operations exist it was a canceled run (resumable); if no operations it was a
                                 canceled plan (re-plan using the existing connector scope). */}
-                            {p.status === 'canceled' && !hasActiveJob && (
+                            {p.status === PublishPlanStatus.Canceled && !hasActiveJob && (
                               <Tooltip label="Resume" position="top" withArrow>
                                 <Button
                                   size="xs"
@@ -565,9 +548,9 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
 
                             {/* Run button group — for non-canceled non-completed publish plans */}
                             {!hasActiveJob &&
-                              p.status !== 'completed' &&
-                              p.status !== 'completed-with-errors' &&
-                              p.status !== 'canceled' &&
+                              p.status !== PublishPlanStatus.Completed &&
+                              p.status !== PublishPlanStatus.CompletedWithErrors &&
+                              p.status !== PublishPlanStatus.Canceled &&
                               !p.status.endsWith('-running') && (
                                 <Group gap={0} wrap="nowrap">
                                   <Tooltip label="Run All" position="top" withArrow>

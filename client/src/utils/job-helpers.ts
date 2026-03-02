@@ -1,4 +1,5 @@
 import { JobEntity } from '@/types/server-entities/job';
+import { PublishPlanStatus } from '@spinner/shared-types';
 import pluralize from 'pluralize';
 
 export type JobType = 'sync' | 'publish' | 'pull' | 'unknown';
@@ -20,6 +21,34 @@ export const getTypeLabel = (jobType: JobType): string => {
       return 'Pull';
     default:
       return 'JOB';
+  }
+};
+
+export const publishPlanStatusBadgeColor = (status: PublishPlanStatus): string => {
+  switch (status) {
+    case PublishPlanStatus.Completed:
+      return 'green';
+    case PublishPlanStatus.CompletedWithErrors:
+      return 'orange';
+    case PublishPlanStatus.Failed:
+      return 'red';
+    case PublishPlanStatus.Canceled:
+      return 'grape';
+    case PublishPlanStatus.Planned:
+      return 'yellow';
+    case PublishPlanStatus.EditsRunning:
+    case PublishPlanStatus.CreatesRunning:
+    case PublishPlanStatus.DeletesRunning:
+    case PublishPlanStatus.BackfillRunning:
+    case PublishPlanStatus.RenameFilesRunning:
+      return 'blue';
+    case PublishPlanStatus.EditsCompleted:
+    case PublishPlanStatus.CreatesCompleted:
+    case PublishPlanStatus.DeletesCompleted:
+    case PublishPlanStatus.BackfillCompleted:
+      return 'teal';
+    default:
+      return 'gray';
   }
 };
 

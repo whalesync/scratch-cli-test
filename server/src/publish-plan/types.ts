@@ -8,13 +8,16 @@ export interface PipelinePhase {
 
 export type PhaseCountMap = Partial<Record<PublishPlanPhase, number>>;
 
+import { PublishPlanStatus } from '@spinner/shared-types';
+export { PublishPlanStatus };
+
 export interface PublishPlanInfo {
   pipelineId: string;
   workbookId: string;
   userId: string;
   branchName: string;
   createdAt: Date;
-  status: string;
+  status: PublishPlanStatus;
   successCount?: number;
   failedCount?: number;
   successByPhase?: PhaseCountMap;

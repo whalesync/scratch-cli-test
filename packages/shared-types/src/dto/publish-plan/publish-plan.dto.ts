@@ -1,3 +1,7 @@
+import { PublishPlanStatus } from '../../enums/enums';
+
+export { PublishPlanStatus };
+
 // ── Request DTOs ──────────────────────────────────────────────────────────────
 
 export interface PublishPlanBuildDto {
@@ -52,7 +56,7 @@ export interface PublishPlanEntity {
   updatedAt: string;
   workbookId: string;
   userId: string;
-  status: string;
+  status: PublishPlanStatus;
   branchName: string;
   result: unknown;
   activeJobId: string | null;

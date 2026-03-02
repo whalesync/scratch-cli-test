@@ -13,7 +13,7 @@ import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
-import { PublishPlanInfo } from './types';
+import { PublishPlanInfo, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
 
 type PublishOperation = {
@@ -82,24 +82,24 @@ export class PublishPlanRunService {
       // *-running means the phase was interrupted — restart it from the beginning (pending entries only).
       // *-completed means the phase finished — move to the next phase.
       const startIndex: number = (() => {
-        switch (plan.status) {
-          case 'planned':
-          case 'edits-running':
+        switch (plan.status as PublishPlanStatus) {
+          case PublishPlanStatus.Planned:
+          case PublishPlanStatus.EditsRunning:
             return 0;
-          case 'edits-completed':
-          case 'creates-running':
+          case PublishPlanStatus.EditsCompleted:
+          case PublishPlanStatus.CreatesRunning:
             return 1;
-          case 'creates-completed':
-          case 'deletes-running':
+          case PublishPlanStatus.CreatesCompleted:
+          case PublishPlanStatus.DeletesRunning:
             return 2;
-          case 'deletes-completed':
-          case 'backfills-running':
+          case PublishPlanStatus.DeletesCompleted:
+          case PublishPlanStatus.BackfillRunning:
             return 3;
-          case 'backfills-completed':
-          case 'rename-files-running':
+          case PublishPlanStatus.BackfillCompleted:
+          case PublishPlanStatus.RenameFilesRunning:
             return 4;
-          case 'completed':
-          case 'completed-with-errors':
+          case PublishPlanStatus.Completed:
+          case PublishPlanStatus.CompletedWithErrors:
             return 5; // nothing left to run
           default:
             throw new Error(`Cannot run pipeline in status: ${plan.status}`);
@@ -347,10 +347,10 @@ export class PublishPlanRunService {
       const lastPhaseRun = phasesToRun[phasesToRun.length - 1];
       const finalStatus =
         failedCount > 0
-          ? 'completed-with-errors'
+          ? PublishPlanStatus.CompletedWithErrors
           : executeSinglePhase && lastPhaseRun && lastPhaseRun !== 'backfill'
-            ? `${lastPhaseRun}s-completed`
-            : 'completed';
+            ? (`${lastPhaseRun}s-completed` as PublishPlanStatus)
+            : PublishPlanStatus.Completed;
 
       // Store status + result in DB — keep activeJobId as a trace of which job completed this
       await this.db.client.publishPlan.update({
@@ -392,7 +392,7 @@ export class PublishPlanRunService {
         // Keep activeJobId so the canceled job can still be inspected
         await this.db.client.publishPlan.update({
           where: { id: pipelineId },
-          data: { status: 'canceled' },
+          data: { status: PublishPlanStatus.Canceled },
         });
         throw err;
       }
@@ -406,7 +406,7 @@ export class PublishPlanRunService {
       // Keep activeJobId so the failed job can still be inspected
       await this.db.client.publishPlan.update({
         where: { id: pipelineId },
-        data: { status: 'failed' },
+        data: { status: PublishPlanStatus.Failed },
       });
       throw err;
     }

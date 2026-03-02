@@ -65,3 +65,21 @@ export enum TableDiscoveryMode {
   LIST = 'LIST',
   SEARCH = 'SEARCH',
 }
+
+export enum PublishPlanStatus {
+  Planning = 'planning',
+  Planned = 'planned',
+  EditsRunning = 'edits-running',
+  EditsCompleted = 'edits-completed',
+  CreatesRunning = 'creates-running',
+  CreatesCompleted = 'creates-completed',
+  DeletesRunning = 'deletes-running',
+  DeletesCompleted = 'deletes-completed',
+  BackfillRunning = 'backfill-running',
+  BackfillCompleted = 'backfill-completed',
+  RenameFilesRunning = 'rename-files-running',
+  Completed = 'completed',
+  CompletedWithErrors = 'completed-with-errors',
+  Failed = 'failed',
+  Canceled = 'canceled',
+}

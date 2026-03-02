@@ -11,7 +11,7 @@ import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefCleanerService } from './ref-cleaner.service';
 import { SchemaHelperService } from './schema-helper.service';
-import { PublishPlanInfo, PublishPlanPhase } from './types';
+import { PublishPlanInfo, PublishPlanPhase, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
 
 @Injectable()
@@ -60,7 +60,7 @@ export class PublishPlanBuildService {
         id: pipelineId,
         workbookId,
         userId,
-        status: 'planning',
+        status: PublishPlanStatus.Planning,
         branchName,
         connectorAccountId: connectorAccountId || null,
       },
@@ -85,7 +85,7 @@ export class PublishPlanBuildService {
   async cancelPipeline(pipelineId: string): Promise<void> {
     await this.db.client.publishPlan.update({
       where: { id: pipelineId },
-      data: { status: 'canceled' },
+      data: { status: PublishPlanStatus.Canceled },
     });
   }
 
@@ -542,7 +542,7 @@ export class PublishPlanBuildService {
     // Mark as planned (ready to run)
     await this.db.client.publishPlan.update({
       where: { id: pipelineId },
-      data: { status: 'planned' },
+      data: { status: PublishPlanStatus.Planned },
     });
 
     return {
@@ -551,7 +551,7 @@ export class PublishPlanBuildService {
       userId,
       branchName,
       createdAt: new Date(),
-      status: 'planned',
+      status: PublishPlanStatus.Planned,
     };
   }
 }
