@@ -8,11 +8,11 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { useUserDevTools } from '@/hooks/use-user-dev-tools';
 import { getBuildFlavor } from '@/utils/build';
 import { ActionIcon, Alert, Anchor, CopyButton, Group, Stack, Table, TextInput, Tooltip } from '@mantine/core';
-import { AlertCircleIcon, CheckIcon, CopyIcon, HatGlassesIcon, Search, UsersIcon } from 'lucide-react';
+import { AlertCircleIcon, CheckIcon, CopyIcon, HatGlassesIcon, PiggyBankIcon, Search, UsersIcon } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { UserDetailsCard } from './components/UserDetails';
-import { clerkUserUrl } from './utils';
+import { clerkUserUrl, posthogPersonUrl } from './utils';
 
 export default function UsersDevPage() {
   const searchParams = useSearchParams();
@@ -93,6 +93,7 @@ export default function UsersDevPage() {
                     {!currentUserDetails && <Table.Th>Clerk</Table.Th>}
                     {!currentUserDetails && <Table.Th>Email</Table.Th>}
                     {!currentUserDetails && <Table.Th>Created</Table.Th>}
+                    {!currentUserDetails && <Table.Th w="40px" />}
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -142,6 +143,20 @@ export default function UsersDevPage() {
                         </Table.Td>
                       )}
                       {!currentUserDetails && <Table.Td>{new Date(user.createdAt).toLocaleDateString()}</Table.Td>}
+                      {!currentUserDetails && (
+                        <Table.Td>
+                          <Tooltip label="View in PostHog">
+                            <Anchor
+                              href={posthogPersonUrl(user.id, getBuildFlavor())}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <StyledLucideIcon Icon={PiggyBankIcon} size={16} />
+                            </Anchor>
+                          </Tooltip>
+                        </Table.Td>
+                      )}
                     </Table.Tr>
                   ))}
                 </Table.Tbody>

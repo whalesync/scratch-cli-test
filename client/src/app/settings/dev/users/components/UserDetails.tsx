@@ -24,9 +24,16 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { ConnectorAccountId, IdPrefixes } from '@spinner/shared-types';
-import { CreditCardIcon, HatGlassesIcon, LockKeyholeIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
+import {
+  CreditCardIcon,
+  HatGlassesIcon,
+  LockKeyholeIcon,
+  PiggyBankIcon,
+  SquarePenIcon,
+  Trash2Icon,
+} from 'lucide-react';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { clerkUserUrl, stripeCustomerUrl } from '../utils';
+import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
 
 export const UserDetailsCard = ({
   details,
@@ -183,6 +190,14 @@ export const UserDetailsCard = ({
                 </Anchor>
               </Tooltip>
             )}
+          </Group>
+          <Group align="center" gap="xs">
+            <LabelValuePair label="PostHog" value="Sessions" />
+            <Tooltip label="View in PostHog">
+              <Anchor href={posthogPersonUrl(details.user.id, getBuildFlavor())} target="_blank" rel="noreferrer">
+                <StyledLucideIcon Icon={PiggyBankIcon} size={16} />
+              </Anchor>
+            </Tooltip>
           </Group>
           <LabelValuePair label="Created" value={new Date(details.user.createdAt).toLocaleString()} />
           <LabelValuePair label="Subscription Status" value={<SubscriptionInfo user={details.user} />} />
