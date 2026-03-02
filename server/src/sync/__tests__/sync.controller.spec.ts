@@ -8,6 +8,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncController } from '../sync.controller';
 import { SyncService } from '../sync.service';
+import { WhalesyncImportApiService } from '../whalesync-import';
 
 const WORKBOOK_ID = 'wkb_test123' as WorkbookId;
 const SYNC_ID = 'syn_test456' as SyncId;
@@ -37,6 +38,7 @@ function makeReqWithUser(overrides?: Partial<{ organizationId: string | null }>)
 describe('SyncController', () => {
   let controller: SyncController;
   let syncService: jest.Mocked<SyncService>;
+  let whalesyncImportApiService: jest.Mocked<WhalesyncImportApiService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let dbService: jest.Mocked<DbService>;
   let posthogService: jest.Mocked<PostHogService>;
@@ -67,7 +69,17 @@ describe('SyncController', () => {
       trackStartSyncRun: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
-    controller = new SyncController(syncService, bullEnqueuerService, dbService, posthogService);
+    whalesyncImportApiService = {
+      previewImport: jest.fn(),
+    } as unknown as jest.Mocked<WhalesyncImportApiService>;
+
+    controller = new SyncController(
+      syncService,
+      whalesyncImportApiService,
+      bullEnqueuerService,
+      dbService,
+      posthogService,
+    );
   });
 
   afterEach(() => {

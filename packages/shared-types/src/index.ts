@@ -47,4 +47,5 @@ export * from './dto/publish-plan/publish-plan.dto';
 export * from './dto/schedule/create-schedule.dto';
 export * from './dto/schedule/update-schedule.dto';
 export * from './dto/sync/sync-api';
+export * from './dto/sync/whalesync-import-api';
 export * from './dto/transformer/test-transformer.dto';

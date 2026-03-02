@@ -11,6 +11,7 @@ import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
 import { TransformerController } from './transformers/transformer.controller';
+import { WhalesyncImportApiService } from './whalesync-import';
 
 @Module({
   imports: [
@@ -25,7 +26,7 @@ import { TransformerController } from './transformers/transformer.controller';
     PublishPlanModule,
   ],
   controllers: [SyncController, TransformerController],
-  providers: [SyncService],
+  providers: [SyncService, WhalesyncImportApiService],
   exports: [SyncService],
 })
 export class SyncModule {}

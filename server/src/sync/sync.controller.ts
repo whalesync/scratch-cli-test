@@ -20,6 +20,8 @@ import type {
   SaveSyncBody,
   SyncId,
   ValidateMappingBody,
+  WhalesyncImportPreviewBody,
+  WhalesyncImportPreviewResponse,
   WorkbookId,
 } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -29,6 +31,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { userToActor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncService } from './sync.service';
+import { WhalesyncImportApiService } from './whalesync-import';
 
 @Controller('workbooks/:workbookId/syncs')
 @UseGuards(ScratchAuthGuard)
@@ -36,6 +39,7 @@ import { SyncService } from './sync.service';
 export class SyncController {
   constructor(
     private readonly syncService: SyncService,
+    private readonly whalesyncImportApiService: WhalesyncImportApiService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly dbService: DbService,
     private readonly posthogService: PostHogService,
@@ -131,6 +135,15 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     return await this.syncService.deleteSync(workbookId, syncId as SyncId, userToActor(req.user));
+  }
+
+  @Post('import-preview')
+  async previewWhalesyncImport(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Body() body: WhalesyncImportPreviewBody,
+    @Req() req: RequestWithUser,
+  ): Promise<WhalesyncImportPreviewResponse> {
+    return this.whalesyncImportApiService.previewImport(workbookId, body, userToActor(req.user));
   }
 
   @Post('preview-record')
