@@ -59,6 +59,7 @@ export const TransformerTypes = {
   AirmarkToHtml: 'airmark_to_html',
   HtmlToAirmark: 'html_to_airmark',
   WebflowOption: 'webflow_option',
+  Slugify: 'slugify',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -77,6 +78,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.AirmarkToHtml, label: 'AirMark to HTML' },
   { type: TransformerTypes.HtmlToAirmark, label: 'HTML to AirMark' },
   { type: TransformerTypes.WebflowOption, label: 'Webflow Option' },
+  { type: TransformerTypes.Slugify, label: 'Slugify' },
 ];
 
 /** Get the display label for a transformer type */
@@ -132,4 +134,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.NotionToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.AirmarkToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.HtmlToAirmark; options?: Record<string, never> }
-  | { type: typeof TransformerTypes.WebflowOption; options?: Record<string, never> };
+  | { type: typeof TransformerTypes.WebflowOption; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> };

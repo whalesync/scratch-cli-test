@@ -1,4 +1,5 @@
 import { JobEntity } from '@/types/server-entities/job';
+import pluralize from 'pluralize';
 
 export type JobType = 'sync' | 'publish' | 'pull' | 'unknown';
 
@@ -41,16 +42,16 @@ export const getJobDescription = (job: JobEntity): string => {
         return `Synced ${count} table${count !== 1 ? 's' : ''}`;
       }
       if (progress?.syncName) {
-        return `Synced ${progress.syncName}`;
+        return `Sync ${progress.syncName}`;
       }
-      return 'Synced';
+      return 'Sync';
     }
     case 'publish': {
       if (progress?.totalFiles !== undefined) {
         const count = Number(progress.totalFiles) || 0;
-        return `Published ${count} change${count !== 1 ? 's' : ''}`;
+        return `Publish ${count} ${pluralize('change', count)}`;
       }
-      return 'Published changes';
+      return 'Publish changes';
     }
     case 'pull': {
       const fileCount = progress?.totalFiles ?? progress?.totalRequested;
@@ -60,12 +61,12 @@ export const getJobDescription = (job: JobEntity): string => {
         const connectionName = progress?.connectionName as string | undefined;
         const connectionSuffix = connectionName ? ` in ${connectionName}` : '';
         if (folderCount && folderCount > 1) {
-          return `Pulled ${count} record${count !== 1 ? 's' : ''} from ${folderCount} folders${connectionSuffix}`;
+          return `Pull ${count} record${count !== 1 ? 's' : ''} from ${folderCount} folders${connectionSuffix}`;
         }
         const folderSuffix = progress?.folderName ? ` for ${progress.folderName}` : '';
-        return `Pulled ${count} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
+        return `Pull ${count} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
       }
-      return 'Refreshed data';
+      return 'Refresh data';
     }
     default:
       return job.type;

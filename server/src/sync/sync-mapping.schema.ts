@@ -41,6 +41,7 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.AirmarkToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.HtmlToAirmark), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.WebflowOption), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.Slugify), options: z.record(z.string(), z.never()).optional() }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

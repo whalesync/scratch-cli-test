@@ -206,6 +206,13 @@ const formatPreviewValue = (value: unknown): string => {
   return JSON.stringify(value, null, 2);
 };
 
+const getTypeLabel = (value: unknown): string => {
+  if (value === null) return 'NULL';
+  if (value === undefined) return 'UNDEFINED';
+  if (Array.isArray(value)) return 'ARRAY';
+  return (typeof value).toUpperCase();
+};
+
 function PreviewValueBox({
   sourceValue,
   transformedValue,
@@ -244,9 +251,16 @@ function PreviewValueBox({
           overflow: 'hidden',
         }}
       >
-        <Text fz="xs" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px` }}>
-          {formatPreviewValue(sourceValue)}
-        </Text>
+        <Group justify="space-between" align="center" wrap="nowrap" gap={6}>
+          <Text fz="xs" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px`, flex: 1 }}>
+            {formatPreviewValue(sourceValue)}
+          </Text>
+          {sourceValue !== undefined && (
+            <Text fz={9} c="dimmed" tt="uppercase" lh={1} style={{ flexShrink: 0 }}>
+              {getTypeLabel(sourceValue)}
+            </Text>
+          )}
+        </Group>
       </Box>
       <Divider />
       <Box
@@ -257,11 +271,18 @@ function PreviewValueBox({
           overflow: 'hidden',
         }}
       >
-        <Group gap={6} wrap="nowrap" align="flex-start">
-          <CornerDownRight size={12} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0, marginTop: 3 }} />
-          <Text fz="xs" c="dimmed" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px` }}>
-            {formatPreviewValue(transformedValue)}
-          </Text>
+        <Group justify="space-between" align="center" wrap="nowrap" gap={6}>
+          <Group gap={6} wrap="nowrap" align="flex-start" style={{ flex: 1 }}>
+            <CornerDownRight size={12} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0, marginTop: 3 }} />
+            <Text fz="xs" c="dimmed" style={{ wordBreak: 'break-all', lineHeight: `${LINE_HEIGHT}px` }}>
+              {formatPreviewValue(transformedValue)}
+            </Text>
+          </Group>
+          {transformedValue !== undefined && (
+            <Text fz={9} c="dimmed" tt="uppercase" lh={1} style={{ flexShrink: 0 }}>
+              {getTypeLabel(transformedValue)}
+            </Text>
+          )}
         </Group>
         {warning && (
           <Text fz={10} c="var(--mantine-color-orange-6)" mt={2}>
