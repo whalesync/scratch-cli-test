@@ -1350,14 +1350,49 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
                     devtool: true,
                     children: [
                       { label: 'Git Graph', icon: GitGraphIcon, devtool: true, onClick: () => setGitGraphOpen(true) },
-                      { label: 'Git File Browser', icon: FileCodeIcon, devtool: true, onClick: () => setGitFileBrowserOpen(true) },
-                      { label: 'Manual Rebase', icon: GitMergeIcon, devtool: true, onClick: () => void handleManualRebase(), disabled: isRebasing },
-                      { label: 'Get Object Counts', icon: GitGraphIcon, devtool: true, onClick: () => void handleGetObjectCounts(), disabled: isLoadingObjectCounts },
-                      { label: 'Run Git GC (Standard)', icon: GitGraphIcon, devtool: true, onClick: () => void handleGitGc(false), disabled: isGcing },
-                      { label: 'Run Git GC (Aggressive)', icon: Trash2Icon, devtool: true, onClick: () => void handleGitGc(true), disabled: isGcing },
+                      {
+                        label: 'Git File Browser',
+                        icon: FileCodeIcon,
+                        devtool: true,
+                        onClick: () => setGitFileBrowserOpen(true),
+                      },
+                      {
+                        label: 'Manual Rebase',
+                        icon: GitMergeIcon,
+                        devtool: true,
+                        onClick: () => void handleManualRebase(),
+                        disabled: isRebasing,
+                      },
+                      {
+                        label: 'Get Object Counts',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleGetObjectCounts(),
+                        disabled: isLoadingObjectCounts,
+                      },
+                      {
+                        label: 'Run Git GC (Standard)',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleGitGc(false),
+                        disabled: isGcing,
+                      },
+                      {
+                        label: 'Run Git GC (Aggressive)',
+                        icon: Trash2Icon,
+                        devtool: true,
+                        onClick: () => void handleGitGc(true),
+                        disabled: isGcing,
+                      },
                     ],
                   },
-                  { label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection },
+                  {
+                    label: 'Reset Connection',
+                    icon: Trash2Icon,
+                    devtool: true,
+                    delete: true,
+                    onClick: handleResetConnection,
+                  },
                 ]
               : []),
             { label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true },
@@ -1366,10 +1401,24 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
       )}
 
       {/* Git Tools Modals (V2 workbooks) */}
-      <GitGraphModal opened={gitGraphOpen} onClose={() => setGitGraphOpen(false)} workbookId={workbookId} connectorAccountId={connectorAccount.id} />
-      <GitFileBrowserModal opened={gitFileBrowserOpen} onClose={() => setGitFileBrowserOpen(false)} workbookId={workbookId} connectorAccountId={connectorAccount.id} />
+      <GitGraphModal
+        opened={gitGraphOpen}
+        onClose={() => setGitGraphOpen(false)}
+        workbookId={workbookId}
+        connectorAccountId={connectorAccount.id}
+      />
+      <GitFileBrowserModal
+        opened={gitFileBrowserOpen}
+        onClose={() => setGitFileBrowserOpen(false)}
+        workbookId={workbookId}
+        connectorAccountId={connectorAccount.id}
+      />
       <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
-      <GitObjectCountsModal opened={objectCountsModalOpen} onClose={() => setObjectCountsModalOpen(false)} data={objectCountsData} />
+      <GitObjectCountsModal
+        opened={objectCountsModalOpen}
+        onClose={() => setObjectCountsModalOpen(false)}
+        data={objectCountsData}
+      />
       <ConfirmDialog {...resetConnectionDialogProps} />
 
       {/* Choose Tables Modal */}

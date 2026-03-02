@@ -4,8 +4,8 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text13Medium, Text13Regular } from '@/app/components/base/text';
 import { useWorkbooks } from '@/hooks/use-workbooks';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { workbookApi } from '@/lib/api/workbook';
 import { usersApi } from '@/lib/api/users';
+import { workbookApi } from '@/lib/api/workbook';
 import { Box, Button, Group, Menu, Modal, Stack, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { Workbook, WorkbookId } from '@spinner/shared-types';
@@ -123,21 +123,18 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
     openCreateModal();
   }, [openCreateModal]);
 
-  const handleMigrateToV2 = useCallback(
-    async (e: React.MouseEvent, workbookId: WorkbookId) => {
-      e.stopPropagation();
-      setMigratingToV2Id(workbookId);
-      setMenuOpened(false);
-      try {
-        await workbookApi.migrateToV2(workbookId);
-      } catch (error) {
-        console.error('Failed to migrate workbook to V2:', error);
-      } finally {
-        setMigratingToV2Id(null);
-      }
-    },
-    [],
-  );
+  const handleMigrateToV2 = useCallback(async (e: React.MouseEvent, workbookId: WorkbookId) => {
+    e.stopPropagation();
+    setMigratingToV2Id(workbookId);
+    setMenuOpened(false);
+    try {
+      await workbookApi.migrateToV2(workbookId);
+    } catch (error) {
+      console.error('Failed to migrate workbook to V2:', error);
+    } finally {
+      setMigratingToV2Id(null);
+    }
+  }, []);
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim()) return;

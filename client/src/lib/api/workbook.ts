@@ -235,7 +235,11 @@ export const workbookApi = {
       throw error;
     }
   },
-  runGitGc: async (workbookId: WorkbookId, aggressive?: boolean, connectorAccountId?: string): Promise<GitGcResponse> => {
+  runGitGc: async (
+    workbookId: WorkbookId,
+    aggressive?: boolean,
+    connectorAccountId?: string,
+  ): Promise<GitGcResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<GitGcResponse>(

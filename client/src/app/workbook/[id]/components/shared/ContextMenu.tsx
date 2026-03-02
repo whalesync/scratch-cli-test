@@ -1,8 +1,8 @@
 'use client';
 
 import { Box, Menu, UnstyledButton } from '@mantine/core';
-import { ChevronRightIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { ChevronRightIcon } from 'lucide-react';
 import { isValidElement, useRef, useState } from 'react';
 
 export interface ContextMenuItem {
@@ -80,12 +80,7 @@ function SubmenuItem({ item, onClose }: { item: ContextMenuItem; onClose: () => 
         >
           {item.children?.map((child, idx) => {
             if (child.type === 'divider') {
-              return (
-                <div
-                  key={idx}
-                  style={{ borderTop: '1px solid var(--mantine-color-gray-2)', margin: '4px 0' }}
-                />
-              );
+              return <div key={idx} style={{ borderTop: '1px solid var(--mantine-color-gray-2)', margin: '4px 0' }} />;
             }
             return (
               <UnstyledButton
@@ -115,8 +110,7 @@ function SubmenuItem({ item, onClose }: { item: ContextMenuItem; onClose: () => 
                 }}
                 onMouseEnter={(e) => {
                   if (!child.disabled)
-                    (e.currentTarget as HTMLElement).style.backgroundColor =
-                      'var(--mantine-color-gray-1)';
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--mantine-color-gray-1)';
                 }}
                 onMouseLeave={(e) => {
                   (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';

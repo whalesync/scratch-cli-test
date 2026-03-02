@@ -1,10 +1,9 @@
 'use client';
 
-import MainContent from '@/app/components/layouts/MainContent';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
+import MainContent from '@/app/components/layouts/MainContent';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
-import { AdminWorkbookDto, AdminWorkbookConnectionDto, Service, WorkbookId } from '@spinner/shared-types';
 import {
   Badge,
   Button,
@@ -22,6 +21,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { AdminWorkbookConnectionDto, AdminWorkbookDto, Service, WorkbookId } from '@spinner/shared-types';
 import { BookOpenIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -35,13 +35,7 @@ function serviceLabel(s: Service): string {
 
 // ── Connections modal ──────────────────────────────────────────────────────────
 
-function ConnectionsModal({
-  workbook,
-  onClose,
-}: {
-  workbook: AdminWorkbookDto | null;
-  onClose: () => void;
-}) {
+function ConnectionsModal({ workbook, onClose }: { workbook: AdminWorkbookDto | null; onClose: () => void }) {
   return (
     <Modal
       opened={!!workbook}
@@ -50,9 +44,11 @@ function ConnectionsModal({
       size="lg"
       centered
     >
-      {workbook && (
-        workbook.connections.length === 0 ? (
-          <Text c="dimmed" size="sm">No connections</Text>
+      {workbook &&
+        (workbook.connections.length === 0 ? (
+          <Text c="dimmed" size="sm">
+            No connections
+          </Text>
         ) : (
           <Table>
             <Table.Thead>
@@ -69,7 +65,9 @@ function ConnectionsModal({
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       <ConnectorIcon connector={conn.service} size={16} />
-                      <Badge size="xs" variant="outline">{conn.service}</Badge>
+                      <Badge size="xs" variant="outline">
+                        {conn.service}
+                      </Badge>
                     </Group>
                   </Table.Td>
                   <Table.Td>
@@ -89,21 +87,14 @@ function ConnectionsModal({
               ))}
             </Table.Tbody>
           </Table>
-        )
-      )}
+        ))}
     </Modal>
   );
 }
 
 // ── Service multiselect ────────────────────────────────────────────────────────
 
-function ServiceMultiselect({
-  selected,
-  onChange,
-}: {
-  selected: Service[];
-  onChange: (services: Service[]) => void;
-}) {
+function ServiceMultiselect({ selected, onChange }: { selected: Service[]; onChange: (services: Service[]) => void }) {
   const toggle = (s: Service) => {
     onChange(selected.includes(s) ? selected.filter((x) => x !== s) : [...selected, s]);
   };
@@ -145,7 +136,11 @@ function ConnectionCountCell({
   onClick: () => void;
 }) {
   if (connections.length === 0) {
-    return <Text size="xs" c="dimmed">—</Text>;
+    return (
+      <Text size="xs" c="dimmed">
+        —
+      </Text>
+    );
   }
   // Deduplicate services for icon display (show each service icon once)
   const uniqueServices = [...new Set(connections.map((c) => c.service))];
@@ -192,10 +187,7 @@ function WorkbookRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        <ConnectionCountCell
-          connections={workbook.connections}
-          onClick={() => onShowConnections(workbook)}
-        />
+        <ConnectionCountCell connections={workbook.connections} onClick={() => onShowConnections(workbook)} />
       </Table.Td>
       <Table.Td>
         <Badge color={workbook.version === 1 ? 'gray' : 'blue'} variant="outline" size="sm">
@@ -349,12 +341,16 @@ export default function WorkbooksDevPage() {
               size="sm"
             />
             <Stack gap={4}>
-              <Text size="xs" c="dimmed">Connector filter</Text>
+              <Text size="xs" c="dimmed">
+                Connector filter
+              </Text>
               <ServiceMultiselect selected={serviceFilter} onChange={setServiceFilter} />
             </Stack>
             {serviceFilter.length > 1 && (
               <Stack gap={4}>
-                <Text size="xs" c="dimmed">Mode</Text>
+                <Text size="xs" c="dimmed">
+                  Mode
+                </Text>
                 <SegmentedControl
                   size="xs"
                   value={serviceMode}
@@ -367,7 +363,9 @@ export default function WorkbooksDevPage() {
               </Stack>
             )}
             <Stack gap={4}>
-              <Text size="xs" c="dimmed">Per page</Text>
+              <Text size="xs" c="dimmed">
+                Per page
+              </Text>
               <Select
                 data={PAGE_SIZE_OPTIONS}
                 value={String(pageSize)}
@@ -435,10 +433,7 @@ export default function WorkbooksDevPage() {
         </Stack>
       </MainContent.Body>
 
-      <ConnectionsModal
-        workbook={connectionsWorkbook}
-        onClose={() => setConnectionsWorkbook(null)}
-      />
+      <ConnectionsModal workbook={connectionsWorkbook} onClose={() => setConnectionsWorkbook(null)} />
     </MainContent>
   );
 }
