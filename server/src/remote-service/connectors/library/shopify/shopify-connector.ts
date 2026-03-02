@@ -9,6 +9,7 @@ import { type TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
@@ -91,9 +92,9 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
 
   private readonly client: ShopifyApiClient;
 
-  constructor(credentials: ShopifyCredentials) {
+  constructor(credentials: ShopifyCredentials, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new ShopifyApiClient(credentials);
+    this.client = new ShopifyApiClient(credentials, { rateLimiter: opts?.rateLimiter });
   }
 
   /**

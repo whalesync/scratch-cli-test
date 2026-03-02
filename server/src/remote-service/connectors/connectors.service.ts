@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { AuthType, ConnectorAccount } from '@prisma/client';
 import { Service } from '@spinner/shared-types';
 import { OAuthService } from '../../oauth/oauth.service';
+import { RateLimiter } from '../../rate-limiter/rate-limiter';
+import { RateLimiterFactory } from '../../rate-limiter/rate-limiter-factory.service';
 import { DecryptedCredentials } from '../connector-account/types/encrypted-credentials.interface';
 import { AuthParser, Connector } from './connector';
 import { ConnectorInstantiationError } from './error';
@@ -21,7 +23,15 @@ import { YouTubeConnector } from './library/youtube/youtube-connector';
 
 @Injectable()
 export class ConnectorsService {
-  constructor(private readonly oauthService: OAuthService) {}
+  constructor(
+    private readonly oauthService: OAuthService,
+    private readonly rateLimiterFactory: RateLimiterFactory,
+  ) {}
+
+  private createRateLimiter(service: Service, connectorAccount: ConnectorAccount | null): RateLimiter | undefined {
+    if (!connectorAccount) return undefined;
+    return this.rateLimiterFactory.createLimiter({ service, connectorAccountId: connectorAccount.id });
+  }
 
   getAuthParser(params: { service: Service }): AuthParser<Service> | undefined {
     const { service } = params;
@@ -45,19 +55,21 @@ export class ConnectorsService {
     const { service, connectorAccount, decryptedCredentials } = params;
 
     switch (service) {
-      case Service.AIRTABLE:
+      case Service.AIRTABLE: {
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for Airtable', service);
         }
+        const airtableRateLimiter = this.createRateLimiter(service, connectorAccount);
         if (connectorAccount.authType === AuthType.OAUTH) {
           const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
-          return new AirtableConnector(accessToken);
+          return new AirtableConnector(accessToken, { rateLimiter: airtableRateLimiter });
         } else {
           if (!decryptedCredentials?.apiKey) {
             throw new ConnectorInstantiationError('API key is required for Airtable', service);
           }
-          return new AirtableConnector(decryptedCredentials.apiKey);
+          return new AirtableConnector(decryptedCredentials.apiKey, { rateLimiter: airtableRateLimiter });
         }
+      }
       case Service.WORDPRESS:
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for WordPress', service);
@@ -103,21 +115,23 @@ export class ConnectorsService {
           // YouTube doesn't support API key authentication, only OAuth
           throw new Error('YouTube only supports OAuth authentication');
         }
-      case Service.WEBFLOW:
+      case Service.WEBFLOW: {
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for Webflow', service);
         }
+        const webflowRateLimiter = this.createRateLimiter(service, connectorAccount);
         if (connectorAccount.authType === AuthType.OAUTH) {
           // For OAuth accounts, get the valid access token
           const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
-          return new WebflowConnector(accessToken);
+          return new WebflowConnector(accessToken, { rateLimiter: webflowRateLimiter });
         } else {
           // For API key accounts, use the apiKey field
           if (!decryptedCredentials?.apiKey) {
             throw new ConnectorInstantiationError('API key is required for Webflow', service);
           }
-          return new WebflowConnector(decryptedCredentials.apiKey);
+          return new WebflowConnector(decryptedCredentials.apiKey, { rateLimiter: webflowRateLimiter });
         }
+      }
       case Service.WIX_BLOG:
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for Wix', service);
@@ -161,13 +175,14 @@ export class ConnectorsService {
         if (!connectorAccount) {
           throw new ConnectorInstantiationError('Connector account is required for Shopify', service);
         }
+        const shopifyRateLimiter = this.createRateLimiter(service, connectorAccount);
         if (connectorAccount.authType === AuthType.OAUTH) {
           const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
           const shopDomain = decryptedCredentials?.oauthWorkspaceId;
           if (!shopDomain) {
             throw new ConnectorInstantiationError('Shop domain is required for Shopify OAuth', service);
           }
-          return new ShopifyConnector({ shopDomain, accessToken });
+          return new ShopifyConnector({ shopDomain, accessToken }, { rateLimiter: shopifyRateLimiter });
         } else {
           if (!decryptedCredentials?.apiKey) {
             throw new ConnectorInstantiationError('Access token (API key) is required for Shopify', service);
@@ -175,10 +190,10 @@ export class ConnectorsService {
           if (!decryptedCredentials?.shopDomain) {
             throw new ConnectorInstantiationError('Shop domain is required for Shopify', service);
           }
-          return new ShopifyConnector({
-            shopDomain: decryptedCredentials.shopDomain,
-            accessToken: decryptedCredentials.apiKey,
-          });
+          return new ShopifyConnector(
+            { shopDomain: decryptedCredentials.shopDomain, accessToken: decryptedCredentials.apiKey },
+            { rateLimiter: shopifyRateLimiter },
+          );
         }
       }
       case Service.SUPABASE: {

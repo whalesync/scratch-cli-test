@@ -2,7 +2,7 @@ import { TObject, TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
-import { sleep } from 'src/util';
+import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Webflow, WebflowClient, WebflowError } from 'webflow-api';
 import { TooManyRequestsError } from 'webflow-api/api/errors';
@@ -14,9 +14,16 @@ import { WebflowSchemaParser } from './webflow-schema-parser';
 import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
 
 export const WEBFLOW_DEFAULT_BATCH_SIZE = 100;
-const MAX_RETRIES = 5;
-const INITIAL_RETRY_DELAY_MS = 1000;
-const MAX_RETRY_DELAY_MS = 60_000;
+
+const WEBFLOW_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => error instanceof TooManyRequestsError,
+  getRetryAfterS: (error) => {
+    if (!(error instanceof TooManyRequestsError)) return undefined;
+    const header = error.rawResponse?.headers?.get('retry-after');
+    const seconds = header ? parseInt(header, 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
+};
 
 export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   readonly service = Service.WEBFLOW;
@@ -24,41 +31,19 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
 
   private readonly client: WebflowClient;
   private readonly schemaParser = new WebflowSchemaParser();
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(accessToken: string) {
+  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
     this.client = new WebflowClient({ accessToken });
+    this.rateLimiter = opts?.rateLimiter;
   }
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    let retryDelay = INITIAL_RETRY_DELAY_MS;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        return await fn();
-      } catch (error) {
-        if (!(error instanceof TooManyRequestsError) || attempt === MAX_RETRIES) {
-          throw error;
-        }
-
-        const retryAfterHeader = error.rawResponse?.headers?.get('retry-after');
-        const retryAfterSeconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
-
-        if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
-          retryDelay = Math.min(retryAfterSeconds * 1000, MAX_RETRY_DELAY_MS);
-        }
-
-        WSLogger.warn({
-          source: 'WebflowConnector',
-          message: `Webflow API rate limited (429), retrying in ${retryDelay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
-        });
-        await sleep(retryDelay);
-
-        retryDelay = Math.min(retryDelay * 2 + Math.random() * 500, MAX_RETRY_DELAY_MS);
-      }
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, WEBFLOW_RETRY_OPTS);
     }
-
-    throw new Error('Webflow API rate limit retries exhausted');
+    return standaloneWithRetry(fn, WEBFLOW_RETRY_OPTS);
   }
 
   public async testConnection(): Promise<void> {

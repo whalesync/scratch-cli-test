@@ -8,7 +8,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
-import { WSLogger } from 'src/logger';
+import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
 import {
   ShopifyArticleInput,
   ShopifyBlogInput,
@@ -66,15 +66,15 @@ import {
 
 import { API_VERSION, ENTITY_REGISTRY, EntityType } from './graphql';
 
-const LOG_SOURCE = 'ShopifyApiClient';
-
-// Retry configuration for rate-limited requests
-const MAX_RETRIES = 5;
-const INITIAL_RETRY_DELAY_MS = 1000;
-const MAX_RETRY_DELAY_MS = 30000;
-
 // Connection pagination size
 const CONNECTION_PAGE_SIZE = 25;
+
+const SHOPIFY_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) =>
+    error instanceof ShopifyError &&
+    (error.code === 'THROTTLED' || error.statusCode === 429 || error.message.toLowerCase().includes('throttle')),
+  maxRetryDelayMs: 30_000,
+};
 
 /**
  * Shopify API error
@@ -89,10 +89,6 @@ export class ShopifyError extends Error {
     super(message);
     this.name = 'ShopifyError';
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -160,9 +156,11 @@ const CONNECTION_FIELDS_MAP: Record<string, Record<string, string>> = {
 export class ShopifyApiClient {
   private readonly client: AxiosInstance;
   private readonly domain: string;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(credentials: ShopifyCredentials) {
+  constructor(credentials: ShopifyCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.domain = normalizeDomain(credentials.shopDomain);
+    this.rateLimiter = opts?.rateLimiter;
 
     this.client = axios.create({
       baseURL: `https://${this.domain}/admin/api/${API_VERSION}`,
@@ -179,36 +177,11 @@ export class ShopifyApiClient {
    * Execute a GraphQL query/mutation with automatic retry on throttling.
    */
   private async query<T>(queryString: string, variables?: Record<string, unknown>): Promise<T> {
-    let lastError: Error | null = null;
-    let retryDelay = INITIAL_RETRY_DELAY_MS;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        return await this.executeQuery<T>(queryString, variables);
-      } catch (error) {
-        lastError = error as Error;
-
-        const isThrottled =
-          error instanceof ShopifyError &&
-          (error.code === 'THROTTLED' || error.statusCode === 429 || error.message.toLowerCase().includes('throttle'));
-
-        if (!isThrottled || attempt === MAX_RETRIES) {
-          throw error;
-        }
-
-        WSLogger.warn({
-          source: LOG_SOURCE,
-          message: `Shopify API throttled, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
-        });
-        await sleep(retryDelay);
-
-        // Exponential backoff with jitter
-        retryDelay = Math.min(retryDelay * 2 + Math.random() * 500, MAX_RETRY_DELAY_MS);
-      }
+    const fn = () => this.executeQuery<T>(queryString, variables);
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, SHOPIFY_RETRY_OPTS);
     }
-
-    // This should be unreachable, but satisfies the compiler
-    throw lastError ?? new ShopifyError('Max retries exceeded', 429, 'THROTTLED');
+    return standaloneWithRetry(fn, SHOPIFY_RETRY_OPTS);
   }
 
   /**

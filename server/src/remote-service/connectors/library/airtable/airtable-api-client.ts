@@ -1,4 +1,5 @@
 import axios, { RawAxiosRequestHeaders } from 'axios';
+import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
 import {
   AirtableApiPushResponse,
   AirtableBaseSchemaResponseV2,
@@ -8,33 +9,59 @@ import {
 
 const AIRTABLE_API_BASE_URL = 'https://api.airtable.com/v0';
 
+const AIRTABLE_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => axios.isAxiosError(error) && error.response?.status === 429,
+  getRetryAfterS: (error) => {
+    if (!axios.isAxiosError(error)) return undefined;
+    const header = String(error.response?.headers?.['retry-after'] ?? '');
+    const seconds = header ? parseInt(header, 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
+};
+
 /**
  * Client for making api calls to airtable.
  */
 export class AirtableApiClient {
   private readonly authHeaders: RawAxiosRequestHeaders;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(private readonly apiKey: string) {
+  constructor(
+    private readonly apiKey: string,
+    opts?: { rateLimiter?: RateLimiter },
+  ) {
     this.authHeaders = {
       Authorization: `Bearer ${this.apiKey}`,
       accept: 'application/json',
     };
+    this.rateLimiter = opts?.rateLimiter;
+  }
+
+  private async retryableRequest<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, AIRTABLE_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, AIRTABLE_RETRY_OPTS);
   }
 
   /**
    * https://airtable.com/developers/web/api/list-bases
    */
   async listBases(): Promise<AirtableListBasesResponse> {
-    const r = await axios.get<AirtableListBasesResponse>(`${AIRTABLE_API_BASE_URL}/meta/bases`, {
-      headers: this.authHeaders,
-    });
+    const r = await this.retryableRequest(() =>
+      axios.get<AirtableListBasesResponse>(`${AIRTABLE_API_BASE_URL}/meta/bases`, {
+        headers: this.authHeaders,
+      }),
+    );
     return r.data;
   }
 
   async getBaseSchema(baseId: string): Promise<AirtableBaseSchemaResponseV2> {
-    const r = await axios.get<AirtableBaseSchemaResponseV2>(`${AIRTABLE_API_BASE_URL}/meta/bases/${baseId}/tables`, {
-      headers: this.authHeaders,
-    });
+    const r = await this.retryableRequest(() =>
+      axios.get<AirtableBaseSchemaResponseV2>(`${AIRTABLE_API_BASE_URL}/meta/bases/${baseId}/tables`, {
+        headers: this.authHeaders,
+      }),
+    );
     return r.data;
   }
 
@@ -45,13 +72,15 @@ export class AirtableApiClient {
   ): AsyncGenerator<AirtableRecord[], void> {
     let offset: string | undefined;
     do {
-      const r = await axios.get<{
-        records: AirtableRecord[];
-        offset?: string;
-      }>(`${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`, {
-        headers: this.authHeaders,
-        params: { offset, ...options },
-      });
+      const r = await this.retryableRequest(() =>
+        axios.get<{
+          records: AirtableRecord[];
+          offset?: string;
+        }>(`${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`, {
+          headers: this.authHeaders,
+          params: { offset, ...options },
+        }),
+      );
       yield r.data.records;
       offset = r.data.offset;
     } while (offset);
@@ -63,10 +92,12 @@ export class AirtableApiClient {
     tableId: string,
     records: { fields: Record<string, unknown> }[],
   ): Promise<AirtableRecord[]> {
-    const r = await axios.post<AirtableApiPushResponse>(
-      `${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`,
-      { records, typecast: true },
-      { headers: { ...this.authHeaders, 'Content-Type': 'application/json' } },
+    const r = await this.retryableRequest(() =>
+      axios.post<AirtableApiPushResponse>(
+        `${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`,
+        { records, typecast: true },
+        { headers: { ...this.authHeaders, 'Content-Type': 'application/json' } },
+      ),
     );
     return r.data.records ?? [];
   }
@@ -76,18 +107,22 @@ export class AirtableApiClient {
     tableId: string,
     records: { id?: string; fields: Record<string, unknown> }[],
   ): Promise<AirtableRecord[]> {
-    const r = await axios.patch<AirtableApiPushResponse>(
-      `${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`,
-      { records, typecast: true },
-      { headers: { ...this.authHeaders, 'Content-Type': 'application/json' } },
+    const r = await this.retryableRequest(() =>
+      axios.patch<AirtableApiPushResponse>(
+        `${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`,
+        { records, typecast: true },
+        { headers: { ...this.authHeaders, 'Content-Type': 'application/json' } },
+      ),
     );
     return r.data.records ?? [];
   }
 
   async deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<void> {
-    await axios.delete(`${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`, {
-      headers: this.authHeaders,
-      params: { records: recordIds },
-    });
+    await this.retryableRequest(() =>
+      axios.delete(`${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`, {
+        headers: this.authHeaders,
+        params: { records: recordIds },
+      }),
+    );
   }
 }
