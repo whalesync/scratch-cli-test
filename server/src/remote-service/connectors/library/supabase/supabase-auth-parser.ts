@@ -71,6 +71,15 @@ export class SupabaseAuthParser extends AuthParser<typeof Service.SUPABASE> {
       );
     }
 
+    // Reject direct connection strings (db.PROJECT_REF.supabase.co) — only pooler strings are supported
+    if (hostname.startsWith('db.') && hostname.endsWith('.supabase.co')) {
+      throw new ConnectorAuthError(
+        'Direct connection string not supported',
+        'Direct connection strings are not supported. Please use the pooler (Supavisor) connection string from your Supabase dashboard under Settings > Database > Connection string > URI.',
+        this.service,
+      );
+    }
+
     return { credentials: { connectionString }, extras: {} };
   }
 }

@@ -182,6 +182,12 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
         modifier: newModifier || undefined,
         displayName: newDisplayName || undefined,
       });
+
+      if (createdAccount.healthStatus === 'FAILED') {
+        setError(createdAccount.healthStatusMessage || 'Connection test failed. Please check your credentials.');
+        return;
+      }
+
       handleClearForm();
       props.onClose?.();
       onConnectionCreated?.(createdAccount);

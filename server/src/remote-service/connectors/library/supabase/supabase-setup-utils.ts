@@ -1,16 +1,30 @@
 import { SUPABASE_SYSTEM_SCHEMAS } from '../pg-common';
 
 /**
- * Extract the Supabase project ref from a pooler connection string.
- * Supavisor shared endpoints use username format: `postgres.PROJECT_REF`.
+ * Extract the Supabase project ref from a connection string.
+ *
+ * Supports two formats:
+ * - Pooler (Supavisor): username contains the ref, e.g. `postgres.PROJECT_REF`
+ * - Direct: hostname contains the ref, e.g. `db.PROJECT_REF.supabase.co`
  */
 export function extractProjectRef(connectionString: string): string {
   const url = new URL(connectionString);
-  const parts = url.username.split('.');
-  if (parts.length >= 2) {
-    return parts.slice(1).join('.');
+
+  // Pooler format: username is `postgres.PROJECT_REF`
+  const usernameParts = url.username.split('.');
+  if (usernameParts.length >= 2) {
+    return usernameParts.slice(1).join('.');
   }
-  throw new Error('Cannot extract project ref from connection string username');
+
+  // Direct format: hostname is `db.PROJECT_REF.supabase.co`
+  const hostParts = url.hostname.split('.');
+  if (hostParts.length >= 3 && hostParts[0] === 'db') {
+    return hostParts[1];
+  }
+
+  throw new Error(
+    'Cannot extract project ref from connection string. Use the pooler (Supavisor) or direct connection format from your Supabase dashboard.',
+  );
 }
 
 /**
