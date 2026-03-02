@@ -5,7 +5,7 @@ import _ from 'lodash';
 import { WSLogger } from '../logger';
 import type { Connector } from '../remote-service/connectors/connector';
 import type { BaseJsonTableSpec } from '../remote-service/connectors/types';
-import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { formatJsonWithPrettier } from '../utils/json-formatter';
 import { deduplicateFileName, resolveBaseFileName } from './util';
 
@@ -85,9 +85,35 @@ export class DataFolderPublishingService {
 
     const idField = tableSpec.idColumnRemoteId || 'id';
 
+    // Discard dotfile diffs by syncing main's version to dirty
+    const dotfileDiffs = diff.filter((f) => f.path.split('/').some((p) => p.startsWith('.')));
+    if (dotfileDiffs.length > 0) {
+      try {
+        for (const dotfile of dotfileDiffs) {
+          const mainFile = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dotfile.path);
+          if (mainFile) {
+            await this.scratchGitService.commitFilesToBranch(
+              repoId,
+              DIRTY_BRANCH,
+              [{ path: dotfile.path, content: mainFile.content }],
+              `Sync ${dotfile.path} from main`,
+            );
+          }
+        }
+      } catch (e) {
+        WSLogger.warn({
+          source: 'DataFolderPublishingService',
+          message: 'Failed to discard dotfile diffs',
+          repoId,
+          folderPath,
+          error: e,
+        });
+      }
+    }
+
     for (const file of diff) {
-      // Only process JSON files
-      if (!file.path.endsWith('.json')) {
+      // Only process JSON files, skip dotfiles (e.g. .schema.json)
+      if (!file.path.endsWith('.json') || file.path.split('/').some((p) => p.startsWith('.'))) {
         continue;
       }
 
