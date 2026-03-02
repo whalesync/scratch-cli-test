@@ -18,5 +18,6 @@
     "^src/(.*)$": "<rootDir>/../../src/$1"
   },
   "globalSetup": "<rootDir>/jest-setup.ts",
-  "maxWorkers": 1
+  "maxWorkers": 1,
+  "forceExit": true
 }
