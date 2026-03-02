@@ -31,6 +31,7 @@ export interface DirtyFileCountResponse {
 export interface GitObjectCountsResponse {
   stats: string;
   gcInProgress: number | null;
+  engine?: string;
 }
 
 /**

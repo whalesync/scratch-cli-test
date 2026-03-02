@@ -110,14 +110,14 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   }, [workbookToRename, newName, updateWorkbook, closeRenameModal]);
 
   const handleOpenCreate = useCallback(() => {
-    createVersionRef.current = 1;
+    createVersionRef.current = 2; // default
     setCreateName('');
     setMenuOpened(false);
     openCreateModal();
   }, [openCreateModal]);
 
-  const handleOpenCreateV2 = useCallback(() => {
-    createVersionRef.current = 2;
+  const handleOpenCreateV1 = useCallback(() => {
+    createVersionRef.current = 1; // Admin explicitly asks for V1
     setCreateName('');
     setMenuOpened(false);
     openCreateModal();
@@ -144,7 +144,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
       const version = createVersionRef.current;
       const newWorkbook = await createWorkbook({
         name: createName.trim(),
-        ...(version > 1 ? { version } : {}),
+        ...(version !== undefined ? { version } : {}),
       });
       closeCreateModal();
       // Navigate to the new workbook
@@ -254,10 +254,10 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
             <Text13Regular c="var(--fg-secondary)">New Project</Text13Regular>
           </Menu.Item>
 
-          {/* New Project V2 (admin only) */}
+          {/* New Project V1 (admin only) */}
           {isAdmin && (
-            <Menu.Item onClick={handleOpenCreateV2} leftSection={<FlaskRoundIcon size={14} />} data-devtool>
-              <Text13Regular c="var(--mantine-color-devTool-8)">New Project (V2)</Text13Regular>
+            <Menu.Item onClick={handleOpenCreateV1} leftSection={<FlaskRoundIcon size={14} />} data-devtool>
+              <Text13Regular c="var(--mantine-color-devTool-8)">New Project (V1)</Text13Regular>
             </Menu.Item>
           )}
         </Menu.Dropdown>
@@ -293,7 +293,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
       <Modal
         opened={createModalOpened}
         onClose={closeCreateModal}
-        title={createVersionRef.current > 1 ? 'New Project (V2)' : 'New Project'}
+        title={createVersionRef.current === 1 ? 'New Project (V1)' : 'New Project'}
         size="sm"
         centered
       >

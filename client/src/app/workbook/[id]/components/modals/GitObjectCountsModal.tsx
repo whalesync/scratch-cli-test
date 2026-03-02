@@ -24,9 +24,16 @@ export function GitObjectCountsModal({ opened, onClose, data }: GitObjectCountsM
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Git Object Counts" size="md">
+    <Modal opened={opened} onClose={onClose} title="Repo Info" size="md">
       <Stack>
-        <Group>{gcStatusBadge}</Group>
+        <Group>
+          {gcStatusBadge}
+          {data.engine && (
+            <Badge color="violet" variant="light">
+              Engine: {data.engine}
+            </Badge>
+          )}
+        </Group>
         <GitStatsViewer stats={data.stats} />
         <Group justify="flex-end" mt="md">
           <Button onClick={onClose}>Close</Button>

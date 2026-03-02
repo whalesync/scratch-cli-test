@@ -178,7 +178,7 @@ pub async fn count_objects(
                 .map_err(|e| AppError::internal(format!("Failed to run git count-objects: {}", e)))?;
             let stats = String::from_utf8_lossy(&output.stdout).to_string();
             let gc_in_progress = state.gc_state.get(&id).map(|v| *v);
-            Ok::<_, AppError>(json!({ "stats": stats, "gcInProgress": gc_in_progress }))
+            Ok::<_, AppError>(json!({ "stats": stats, "gcInProgress": gc_in_progress, "engine": "gitoxide" }))
         }
     })
     .await;

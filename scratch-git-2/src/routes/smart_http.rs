@@ -1,5 +1,5 @@
 use axum::{
-    body::{Body, Bytes},
+    body::Body,
     extract::{Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode},
     response::IntoResponse,

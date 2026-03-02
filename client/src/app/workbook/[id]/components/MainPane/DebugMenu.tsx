@@ -226,14 +226,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
                   >
                     Manual Rebase
                   </Menu.Item>
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<GitGraphIcon size={16} />}
-                    onClick={handleGetObjectCounts}
-                    disabled={isLoadingObjectCounts}
-                  >
-                    Get Object Counts
-                  </Menu.Item>
+
                   <Menu.Item
                     data-devtool
                     leftSection={<GitGraphIcon size={16} />}
@@ -259,6 +252,14 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
                   </Menu.Item>
                   <Menu.Item data-devtool leftSection={<LinkIcon size={16} />} onClick={() => setRefIndexOpen(true)}>
                     Ref Index
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitGraphIcon size={16} />}
+                    onClick={handleGetObjectCounts}
+                    disabled={isLoadingObjectCounts}
+                  >
+                    Get Object Counts
                   </Menu.Item>
                 </Menu.Dropdown>
               </Menu>

@@ -48,7 +48,7 @@ export class WorkbookService {
         userId: actor.userId,
         organizationId: actor.organizationId,
         name: name ?? `New workbook`,
-        ...(version !== undefined ? { version } : {}),
+        ...(version !== undefined ? { version } : { version: 2 }),
       },
       include: WorkbookCluster._validator.include,
     });
