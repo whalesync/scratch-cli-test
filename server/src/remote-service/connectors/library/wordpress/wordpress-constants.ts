@@ -20,7 +20,6 @@ export const WORDPRESS_EXCLUDE_TABLE_SLUGS = [
   'wp_navigation',
   'wp_font_family',
   'wp_font_face',
-  'attachment', // Media has the slug "attachment"
   'users',
 ];
 

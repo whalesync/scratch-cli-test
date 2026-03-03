@@ -1,6 +1,12 @@
 import { Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import { FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../../json-schema';
+import {
+  ASSET_FIELD,
+  AssetFieldOptions,
+  FOREIGN_KEY_OPTIONS,
+  ForeignKeyOptionSchema,
+  READONLY_FLAG,
+} from '../../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../../types';
 
 /**
@@ -80,7 +86,10 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
             width: Type.Optional(Type.Integer({ description: 'Image width' })),
             altText: Type.Optional(Type.String({ description: 'Alt text' })),
           },
-          { description: 'Hero/cover image' },
+          {
+            description: 'Hero/cover image',
+            [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+          },
         ),
       ),
       media: Type.Optional(

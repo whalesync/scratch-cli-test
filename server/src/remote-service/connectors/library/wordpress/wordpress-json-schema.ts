@@ -1,7 +1,14 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { isArray } from 'lodash';
-import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
+import {
+  ASSET_TABLE,
+  AssetTableOptions,
+  CONNECTOR_DATA_TYPE,
+  FOREIGN_KEY_OPTIONS,
+  ForeignKeyOptionSchema,
+  READONLY_FLAG,
+} from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
@@ -244,10 +251,26 @@ export function buildWordPressJsonTableSpec(
     properties['acf'] = Type.Optional(Type.Object(acfFieldProperties, { description: 'Advanced Custom Fields' }));
   }
 
-  const schema = Type.Object(properties, {
+  const schemaOptions: Record<string, unknown> = {
     $id: tableId,
     title: formatTableName(tableId),
-  });
+  };
+
+  // Media tables are standalone asset tables — each record IS an asset
+  if (tableId === 'media') {
+    schemaOptions[ASSET_TABLE] = {
+      urlPath: 'source_url',
+      filenamePath: 'title.rendered',
+      mimeTypePath: 'mime_type',
+      sizePath: 'media_details.filesize',
+      widthPath: 'media_details.width',
+      heightPath: 'media_details.height',
+      altTextPath: 'alt_text',
+      urlExpires: false,
+    } satisfies AssetTableOptions;
+  }
+
+  const schema = Type.Object(properties, schemaOptions);
 
   return {
     id,

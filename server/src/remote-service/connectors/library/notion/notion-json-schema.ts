@@ -3,6 +3,8 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import {
+  ASSET_FIELD,
+  AssetFieldOptions,
   CONNECTOR_DATA_TYPE,
   FOREIGN_KEY_OPTIONS,
   READONLY_FLAG,
@@ -68,34 +70,40 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
         { description: 'User who last edited the page' },
       ),
       cover: Type.Optional(
-        Type.Union([
-          Type.Object({
-            type: Type.Literal('external'),
-            external: Type.Object({ url: Type.String({ format: 'uri' }) }),
-          }),
-          Type.Object({
-            type: Type.Literal('file'),
-            file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
-          }),
-          Type.Null(),
-        ]),
+        Type.Union(
+          [
+            Type.Object({
+              type: Type.Literal('external'),
+              external: Type.Object({ url: Type.String({ format: 'uri' }) }),
+            }),
+            Type.Object({
+              type: Type.Literal('file'),
+              file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
+            }),
+            Type.Null(),
+          ],
+          { [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
+        ),
       ),
       icon: Type.Optional(
-        Type.Union([
-          Type.Object({
-            type: Type.Literal('emoji'),
-            emoji: Type.String(),
-          }),
-          Type.Object({
-            type: Type.Literal('external'),
-            external: Type.Object({ url: Type.String({ format: 'uri' }) }),
-          }),
-          Type.Object({
-            type: Type.Literal('file'),
-            file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
-          }),
-          Type.Null(),
-        ]),
+        Type.Union(
+          [
+            Type.Object({
+              type: Type.Literal('emoji'),
+              emoji: Type.String(),
+            }),
+            Type.Object({
+              type: Type.Literal('external'),
+              external: Type.Object({ url: Type.String({ format: 'uri' }) }),
+            }),
+            Type.Object({
+              type: Type.Literal('file'),
+              file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
+            }),
+            Type.Null(),
+          ],
+          { [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
+        ),
       ),
       parent: Type.Object(
         {
@@ -264,7 +272,10 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
             file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
           }),
         ]),
-        { description },
+        {
+          description,
+          [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions,
+        },
       );
       break;
 

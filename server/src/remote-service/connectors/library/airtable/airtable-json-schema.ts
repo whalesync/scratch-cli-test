@@ -1,6 +1,8 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import {
+  ASSET_FIELD,
+  AssetFieldOptions,
   CONNECTOR_DATA_TYPE,
   FOREIGN_KEY_OPTIONS,
   ForeignKeyOptionSchema,
@@ -185,7 +187,10 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
           size: Type.Optional(Type.Number()),
           type: Type.Optional(Type.String()),
         }),
-        { description },
+        {
+          description,
+          [ASSET_FIELD]: { idPath: 'id', urlExpires: true } satisfies AssetFieldOptions,
+        },
       );
       break;
 

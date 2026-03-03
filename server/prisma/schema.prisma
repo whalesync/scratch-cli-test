@@ -201,6 +201,7 @@ model Workbook {
   publishPlans       PublishPlan[]
   schedules          Schedule[]
   syncs              Sync[]
+  assets             Asset[]
 
   @@index([userId])
   @@index([organizationId])
@@ -696,6 +697,45 @@ model Schedule {
   @@index([workbookId])
   @@index([enabled, nextRunAt])
   @@index([entityId])
+}
+
+//#endregion
+
+//#region Asset
+
+/// Tracks file/media assets extracted from record files during pull.
+/// Each row represents a single file attachment found within a record.
+model Asset {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  workbookId String
+
+  service        Service // AIRTABLE, NOTION, WEBFLOW, etc.
+  remoteAssetId  String // Stable ID per connector (e.g. Airtable attachment id, URL hash, etc.)
+  recordFilePath String // Git path of the record containing this asset
+  recordRemoteId String? // Remote record ID (cross-ref with FileIndex)
+  fieldPath      String? // Location within the record JSON (e.g. "fields.Photos[0]")
+  assetContext   String  @default("FIELD_VALUE") // FIELD_VALUE | CONTENT_BLOCK | RECORD_PROPERTY | STANDALONE_ENTITY
+
+  url          String? // Current URL (may be expired)
+  filename     String?
+  mimeType     String?
+  size         BigInt? // Bytes
+  width        Int? // Pixels
+  height       Int? // Pixels
+  altText      String?
+  mediaType    String? // image | video | audio | document | file | external_video | model_3d
+  urlExpiresAt DateTime? // When URL expires (null = permanent)
+  lastSeenAt   DateTime? // Updated each pull; stale = deleted upstream
+
+  @@unique([workbookId, service, remoteAssetId, recordFilePath])
+  @@index([workbookId, recordFilePath])
+  @@index([workbookId, service])
+  @@index([urlExpiresAt])
+  @@index([workbookId, lastSeenAt])
 }
 
 //#endregion

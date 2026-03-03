@@ -2,14 +2,18 @@ import { TObject, TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
-import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Webflow, WebflowClient, WebflowError } from 'webflow-api';
 import { TooManyRequestsError } from 'webflow-api/api/errors';
 import { minifyHtml } from '../../../../wrappers/html-minify';
 import { Connector } from '../../connector';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
-import { buildWebflowJsonTableSpec } from './webflow-json-schema';
+import {
+  buildWebflowAssetsJsonTableSpec,
+  buildWebflowJsonTableSpec,
+  WEBFLOW_ASSETS_TABLE_ID_PREFIX,
+} from './webflow-json-schema';
 import { WebflowSchemaParser } from './webflow-schema-parser';
 import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
 
@@ -58,7 +62,7 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     const sitesResponse = await this.withRetry(() => this.client.sites.list());
     const sites = sitesResponse.sites || [];
 
-    // For each site, get all collections
+    // For each site, get all collections + an Assets table
     for (const site of sites) {
       const collectionsResponse = await this.withRetry(() => this.client.collections.list(site.id));
       const collections = collectionsResponse.collections || [];
@@ -70,6 +74,22 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
         }
         tables.push(this.schemaParser.parseTablePreview(site, collection));
       }
+
+      // Add a site-level Assets table
+      const assetsTableId = `${WEBFLOW_ASSETS_TABLE_ID_PREFIX}${site.id}`;
+      tables.push({
+        id: {
+          wsId: assetsTableId,
+          remoteId: [site.id, assetsTableId],
+        },
+        displayName: `Assets`,
+        disabledCreates: true,
+        metadata: {
+          siteId: site.id,
+          siteName: site.displayName,
+          isAssetsTable: true,
+        },
+      });
     }
 
     return tables;
@@ -158,7 +178,13 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     _options: ConnectorPullOptions,
   ): Promise<void> {
     WSLogger.info({ source: 'WebflowConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
-    const [, collectionId] = tableSpec.id.remoteId;
+    const [siteId, collectionId] = tableSpec.id.remoteId;
+
+    // Handle assets table
+    if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
+      await this.pullAssets(siteId, callback);
+      return;
+    }
 
     let offset = 0;
     let hasMore = true;
@@ -196,12 +222,64 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   }
 
   /**
-   * Fetch JSON Table Spec directly from the Webflow API for a collection.
+   * Pull all assets for a site via the Webflow Assets API.
+   */
+  private async pullAssets(
+    siteId: string,
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.withRetry(() =>
+        this.client.assets.list(siteId, {
+          offset,
+          limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+        }),
+      );
+
+      const assets = response.assets || [];
+
+      if (assets.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      // Normalize asset records: convert Date fields to ISO strings
+      const files: ConnectorFile[] = assets.map((asset) => ({
+        ...asset,
+        createdOn: asset.createdOn instanceof Date ? asset.createdOn.toISOString() : asset.createdOn,
+        lastUpdated: asset.lastUpdated instanceof Date ? asset.lastUpdated.toISOString() : asset.lastUpdated,
+      }));
+
+      await callback({ files });
+
+      const pagination = response.pagination;
+      if (pagination) {
+        const total = pagination.total || 0;
+        offset += assets.length;
+        hasMore = offset < total;
+      } else {
+        hasMore = assets.length === WEBFLOW_DEFAULT_BATCH_SIZE;
+        offset += assets.length;
+      }
+    }
+  }
+
+  /**
+   * Fetch JSON Table Spec directly from the Webflow API for a collection or assets table.
    * Converts Webflow field types to JSON Schema types for AI consumption.
    * Uses field slugs as property keys.
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [siteId, collectionId] = id.remoteId;
+
+    // Handle assets table
+    if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
+      const site = await this.withRetry(() => this.client.sites.get(siteId));
+      return buildWebflowAssetsJsonTableSpec(id, site);
+    }
 
     // Fetch site and collection directly from Webflow API
     const [site, collection] = await Promise.all([
@@ -218,6 +296,37 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
     const [, collectionId] = tableSpec.id.remoteId;
+
+    // Handle assets table
+    if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
+      const buffer: ConnectorFile[] = [];
+      for (const assetId of ids) {
+        try {
+          const asset = await this.withRetry(() => this.client.assets.get(assetId));
+          if (asset) {
+            buffer.push({
+              ...asset,
+              createdOn: asset.createdOn instanceof Date ? asset.createdOn.toISOString() : asset.createdOn,
+              lastUpdated: asset.lastUpdated instanceof Date ? asset.lastUpdated.toISOString() : asset.lastUpdated,
+            } as unknown as ConnectorFile);
+          }
+        } catch (error) {
+          if (error instanceof WebflowError && error.statusCode === 404) {
+            WSLogger.warn({
+              source: 'WebflowConnector',
+              message: `Asset ${assetId} not found, skipping`,
+            });
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (buffer.length > 0) {
+        await callback({ files: buffer });
+      }
+      return;
+    }
+
     const BATCH_SIZE = 20;
     const buffer: ConnectorFile[] = [];
 

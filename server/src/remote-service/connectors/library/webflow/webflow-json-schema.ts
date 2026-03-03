@@ -4,6 +4,10 @@ import { TransformerTypes } from '@spinner/shared-types';
 import _ from 'lodash';
 import { Webflow } from 'webflow-api';
 import {
+  ASSET_FIELD,
+  ASSET_TABLE,
+  AssetFieldOptions,
+  AssetTableOptions,
   CONNECTOR_DATA_TYPE,
   FOREIGN_KEY_OPTIONS,
   ForeignKeyOptionSchema,
@@ -100,7 +104,10 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
           url: Type.String({ format: 'uri' }),
           alt: Type.Optional(Type.String()),
         },
-        { description },
+        {
+          description,
+          [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+        },
       );
       break;
 
@@ -110,7 +117,10 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
           url: Type.String({ format: 'uri' }),
           alt: Type.Optional(Type.String()),
         }),
-        { description },
+        {
+          description,
+          [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+        },
       );
       break;
 
@@ -231,6 +241,66 @@ export function buildWebflowJsonTableSpec(
     mainContentColumnRemoteId,
     idColumnRemoteId: 'id',
     slugColumnRemoteId: 'fieldData.slug',
+    basePath: [site.displayName ?? site.shortName ?? ''],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Table ID prefix for Webflow site-level asset tables.
+ */
+export const WEBFLOW_ASSETS_TABLE_ID_PREFIX = '__assets__';
+
+/**
+ * Build a BaseJsonTableSpec schema for Webflow site assets.
+ */
+export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Webflow.Site): BaseJsonTableSpec {
+  const schema = Type.Object(
+    {
+      id: Type.String({ description: 'Unique asset identifier', [READONLY_FLAG]: true }),
+      displayName: Type.String({ description: 'Display name of the asset' }),
+      hostedUrl: Type.Optional(
+        Type.String({
+          description: 'Permanent CDN URL for the asset',
+          format: 'uri',
+          [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+        }),
+      ),
+      originalFileName: Type.Optional(Type.String({ description: 'Original file name at upload' })),
+      contentType: Type.Optional(Type.String({ description: 'MIME content type' })),
+      size: Type.Optional(Type.Number({ description: 'File size in bytes' })),
+      altText: Type.Optional(Type.String({ description: 'Visual description of the asset' })),
+      siteId: Type.Optional(Type.String({ description: 'Site that hosts this asset', [READONLY_FLAG]: true })),
+      createdOn: Type.Optional(
+        Type.String({ description: 'When the asset was created', format: 'date-time', [READONLY_FLAG]: true }),
+      ),
+      lastUpdated: Type.Optional(
+        Type.String({ description: 'When the asset was last updated', format: 'date-time', [READONLY_FLAG]: true }),
+      ),
+    },
+    {
+      $id: `webflow-assets/${site.id}`,
+      title: 'Assets',
+      [ASSET_TABLE]: {
+        urlPath: 'hostedUrl',
+        filenamePath: 'originalFileName',
+        mimeTypePath: 'contentType',
+        sizePath: 'size',
+        widthPath: null,
+        heightPath: null,
+        altTextPath: 'altText',
+        urlExpires: false,
+      } satisfies AssetTableOptions,
+    },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Assets',
+    schema,
+    idColumnRemoteId: 'id',
+    titleColumnRemoteId: ['displayName'],
     basePath: [site.displayName ?? site.shortName ?? ''],
     generatedAt: new Date().toISOString(),
   };

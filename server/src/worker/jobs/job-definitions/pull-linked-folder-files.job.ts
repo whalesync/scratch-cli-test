@@ -5,6 +5,8 @@ import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/c
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
+import { AssetExtractorService } from 'src/asset/asset-extractor.service';
+import { AssetIndexService } from 'src/asset/asset-index.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -59,6 +61,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     private readonly scratchGitService: ScratchGitService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
+    private readonly assetExtractorService: AssetExtractorService,
+    private readonly assetIndexService: AssetIndexService,
   ) {}
 
   async run(params: {
@@ -341,6 +345,42 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
             })),
             tableSpec.schema, // Schema for Pass 2 (resolved ID refs)
           );
+
+          // Update Asset Index
+          try {
+            const assetEntries = builtFiles.flatMap((f) => {
+              const normalizedPath = f.path.startsWith('/') ? f.path.slice(1) : f.path;
+              const content = JSON.parse(f.content) as Record<string, unknown>;
+              // eslint-disable-next-line @typescript-eslint/no-base-to-string
+              const recordRemoteId = String(content[tableSpec.idColumnRemoteId] || '') || undefined;
+              return this.assetExtractorService.extractAssets({
+                workbookId: dataFolder.workbookId,
+                service: dataFolder.connectorService as Service,
+                recordFilePath: normalizedPath,
+                recordRemoteId,
+                recordContent: content,
+                schema: tableSpec.schema as Record<string, unknown>,
+              });
+            });
+            if (assetEntries.length > 0) {
+              await this.assetIndexService.upsertBatch(assetEntries);
+              WSLogger.info({
+                source: 'PullLinkedFolderFilesJob',
+                message: `Asset index updated: extracted assets from records`,
+                service: dataFolder.connectorService,
+                workbookId: dataFolder.workbookId,
+                assetCount: assetEntries.length,
+                recordCount: builtFiles.length,
+              });
+            }
+          } catch (assetErr) {
+            WSLogger.error({
+              source: 'PullLinkedFolderFilesJob',
+              message: 'Failed to update asset index',
+              workbookId: dataFolder.workbookId,
+              error: assetErr,
+            });
+          }
         } catch (err) {
           WSLogger.error({
             source: 'PullLinkedFolderFilesJob',

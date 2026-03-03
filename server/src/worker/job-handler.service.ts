@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { AssetExtractorService } from 'src/asset/asset-extractor.service';
+import { AssetIndexService } from 'src/asset/asset-index.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
@@ -34,6 +36,8 @@ export class JobHandlerService {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
+    private readonly assetExtractorService: AssetExtractorService,
+    private readonly assetIndexService: AssetIndexService,
     private readonly pipelinePlanService: PublishPlanBuildService,
     private readonly pipelineRunService: PublishPlanRunService,
     private readonly dbService: DbService,
@@ -56,6 +60,8 @@ export class JobHandlerService {
           this.scratchGitService,
           this.fileIndexService,
           this.fileReferenceService,
+          this.assetExtractorService,
+          this.assetIndexService,
         ) as JobHandler<JobDefinition>;
 
       case 'refresh-records':
@@ -67,6 +73,8 @@ export class JobHandlerService {
           this.scratchGitService,
           this.fileIndexService,
           this.fileReferenceService,
+          this.assetExtractorService,
+          this.assetIndexService,
         ) as JobHandler<JobDefinition>;
 
       case 'publish-data-folder':
