@@ -5,7 +5,7 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { GitGcResponse, GitObjectCountsResponse, WorkbookId } from '@spinner/shared-types';
@@ -43,7 +43,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
-  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
+  const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const [isRebasing, setIsRebasing] = useState(false);
   const [isGcing, setIsGcing] = useState(false);
 

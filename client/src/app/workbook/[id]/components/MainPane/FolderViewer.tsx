@@ -3,8 +3,8 @@
 import { ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Group, SimpleGrid, Stack, TextInput, UnstyledButton } from '@mantine/core';
 import type { DataFolderId, FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import { FileIcon, SearchIcon } from 'lucide-react';
@@ -26,7 +26,7 @@ export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' 
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const setSummary = useReviewToolbarStore((state) => state.setSummary);
-  const hiddenFileFolders = useNewWorkbookUIStore((state) => state.hiddenFileFolders);
+  const hiddenFileFolders = useWorkbookUIStore((state) => state.hiddenFileFolders);
   const showHidden = hiddenFileFolders.has(folderId);
 
   // Filter hidden files (dotfiles) unless the user opted to show them

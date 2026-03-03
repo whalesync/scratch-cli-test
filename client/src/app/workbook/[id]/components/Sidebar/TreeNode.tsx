@@ -15,7 +15,7 @@ import { dataFolderApi } from '@/lib/api/data-folder';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackRefreshRecords } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { OAuthService } from '@/types/oauth';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { initiateOAuth } from '@/utils/oauth';
@@ -141,8 +141,8 @@ interface IntermediateFolderNodeProps {
 }
 
 function IntermediateFolderNode({ name, nodeId, depth, children }: IntermediateFolderNodeProps) {
-  const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
-  const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
   const isExpanded = expandedNodes.has(nodeId);
 
   const handleToggle = useCallback(() => {
@@ -252,9 +252,9 @@ export function ConnectionNode({
   mode = 'files',
   dirtyFilePaths,
 }: ConnectionNodeProps) {
-  const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
-  const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
-  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
+  const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const { workbook, pullFolders } = useActiveWorkbook();
   const { getJobsForConnector } = useWorkbookActiveJobs(workbookId);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
@@ -730,10 +730,10 @@ interface TableNodeProps {
 function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: TableNodeProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
-  const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
-  const hiddenFileFolders = useNewWorkbookUIStore((state) => state.hiddenFileFolders);
-  const toggleHiddenFiles = useNewWorkbookUIStore((state) => state.toggleHiddenFiles);
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
+  const hiddenFileFolders = useWorkbookUIStore((state) => state.hiddenFileFolders);
+  const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { pullFolders } = useActiveWorkbook();
 
   const nodeId = `table-${folder.id}`;
@@ -1301,9 +1301,9 @@ interface EmptyConnectionNodeProps {
 }
 
 export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConnectionNodeProps) {
-  const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
-  const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
-  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
+  const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
   const { workbook } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();

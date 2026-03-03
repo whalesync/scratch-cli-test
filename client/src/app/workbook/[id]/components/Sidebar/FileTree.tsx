@@ -6,7 +6,7 @@ import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, Workbook, WorkbookId } from '@spinner/shared-types';
@@ -30,8 +30,8 @@ const SCRATCH_GROUP_NAME = 'Scratch';
 export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   const { dataFolderGroups, isLoading, refresh: refreshDataFolders } = useDataFolders(workbook.id);
   const { connectorAccounts } = useConnectorAccounts(workbook.id);
-  const expandAll = useNewWorkbookUIStore((state) => state.expandAll);
-  const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
+  const expandAll = useWorkbookUIStore((state) => state.expandAll);
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
 
   // Connection modal for empty state
   const [connectionModalOpened, { open: openConnectionModal, close: closeConnectionModal }] = useDisclosure(false);

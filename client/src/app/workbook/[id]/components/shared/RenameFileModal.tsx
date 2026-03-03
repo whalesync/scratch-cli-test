@@ -1,6 +1,6 @@
 import { Text12Regular } from '@/app/components/base/text';
 import { API_CONFIG } from '@/lib/api/config';
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Button, Group, Modal, Stack, TextInput } from '@mantine/core';
 import type { FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import { useState } from 'react';
@@ -14,7 +14,7 @@ interface RenameFileModalProps {
 }
 
 export function RenameFileModal({ opened, onClose, workbookId, file, onSuccess }: RenameFileModalProps) {
-  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
+  const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
 
   const [newName, setNewName] = useState(file.name);
   const [isSubmitting, setIsSubmitting] = useState(false);

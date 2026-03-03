@@ -4,7 +4,7 @@ import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { ErrorInfo, Info } from '@/app/components/InfoPanel';
 import MainContent from '@/app/components/layouts/MainContent';
 import { useWorkbook } from '@/hooks/use-workbook';
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { useWorkbookWebSocketStore } from '@/stores/workbook-websocket-store';
 import { RouteUrls } from '@/utils/route-urls';
 import type { WorkbookId } from '@spinner/shared-types';
@@ -23,10 +23,10 @@ export default function NewWorkbookLayout({ children }: LayoutProps) {
   const workbookId = params.id as WorkbookId;
 
   const { workbook, isLoading, error } = useWorkbook(workbookId);
-  const reset = useNewWorkbookUIStore((state) => state.reset);
+  const reset = useWorkbookUIStore((state) => state.reset);
   // Initialize the workbook editor store so useDataFolders can work
-  const openWorkbook = useNewWorkbookUIStore((state) => state.openWorkbook);
-  const closeWorkbook = useNewWorkbookUIStore((state) => state.closeWorkbook);
+  const openWorkbook = useWorkbookUIStore((state) => state.openWorkbook);
+  const closeWorkbook = useWorkbookUIStore((state) => state.closeWorkbook);
   const connect = useWorkbookWebSocketStore((state) => state.connect);
   const disconnect = useWorkbookWebSocketStore((state) => state.disconnect);
 

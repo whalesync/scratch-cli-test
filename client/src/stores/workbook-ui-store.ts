@@ -2,6 +2,7 @@ import { Workbook, WorkbookId } from '@spinner/shared-types';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// Define the global modals that can be show from anywhere in the workbook UI
 export enum WorkbookModals {
   RENAME_WORKBOOK = 'rename_workbook',
   CONFIRM_DELETE = 'confirm-delete',
@@ -16,6 +17,7 @@ export type WorkbookModalParams =
     }
   | { type: WorkbookModals.PUBLISH_PLANS };
 
+// Define the global error that can be shown from anywhere in the workbook UI
 export interface WorkbookError {
   // Limit the scope of the error to a specific area of the UI. If not provided it will display on all workbook views
   scope?: 'files' | 'review' | 'syncs' | 'runs';
@@ -30,7 +32,7 @@ export interface WorkbookError {
   cause?: Error;
 }
 
-export interface NewWorkbookUIState {
+export interface WorkbookUIState {
   // The real entities are available with useActiveWorkbook() hook.
   workbookId: WorkbookId | null;
 
@@ -69,9 +71,9 @@ type Actions = {
   reset: () => void;
 };
 
-type NewWorkbookUIStore = NewWorkbookUIState & Actions;
+type WorkbookUIStore = WorkbookUIState & Actions;
 
-const INITIAL_STATE: NewWorkbookUIState = {
+const INITIAL_STATE: WorkbookUIState = {
   workbookId: null,
   activeModal: null,
   workbookError: null,
@@ -81,7 +83,7 @@ const INITIAL_STATE: NewWorkbookUIState = {
   tableFilters: {},
 };
 
-export const useNewWorkbookUIStore = create<NewWorkbookUIStore>()(
+export const useWorkbookUIStore = create<WorkbookUIStore>()(
   persist(
     (set, get) => ({
       ...INITIAL_STATE,
@@ -182,7 +184,7 @@ export const useNewWorkbookUIStore = create<NewWorkbookUIStore>()(
       },
     }),
     {
-      name: 'new-workbook-ui-store',
+      name: 'workbook-ui-store',
       // Custom serialization for Set
       storage: {
         getItem: (name) => {

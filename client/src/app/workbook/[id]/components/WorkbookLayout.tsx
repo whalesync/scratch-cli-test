@@ -1,6 +1,6 @@
 'use client';
 
-import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Stack } from '@mantine/core';
 import type { Workbook } from '@spinner/shared-types';
 import { usePathname } from 'next/navigation';
@@ -26,8 +26,8 @@ const MAX_SIDEBAR_WIDTH = 500;
 
 export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
   const pathname = usePathname();
-  const sidebarWidth = useNewWorkbookUIStore((state) => state.sidebarWidth);
-  const setSidebarWidth = useNewWorkbookUIStore((state) => state.setSidebarWidth);
+  const sidebarWidth = useWorkbookUIStore((state) => state.sidebarWidth);
+  const setSidebarWidth = useWorkbookUIStore((state) => state.setSidebarWidth);
 
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
