@@ -138,6 +138,11 @@ export class PublishPlanController {
     return this.publishAdminService.listRefIndex(workbookId);
   }
 
+  @Get('index/assets')
+  assetIndex(@Param('workbookId') workbookId: WorkbookId) {
+    return this.publishAdminService.listAssetIndex(workbookId);
+  }
+
   @Delete(':pipelineId')
   delete(@Param('pipelineId') pipelineId: string) {
     return this.publishAdminService.deletePublishPlan(pipelineId);

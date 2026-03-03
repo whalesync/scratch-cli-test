@@ -88,6 +88,14 @@ describe('AssetExtractorService', () => {
         mimeType: 'application/pdf',
         mediaType: 'document',
       });
+
+      // Airtable URLs expire — urlExpiresAt should be set (~2 hours from now)
+      for (const entry of result) {
+        expect(entry.urlExpiresAt).toBeInstanceOf(Date);
+        const diffMs = entry.urlExpiresAt!.getTime() - Date.now();
+        expect(diffMs).toBeGreaterThan(1.5 * 60 * 60 * 1000); // > 1.5h
+        expect(diffMs).toBeLessThanOrEqual(2 * 60 * 60 * 1000); // <= 2h
+      }
     });
   });
 

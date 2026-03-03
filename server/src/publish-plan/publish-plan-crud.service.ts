@@ -91,6 +91,14 @@ export class PublishPlanCrudService {
     });
   }
 
+  async listAssetIndex(workbookId: string) {
+    const assets = await this.db.client.asset.findMany({
+      where: { workbookId },
+      orderBy: [{ service: 'asc' }, { lastSeenAt: 'desc' }],
+    });
+    return assets.map((a) => ({ ...a, size: a.size != null ? Number(a.size) : null }));
+  }
+
   async listPublishPlanOperations(
     pipelineId: string,
     options?: { page?: number; pageSize?: number; phase?: string; hasError?: boolean },

@@ -468,6 +468,17 @@ export const workbookApi = {
     }
   },
 
+  listAssetIndex: async (workbookId: WorkbookId): Promise<unknown[]> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/assets`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to list asset index');
+      throw error;
+    }
+  },
+
   listPublishPlanOperations: async (
     workbookId: WorkbookId,
     publishPlanId: string,

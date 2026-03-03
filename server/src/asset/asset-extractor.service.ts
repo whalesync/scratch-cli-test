@@ -465,7 +465,7 @@ export class AssetExtractorService {
     return undefined;
   }
 
-  private inferExpiryDate(item: Record<string, unknown>): Date | undefined {
+  private inferExpiryDate(item: Record<string, unknown>): Date {
     // Notion: file.expiry_time
     const file = item['file'] as Record<string, unknown> | undefined;
     const expiryTime = file?.['expiry_time'] as string | undefined;
@@ -473,7 +473,8 @@ export class AssetExtractorService {
       const d = new Date(expiryTime);
       if (!isNaN(d.getTime())) return d;
     }
-    return undefined;
+    // Default: 2 hours from now (matches Airtable's expiry policy)
+    return new Date(Date.now() + 2 * 60 * 60 * 1000);
   }
 
   private parseNotionExpiry(blockData: Record<string, unknown>): Date | undefined {

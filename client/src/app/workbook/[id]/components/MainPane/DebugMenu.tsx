@@ -17,11 +17,13 @@ import {
   FileCodeIcon,
   GitGraphIcon,
   GitMergeIcon,
+  ImageIcon,
   LinkIcon,
   ServerCrashIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { useState } from 'react';
+import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { FileIndexModal } from '../modals/FileIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
@@ -42,6 +44,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
+  const [assetIndexOpen, setAssetIndexOpen] = useState(false);
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const [isRebasing, setIsRebasing] = useState(false);
@@ -265,6 +268,13 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
               </Menu>
               <Menu.Item
                 data-devtool
+                leftSection={<ImageIcon size={16} />}
+                onClick={() => setAssetIndexOpen(true)}
+              >
+                Asset Index
+              </Menu.Item>
+              <Menu.Item
+                data-devtool
                 leftSection={<ServerCrashIcon size={16} />}
                 onClick={() =>
                   setWorkbookError({
@@ -287,6 +297,8 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
       <FileIndexModal opened={fileIndexOpen} onClose={() => setFileIndexOpen(false)} workbookId={workbookId} />
 
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
+
+      <AssetIndexModal opened={assetIndexOpen} onClose={() => setAssetIndexOpen(false)} workbookId={workbookId} />
 
       <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
 
