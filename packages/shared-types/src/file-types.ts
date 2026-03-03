@@ -32,6 +32,7 @@ export interface GitObjectCountsResponse {
   stats: string;
   gcInProgress: number | null;
   engine?: string;
+  repoPath?: string;
 }
 
 /**

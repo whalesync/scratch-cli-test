@@ -1,5 +1,6 @@
 'use client';
 
+import { Text12Regular } from '@/app/components/base/text';
 import { Badge, Button, Group, Modal, Stack } from '@mantine/core';
 import { GitObjectCountsResponse } from '@spinner/shared-types';
 import { GitStatsViewer } from './GitStatsViewer';
@@ -8,9 +9,10 @@ interface GitObjectCountsModalProps {
   opened: boolean;
   onClose: () => void;
   data: GitObjectCountsResponse | null;
+  repoPath?: string | null;
 }
 
-export function GitObjectCountsModal({ opened, onClose, data }: GitObjectCountsModalProps) {
+export function GitObjectCountsModal({ opened, onClose, data, repoPath }: GitObjectCountsModalProps) {
   if (!data) return null;
 
   let gcStatusBadge = <Badge color="gray">GC Not running</Badge>;
@@ -34,6 +36,7 @@ export function GitObjectCountsModal({ opened, onClose, data }: GitObjectCountsM
             </Badge>
           )}
         </Group>
+        {repoPath && <Text12Regular c="var(--fg-secondary)">Path: {repoPath}</Text12Regular>}
         <GitStatsViewer stats={data.stats} />
         <Group justify="flex-end" mt="md">
           <Button onClick={onClose}>Close</Button>

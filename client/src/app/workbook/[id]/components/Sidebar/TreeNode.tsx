@@ -560,6 +560,7 @@ export function ConnectionNode({
             opened={objectCountsModalOpen}
             onClose={() => setObjectCountsModalOpen(false)}
             data={objectCountsData}
+            repoPath={connectorAccount.repoPath}
           />
         </>
       )}

@@ -310,9 +310,18 @@ export class OAuthService {
     }
 
     // Create new account
+    const accountId = createConnectorAccountId();
+
+    // For V2 workbooks, compute the composite repo path
+    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
+    let repoPath: string | null = null;
+    if (workbook && workbook.version >= 2) {
+      repoPath = `${actor.organizationId}--${workbookId}--${accountId}`;
+    }
+
     const newConnectorAccount = await this.db.client.connectorAccount.create({
       data: {
-        id: createConnectorAccountId(),
+        id: accountId,
         userId: actor.userId,
         workbookId: workbookId,
         service: serviceEnum,
@@ -320,6 +329,7 @@ export class OAuthService {
           connectionInfo?.connectionName ??
           `${capitalize(service)} (${connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? 'Private OAuth' : 'OAuth'})`,
         authType: AuthType.OAUTH,
+        repoPath,
         encryptedCredentials: encryptedCredentials as Record<string, any>,
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),

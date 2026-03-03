@@ -20,6 +20,7 @@ export interface ConnectorAccount {
   modifier: string | null; // ID of the custom connector or other modifier entity
   extras: Record<string, unknown> | null; // Additional service-specific configuration
   authType: AuthType;
+  repoPath: string | null;
 }
 
 ///

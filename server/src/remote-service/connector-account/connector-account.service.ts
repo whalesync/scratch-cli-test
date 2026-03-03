@@ -88,14 +88,24 @@ export class ConnectorAccountService {
       credentials as unknown as DecryptedCredentials,
     );
 
+    const accountId = createConnectorAccountId();
+    let repoPath: string | null = null;
+    if (workbook.version >= 2) {
+      if (!actor.organizationId) {
+        throw new Error(`Cannot create V2 repoPath without organizationId`);
+      }
+      repoPath = `${actor.organizationId}--${workbookId}--${accountId}`;
+    }
+
     const connectorAccount = await this.db.client.connectorAccount.create({
       data: {
-        id: createConnectorAccountId(),
+        id: accountId,
         userId: actor.userId,
         workbookId: workbookId,
         service: createDto.service,
         displayName: createDto.displayName ?? `${_.startCase(createDto.service.toLowerCase())}`,
         authType: createDto.authType || AuthType.USER_PROVIDED_PARAMS,
+        repoPath,
         encryptedCredentials: encryptedCredentials as Record<string, any>,
         modifier: createDto.modifier,
         extras,

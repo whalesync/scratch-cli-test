@@ -9,7 +9,7 @@ import type {
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import { DbService } from 'src/db/db.service';
 import { MigrationService } from './migration.service';
-import { ScratchGitService, getRepoId } from './scratch-git.service';
+import { ScratchGitService } from './scratch-git.service';
 
 @Controller('scratch-git')
 @UseGuards(ScratchAuthGuard)
@@ -35,15 +35,15 @@ export class ScratchGitController {
 
     // V2 with no connectorAccountId: aggregate across all connections
     const connAccounts = await this.db.client.connectorAccount.findMany({
-      where: { workbookId },
-      select: { id: true },
+      where: { workbookId, repoPath: { not: null } },
+      select: { repoPath: true },
     });
 
     if (connAccounts.length === 0) {
       return [workbookId]; // no connections yet — nothing to check
     }
 
-    return connAccounts.map((ca) => getRepoId(workbook.version, workbookId, workbook.organizationId, ca.id));
+    return connAccounts.map((ca) => ca.repoPath as string);
   }
 
   @Get(':id/list')

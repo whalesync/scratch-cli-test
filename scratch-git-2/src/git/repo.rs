@@ -266,7 +266,6 @@ impl GitRepo {
         self.get_file_content_by_commit(commit_oid, file_path)
     }
 
-    /// Get file content from a specific commit.
     pub fn get_file_content_by_commit(
         &self,
         commit_oid: ObjectId,
@@ -294,47 +293,35 @@ impl GitRepo {
                 .try_into_tree()
                 .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
 
-            // Collect entries to avoid borrow issues
-            let entries: Vec<(String, ObjectId, bool, bool)> = tree
-                .iter()
-                .filter_map(|e| e.ok())
-                .map(|entry| {
-                    let name = std::str::from_utf8(entry.filename())
-                        .unwrap_or("")
-                        .to_string();
-                    let oid: ObjectId = entry.object_id().into();
-                    let is_blob = entry.mode().is_blob();
-                    let is_tree = entry.mode().is_tree();
-                    (name, oid, is_blob, is_tree)
-                })
-                .collect();
+            let part_bytes = part.as_bytes();
+            let mut found = false;
 
-            if i == parts.len() - 1 {
-                // Last part - look for blob
-                for (name, oid, is_blob, _) in &entries {
-                    if name == part && *is_blob {
-                        let blob = self.read_blob(*oid)?;
-                        return Ok(Some(
-                            String::from_utf8(blob).map_err(|e| {
-                                AppError::internal(format!("Blob not UTF-8: {}", e))
-                            })?,
-                        ));
+            for entry_ref in tree.iter() {
+                let entry = entry_ref.ok();
+                if let Some(entry) = entry {
+                    if entry.filename() == part_bytes {
+                        let is_blob = entry.mode().is_blob();
+                        let is_tree = entry.mode().is_tree();
+                        let oid = entry.object_id().into();
+
+                        if i == parts.len() - 1 && is_blob {
+                            let blob = self.read_blob(oid)?;
+                            return Ok(Some(
+                                String::from_utf8(blob).map_err(|e| {
+                                    AppError::internal(format!("Blob not UTF-8: {}", e))
+                                })?,
+                            ));
+                        } else if i < parts.len() - 1 && is_tree {
+                            current_tree_oid = oid;
+                            found = true;
+                            break;
+                        }
                     }
                 }
+            }
+
+            if !found && i < parts.len() - 1 {
                 return Ok(None);
-            } else {
-                // Intermediate part - look for subtree
-                let mut found = false;
-                for (name, oid, _, is_tree) in &entries {
-                    if name == part && *is_tree {
-                        current_tree_oid = *oid;
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    return Ok(None);
-                }
             }
         }
 
@@ -481,24 +468,20 @@ impl GitRepo {
                 let t = obj
                     .try_into_tree()
                     .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
-                let entries: Vec<(String, ObjectId, bool)> = t
-                    .iter()
-                    .filter_map(|e| e.ok())
-                    .map(|entry| {
-                        let name = std::str::from_utf8(entry.filename())
-                            .unwrap_or("")
-                            .to_string();
-                        (name, entry.object_id().into(), entry.mode().is_tree())
-                    })
-                    .collect();
+                
+                let part_bytes = part.as_bytes();
                 let mut found = false;
-                for (name, oid, is_tree) in &entries {
-                    if name == part && *is_tree {
-                        current_oid = *oid;
-                        found = true;
-                        break;
+
+                for entry_ref in t.iter() {
+                    if let Ok(entry) = entry_ref {
+                        if entry.filename() == part_bytes && entry.mode().is_tree() {
+                            current_oid = entry.object_id().into();
+                            found = true;
+                            break;
+                        }
                     }
                 }
+
                 if !found {
                     return Ok(vec![]);
                 }

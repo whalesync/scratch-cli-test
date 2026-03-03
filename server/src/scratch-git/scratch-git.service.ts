@@ -66,9 +66,12 @@ export class ScratchGitService {
     if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
     if (workbook.version < 2) return workbookId;
     if (!connectorAccountId) throw new Error(`connectorAccountId required for V2 workbook ${workbookId}`);
-    const orgId = workbook.organizationId;
-    if (!orgId) throw new Error(`Workbook ${workbookId} has no organizationId`);
-    return getRepoId(workbook.version, workbookId, orgId, connectorAccountId);
+
+    const account = await this.db.client.connectorAccount.findUnique({ where: { id: connectorAccountId } });
+    if (account?.repoPath) {
+      return account.repoPath;
+    }
+    throw new Error(`Connector account ${connectorAccountId} has no repoPath`);
   }
 
   async initRepo(workbookId: WorkbookId): Promise<void> {

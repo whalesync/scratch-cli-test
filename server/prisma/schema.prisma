@@ -160,6 +160,7 @@ model ConnectorAccount {
   service                   Service
   displayName               String
   authType                  AuthType               @default(USER_PROVIDED_PARAMS)
+  repoPath                  String?
   encryptedCredentials      Json                   @default("{}") // Encrypted JSON containing apiKey, oauth tokens, etc.
   healthStatus              ConnectorHealthStatus?
   healthStatusLastCheckedAt DateTime?

@@ -50,17 +50,6 @@ impl GitRepo {
             .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
 
         let mut new_entries: Vec<(String, gix::objs::tree::EntryKind, ObjectId)> = Vec::new();
-        let mut processed_subtrees = std::collections::HashSet::new();
-        let current_entry_names: std::collections::HashSet<String> = tree
-            .iter()
-            .filter_map(|e| {
-                e.ok().map(|entry| {
-                    std::str::from_utf8(entry.filename())
-                        .unwrap_or("")
-                        .to_string()
-                })
-            })
-            .collect();
 
         for entry_ref in tree.iter() {
             let entry = entry_ref
@@ -71,7 +60,7 @@ impl GitRepo {
             let mode = entry.mode();
             let oid = entry.object_id();
 
-            if let Some(direct) = direct_changes.get(&name) {
+            if let Some(direct) = direct_changes.remove(&name) {
                 if direct.change_type == ChangeType::Delete {
                     // Skip (delete)
                     continue;
@@ -79,7 +68,7 @@ impl GitRepo {
                 // Modify or add over existing
                 let new_oid = self.write_blob_for_change(direct)?;
                 new_entries.push((name, gix::objs::tree::EntryKind::Blob, new_oid));
-            } else if let Some(sub_changes) = subtree_changes.get(&name) {
+            } else if let Some(sub_changes) = subtree_changes.remove(&name) {
                 if mode.is_tree() {
                     let new_subtree_oid = self.apply_changes_to_tree(
                         oid.into(),
@@ -94,7 +83,6 @@ impl GitRepo {
                         },
                     )?;
                     new_entries.push((name.clone(), gix::objs::tree::EntryKind::Tree, new_subtree_oid));
-                    processed_subtrees.insert(name);
                 } else {
                     // Entry is not a tree but we have subtree changes - keep as-is
                     new_entries.push((
@@ -115,9 +103,7 @@ impl GitRepo {
 
         // Add new direct entries (not already in tree)
         for (name, change) in &direct_changes {
-            if (change.change_type == ChangeType::Add || change.change_type == ChangeType::Modify)
-                && !current_entry_names.contains(name.as_str())
-            {
+            if change.change_type == ChangeType::Add || change.change_type == ChangeType::Modify {
                 let new_oid = self.write_blob_for_change(change)?;
                 new_entries.push((name.clone(), gix::objs::tree::EntryKind::Blob, new_oid));
             }
@@ -125,22 +111,20 @@ impl GitRepo {
 
         // Add new subtrees (not already in tree)
         for (name, sub_changes) in &subtree_changes {
-            if !current_entry_names.contains(name.as_str()) {
-                let empty_tree = self.write_empty_tree()?;
-                let new_subtree_oid = self.apply_changes_to_tree(
-                    empty_tree,
-                    &sub_changes
-                        .iter()
-                        .map(|c| (*c).clone())
-                        .collect::<Vec<_>>(),
-                    &if prefix.is_empty() {
-                        name.clone()
-                    } else {
-                        format!("{}/{}", prefix, name)
-                    },
-                )?;
-                new_entries.push((name.clone(), gix::objs::tree::EntryKind::Tree, new_subtree_oid));
-            }
+            let empty_tree = self.write_empty_tree()?;
+            let new_subtree_oid = self.apply_changes_to_tree(
+                empty_tree,
+                &sub_changes
+                    .iter()
+                    .map(|c| (*c).clone())
+                    .collect::<Vec<_>>(),
+                &if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", prefix, name)
+                },
+            )?;
+            new_entries.push((name.clone(), gix::objs::tree::EntryKind::Tree, new_subtree_oid));
         }
 
         // Sort entries in git canonical order (dirs get trailing `/` for comparison)

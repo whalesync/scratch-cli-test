@@ -5,11 +5,13 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
 import {
+  ActionIcon,
   Badge,
   Button,
   Center,
   Group,
   Loader,
+  Menu,
   Modal,
   Pagination,
   SegmentedControl,
@@ -21,8 +23,16 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { AdminWorkbookConnectionDto, AdminWorkbookDto, Service, WorkbookId } from '@spinner/shared-types';
-import { BookOpenIcon } from 'lucide-react';
+import { notifications } from '@mantine/notifications';
+import {
+  AdminWorkbookConnectionDto,
+  AdminWorkbookDto,
+  GitGcResponse,
+  GitObjectCountsResponse,
+  Service,
+  WorkbookId,
+} from '@spinner/shared-types';
+import { BookOpenIcon, DatabaseIcon, GitMergeIcon, MoreVerticalIcon, Trash2Icon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
@@ -33,9 +43,117 @@ function serviceLabel(s: Service): string {
   return s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
+// ── Git actions hook ───────────────────────────────────────────────────────────
+
+function useGitActions() {
+  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
+  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
+  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
+  const [gcModalOpen, setGcModalOpen] = useState(false);
+
+  const handleGetObjectCounts = async (workbookId: WorkbookId, connectorAccountId?: string) => {
+    try {
+      const result = await workbookApi.getObjectCounts(workbookId, connectorAccountId);
+      setObjectCountsData(result);
+      setObjectCountsModalOpen(true);
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to get object counts', color: 'red' });
+    }
+  };
+
+  const handleRunGc = async (workbookId: WorkbookId, aggressive: boolean, connectorAccountId?: string) => {
+    try {
+      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccountId);
+      setGcData(result);
+      setGcModalOpen(true);
+      notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to run Git GC', color: 'red' });
+    }
+  };
+
+  const handleRebase = async (workbookId: WorkbookId, connectorAccountId?: string) => {
+    try {
+      await workbookApi.rebaseDirty(workbookId, connectorAccountId);
+      notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
+    }
+  };
+
+  return {
+    objectCountsData,
+    objectCountsModalOpen,
+    setObjectCountsModalOpen,
+    gcData,
+    gcModalOpen,
+    setGcModalOpen,
+    handleGetObjectCounts,
+    handleRunGc,
+    handleRebase,
+  };
+}
+
+// ── Git actions menu ───────────────────────────────────────────────────────────
+
+function GitActionsMenu({
+  workbookId,
+  connectorAccountId,
+  gitActions,
+}: {
+  workbookId: WorkbookId;
+  connectorAccountId?: string;
+  gitActions: ReturnType<typeof useGitActions>;
+}) {
+  return (
+    <Menu shadow="md" width={200} position="bottom-end">
+      <Menu.Target>
+        <ActionIcon variant="subtle" size="sm">
+          <MoreVerticalIcon size={14} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Git</Menu.Label>
+        <Menu.Item
+          leftSection={<DatabaseIcon size={14} />}
+          onClick={() => void gitActions.handleGetObjectCounts(workbookId, connectorAccountId)}
+        >
+          Repo Info
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<GitMergeIcon size={14} />}
+          onClick={() => void gitActions.handleRebase(workbookId, connectorAccountId)}
+        >
+          Rebase
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<Trash2Icon size={14} />}
+          onClick={() => void gitActions.handleRunGc(workbookId, false, connectorAccountId)}
+        >
+          GC (Standard)
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<Trash2Icon size={14} />}
+          onClick={() => void gitActions.handleRunGc(workbookId, true, connectorAccountId)}
+        >
+          GC (Aggressive)
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 // ── Connections modal ──────────────────────────────────────────────────────────
 
-function ConnectionsModal({ workbook, onClose }: { workbook: AdminWorkbookDto | null; onClose: () => void }) {
+function ConnectionsModal({
+  workbook,
+  onClose,
+  gitActions,
+}: {
+  workbook: AdminWorkbookDto | null;
+  onClose: () => void;
+  gitActions: ReturnType<typeof useGitActions>;
+}) {
   return (
     <Modal
       opened={!!workbook}
@@ -57,6 +175,7 @@ function ConnectionsModal({ workbook, onClose }: { workbook: AdminWorkbookDto | 
                 <Table.Th>Display name</Table.Th>
                 <Table.Th>ID</Table.Th>
                 <Table.Th>Created</Table.Th>
+                {workbook.version >= 2 && <Table.Th>Git</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -83,6 +202,11 @@ function ConnectionsModal({ workbook, onClose }: { workbook: AdminWorkbookDto | 
                       {new Date(conn.createdAt).toLocaleDateString()}
                     </Text>
                   </Table.Td>
+                  {workbook.version >= 2 && (
+                    <Table.Td>
+                      <GitActionsMenu workbookId={workbook.id} connectorAccountId={conn.id} gitActions={gitActions} />
+                    </Table.Td>
+                  )}
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -164,12 +288,14 @@ function WorkbookRow({
   onMigrate,
   isMigrating,
   migrationError,
+  gitActions,
 }: {
   workbook: AdminWorkbookDto;
   onShowConnections: (w: AdminWorkbookDto) => void;
   onMigrate: (id: WorkbookId) => void;
   isMigrating: boolean;
   migrationError: boolean;
+  gitActions: ReturnType<typeof useGitActions>;
 }) {
   return (
     <Table.Tr>
@@ -200,31 +326,35 @@ function WorkbookRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        {workbook.version >= 2 ? (
-          <Tooltip label="Already on v2">
-            <Badge color="blue" variant="light" size="sm">
-              v2 ✓
-            </Badge>
-          </Tooltip>
-        ) : (
-          <Tooltip
-            label={
-              migrationError
-                ? 'Migration failed — check server logs'
-                : 'Migrate repo structure to v2 (one repo per connection)'
-            }
-          >
-            <Button
-              size="xs"
-              variant="outline"
-              color={migrationError ? 'red' : undefined}
-              loading={isMigrating}
-              onClick={() => onMigrate(workbook.id)}
+        <Group gap="xs" wrap="nowrap">
+          {workbook.version >= 2 ? (
+            <Tooltip label="Already on v2">
+              <Badge color="blue" variant="light" size="sm">
+                v2 ✓
+              </Badge>
+            </Tooltip>
+          ) : (
+            <Tooltip
+              label={
+                migrationError
+                  ? 'Migration failed — check server logs'
+                  : 'Migrate repo structure to v2 (one repo per connection)'
+              }
             >
-              → v2
-            </Button>
-          </Tooltip>
-        )}
+              <Button
+                size="xs"
+                variant="outline"
+                color={migrationError ? 'red' : undefined}
+                loading={isMigrating}
+                onClick={() => onMigrate(workbook.id)}
+              >
+                → v2
+              </Button>
+            </Tooltip>
+          )}
+          {/* V1 git actions — one repo per workbook */}
+          {workbook.version < 2 && <GitActionsMenu workbookId={workbook.id} gitActions={gitActions} />}
+        </Group>
       </Table.Td>
     </Table.Tr>
   );
@@ -251,6 +381,8 @@ export default function WorkbooksDevPage() {
   const [errorId, setErrorId] = useState<WorkbookId | null>(null);
 
   const [connectionsWorkbook, setConnectionsWorkbook] = useState<AdminWorkbookDto | null>(null);
+
+  const gitActions = useGitActions();
 
   const fetchWorkbooks = useCallback(async () => {
     setIsLoading(true);
@@ -418,6 +550,7 @@ export default function WorkbooksDevPage() {
                       onMigrate={handleMigrateToV2}
                       isMigrating={migratingId === workbook.id}
                       migrationError={errorId === workbook.id}
+                      gitActions={gitActions}
                     />
                   ))}
                 </Table.Tbody>
@@ -433,7 +566,56 @@ export default function WorkbooksDevPage() {
         </Stack>
       </MainContent.Body>
 
-      <ConnectionsModal workbook={connectionsWorkbook} onClose={() => setConnectionsWorkbook(null)} />
+      <ConnectionsModal
+        workbook={connectionsWorkbook}
+        onClose={() => setConnectionsWorkbook(null)}
+        gitActions={gitActions}
+      />
+      <Modal
+        opened={gitActions.objectCountsModalOpen}
+        onClose={() => gitActions.setObjectCountsModalOpen(false)}
+        title="Repo Info"
+        size="md"
+        centered
+      >
+        {gitActions.objectCountsData && (
+          <Stack>
+            <Text size="sm" style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}>
+              {gitActions.objectCountsData.stats}
+            </Text>
+            <Group justify="flex-end">
+              <Button onClick={() => gitActions.setObjectCountsModalOpen(false)}>Close</Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+      <Modal
+        opened={gitActions.gcModalOpen}
+        onClose={() => gitActions.setGcModalOpen(false)}
+        title="Git GC Results"
+        size="lg"
+        centered
+      >
+        {gitActions.gcData && (
+          <Stack>
+            <Text fw={600} size="sm">
+              Before GC
+            </Text>
+            <Text size="sm" style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}>
+              {gitActions.gcData.statsBefore}
+            </Text>
+            <Text fw={600} size="sm">
+              After GC
+            </Text>
+            <Text size="sm" style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}>
+              {gitActions.gcData.statsAfter}
+            </Text>
+            <Group justify="flex-end">
+              <Button onClick={() => gitActions.setGcModalOpen(false)}>Close</Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </MainContent>
   );
 }
