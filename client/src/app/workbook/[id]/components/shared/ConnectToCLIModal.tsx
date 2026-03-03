@@ -35,7 +35,7 @@ const CommandBlock = ({ command }: { command: string }) => (
     gap="xs"
     p="md"
     style={{
-      backgroundColor: 'var(--mantine-color-gray-1)',
+      backgroundColor: 'var(--bg-selected)',
       borderRadius: 'var(--mantine-radius-sm)',
       border: '1px solid var(--mantine-color-gray-3)',
     }}
@@ -44,7 +44,7 @@ const CommandBlock = ({ command }: { command: string }) => (
       style={{
         flex: 1,
         backgroundColor: 'transparent',
-        color: 'var(--mantine-color-dark-7)',
+        color: 'var(--fg-primary)',
         fontSize: 'var(--mantine-font-size-sm)',
         fontFamily: 'var(--mantine-font-family-monospace)',
       }}
