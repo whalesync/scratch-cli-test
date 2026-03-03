@@ -1,7 +1,7 @@
 import { ButtonDangerLight } from '@/app/components/base/buttons';
 import { Text13Book, Text13Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
+import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { Alert, Code, Stack, UnstyledButton } from '@mantine/core';
 import { AlertTriangleIcon } from 'lucide-react';
 import { usePathname } from 'next/navigation';
@@ -9,8 +9,8 @@ import { useMemo, useState } from 'react';
 
 export const WorkbookErrorAlert = () => {
   const pathname = usePathname();
-  const workbookError = useWorkbookEditorUIStore((state) => state.workbookError);
-  const clearWorkbookError = useWorkbookEditorUIStore((state) => state.clearWorkbookError);
+  const workbookError = useNewWorkbookUIStore((state) => state.workbookError);
+  const clearWorkbookError = useNewWorkbookUIStore((state) => state.clearWorkbookError);
   const [showDetails, setShowDetails] = useState(false);
 
   const isVisible = useMemo(() => {

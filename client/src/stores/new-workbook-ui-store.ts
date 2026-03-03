@@ -1,7 +1,44 @@
+import { Workbook, WorkbookId } from '@spinner/shared-types';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export enum WorkbookModals {
+  RENAME_WORKBOOK = 'rename_workbook',
+  CONFIRM_DELETE = 'confirm-delete',
+  PUBLISH_PLANS = 'publish_plans',
+}
+
+export type WorkbookModalParams =
+  | { type: WorkbookModals.RENAME_WORKBOOK }
+  | {
+      type: WorkbookModals.CONFIRM_DELETE;
+      workbookId: WorkbookId /** Provide explicitly to be safe from race conditions */;
+    }
+  | { type: WorkbookModals.PUBLISH_PLANS };
+
+export interface WorkbookError {
+  // Limit the scope of the error to a specific area of the UI. If not provided it will display on all workbook views
+  scope?: 'files' | 'review' | 'syncs' | 'runs';
+  title?: string;
+  description: string;
+  // An optional action to present the user as a way to fix the error
+  // can be used to display a button to replace the close button
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+  cause?: Error;
+}
+
 export interface NewWorkbookUIState {
+  // The real entities are available with useActiveWorkbook() hook.
+  workbookId: WorkbookId | null;
+
+  activeModal: WorkbookModalParams | null;
+
+  // Global Workbook Error
+  workbookError: WorkbookError | null;
+
   // Selection state is URL-driven (from route params), not stored here
   expandedNodes: Set<string>;
   hiddenFileFolders: Set<string>;
@@ -10,6 +47,16 @@ export interface NewWorkbookUIState {
 }
 
 type Actions = {
+  openWorkbook: (params: { workbookId: WorkbookId }) => void;
+  closeWorkbook: () => void;
+  reconcileWithWorkbook: (workbook: Workbook) => void;
+
+  showModal: (modal: WorkbookModalParams) => void;
+  dismissModal: (modalType: WorkbookModalParams['type']) => void;
+
+  setWorkbookError: (error: WorkbookError) => void;
+  clearWorkbookError: () => void;
+
   toggleNode: (nodeId: string) => void;
   expandNode: (nodeId: string) => void;
   collapseNode: (nodeId: string) => void;
@@ -25,6 +72,9 @@ type Actions = {
 type NewWorkbookUIStore = NewWorkbookUIState & Actions;
 
 const INITIAL_STATE: NewWorkbookUIState = {
+  workbookId: null,
+  activeModal: null,
+  workbookError: null,
   expandedNodes: new Set<string>(),
   hiddenFileFolders: new Set<string>(),
   sidebarWidth: 320,
@@ -35,6 +85,35 @@ export const useNewWorkbookUIStore = create<NewWorkbookUIStore>()(
   persist(
     (set, get) => ({
       ...INITIAL_STATE,
+      openWorkbook: (params: { workbookId: WorkbookId }) => {
+        set({ workbookId: params.workbookId });
+      },
+      closeWorkbook: () => {
+        set({ ...INITIAL_STATE });
+      },
+      /**
+       * This is called every time the workbook is updated from the server.
+       * Any state that has a dependency on the workbook's data should be updated here, to clean up any stale state.
+       */
+      reconcileWithWorkbook: (workbook: Workbook) => {
+        const current = get();
+
+        if (workbook.id !== current.workbookId) {
+          return;
+        }
+        // TODO: update the state with the new workbook
+      },
+
+      showModal: (modal: WorkbookModalParams) => set({ activeModal: modal }),
+      dismissModal: (modalType: WorkbookModalParams['type'] | null) => {
+        if (modalType && modalType !== get().activeModal?.type) {
+          return;
+        }
+        set({ activeModal: null });
+      },
+
+      setWorkbookError: (error: WorkbookError) => set({ workbookError: error }),
+      clearWorkbookError: () => set({ workbookError: null }),
 
       toggleNode: (nodeId: string) => {
         const { expandedNodes } = get();

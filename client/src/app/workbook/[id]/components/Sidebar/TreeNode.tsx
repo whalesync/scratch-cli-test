@@ -16,7 +16,6 @@ import { workbookApi } from '@/lib/api/workbook';
 import { trackRefreshRecords } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
-import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
 import { OAuthService } from '@/types/oauth';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { initiateOAuth } from '@/utils/oauth';
@@ -255,7 +254,7 @@ export function ConnectionNode({
 }: ConnectionNodeProps) {
   const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
-  const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
+  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
   const { workbook, pullFolders } = useActiveWorkbook();
   const { getJobsForConnector } = useWorkbookActiveJobs(workbookId);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
@@ -1304,7 +1303,7 @@ interface EmptyConnectionNodeProps {
 export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConnectionNodeProps) {
   const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
-  const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
+  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
   const { workbook } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();

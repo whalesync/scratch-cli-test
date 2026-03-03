@@ -1,4 +1,4 @@
-import { useWorkbookEditorUIStore } from '../stores/workbook-editor-store';
+import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { useWorkbook, UseWorkbookReturn } from './use-workbook';
 
 /**
@@ -9,7 +9,7 @@ import { useWorkbook, UseWorkbookReturn } from './use-workbook';
  * by the UI state.
  */
 export const useActiveWorkbook = (): UseWorkbookReturn => {
-  const workbookId = useWorkbookEditorUIStore((state) => state.workbookId);
+  const workbookId = useNewWorkbookUIStore((state) => state.workbookId);
   const hookResult = useWorkbook(workbookId);
   return {
     ...hookResult,

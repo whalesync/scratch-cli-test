@@ -14,7 +14,7 @@ import { useJobs } from '@/hooks/use-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { jobApi } from '@/lib/api/job';
 import { workbookApi } from '@/lib/api/workbook';
-import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
+import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { JobEntity } from '@/types/server-entities/job';
 import { timeAgo } from '@/utils/helpers';
 import { getJobDescription, getJobType, getTypeLabel, JobType, publishPlanStatusBadgeColor } from '@/utils/job-helpers';
@@ -148,7 +148,7 @@ export function RunsView() {
   const searchParams = useSearchParams();
   const { jobs, error, isLoading, mutate, cancelJob } = useJobs(50, 0, workbookId);
   const { isDevToolsEnabled } = useDevTools();
-  const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
+  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
   const [cancelingJobIds, setCancelingJobIds] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(() => {
     const jobId = searchParams.get('jobId');

@@ -6,8 +6,8 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
+import { useNewWorkbookUIStore, WorkbookModals } from '@/stores/new-workbook-ui-store';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
-import { useWorkbookEditorUIStore, WorkbookModals } from '@/stores/workbook-editor-store';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Group, Menu, SegmentedControl } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
@@ -24,9 +24,9 @@ interface ReviewSubToolbarProps {
 export function ReviewSubToolbar({ workbookId }: ReviewSubToolbarProps) {
   const router = useRouter();
   const { discardAllChanges } = useActiveWorkbook();
-  const activeModal = useWorkbookEditorUIStore((state) => state.activeModal);
-  const showModal = useWorkbookEditorUIStore((state) => state.showModal);
-  const dismissModal = useWorkbookEditorUIStore((state) => state.dismissModal);
+  const activeModal = useNewWorkbookUIStore((state) => state.activeModal);
+  const showModal = useNewWorkbookUIStore((state) => state.showModal);
+  const dismissModal = useNewWorkbookUIStore((state) => state.dismissModal);
 
   const viewMode = useReviewToolbarStore((state) => state.viewMode);
   const setViewMode = useReviewToolbarStore((state) => state.setViewMode);

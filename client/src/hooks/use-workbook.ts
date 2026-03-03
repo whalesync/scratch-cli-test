@@ -4,7 +4,7 @@ import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackDiscardChanges, trackPullFiles } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
-import { useWorkbookEditorUIStore } from '@/stores/workbook-editor-store';
+import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import {
   CreateDataFolderDto,
   DataFolder,
@@ -38,7 +38,7 @@ export interface UseWorkbookReturn {
 }
 
 export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
-  const setWorkbookError = useWorkbookEditorUIStore((state) => state.setWorkbookError);
+  const setWorkbookError = useNewWorkbookUIStore((state) => state.setWorkbookError);
   const { data, error, isLoading, mutate } = useSWR(
     id ? SWR_KEYS.workbook.detail(id) : null,
     () => (id ? workbookApi.detail(id) : undefined),
