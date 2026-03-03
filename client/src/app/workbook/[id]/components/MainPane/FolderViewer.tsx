@@ -3,6 +3,7 @@
 import { ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
+import { useNewWorkbookUIStore } from '@/stores/new-workbook-ui-store';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { Box, Group, SimpleGrid, Stack, TextInput, UnstyledButton } from '@mantine/core';
 import type { DataFolderId, FileRefEntity, WorkbookId } from '@spinner/shared-types';
@@ -21,10 +22,18 @@ interface FolderViewerProps {
 }
 
 export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' }: FolderViewerProps) {
-  const { files, isLoading } = useFolderFileList(workbookId, folderId);
+  const { files: allFiles, isLoading } = useFolderFileList(workbookId, folderId);
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const setSummary = useReviewToolbarStore((state) => state.setSummary);
+  const hiddenFileFolders = useNewWorkbookUIStore((state) => state.hiddenFileFolders);
+  const showHidden = hiddenFileFolders.has(folderId);
+
+  // Filter hidden files (dotfiles) unless the user opted to show them
+  const files = useMemo(
+    () => (showHidden ? allFiles : allFiles.filter((f) => !f.name.startsWith('.'))),
+    [allFiles, showHidden],
+  );
 
   // Filter to only files, optionally filter to dirty only in review mode, apply search, and apply limit
   const { displayedFiles, totalCount, hasMore } = useMemo(() => {
