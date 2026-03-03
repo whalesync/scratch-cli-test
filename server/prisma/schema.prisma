@@ -200,6 +200,7 @@ model Workbook {
   usersWithAsDefault User[]             @relation("UserLastWorkbook")
   publishPlans       PublishPlan[]
   schedules          Schedule[]
+  syncs              Sync[]
 
   @@index([userId])
   @@index([organizationId])
@@ -547,6 +548,9 @@ model Sync {
   updatedAt    DateTime @updatedAt
   displayName  String
   displayOrder Int      @default(0) @db.SmallInt
+
+  workbookId String?
+  workbook   Workbook? @relation(fields: [workbookId], references: [id], onDelete: Cascade)
 
   // No default here, so the application should set a valid empty SyncMapping on creation
   mappings Json // SyncMapping - @see packages/shared-types/src/sync-mapping.ts

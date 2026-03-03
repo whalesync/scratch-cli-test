@@ -147,6 +147,7 @@ export class SyncService {
     const sync = await this.db.client.sync.create({
       data: {
         id: syncId,
+        workbookId,
         displayName: body.displayName,
         mappings: body.mappings as unknown as Prisma.InputJsonValue,
         publishAfterSync: false,
@@ -318,11 +319,7 @@ export class SyncService {
     const sync = await this.db.client.sync.findFirst({
       where: {
         id: syncId,
-        syncTablePairs: {
-          some: {
-            sourceDataFolder: { workbookId },
-          },
-        },
+        workbookId,
       },
       include: {
         syncTablePairs: true,
@@ -346,16 +343,9 @@ export class SyncService {
       throw new NotFoundException('Workbook not found');
     }
 
-    // Consider adding workbookId to the sync.
     return await this.db.client.sync.findMany({
       where: {
-        syncTablePairs: {
-          some: {
-            sourceDataFolder: {
-              workbookId,
-            },
-          },
-        },
+        workbookId,
       },
       include: {
         syncTablePairs: true,
@@ -385,7 +375,7 @@ export class SyncService {
     }
 
     const sync = await this.db.client.sync.findFirst({
-      where: { id: syncId, syncTablePairs: { some: { sourceDataFolder: { workbookId } } } },
+      where: { id: syncId, workbookId },
     });
     if (!sync) {
       throw new NotFoundException('Sync not found');

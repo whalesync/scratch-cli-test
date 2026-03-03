@@ -146,6 +146,7 @@ describe('SyncService', () => {
       expect(dbService.client.sync.create).toHaveBeenCalledTimes(1);
 
       const createArg = (dbService.client.sync.create as jest.Mock).mock.calls[0][0];
+      expect(createArg.data.workbookId).toBe(WORKBOOK_ID);
       expect(createArg.data.displayName).toBe('Test Sync');
       expect(createArg.data.mappings.version).toBe(1);
       expect(createArg.data.mappings.tableMappings).toHaveLength(1);
@@ -599,7 +600,7 @@ describe('SyncService', () => {
       expect(dbService.client.sync.findFirst).toHaveBeenCalledWith({
         where: {
           id: SYNC_ID,
-          syncTablePairs: { some: { sourceDataFolder: { workbookId: WORKBOOK_ID } } },
+          workbookId: WORKBOOK_ID,
         },
         include: { syncTablePairs: true },
       });
@@ -634,7 +635,7 @@ describe('SyncService', () => {
       expect(result).toEqual(syncs);
       expect(dbService.client.sync.findMany).toHaveBeenCalledWith({
         where: {
-          syncTablePairs: { some: { sourceDataFolder: { workbookId: WORKBOOK_ID } } },
+          workbookId: WORKBOOK_ID,
         },
         include: { syncTablePairs: true },
         orderBy: { createdAt: 'desc' },
@@ -713,7 +714,7 @@ describe('SyncService', () => {
       expect(dbService.client.sync.delete).not.toHaveBeenCalled();
     });
 
-    it('scopes sync query to workbook via syncTablePairs', async () => {
+    it('scopes sync query to workbook via workbookId', async () => {
       workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
 
@@ -722,7 +723,7 @@ describe('SyncService', () => {
       expect(dbService.client.sync.findFirst).toHaveBeenCalledWith({
         where: {
           id: SYNC_ID,
-          syncTablePairs: { some: { sourceDataFolder: { workbookId: WORKBOOK_ID } } },
+          workbookId: WORKBOOK_ID,
         },
       });
     });

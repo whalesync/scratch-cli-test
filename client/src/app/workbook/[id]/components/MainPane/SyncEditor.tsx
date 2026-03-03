@@ -36,6 +36,7 @@ import { notifications } from '@mantine/notifications';
 import type {
   AutoConvertOptions,
   ColumnMapping,
+  DataFolder,
   DataFolderId,
   PreviewFieldResult,
   SaveSyncBody,
@@ -89,7 +90,9 @@ interface FieldMapping {
 interface FolderPair {
   id: string;
   sourceId: string;
+  sourceFolderExists: boolean;
   destId: string;
+  destFolderExists: boolean;
   fieldMappings: FieldMapping[];
   matchingDestinationField: string;
   matchingSourceField: string;
@@ -108,7 +111,9 @@ let pairIdCounter = 0;
 const createPair = (): FolderPair => ({
   id: `pair-${++pairIdCounter}`,
   sourceId: '',
+  sourceFolderExists: false,
   destId: '',
+  destFolderExists: false,
   fieldMappings: [createMapping()],
   matchingDestinationField: '',
   matchingSourceField: '',
@@ -148,8 +153,11 @@ const folderPairsToSyncMapping = (pairs: FolderPair[]): SyncMapping => {
   };
 };
 
-const syncMappingToFolderPairs = (mapping: SyncMapping): FolderPair[] => {
+const syncMappingToFolderPairs = (mapping: SyncMapping, allFolders: DataFolder[]): FolderPair[] => {
   return mapping.tableMappings.map((tm) => {
+    const sourceFolder = allFolders.find((f) => f.id === tm.sourceDataFolderId);
+    const destFolder = allFolders.find((f) => f.id === tm.destinationDataFolderId);
+
     const fieldMappings: FieldMapping[] = tm.columnMappings.map((cm) => ({
       id: `mapping-${++mappingIdCounter}`,
       sourceField: cm.sourceColumnId,
@@ -160,7 +168,9 @@ const syncMappingToFolderPairs = (mapping: SyncMapping): FolderPair[] => {
     return {
       id: `pair-${++pairIdCounter}`,
       sourceId: tm.sourceDataFolderId,
+      sourceFolderExists: sourceFolder !== undefined,
       destId: tm.destinationDataFolderId,
+      destFolderExists: destFolder !== undefined,
       fieldMappings: fieldMappings.length ? fieldMappings : [createMapping()],
       matchingDestinationField: tm.recordMatching?.destinationColumnId || '',
       matchingSourceField: tm.recordMatching?.sourceColumnId || '',
@@ -323,7 +333,7 @@ function PreviewValueBox({
 
 export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const router = useRouter();
-  const { dataFolderGroups } = useDataFolders();
+  const { folders: allFolders } = useDataFolders();
   const syncs = useSyncStore((state) => state.syncs);
   const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
 
@@ -374,9 +384,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
   const hasUnsavedChanges = isNew ? true : getCurrentStateSnapshot() !== lastSavedState;
 
-  // Flatten folders for easy selection
-  const allFolders = dataFolderGroups.flatMap((g) => g.dataFolders);
-
   // Derive active pair from selection
   const activePairIndex = Math.min(selectedPairIndex, folderPairs.length - 1);
   const activePair = folderPairs[activePairIndex];
@@ -395,9 +402,12 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   // Fetch schema paths if not in cache
   const ensureSchemaPaths = async (folderId: string) => {
     if (!folderId || schemaCache[folderId]) return;
-
-    const paths = await workbookApi.getSchemaPaths(folderId);
-    setSchemaCache((prev) => ({ ...prev, [folderId]: paths }));
+    try {
+      const paths = await workbookApi.getSchemaPaths(folderId);
+      setSchemaCache((prev) => ({ ...prev, [folderId]: paths }));
+    } catch (error) {
+      console.error('Error fetching schema paths:', error);
+    }
   };
 
   const handleJsonContentChange = useCallback((value: string) => {
@@ -426,7 +436,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           );
           return;
         }
-        const pairs = syncMappingToFolderPairs(parsed);
+        const pairs = syncMappingToFolderPairs(parsed, allFolders);
         setFolderPairs(pairs);
         setSelectedPairIndex(0);
         // Ensure schema paths for all referenced folders
@@ -492,7 +502,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         return {
           id: `pair-${++pairIdCounter}`,
           sourceId: tm.sourceDataFolderId,
+          sourceFolderExists: allFolders.find((f) => f.id === tm.sourceDataFolderId) !== undefined,
           destId: tm.destinationDataFolderId,
+          destFolderExists: allFolders.find((f) => f.id === tm.destinationDataFolderId) !== undefined,
           fieldMappings: fieldMappings.length ? fieldMappings : [createMapping()],
           matchingDestinationField: tm.recordMatching?.destinationColumnId || '',
           matchingSourceField: tm.recordMatching?.sourceColumnId || '',
@@ -505,7 +517,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       const pairs: FolderPair[] = existingSync.syncTablePairs.map((p: SyncTablePair) => ({
         id: `pair-${++pairIdCounter}`,
         sourceId: p.sourceDataFolderId,
+        sourceFolderExists: allFolders.find((f) => f.id === p.sourceDataFolderId) !== undefined,
         destId: p.destinationDataFolderId,
+        destFolderExists: allFolders.find((f) => f.id === p.destinationDataFolderId) !== undefined,
         fieldMappings: [createMapping()],
         matchingDestinationField: '',
         matchingSourceField: '',
@@ -745,7 +759,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const handleFolderMappingConfirm = (sourceId: string, destId: string) => {
     const newPair = createPair();
     newPair.sourceId = sourceId;
+    newPair.sourceFolderExists = true; // assume the folder exists until we know otherwise
     newPair.destId = destId;
+    newPair.destFolderExists = true; // assume the folder exists until we know otherwise
     const newPairs = [...folderPairs, newPair];
     setFolderPairs(newPairs);
     setSelectedPairIndex(newPairs.length - 1);
@@ -920,6 +936,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                     id: p.id,
                     sourceId: p.sourceId,
                     destId: p.destId,
+                    sourceFolderExists: p.sourceFolderExists,
+                    destFolderExists: p.destFolderExists,
                     fieldMappingCount: p.fieldMappings.filter((m) => m.sourceField && m.destField).length,
                     sourceConnectorService: getFolderConnectorService(p.sourceId),
                     destConnectorService: getFolderConnectorService(p.destId),

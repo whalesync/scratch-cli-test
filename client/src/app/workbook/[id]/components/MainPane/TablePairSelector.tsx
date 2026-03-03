@@ -1,13 +1,15 @@
 import { Text12Regular, Text13Medium } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { Badge, Group, Menu, UnstyledButton } from '@mantine/core';
-import { ArrowRight, ChevronDown, Plus } from 'lucide-react';
+import { Badge, Box, Group, Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { AlertCircle, ArrowRight, ChevronDown, Plus } from 'lucide-react';
 
 interface FolderPairSummary {
   id: string;
   sourceId: string;
   destId: string;
+  sourceFolderExists: boolean;
+  destFolderExists: boolean;
   fieldMappingCount: number;
   sourceConnectorService?: string | null;
   destConnectorService?: string | null;
@@ -21,11 +23,26 @@ interface TablePairSelectorProps {
   getFolderName: (id: string) => string;
 }
 
-function FolderLabel({ name, connectorService }: { name: string; connectorService?: string | null }) {
+function FolderLabel({
+  name,
+  connectorService,
+  missingFolder,
+}: {
+  name: string;
+  connectorService?: string | null;
+  missingFolder?: boolean;
+}) {
   return (
     <Group gap={4} wrap="nowrap">
       {connectorService && <ConnectorIcon connector={connectorService} size={16} p={0} />}
       <Text13Medium>{name}</Text13Medium>
+      {missingFolder && (
+        <Tooltip label="This folder no longer exists in the workbook">
+          <Box display="inline-flex">
+            <StyledLucideIcon Icon={AlertCircle} size={10} c="var(--mantine-color-red-6)" />
+          </Box>
+        </Tooltip>
+      )}
     </Group>
   );
 }
@@ -62,9 +79,14 @@ export function TablePairSelector({
               <FolderLabel
                 name={getFolderName(activePair.sourceId)}
                 connectorService={activePair.sourceConnectorService}
+                missingFolder={!activePair.sourceFolderExists}
               />
               <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
-              <FolderLabel name={getFolderName(activePair.destId)} connectorService={activePair.destConnectorService} />
+              <FolderLabel
+                name={getFolderName(activePair.destId)}
+                connectorService={activePair.destConnectorService}
+                missingFolder={!activePair.destFolderExists}
+              />
             </Group>
           ) : (
             <Text13Medium style={{ flex: 1 }}>{activePair ? 'New folder mapping' : 'Select table'}</Text13Medium>
@@ -90,9 +112,17 @@ export function TablePairSelector({
               <Group gap="sm" wrap="nowrap">
                 {pair.sourceId && pair.destId ? (
                   <Group gap="xs" wrap="nowrap" style={{ flex: 1 }}>
-                    <FolderLabel name={getFolderName(pair.sourceId)} connectorService={pair.sourceConnectorService} />
+                    <FolderLabel
+                      name={getFolderName(pair.sourceId)}
+                      connectorService={pair.sourceConnectorService}
+                      missingFolder={!pair.sourceFolderExists}
+                    />
                     <ArrowRight size={14} color="var(--mantine-color-dimmed)" />
-                    <FolderLabel name={getFolderName(pair.destId)} connectorService={pair.destConnectorService} />
+                    <FolderLabel
+                      name={getFolderName(pair.destId)}
+                      connectorService={pair.destConnectorService}
+                      missingFolder={!pair.destFolderExists}
+                    />
                   </Group>
                 ) : (
                   <Text13Medium style={{ flex: 1 }}>New folder mapping</Text13Medium>

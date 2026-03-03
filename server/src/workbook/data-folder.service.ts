@@ -414,6 +414,11 @@ export class DataFolderService {
       await this.scratchGitService.removeDataFolder(dataFolder.workbookId as WorkbookId, dataFolder.path);
     }
 
+    // Delete associated pull/publish schedules (no FK cascade exists for Schedule.entityId)
+    await this.db.client.schedule.deleteMany({
+      where: { entityId: id, action: { in: ['PULL', 'PUBLISH'] } },
+    });
+
     // Delete the data folder (cascades to children due to schema relation)
     await this.db.client.dataFolder.delete({
       where: { id },
