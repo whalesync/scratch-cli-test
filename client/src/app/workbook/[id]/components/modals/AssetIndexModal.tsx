@@ -43,7 +43,9 @@ function abbreviateUrl(url: string, maxLen = 50): string {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname + parsed.search;
-    const abbrev = parsed.host + (path.length > maxLen - parsed.host.length ? path.slice(0, maxLen - parsed.host.length) + '...' : path);
+    const abbrev =
+      parsed.host +
+      (path.length > maxLen - parsed.host.length ? path.slice(0, maxLen - parsed.host.length) + '...' : path);
     return abbrev;
   } catch {
     return url.length > maxLen ? url.slice(0, maxLen) + '...' : url;

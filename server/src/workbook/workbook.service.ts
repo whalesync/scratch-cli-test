@@ -86,21 +86,53 @@ export class WorkbookService {
   async delete(id: WorkbookId, actor: Actor): Promise<void> {
     const workbook = await this.findOneOrThrow(id, actor); // Permissions
 
-    // Delete Git Repo
-    try {
-      await this.scratchGitService.deleteRepo(id);
-    } catch (err) {
-      WSLogger.error({
-        source: 'WorkbookService.delete',
-        message: 'Failed to delete git repo',
-        error: err,
-        workbookId: id,
+    // Delete Git Repos
+    if (workbook.version >= 2) {
+      // V2: one repo per connection — delete each connection's repo
+      const connectorAccounts = await this.db.client.connectorAccount.findMany({
+        where: { workbookId: id },
+        select: { id: true },
       });
+      for (const ca of connectorAccounts) {
+        try {
+          const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
+          await this.scratchGitService.deleteRepo(repoId);
+        } catch (err) {
+          WSLogger.error({
+            source: 'WorkbookService.delete',
+            message: 'Failed to delete V2 git repo',
+            error: err,
+            workbookId: id,
+            connectorAccountId: ca.id,
+          });
+        }
+      }
+    } else {
+      // V1: single repo per workbook
+      try {
+        await this.scratchGitService.deleteRepo(id);
+      } catch (err) {
+        WSLogger.error({
+          source: 'WorkbookService.delete',
+          message: 'Failed to delete git repo',
+          error: err,
+          workbookId: id,
+        });
+      }
     }
 
     // Cleanup index and references
     await this.fileIndexService.deleteForWorkbook(id);
     await this.fileReferenceService.deleteForWorkbook(id);
+
+    // Delete orphaned SyncMatchKeys (no FK, must delete before cascade removes Sync rows)
+    const syncs = await this.db.client.sync.findMany({ where: { workbookId: id }, select: { id: true } });
+    if (syncs.length > 0) {
+      await this.db.client.syncMatchKeys.deleteMany({ where: { syncId: { in: syncs.map((s) => s.id) } } });
+    }
+
+    // Delete orphaned DbJob rows
+    await this.db.client.dbJob.deleteMany({ where: { workbookId: id } });
 
     await this.db.client.workbook.delete({
       where: { id },

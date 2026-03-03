@@ -266,11 +266,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
                   </Menu.Item>
                 </Menu.Dropdown>
               </Menu>
-              <Menu.Item
-                data-devtool
-                leftSection={<ImageIcon size={16} />}
-                onClick={() => setAssetIndexOpen(true)}
-              >
+              <Menu.Item data-devtool leftSection={<ImageIcon size={16} />} onClick={() => setAssetIndexOpen(true)}>
                 Asset Index
               </Menu.Item>
               <Menu.Item
