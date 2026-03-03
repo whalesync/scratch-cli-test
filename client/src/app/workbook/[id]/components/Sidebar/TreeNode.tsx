@@ -90,6 +90,151 @@ const FILE_LIMIT = 100;
 const INDENT_PX = 10;
 
 // ============================================================================
+// Intermediate folder helpers
+// ============================================================================
+
+/**
+ * Extract all intermediate path segments from a folder path.
+ * Given `/Connection/a/b/c/Table`, returns `["a", "b", "c"]` — any number of levels.
+ * First segment (connection) and last segment (table) are excluded.
+ */
+function getIntermediateSegments(folderPath: string): string[] {
+  const segments = folderPath.replace(/^\//, '').split('/');
+  if (segments.length <= 2) return [];
+  return segments.slice(1, -1);
+}
+
+interface FolderTreeNode {
+  folders: DataFolder[];
+  children: Map<string, FolderTreeNode>;
+}
+
+/** Group a flat DataFolder[] into a tree based on intermediate path segments. */
+function buildFolderTree(folders: DataFolder[], groupName: string): FolderTreeNode {
+  const root: FolderTreeNode = { folders: [], children: new Map() };
+
+  for (const folder of folders) {
+    const segments = getIntermediateSegments(folder.path ?? `/${groupName}/${folder.name}`);
+    let node = root;
+    for (const seg of segments) {
+      let child = node.children.get(seg);
+      if (!child) {
+        child = { folders: [], children: new Map() };
+        node.children.set(seg, child);
+      }
+      node = child;
+    }
+    node.folders.push(folder);
+  }
+
+  return root;
+}
+
+// ============================================================================
+// Intermediate Folder Node (collapsible path segment)
+// ============================================================================
+
+interface IntermediateFolderNodeProps {
+  name: string;
+  nodeId: string;
+  depth: number;
+  children: React.ReactNode;
+}
+
+function IntermediateFolderNode({ name, nodeId, depth, children }: IntermediateFolderNodeProps) {
+  const expandedNodes = useNewWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useNewWorkbookUIStore((state) => state.toggleNode);
+  const isExpanded = expandedNodes.has(nodeId);
+
+  const handleToggle = useCallback(() => {
+    toggleNode(nodeId);
+  }, [toggleNode, nodeId]);
+
+  return (
+    <>
+      <UnstyledButton
+        onClick={handleToggle}
+        px="sm"
+        py={4}
+        style={{
+          width: `calc(100% - ${INDENT_PX * depth}px)`,
+          marginLeft: INDENT_PX * depth,
+          backgroundColor: 'transparent',
+        }}
+        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
+        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
+      >
+        <Group gap={6} wrap="nowrap">
+          <StyledLucideIcon Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-secondary)" />
+          <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-secondary)" />
+          <Text12Regular c="var(--fg-primary)" truncate>
+            {name}
+          </Text12Regular>
+        </Group>
+      </UnstyledButton>
+      <Collapse in={isExpanded}>{children}</Collapse>
+    </>
+  );
+}
+
+// ============================================================================
+// Folder Tree Renderer (recursive)
+// ============================================================================
+
+interface FolderTreeRendererProps {
+  tree: FolderTreeNode;
+  depth: number;
+  groupName: string;
+  workbookId: WorkbookId;
+  mode: FileTreeMode;
+  dirtyFilePaths?: Map<string, FileDiffStatus>;
+  /** Prefix of ancestor segment names for building unique node IDs */
+  idPrefix: string;
+}
+
+function FolderTreeRenderer({
+  tree,
+  depth,
+  groupName,
+  workbookId,
+  mode,
+  dirtyFilePaths,
+  idPrefix,
+}: FolderTreeRendererProps) {
+  return (
+    <>
+      {Array.from(tree.children.entries()).map(([segName, childNode]) => {
+        const childId = `${idPrefix}/${segName}`;
+        const nodeId = `intermediate-${childId}`;
+        return (
+          <IntermediateFolderNode key={childId} name={segName} nodeId={nodeId} depth={depth}>
+            <FolderTreeRenderer
+              tree={childNode}
+              depth={depth + 1}
+              groupName={groupName}
+              workbookId={workbookId}
+              mode={mode}
+              dirtyFilePaths={dirtyFilePaths}
+              idPrefix={childId}
+            />
+          </IntermediateFolderNode>
+        );
+      })}
+      {tree.folders.map((folder) => (
+        <TableNode
+          key={folder.id}
+          folder={folder}
+          workbookId={workbookId}
+          mode={mode}
+          dirtyFilePaths={dirtyFilePaths}
+          groupName={groupName}
+        />
+      ))}
+    </>
+  );
+}
+
+// ============================================================================
 // Connection Node (top-level group)
 // ============================================================================
 
@@ -138,6 +283,8 @@ export function ConnectionNode({
       return false;
     });
   }, [mode, dirtyFilePaths, group.dataFolders]);
+
+  const folderTree = useMemo(() => buildFolderTree(visibleFolders, group.name), [visibleFolders, group.name]);
 
   const hasDirtyFiles = mode !== 'review' || visibleFolders.length > 0;
 
@@ -395,27 +542,28 @@ export function ConnectionNode({
 
       <Collapse in={isExpanded}>
         <Stack gap={0} pl={INDENT_PX}>
-          {visibleFolders.length === 0
-            ? mode === 'files' &&
-              connectorAccount && (
-                <Box pl={INDENT_PX * 2 + 34} py={4}>
-                  <UnstyledButton onClick={openChooseTables}>
-                    <Text12Regular c="var(--mantine-color-blue-6)" style={{ cursor: 'pointer' }}>
-                      Choose tables
-                    </Text12Regular>
-                  </UnstyledButton>
-                </Box>
-              )
-            : visibleFolders.map((folder) => (
-                <TableNode
-                  key={folder.id}
-                  folder={folder}
-                  workbookId={workbookId}
-                  mode={mode}
-                  dirtyFilePaths={dirtyFilePaths}
-                  groupName={group.name}
-                />
-              ))}
+          {visibleFolders.length === 0 ? (
+            mode === 'files' &&
+            connectorAccount && (
+              <Box pl={INDENT_PX * 2 + 34} py={4}>
+                <UnstyledButton onClick={openChooseTables}>
+                  <Text12Regular c="var(--mantine-color-blue-6)" style={{ cursor: 'pointer' }}>
+                    Choose tables
+                  </Text12Regular>
+                </UnstyledButton>
+              </Box>
+            )
+          ) : (
+            <FolderTreeRenderer
+              tree={folderTree}
+              depth={0}
+              groupName={group.name}
+              workbookId={workbookId}
+              mode={mode}
+              dirtyFilePaths={dirtyFilePaths}
+              idPrefix={group.name}
+            />
+          )}
         </Stack>
       </Collapse>
 
