@@ -95,6 +95,7 @@ export class JobHandlerService {
           this.pipelinePlanService,
           this.pipelineRunService,
           this.dbService,
+          this.workbookEventService,
           this.bullEnqueuerService,
         ) as JobHandler<JobDefinition>;
 

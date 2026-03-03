@@ -19,6 +19,7 @@ export type WorkbookEventType =
   | 'job-completed'
   | 'job-failed'
   | 'changes-discarded'
+  | 'changes-published'
   | 'folder-created'
   | 'folder-deleted'
   | 'folder-updated'

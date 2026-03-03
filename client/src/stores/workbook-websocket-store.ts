@@ -101,6 +101,14 @@ export const useWorkbookWebSocketStore = create<WorkbookWebSocketStore>((set, ge
       return;
     }
 
+    if (event.type === 'changes-published') {
+      get()._addToMessageLog('Mutate changes published SWR keys');
+      mutate(SWR_KEYS.dirtyFiles.list(workbookId), undefined, { revalidate: true });
+      mutate(SWR_KEYS.dirtyFiles.hasDirty(workbookId), undefined, { revalidate: true });
+      mutate(SWR_KEYS.dirtyFiles.count(workbookId), undefined, { revalidate: true });
+      return;
+    }
+
     if (event.type === 'folder-created' || event.type === 'folder-deleted') {
       get()._addToMessageLog('Mutate folder list and workbook detail SWR keys');
       mutate(SWR_KEYS.dataFolders.list(workbookId), undefined, {

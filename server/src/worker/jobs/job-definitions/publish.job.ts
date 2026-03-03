@@ -1,6 +1,7 @@
 import type { WorkbookId } from '@spinner/shared-types';
 import type { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import type { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
 import { JobCanceledError } from '../../job-errors';
@@ -55,6 +56,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     private readonly publishPlanService: PublishPlanBuildService,
     private readonly publishRunService: PublishPlanRunService,
     private readonly db: import('src/db/db.service').DbService,
+    private readonly workbookEventService: WorkbookEventService,
     private readonly bullEnqueuerService?: BullEnqueuerService,
   ) {}
 
@@ -264,6 +266,16 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         },
         jobProgress: {},
         connectorProgress: {},
+      });
+
+      this.workbookEventService.sendWorkbookEvent(data.workbookId, {
+        type: 'changes-published',
+        data: {
+          source: 'job',
+          entityId: data.workbookId,
+          message: 'Publish completed',
+          jobId,
+        },
       });
 
       WSLogger.info({
