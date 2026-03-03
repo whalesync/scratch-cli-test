@@ -157,18 +157,21 @@ export function buildWebflowJsonTableSpec(
   properties['lastPublished'] = Type.Optional(
     Type.Union([Type.String({ format: 'date-time' }), Type.Null()], {
       description: 'When the item was last published (read-only)',
+      [REMOTE_FIELD_ID]: 'published-on',
     }),
   );
   properties['lastUpdated'] = Type.Optional(
     Type.String({
       format: 'date-time',
       description: 'When the item was last updated (read-only)',
+      [REMOTE_FIELD_ID]: 'updated-on',
     }),
   );
   properties['createdOn'] = Type.Optional(
     Type.String({
       format: 'date-time',
       description: 'When the item was created (read-only)',
+      [REMOTE_FIELD_ID]: 'created-on',
     }),
   );
   properties['isArchived'] = Type.Optional(

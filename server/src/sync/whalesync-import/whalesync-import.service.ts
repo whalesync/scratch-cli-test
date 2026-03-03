@@ -16,6 +16,10 @@ import type { Caveat, UnmatchedFolder, WhalesyncImportResult } from './whalesync
 
 type Side = 'left' | 'right';
 
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 /** Resolved mapping from a Whalesync table ID to its Scratch DataFolder. */
 interface ResolvedTable {
   whalesyncTable: WhalesyncExportTable;
@@ -260,6 +264,9 @@ function resolveColumnMappings(
 
     if (!sourceWsCol || !destWsCol) continue;
 
+    // Silently skip synthesized columns with no Scratch equivalent (e.g. syntheticStatus)
+    if (isUnmappableSynthesizedColumn(sourceWsCol) || isUnmappableSynthesizedColumn(destWsCol)) continue;
+
     const sourcePath = resolveFieldPath(sourceWsCol, sourceFieldLookup);
     const destPath = resolveFieldPath(destWsCol, destFieldLookup);
 
@@ -267,7 +274,7 @@ function resolveColumnMappings(
       caveats.push({
         severity: 'warning',
         message: `Source column "${sourceWsCol.name}" could not be matched to a Scratch schema field`,
-        context: `Table "${sourceTable.name}" — column will be skipped`,
+        context: `${capitalize(sourceTable.connectorType)} table "${sourceTable.name}" — column will be skipped`,
       });
       continue;
     }
@@ -276,7 +283,7 @@ function resolveColumnMappings(
       caveats.push({
         severity: 'warning',
         message: `Destination column "${destWsCol.name}" could not be matched to a Scratch schema field`,
-        context: `Table "${destTable.name}" — column will be skipped`,
+        context: `${capitalize(destTable.connectorType)} table "${destTable.name}" — column will be skipped`,
       });
       continue;
     }
@@ -326,8 +333,17 @@ function buildFieldLookup(fields: SchemaField[]): FieldLookup {
   return { byRemoteId, bySlug, byDescription };
 }
 
+/** Synthesized columns with no Scratch equivalent (silently skipped). */
+function isUnmappableSynthesizedColumn(col: WhalesyncExportColumn): boolean {
+  return col.dataType.endsWith('/syntheticStatus');
+}
+
 /** Resolve a Whalesync column to a schema field path using cascading lookup: remote ID → slug → display name. */
 function resolveFieldPath(wsCol: WhalesyncExportColumn, lookup: FieldLookup): string | undefined {
+  // ws-synthesized/remoteRecordId maps to the record's `id` field
+  if (wsCol.dataType === 'ws-synthesized/remoteRecordId') {
+    return lookup.bySlug.get('id') ?? 'id';
+  }
   return lookup.byRemoteId.get(wsCol.remoteId) ?? lookup.bySlug.get(wsCol.name) ?? lookup.byDescription.get(wsCol.name);
 }
 
@@ -348,7 +364,7 @@ function generateTablePairCaveats(pair: WhalesyncExportTablePair, caveats: Cavea
   if (pair.leftDeleteBehavior === 'sync' || pair.rightDeleteBehavior === 'sync') {
     caveats.push({
       severity: 'warning',
-      message: 'Delete behavior "sync" is not supported in Scratch',
+      message: 'Delete syncing is not supported in Scratch',
       context:
         'Scratch does not propagate deletes. Records deleted in the source will not be deleted in the destination.',
     });

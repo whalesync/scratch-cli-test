@@ -6,6 +6,8 @@ import {
   SaveSyncBody,
   Sync,
   SyncId,
+  WhalesyncImportPreviewBody,
+  WhalesyncImportPreviewResponse,
   WorkbookId,
 } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
@@ -86,6 +88,22 @@ export const syncApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to get AI context');
+    }
+  },
+
+  importPreview: async (
+    workbookId: WorkbookId,
+    body: WhalesyncImportPreviewBody,
+  ): Promise<WhalesyncImportPreviewResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<WhalesyncImportPreviewResponse>(
+        `/workbooks/${workbookId}/syncs/import-preview`,
+        body,
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to preview Whalesync import');
     }
   },
 

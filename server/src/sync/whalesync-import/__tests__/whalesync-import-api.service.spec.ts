@@ -33,10 +33,11 @@ const VALID_BODY: WhalesyncImportPreviewBody = {
 function buildService(overrides?: { dataFolders?: ReturnType<typeof makeDataFolder>[] }) {
   const dataFolderService = {
     listAll: jest.fn().mockResolvedValue(overrides?.dataFolders ?? []),
+    readSchema: jest.fn().mockResolvedValue(null),
   } as unknown as DataFolderService;
 
   const configService = {
-    getWhalesyncApiUrl: jest.fn().mockReturnValue('https://api.whalesync.com'),
+    getWhalesyncApiUrl: jest.fn().mockReturnValue('https://production-bottlenose-frontend-service.whalesync.com'),
   } as unknown as ScratchConfigService;
 
   const service = new WhalesyncImportApiService(dataFolderService, configService);
@@ -163,9 +164,12 @@ describe('WhalesyncImportApiService', () => {
       const { service } = buildService();
       await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
 
-      expect(mockedAxios.get).toHaveBeenCalledWith('https://api.whalesync.com/rest/core-bases/cb_123/export', {
-        headers: { Authorization: 'WS-API-Token ws-token-abc' },
-      });
+      expect(mockedAxios.get).toHaveBeenCalledWith(
+        'https://production-bottlenose-frontend-service.whalesync.com/rest/core-bases/cb_123/export',
+        {
+          headers: { Authorization: 'WS-API-Token ws-token-abc' },
+        },
+      );
     });
 
     it('should URL-encode the coreBaseId', async () => {
@@ -176,7 +180,7 @@ describe('WhalesyncImportApiService', () => {
       await service.previewImport(WORKBOOK_ID, { whalesyncApiToken: 'token', coreBaseId: 'id/with spaces' }, ACTOR);
 
       expect(mockedAxios.get).toHaveBeenCalledWith(
-        'https://api.whalesync.com/rest/core-bases/id%2Fwith%20spaces/export',
+        'https://production-bottlenose-frontend-service.whalesync.com/rest/core-bases/id%2Fwith%20spaces/export',
         expect.anything(),
       );
     });
@@ -349,9 +353,10 @@ describe('WhalesyncImportApiService', () => {
 
       const dataFolderService = {
         listAll: jest.fn().mockRejectedValue(new NotFoundException('Workbook not found')),
+        readSchema: jest.fn().mockResolvedValue(null),
       } as unknown as DataFolderService;
       const configService = {
-        getWhalesyncApiUrl: jest.fn().mockReturnValue('https://api.whalesync.com'),
+        getWhalesyncApiUrl: jest.fn().mockReturnValue('https://production-bottlenose-frontend-service.whalesync.com'),
       } as unknown as ScratchConfigService;
       const service = new WhalesyncImportApiService(dataFolderService, configService);
 

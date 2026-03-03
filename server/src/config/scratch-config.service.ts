@@ -148,7 +148,9 @@ export class ScratchConfigService {
   }
 
   getWhalesyncApiUrl(): string {
-    return this.getOptionalEnvVariable('WHALESYNC_API_URL') ?? 'https://api.whalesync.com';
+    return (
+      this.getOptionalEnvVariable('WHALESYNC_API_URL') ?? 'https://production-bottlenose-frontend-service.whalesync.com'
+    );
   }
 
   getScratchGitBackendUrl(): string {

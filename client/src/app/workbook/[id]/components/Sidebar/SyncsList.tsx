@@ -2,13 +2,16 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { useSyncStore } from '@/stores/sync-store';
 import { Box, Group, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import type { Sync, WorkbookId } from '@spinner/shared-types';
-import { ClockIcon, PlayIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
+import { ClockIcon, DownloadIcon, PlayIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { WhalesyncImportModal } from '../modals/WhalesyncImportModal';
 
 interface SyncsListProps {
   workbookId: WorkbookId;
@@ -22,6 +25,8 @@ export function SyncsList({ workbookId }: SyncsListProps) {
 
   const params = useParams<{ syncId?: string }>();
   const router = useRouter();
+  const { isDevToolsEnabled } = useDevTools();
+  const [importModalOpened, { open: openImportModal, close: closeImportModal }] = useDisclosure(false);
 
   useEffect(() => {
     fetchSyncs(workbookId);
@@ -58,6 +63,21 @@ export function SyncsList({ workbookId }: SyncsListProps) {
           </Group>
         </UnstyledButton>
 
+        {/* Import from Whalesync button (admin-only) */}
+        {isDevToolsEnabled && (
+          <UnstyledButton
+            onClick={openImportModal}
+            px="sm"
+            py={6}
+            style={{ width: '100%', backgroundColor: 'transparent' }}
+          >
+            <Group gap={6} wrap="nowrap">
+              <StyledLucideIcon Icon={DownloadIcon} size="sm" c="var(--mantine-color-devTool-9)" />
+              <Text12Regular c="var(--mantine-color-devTool-9)">Import from Whalesync</Text12Regular>
+            </Group>
+          </UnstyledButton>
+        )}
+
         {/* Divider */}
         {syncs.length > 0 && <Box my="xs" mx="sm" style={{ borderBottom: '1px solid var(--fg-divider)' }} />}
 
@@ -79,6 +99,8 @@ export function SyncsList({ workbookId }: SyncsListProps) {
           </Box>
         )}
       </Stack>
+
+      <WhalesyncImportModal opened={importModalOpened} onClose={closeImportModal} workbookId={workbookId} />
     </ScrollArea>
   );
 }

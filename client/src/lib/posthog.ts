@@ -12,6 +12,7 @@ export enum PostHogEvents {
   PUBLISH_ALL = 'publish_all',
   DISCARD_CHANGES = 'discard_changes',
   REFRESH_RECORDS = 'refresh_records',
+  WHALESYNC_IMPORT = 'whalesync_import',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -99,4 +100,8 @@ export function trackDiscardChanges(workbookId: string): void {
 
 export function trackRefreshRecords(workbookId: string, dataFolderId: string): void {
   captureEvent(PostHogEvents.REFRESH_RECORDS, { workbookId, dataFolderId });
+}
+
+export function trackWhalesyncImport(workbookId: string, syncCount: number): void {
+  captureEvent(PostHogEvents.WHALESYNC_IMPORT, { workbookId, syncCount });
 }

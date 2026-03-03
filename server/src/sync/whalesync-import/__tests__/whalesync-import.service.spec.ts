@@ -340,7 +340,7 @@ describe('convertWhalesyncExport', () => {
 
       const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
 
-      const deleteCaveat = result.caveats.find((c) => c.message.includes('Delete behavior'));
+      const deleteCaveat = result.caveats.find((c) => c.message.includes('Delete syncing'));
       expect(deleteCaveat).toBeDefined();
       expect(deleteCaveat!.severity).toBe('warning');
     });
