@@ -47,7 +47,9 @@ describe('SyncService - fillSyncCaches', () => {
     } as unknown as DataFolderService;
 
     // Shouldn't be called
-    scratchGitService = {} as unknown as ScratchGitService;
+    scratchGitService = {
+      resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
+    } as unknown as ScratchGitService;
 
     // Create SyncService instance (workbookService not needed for these tests)
     const scheduleService = { create: jest.fn(), update: jest.fn(), delete: jest.fn() } as unknown as ScheduleService;
@@ -367,6 +369,7 @@ describe('SyncService - syncTableMapping', () => {
     );
 
     scratchGitService = {
+      resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
@@ -1530,6 +1533,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     );
 
     scratchGitService = {
+      resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
@@ -2275,6 +2279,7 @@ describe('SyncService - lookup_field transformer', () => {
     );
 
     scratchGitService = {
+      resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {

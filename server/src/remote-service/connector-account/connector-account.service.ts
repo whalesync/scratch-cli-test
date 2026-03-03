@@ -133,7 +133,7 @@ export class ConnectorAccountService {
     // For V2 workbooks, init the connection's dedicated git repo immediately
     if (workbook.version >= 2) {
       const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccount.id);
-      await this.scratchGitService.initRepo(repoId as WorkbookId);
+      await this.scratchGitService.initRepo(repoId);
     }
 
     // Re-fetch to include health status set by testConnection()
@@ -312,7 +312,7 @@ export class ConnectorAccountService {
       try {
         const repoId = await this.scratchGitService.resolveRepoId(workbookId, id);
         try {
-          await this.scratchGitService.deleteRepo(repoId as WorkbookId);
+          await this.scratchGitService.deleteRepo(repoId);
         } catch (err) {
           WSLogger.error({
             source: 'ConnectorAccountService.resetConnection',
@@ -322,7 +322,7 @@ export class ConnectorAccountService {
             connectorAccountId: id,
           });
         }
-        await this.scratchGitService.initRepo(repoId as WorkbookId);
+        await this.scratchGitService.initRepo(repoId);
       } catch (err) {
         WSLogger.error({
           source: 'ConnectorAccountService.resetConnection',

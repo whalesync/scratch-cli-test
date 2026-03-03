@@ -447,11 +447,16 @@ export class SyncService {
       sourceFolder.path,
       sourceFolder.schema,
     );
+
     const destinationTableSpec = await this.readSchemaWithFallback(
       workbookId,
       destinationFolder.connectorAccountId,
       destinationFolder.path,
       destinationFolder.schema,
+    );
+    const destinationRepoId = await this.scratchGitService.resolveRepoId(
+      workbookId,
+      destinationFolder.connectorAccountId ?? undefined,
     );
 
     // Get idColumnRemoteId from schemas
@@ -736,7 +741,7 @@ export class SyncService {
       });
       try {
         await this.scratchGitService.commitFilesToBranch(
-          workbookId,
+          destinationRepoId,
           DIRTY_BRANCH,
           filesToWrite,
           'Sync: batch write files',

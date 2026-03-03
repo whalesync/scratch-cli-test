@@ -113,7 +113,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     // For V2 workbooks, ensure the repo exists (e.g. new connection added after migration)
     if (workbookVersion >= 2 && connectorAccountId) {
-      await this.scratchGitService.initRepo(repoId as WorkbookId);
+      await this.scratchGitService.initRepo(repoId);
     }
 
     const totalFilesAccumulator = { count: 0 };
@@ -298,13 +298,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         gitFiles = gitFiles.concat(batchGitFiles);
 
         await this.scratchGitService.commitFilesToBranch(
-          repoId as WorkbookId,
+          repoId,
           'main',
           batchGitFiles,
           `Sync batch of ${builtFiles.length} files`,
         );
 
-        await this.scratchGitService.rebaseDirty(repoId as WorkbookId);
+        await this.scratchGitService.rebaseDirty(repoId);
 
         // Update File Index & References (Best effort, after commit)
         try {
@@ -428,7 +428,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
       try {
         const mainFiles = (await this.scratchGitService.listRepoFiles(
-          repoId as WorkbookId,
+          repoId,
           MAIN_BRANCH,
           folderPath,
         )) as RepoFileRef[];
@@ -455,13 +455,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           });
 
           await this.scratchGitService.deleteFilesFromBranch(
-            repoId as WorkbookId,
+            repoId,
             MAIN_BRANCH,
             filesToDelete,
             `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
           );
 
-          await this.scratchGitService.rebaseDirty(repoId as WorkbookId);
+          await this.scratchGitService.rebaseDirty(repoId);
         }
       } catch (err) {
         WSLogger.error({
@@ -525,7 +525,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       });
 
       try {
-        await this.scratchGitService.runGitGc(repoId as WorkbookId);
+        await this.scratchGitService.runGitGc(repoId);
       } catch (err) {
         WSLogger.warn({
           source: 'PullLinkedFolderFilesJob',

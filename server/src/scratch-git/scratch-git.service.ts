@@ -25,6 +25,8 @@ export const SCHEMA_JSON_FILENAME = '.schema.json';
 /** Separator used in V2 composite repo IDs (must match Rust constant in state.rs) */
 const V2_ID_SEPARATOR = '--';
 
+export type RepoId = WorkbookId | `${string}--${string}--${string}`;
+
 /**
  * Returns the repo ID to pass to scratch-git for a given workbook.
  *
@@ -38,12 +40,12 @@ export function getRepoId(
   workbookId: WorkbookId,
   orgId?: string,
   connAccountId?: string,
-): string {
+): RepoId {
   if (workbookVersion >= 2) {
     if (!orgId || !connAccountId) {
       throw new Error(`V2 repo ID requires orgId and connAccountId (workbookId=${workbookId})`);
     }
-    return [orgId, workbookId, connAccountId].join(V2_ID_SEPARATOR);
+    return [orgId, workbookId, connAccountId].join(V2_ID_SEPARATOR) as RepoId;
   }
   return workbookId;
 }
@@ -61,7 +63,7 @@ export class ScratchGitService {
    * For V2 workbooks returns the composite `{orgId}--{workbookId}--{connAccountId}` ID.
    * Throws if connectorAccountId is missing for a V2 workbook.
    */
-  async resolveRepoId(workbookId: WorkbookId, connectorAccountId?: string): Promise<string> {
+  async resolveRepoId(workbookId: WorkbookId, connectorAccountId?: string): Promise<RepoId> {
     const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
     if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
     if (workbook.version < 2) return workbookId;
@@ -69,17 +71,17 @@ export class ScratchGitService {
 
     const account = await this.db.client.connectorAccount.findUnique({ where: { id: connectorAccountId } });
     if (account?.repoPath) {
-      return account.repoPath;
+      return account.repoPath as RepoId;
     }
     throw new Error(`Connector account ${connectorAccountId} has no repoPath`);
   }
 
-  async initRepo(workbookId: WorkbookId): Promise<void> {
-    await this.scratchGitClient.initRepo(workbookId);
+  async initRepo(repoId: string): Promise<void> {
+    await this.scratchGitClient.initRepo(repoId);
   }
 
-  async deleteRepo(workbookId: WorkbookId): Promise<void> {
-    await this.scratchGitClient.deleteRepo(workbookId);
+  async deleteRepo(repoId: string): Promise<void> {
+    await this.scratchGitClient.deleteRepo(repoId);
   }
 
   async discardChanges(repoId: string, path?: string): Promise<void> {

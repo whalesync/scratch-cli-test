@@ -176,7 +176,7 @@ export class WorkbookService {
       for (const ca of connectorAccounts) {
         const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
         try {
-          await this.scratchGitService.deleteRepo(repoId as WorkbookId);
+          await this.scratchGitService.deleteRepo(repoId);
         } catch (err) {
           WSLogger.error({
             source: 'WorkbookService.resetWorkbook',
@@ -187,7 +187,7 @@ export class WorkbookService {
           });
         }
         try {
-          await this.scratchGitService.initRepo(repoId as WorkbookId);
+          await this.scratchGitService.initRepo(repoId);
         } catch (err) {
           WSLogger.error({
             source: 'WorkbookService.resetWorkbook',

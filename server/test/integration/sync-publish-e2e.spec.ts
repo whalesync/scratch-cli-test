@@ -92,13 +92,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // ---- DB Service (real) ----
     dbService = { client: prisma } as unknown as DbService;
 
-    // ---- Real services ----
-    fileIndexService = new FileIndexService(dbService);
-    publishSchemaService = new SchemaHelperService(dbService);
-    refCleanerService = new RefCleanerService();
-    publishRefResolverService = new RefResolverService(fileIndexService);
-    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
-
     // ---- Mock: ScratchGitService ----
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
@@ -123,6 +116,13 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         return Promise.resolve();
       }),
     } as unknown as ScratchGitService;
+
+    // ---- Real services ----
+    fileIndexService = new FileIndexService(dbService);
+    publishSchemaService = new SchemaHelperService(dbService, scratchGitService);
+    refCleanerService = new RefCleanerService();
+    publishRefResolverService = new RefResolverService(fileIndexService);
+    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Mock: DataFolderService ----
     folderPathMap.clear();
@@ -698,13 +698,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     // ---- DB Service (real) ----
     dbService = { client: prisma } as unknown as DbService;
 
-    // ---- Real services ----
-    fileIndexService = new FileIndexService(dbService);
-    publishSchemaService = new SchemaHelperService(dbService);
-    refCleanerService = new RefCleanerService();
-    publishRefResolverService = new RefResolverService(fileIndexService);
-    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
-
     // ---- Mock: ScratchGitService (V2-aware) ----
     // resolveRepoId returns the composite ID for V2 workbooks
     scratchGitService = {
@@ -734,6 +727,13 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         return Promise.resolve();
       }),
     } as unknown as ScratchGitService;
+
+    // ---- Real services ----
+    fileIndexService = new FileIndexService(dbService);
+    publishSchemaService = new SchemaHelperService(dbService, scratchGitService);
+    refCleanerService = new RefCleanerService();
+    publishRefResolverService = new RefResolverService(fileIndexService);
+    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Mock: DataFolderService ----
     folderPathMap.clear();
