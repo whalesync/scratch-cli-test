@@ -185,6 +185,7 @@ describe('DataFolderService dotfile filtering', () => {
 
     mockScratchGitService = {
       getRepoFilesPaginated: jest.fn(),
+      resolveRepoId: jest.fn().mockResolvedValue('resolved-repo-id'),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     // Create service with only the dependencies these methods use

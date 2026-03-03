@@ -1204,8 +1204,10 @@ export class SyncService {
 
     const sourceIdColumn = this.getIdColumnFromSchema(sourceFolder.schema);
 
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, sourceFolder.connectorAccountId ?? undefined);
+
     // Fetch the single source file
-    const file = await this.scratchGitService.getRepoFile(workbookId, DIRTY_BRANCH, body.filePath);
+    const file = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, body.filePath);
     if (!file) {
       throw new NotFoundException(`File not found: ${body.filePath}`);
     }

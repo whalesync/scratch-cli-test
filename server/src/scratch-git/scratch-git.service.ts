@@ -126,36 +126,36 @@ export class ScratchGitService {
   }
 
   async getRepoFilesPaginated(
-    workbookId: WorkbookId,
+    repoId: string,
     branch: string,
     folder: string,
     limit: number,
     cursor?: string,
   ): Promise<{ files: Array<{ name: string; content: string }>; nextCursor?: string }> {
-    return this.scratchGitClient.readFilesPaginated(workbookId, branch, folder, limit, cursor);
+    return this.scratchGitClient.readFilesPaginated(repoId, branch, folder, limit, cursor);
   }
 
   async readRepoFiles(
-    workbookId: WorkbookId,
+    repoId: string,
     branch: string,
     paths: string[],
   ): Promise<Array<{ path: string; content: string | null }>> {
-    return this.scratchGitClient.readFiles(workbookId, branch, paths);
+    return this.scratchGitClient.readFiles(repoId, branch, paths);
   }
 
   async readRepoFilesFromFolder(
-    workbookId: WorkbookId,
+    repoId: string,
     branch: string,
     folderPath: string,
     filenames: string[],
   ): Promise<Array<{ path: string; content: string | null }>> {
-    return this.scratchGitClient.readFilesFromFolder(workbookId, branch, folderPath, filenames);
+    return this.scratchGitClient.readFilesFromFolder(repoId, branch, folderPath, filenames);
   }
 
   // Groups paths by their parent folder and calls readFilesFromFolder per group,
   // which uses a single optimized tree walk per folder instead of one per file.
   async readRepoFilesByFolder(
-    workbookId: string,
+    repoId: string,
     branch: string,
     paths: string[],
   ): Promise<Array<{ path: string; content: string | null }>> {
@@ -172,18 +172,15 @@ export class ScratchGitService {
 
     const groups = await Promise.all(
       Array.from(byFolder.entries()).map(([folder, filenames]) =>
-        this.scratchGitClient.readFilesFromFolder(workbookId, branch, folder, filenames),
+        this.scratchGitClient.readFilesFromFolder(repoId, branch, folder, filenames),
       ),
     );
 
     return groups.flat();
   }
 
-  async readBlobsByOid(
-    workbookId: WorkbookId,
-    oids: string[],
-  ): Promise<Array<{ oid: string; content: string | null }>> {
-    return this.scratchGitClient.readBlobsByOid(workbookId, oids);
+  async readBlobsByOid(repoId: string, oids: string[]): Promise<Array<{ oid: string; content: string | null }>> {
+    return this.scratchGitClient.readBlobsByOid(repoId, oids);
   }
 
   async commitFile(repoId: string, path: string, content: string, message: string): Promise<void> {

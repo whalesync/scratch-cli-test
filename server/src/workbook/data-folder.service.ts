@@ -768,9 +768,11 @@ export class DataFolderService {
     const allFiles: { folderId: DataFolderId; path: string; content: string }[] = [];
     let cursor: string | undefined;
 
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
+
     do {
       const page = await this.scratchGitService.getRepoFilesPaginated(
-        workbookId,
+        repoId,
         branch,
         folderPath,
         PAGINATED_FILE_BATCH_SIZE,
@@ -812,8 +814,9 @@ export class DataFolderService {
 
     const folderPath = folder.path.replace(/^\//, ''); // remove preceding / for git paths
 
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
     const page = await this.scratchGitService.getRepoFilesPaginated(
-      workbookId,
+      repoId,
       branch,
       folderPath,
       PAGINATED_FILE_BATCH_SIZE,
