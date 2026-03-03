@@ -456,25 +456,46 @@ Failures observed across Whalesync and Scratch, organized by connector.
 - **Required fields cleared.** Webflow allows marking fields as required. Syncing a record with an empty required field was rejected, but the error didn't clearly identify which field.
 - **Field type mismatches.** URL fields rejecting non-URL strings, number fields rejecting text. Webflow's error: "Expected value to be..." without clear guidance.
 - **Referenced items not found.** Webflow reference fields require the referenced item to be in a published state. Unpublished or deleted referenced items cause opaque failures.
+- **Multi-line HTML in rich text fields.** Webflow rich text fields require HTML to be minified to a single line. Multi-line HTML breaks rendering in the Webflow UI. Whalesync had to add automatic minification to work around this.
+- **Initial variant price required for products.** When creating a Webflow product, the "Initial Variant - Price" field must be provided because Webflow creates the first variant at product creation time. Missing it causes the create to fail.
 - **CMS item plan limits.** Webflow limits total CMS items by subscription plan. Hitting the limit mid-batch leaves the publish partially completed. Catchable by comparing current item count + planned creates against the plan limit (queryable from Webflow's API or configurable as a user rule).
+- **Site must be published to all domains.** Webflow rejects API updates if the site has been published to different domains at different times. The error is confusing and the fix (republish to all domains) is non-obvious.
 
 ### Notion
 
 - **Text fields exceeding 2,000-character limit.** Notion enforces a hard 2,000-character limit on text properties. The API rejected or truncated the data without a clear warning.
 - **Rich text with too many style elements.** Notion's API only accepts up to 100 style changes per rich text field. Heavily formatted content from other sources was silently rejected.
 - **Reference fields with too many entries.** Relation fields with more entries than Notion's API accepts in a single update failed with a confusing error about request size.
+- **Relation field truncation at 25 entries.** Notion's API only returns the first 25 related records per relation field. When a field has more than 25 relations, partial data is returned without warning, requiring separate API calls to fetch the rest. Updates can silently drop relations beyond the 25th.
 - **Field type changes.** When a field type is changed in Notion (e.g., Select to Multi-Select), existing updates fail until the schema is refreshed. The error message doesn't explain the root cause.
 
-### Postgres
+### Postgres / Supabase
 
 - **NULL characters in JSONB fields.** Data containing null bytes (U+0000) caused insert failures. The database error was difficult to trace back to the specific field and character.
 - **NOT NULL constraint violations.** Publishing records with null values in `NOT NULL` columns. The error sometimes didn't clearly identify which column.
+- **Unique constraint violations.** Inserting records with duplicate values in columns that have unique indexes. The error identifies the constraint but not always the specific value that conflicted.
 
 ### Shopify
 
 - **Case-sensitive enum fields.** The Status field only accepts exactly `active`, `draft`, or `archived` — case-sensitive. A value like "Active" or "ACTIVE" is rejected.
 - **Duplicate variant combinations.** Shopify doesn't allow two variants with the same option values. The error message was unclear about which variants conflicted.
 - **Cannot delete all variants.** Shopify requires at least one default variant per product. Attempting to delete the last variant fails.
+- **Product title required, 255-character limit.** Product title is required and cannot exceed 255 characters. The GraphQL API rejects the mutation but the error doesn't always clearly point to the title field.
+- **Maximum 100 variants per product.** Hard limit — adding a 101st variant fails. This is easy to hit with products that have multiple option types (e.g., 5 sizes x 5 colors x 5 materials = 125 variants).
+- **Maximum 3 option types per product.** Products can only have 3 option dimensions (e.g., Size, Color, Material). Attempting to add a 4th is rejected.
+- **Maximum 250 images per product.** Exceeding this limit fails silently in some API versions.
+- **Variant option values limited to 255 characters.** SKU also limited to 255 characters. Exceeding either causes a mutation failure.
+- **Handle (slug) uniqueness.** Product handles must be unique across the entire store and follow URL-safe formatting. Duplicates are rejected.
+- **Prices must be decimal strings, not numbers.** The GraphQL API expects `"19.99"` (string), not `19.99` (number). GraphQL's strict typing rejects the wrong type with a confusing schema validation error.
+- **Compare-at price must exceed actual price.** Setting a compare-at (original) price lower than the sale price is rejected. Setting it equal is also rejected — it must be strictly higher, or null.
+- **Negative prices rejected.** Prices cannot be negative values.
+- **Metafield type strict validation.** Metafield values are validated against their declared type — `date` rejects non-ISO-8601 strings, `integer` rejects decimals, `json` validates against its JSON schema. The errors reference the metafield type system, which is unfamiliar to most users.
+- **Metafield key/namespace format restrictions.** Keys must be lowercase alphanumeric + underscores (max 64 chars). Namespaces have the same restrictions (max 20 chars). Violations are rejected with a generic "invalid" error.
+- **Single-line metafields reject newlines.** Same pattern as Webflow PlainText — newline characters in single-line text metafields cause the mutation to fail.
+- **Tags: 250 max, 255 chars each, comma parsing issues.** Products are limited to 250 tags, each max 255 characters. Tags containing commas are split into multiple tags in some API contexts, causing unexpected behavior.
+- **Inventory can't be set if tracking is disabled.** Attempting to set inventory quantities for a variant that doesn't have inventory tracking enabled is rejected.
+- **Negative inventory requires "allow overselling" setting.** Setting inventory below zero fails unless the location has overselling enabled. The error doesn't explain the location-level setting.
+- **Unsupported HTML tags silently stripped from descriptions.** Product descriptions accept HTML but only a subset of tags. Unsupported tags (e.g., `<script>`, `<iframe>`, certain CSS) are silently removed, which can break formatting without any error.
 
 ### HubSpot
 
@@ -483,6 +504,28 @@ Failures observed across Whalesync and Scratch, organized by connector.
 ### Airtable
 
 - **Unknown field names.** After a field was deleted in Airtable but remained mapped in Whalesync, updates to that field failed with "Unknown field name."
+- **Single-line text fields with spurious newlines.** Data imported via CSV into Airtable sometimes has stray newlines at the start and end of single-line text fields. Whalesync had to add stripping logic to handle this.
+
+### WordPress
+
+- **Invalid usernames.** Usernames containing special characters, spaces, or formatted as email addresses were rejected by WordPress's API.
+
+### Wix
+
+- **Single-item collections rejecting new records.** Wix has "single item" collections that contain exactly one record. Attempting to create additional records in them fails.
+
+### Cross-Connector Data Conversion Issues
+
+These issues apply across connectors whenever data is converted between types:
+
+- **Select/enum values must match exactly.** Values that don't match the destination's defined options are rejected. This is case-sensitive and whitespace-sensitive across most connectors.
+- **Number fields rejecting NaN.** Non-numeric strings in number fields cause parse failures. The error often doesn't identify the specific value that failed.
+- **Number fields with min/max range limits.** Values outside the allowed range for a numeric field are rejected. The limits vary by connector and field configuration.
+- **Invalid JSON in JSON/JSONB fields.** Malformed JSON strings in structured fields cause parse failures with the raw JSON parser error, which is unhelpful to users.
+- **Date fields requiring ISO 8601 format.** Dates in non-standard formats (e.g., "March 3, 2026" or "03/03/26") are rejected. The required format isn't obvious to users.
+- **Boolean fields with unexpected values.** Most connectors accept `true`/`false`, `1`/`0`, `yes`/`no`, and `on`/`off`, but reject other truthy/falsy values like `"Y"` or `"enabled"`.
+- **Integer truncation without warning.** When decimal values are published to integer fields, the decimal portion is silently truncated (not rounded). A value of `9.99` becomes `9` with no warning.
+- **Single-value foreign keys silently dropping extras.** When a multi-value relation is published to a single-value foreign key field, only the first value is kept. The remaining values are silently dropped.
 
 ## Appendix B: Expected Failures for Future Connectors
 
@@ -490,7 +533,7 @@ Every new connector we build introduces its own set of constraints that will cau
 
 _Database connectors (Postgres, Supabase)_ — Non-null constraint violations, unique index conflicts, foreign key references to non-existent rows, type mismatches (strings in integer columns, malformed dates), values exceeding column length limits, check constraint violations, invalid characters in JSONB fields.
 
-_E-commerce (Shopify)_ — Missing required product data (no images, no description), invalid variant combinations (duplicate option values, exceeding variant limits), inventory set to negative values, case-sensitive enum values.
+_E-commerce (Shopify)_ — Missing required product data (no images, no description), invalid variant combinations (duplicate option values, exceeding 100-variant or 3-option-type limits), inventory set to negative values, case-sensitive enum values, prices as wrong type (number vs string), compare-at price lower than actual price, handle uniqueness, metafield type validation, tag limits, unsupported HTML in descriptions.
 
 _CMS platforms (Webflow, Wix)_ — Slug issues (duplicates, missing values, invalid characters), field format violations (newlines in single-line fields, invalid HTML in rich text), broken image URLs, content exceeding field size limits, image size limits in rich text, required field violations, CMS item plan limits.
 
