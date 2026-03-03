@@ -122,7 +122,7 @@ export interface LookupFieldOptions {
 }
 
 /** How to handle multiple results from a JSONPath expression */
-export type JSONPathArrayHandling = 'first' | 'array' | 'join_space' | 'join_comma';
+export type JSONPathArrayHandling = 'first' | 'array' | 'join_space' | 'join_comma' | 'concat';
 
 /** Options for the jsonpath transformer */
 export interface JSONPathOptions {

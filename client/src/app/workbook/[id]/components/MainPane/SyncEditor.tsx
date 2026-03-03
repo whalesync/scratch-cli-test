@@ -81,10 +81,6 @@ interface FieldMapping {
   destField: string;
   /** Pipeline of transformers applied sequentially */
   transformers: TransformerConfig[];
-  /** True when the transformer was auto-applied (can be replaced when fields change) */
-  transformerAutoApplied?: boolean;
-  /** True when the user has explicitly cleared the transformer (opt-out of auto-applied transformer) */
-  transformerClearedManually?: boolean;
 }
 
 interface FolderPair {
@@ -201,7 +197,7 @@ const renderAutocompleteOption = ({ option }: any) => (
     <Badge size="xs" variant="light" color="blue" w={70} style={{ flexShrink: 0 }}>
       {option.type}
     </Badge>
-    <Text size="sm">{option.value}</Text>
+    <Text size="sm">{option.displayLabel ? `${option.displayLabel} (${option.value})` : option.value}</Text>
   </Group>
 );
 
@@ -352,7 +348,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [aiContextCopying, setAiContextCopying] = useState(false);
   const [errorBanner, setErrorBanner] = useState<{ title: string; body: string } | null>(null);
   const [schemaCache, setSchemaCache] = useState<
-    Record<string, { path: string; type: string; suggestedTransformer?: TransformerConfig }[]>
+    Record<string, { path: string; type: string; displayLabel?: string; suggestedTransformer?: TransformerConfig }[]>
   >({});
   const [transformerModalOpen, setTransformerModalOpen] = useState(false);
   const [editingTransformerTarget, setEditingTransformerTarget] = useState<{
@@ -798,14 +794,11 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     pairIndex: number,
     mappingIndex: number,
     transformers: TransformerConfig[],
-    options?: { cleared?: boolean; autoApplied?: boolean },
   ) => {
     const next = [...folderPairs];
     next[pairIndex].fieldMappings[mappingIndex] = {
       ...next[pairIndex].fieldMappings[mappingIndex],
       transformers,
-      transformerClearedManually: options?.cleared ?? false,
-      transformerAutoApplied: options?.autoApplied ?? false,
     };
     setFolderPairs(next);
   };
@@ -816,64 +809,32 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   };
 
   /**
-   * Clear any auto-applied transformer so maybeAutoConvert can re-evaluate.
-   * Returns true if the transformer was cleared (caller should use updated state).
+   * Compute the appropriate transformers for a field mapping based on the source and dest fields.
+   * Checks for a suggested transformer from the source schema first, then auto-converts if types differ.
    */
-  const clearAutoAppliedTransformer = (pairIndex: number, mappingIndex: number): boolean => {
-    const mapping = folderPairs[pairIndex].fieldMappings[mappingIndex];
-    const clearTransformer = (mapping.transformers.length > 0 && mapping.transformerAutoApplied) ?? false;
+  const computeAutoTransformers = (pairIndex: number, sourceField: string, destField: string): TransformerConfig[] => {
+    if (!sourceField || !destField) return [];
 
-    const next = [...folderPairs];
-    const previous = next[pairIndex].fieldMappings[mappingIndex];
-    next[pairIndex].fieldMappings[mappingIndex] = {
-      ...previous,
-      transformers: clearTransformer ? [] : previous.transformers,
-      transformerAutoApplied: clearTransformer ? false : true,
-      transformerClearedManually: false,
-    };
-    setFolderPairs(next);
-
-    return clearTransformer;
-  };
-
-  /**
-   * Auto-apply AutoConvert transformer when source and dest field types differ.
-   * @param wasAutoCleared pass true if clearAutoAppliedTransformer just cleared the transformer
-   *        in this same event handler (React hasn't re-rendered yet so folderPairs is stale).
-   */
-  const maybeAutoConvert = (
-    pairIndex: number,
-    mappingIndex: number,
-    sourceField: string,
-    destField: string,
-    wasAutoCleared?: boolean,
-  ) => {
     const pair = folderPairs[pairIndex];
-    const mapping = pair.fieldMappings[mappingIndex];
-    if (!sourceField || !destField) return;
-    if (mapping.transformerClearedManually) return;
-    // If there's a non-auto-applied transformer, don't override it
-    if (mapping.transformers.length > 0 && !mapping.transformerAutoApplied && !wasAutoCleared) return;
-
     const sourceSchema = schemaCache[pair.sourceId] || [];
     const destSchema = schemaCache[pair.destId] || [];
     const sourceInfo = sourceSchema.find((f) => f.path === sourceField);
     const destInfo = destSchema.find((f) => f.path === destField);
-    if (!sourceInfo || !destInfo) return;
-    if (sourceInfo.suggestedTransformer) return;
 
-    if (sourceInfo.type === destInfo.type) return;
+    // Check for suggested transformer from the source field
+    if (sourceInfo?.suggestedTransformer) {
+      return [sourceInfo.suggestedTransformer];
+    }
+
+    // Auto-convert when source and dest types differ
+    if (!sourceInfo || !destInfo) return [];
+    if (sourceInfo.type === destInfo.type) return [];
 
     const targetType = destInfo.type as AutoConvertOptions['targetType'];
     const validTargets: AutoConvertOptions['targetType'][] = ['string', 'number', 'integer', 'boolean', 'array'];
-    if (!validTargets.includes(targetType)) return;
+    if (!validTargets.includes(targetType)) return [];
 
-    updateFieldMappingTransformers(
-      pairIndex,
-      mappingIndex,
-      [{ type: TransformerTypes.AutoConvert, options: { targetType } }],
-      { autoApplied: true },
-    );
+    return [{ type: TransformerTypes.AutoConvert, options: { targetType } }];
   };
 
   const getFolderName = (id: string) => allFolders.find((f) => f.id === id)?.name || 'Unknown';
@@ -1086,33 +1047,33 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                   <Autocomplete
                                     placeholder="Source field"
                                     style={{ flex: 1 }}
+                                    autoSelectOnBlur
+                                    clearable
                                     value={mapping.sourceField}
                                     onChange={(val) => {
                                       updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
-                                      const wasAutoCleared = clearAutoAppliedTransformer(activePairIndex, mIndex);
-                                      const currentMapping = folderPairs[activePairIndex].fieldMappings[mIndex];
-                                      const hasTransformer = currentMapping.transformers.length > 0 && !wasAutoCleared;
-                                      const field = (schemaCache[activePair.sourceId] || []).find(
-                                        (f) => f.path === val,
+                                      const transformers = computeAutoTransformers(
+                                        activePairIndex,
+                                        val,
+                                        mapping.destField,
                                       );
-                                      if (field?.suggestedTransformer && !hasTransformer) {
-                                        updateFieldMappingTransformers(activePairIndex, mIndex, [
-                                          field.suggestedTransformer,
-                                        ]);
-                                      } else {
-                                        maybeAutoConvert(
-                                          activePairIndex,
-                                          mIndex,
-                                          val,
-                                          mapping.destField,
-                                          wasAutoCleared,
-                                        );
-                                      }
+                                      updateFieldMappingTransformers(activePairIndex, mIndex, transformers);
                                     }}
-                                    data={(schemaCache[activePair.sourceId] || []).map((f) => {
-                                      if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                                      return { value: f.path, label: f.path, type: f.type };
-                                    })}
+                                    data={[...(schemaCache[activePair.sourceId] || [])]
+                                      .sort((a, b) => {
+                                        if (a.displayLabel && !b.displayLabel) return -1;
+                                        if (!a.displayLabel && b.displayLabel) return 1;
+                                        return 0;
+                                      })
+                                      .map((f) => {
+                                        if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
+                                        return {
+                                          value: f.path,
+                                          label: f.path,
+                                          type: f.type,
+                                          displayLabel: f.displayLabel,
+                                        };
+                                      })}
                                     renderOption={renderAutocompleteOption}
                                     rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
                                   />
@@ -1120,22 +1081,33 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                                   <Autocomplete
                                     placeholder="Dest field"
                                     style={{ flex: 1 }}
+                                    autoSelectOnBlur
+                                    clearable
                                     value={mapping.destField}
                                     onChange={(val) => {
                                       updateFieldMapping(activePairIndex, mIndex, 'destField', val);
-                                      const wasAutoCleared = clearAutoAppliedTransformer(activePairIndex, mIndex);
-                                      maybeAutoConvert(
+                                      const transformers = computeAutoTransformers(
                                         activePairIndex,
-                                        mIndex,
                                         mapping.sourceField,
                                         val,
-                                        wasAutoCleared,
                                       );
+                                      updateFieldMappingTransformers(activePairIndex, mIndex, transformers);
                                     }}
-                                    data={(schemaCache[activePair.destId] || []).map((f) => {
-                                      if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                                      return { value: f.path, label: f.path, type: f.type };
-                                    })}
+                                    data={[...(schemaCache[activePair.destId] || [])]
+                                      .sort((a, b) => {
+                                        if (a.displayLabel && !b.displayLabel) return -1;
+                                        if (!a.displayLabel && b.displayLabel) return 1;
+                                        return 0;
+                                      })
+                                      .map((f) => {
+                                        if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
+                                        return {
+                                          value: f.path,
+                                          label: f.path,
+                                          type: f.type,
+                                          displayLabel: f.displayLabel,
+                                        };
+                                      })}
                                     renderOption={renderAutocompleteOption}
                                     rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
                                   />
@@ -1326,7 +1298,6 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
               editingTransformerTarget.pairIndex,
               editingTransformerTarget.mappingIndex,
               configs,
-              configs.length === 0 ? { cleared: true } : undefined, // mark as cleared when user removes all
             );
           }
         }}

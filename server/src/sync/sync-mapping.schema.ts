@@ -35,7 +35,7 @@ const lookupFieldOptionsSchema = z
 const jsonpathOptionsSchema = z
   .object({
     expression: z.string().min(1),
-    arrayHandling: z.enum(['first', 'array', 'join_space', 'join_comma']).optional(),
+    arrayHandling: z.enum(['first', 'array', 'join_space', 'join_comma', 'concat']).optional(),
   })
   .strict();
 

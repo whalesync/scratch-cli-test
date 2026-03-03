@@ -8,6 +8,7 @@ import {
   READONLY_FLAG,
   REMOTE_FIELD_ID,
   SUGGESTED_TRANSFORMER,
+  VIRTUAL_FIELDS,
 } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 
@@ -150,7 +151,19 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
           plain_text: Type.String(),
           href: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
-        { description },
+        {
+          description,
+          [VIRTUAL_FIELDS]: [
+            {
+              displayLabel: description,
+              type: 'string',
+              suggestedTransformer: {
+                type: TransformerTypes.JSONPath,
+                options: { expression: '$.title[*].plain_text', arrayHandling: 'concat' },
+              },
+            },
+          ],
+        },
       );
       break;
 

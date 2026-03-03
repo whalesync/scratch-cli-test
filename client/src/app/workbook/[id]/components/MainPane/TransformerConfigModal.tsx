@@ -334,6 +334,7 @@ export function TransformerConfigModal({
                   data={[
                     { value: 'first', label: 'First value' },
                     { value: 'array', label: 'Array' },
+                    { value: 'concat', label: 'Concatenate' },
                     { value: 'join_space', label: 'Join with spaces' },
                     { value: 'join_comma', label: 'Join with commas' },
                   ]}

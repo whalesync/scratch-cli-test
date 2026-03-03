@@ -125,6 +125,13 @@ describe('jsonpathTransformer', () => {
       expect(result).toEqual({ success: true, value: 'a, b, c' });
     });
 
+    it('should concatenate without delimiter with arrayHandling=concat', async () => {
+      const result = await jsonpathTransformer.transform(
+        createContext(data, { expression: '$.items[*]', arrayHandling: 'concat' }),
+      );
+      expect(result).toEqual({ success: true, value: 'abc' });
+    });
+
     it('should still unwrap single results regardless of arrayHandling', async () => {
       const result = await jsonpathTransformer.transform(
         createContext(data, { expression: '$.items[0]', arrayHandling: 'array' }),

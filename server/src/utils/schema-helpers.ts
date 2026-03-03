@@ -1,11 +1,12 @@
 import { TSchema } from '@sinclair/typebox';
 import { TransformerConfig } from '@spinner/shared-types';
-import type { ForeignKeyOptionSchema } from '../remote-service/connectors/json-schema';
+import type { ForeignKeyOptionSchema, VirtualFieldDef } from '../remote-service/connectors/json-schema';
 import {
   FOREIGN_KEY_OPTIONS,
   READONLY_FLAG,
   REMOTE_FIELD_ID,
   SUGGESTED_TRANSFORMER,
+  VIRTUAL_FIELDS,
 } from '../remote-service/connectors/json-schema';
 
 /**
@@ -49,6 +50,7 @@ export function extractSchemaPaths(schema: TSchema, parentPath = ''): string[] {
 export interface SchemaField {
   path: string;
   type: string;
+  displayLabel?: string;
   description?: string;
   remoteFieldId?: string;
   suggestedTransformer?: TransformerConfig;
@@ -87,6 +89,16 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     if (schema[READONLY_FLAG] === true) field.readonly = true;
     const fk = schema[FOREIGN_KEY_OPTIONS] as ForeignKeyOptionSchema | undefined;
     if (fk?.linkedTableId) field.foreignKey = { linkedTableId: fk.linkedTableId };
+
+    // Virtual fields: overwrite the entry with a human-readable label and pre-configured transformer
+    const virtualDefs = schema[VIRTUAL_FIELDS] as VirtualFieldDef[] | undefined;
+    if (virtualDefs?.length) {
+      const vf = virtualDefs[0];
+      field.displayLabel = vf.displayLabel;
+      field.type = vf.type;
+      field.suggestedTransformer = vf.suggestedTransformer;
+    }
+
     fields.set(parentPath, field);
   }
 

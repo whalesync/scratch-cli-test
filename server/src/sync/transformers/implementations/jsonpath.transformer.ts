@@ -68,6 +68,8 @@ export const jsonpathTransformer: FieldTransformer = {
           return { success: true, value: results.map(String).join(' ') };
         case 'join_comma':
           return { success: true, value: results.map(String).join(', ') };
+        case 'concat':
+          return { success: true, value: results.map(String).join('') };
         case 'first':
         default:
           return { success: true, value: results[0] };
