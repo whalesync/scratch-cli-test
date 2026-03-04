@@ -527,6 +527,8 @@ model PublishPlanOperation {
   phase   String // "create", "edit", "delete", "backfill"
   content Json? // The content of the file that we will push at this phase
 
+  changedFields Json? // Only the fields that changed (edit/backfill phases only)
+
   remoteRecordId String? // The remote record ID (set for delete entries)
   remoteTableId  String? // DEPRECATED: usage removed, column to be dropped in future migration
   dataFolderId   String? // The DataFolder ID (for batching)

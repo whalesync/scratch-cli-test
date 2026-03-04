@@ -393,12 +393,18 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
    * Update items in Webflow from raw JSON files.
    * Files should have an 'id' field and fieldData to update.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields?: (Record<string, unknown> | undefined)[],
+  ): Promise<void> {
     const [, collectionId] = tableSpec.id.remoteId;
 
     const items: { id: string; fieldData: Webflow.CollectionItemFieldData }[] = [];
-    for (const file of files) {
-      const fieldData = await this.extractFieldDataForApi(file, tableSpec);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const source = changedFields?.[i] ?? file;
+      const fieldData = await this.extractFieldDataForApi(source as ConnectorFile, tableSpec);
       items.push({
         id: file.id as string,
         fieldData: fieldData as Webflow.CollectionItemFieldData,

@@ -55,7 +55,11 @@ interface PlanEntriesModalProps {
 function JsonViewerModal({ operation, onClose }: { operation: PlanOperation; onClose: () => void }) {
   const { colorScheme } = useMantineColorScheme();
   const extensions = useMemo(() => [json(), EditorView.lineWrapping, EditorView.editable.of(false)], []);
-  const content = JSON.stringify(operation.content, null, 2);
+  const displayContent =
+    (operation.phase === 'edit' || operation.phase === 'backfill') && operation.changedFields
+      ? operation.changedFields
+      : operation.content;
+  const content = JSON.stringify(displayContent, null, 2);
 
   return (
     <Modal

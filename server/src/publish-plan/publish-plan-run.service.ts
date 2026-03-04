@@ -20,6 +20,7 @@ type PublishOperation = {
   id: string;
   filePath: string;
   content: ParsedContent;
+  changedFields?: Record<string, unknown> | null;
   remoteRecordId?: string | null;
   dataFolderId?: string | null;
 };
@@ -528,6 +529,7 @@ export class PublishPlanRunService {
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
 
     const contents: ParsedContent[] = [];
+    const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
     const entriesWithOps: { entry: PublishOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
@@ -550,14 +552,22 @@ export class PublishPlanRunService {
         [idField]: remoteId,
       } as ParsedContent;
 
+      // Skip no-op edits where changedFields is an empty object
+      const cf = entry.changedFields;
+      if (cf && Object.keys(cf).length === 0) {
+        continue;
+      }
+
       contents.push(resolvedContent);
+      changedFieldsArray.push(cf ?? undefined);
       entriesWithOps.push({ entry, resolvedContent: resolvedContent });
     }
 
     if (contents.length === 0) return;
 
-    // Bulk update
-    await connector.updateRecords(tableSpec, contents);
+    // Bulk update — pass changedFields to the connector if any entry has them
+    const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
+    await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
 
     // Update Refs & Git
     // We can do this in parallel or sequentially. Sequential for safety.
@@ -568,7 +578,7 @@ export class PublishPlanRunService {
 
     await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
 
-    // Git Commit (Main)
+    // Git Commit (Main) — always commit full content
     const gitFiles = refUpdates.map((u) => ({ path: u.path, content: JSON.stringify(u.content, null, 2) }));
     await this.scratchGitService.commitFilesToBranch(
       repoId,
@@ -577,7 +587,7 @@ export class PublishPlanRunService {
       `Publish V2 ${phase} batch (${entries.length})`,
     );
 
-    // Git Commit (Dirty) - checking if final
+    // Git Commit (Dirty) — uses full content, not changedFields
     const dirtySyncBatch = entriesWithOps.map(({ entry, resolvedContent: resolvedOp }) => ({
       filePath: entry.filePath,
       content: JSON.stringify(resolvedOp, null, 2),

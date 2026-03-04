@@ -215,6 +215,173 @@ describe('PublishPlanService', () => {
     });
   });
 
+  describe('changedFields computation', () => {
+    // Helper to extract saved operations from createMany calls
+    const getSavedOps = () => {
+      const allCalls = db.client.publishPlanOperation.createMany.mock.calls;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+      return allCalls.flatMap((call) => call[0].data) as Array<{
+        phase: string;
+        filePath: string;
+        content: Record<string, unknown>;
+        changedFields: Record<string, unknown> | null;
+      }>;
+    };
+
+    it('computes changedFields with only the changed field for an edit', async () => {
+      const filePath = 'articles/article1.json';
+      const mainContent = { title: 'Old Title', body: 'Same' };
+      const dirtyContent = { title: 'New Title', body: 'Same' };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockImplementation((_wkb, branch, paths) => {
+        const content = branch === 'dirty' ? JSON.stringify(dirtyContent) : JSON.stringify(mainContent);
+        return Promise.resolve(paths.map((p) => ({ path: p, content })));
+      });
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const editOp = ops.find((e) => e.phase === 'edit');
+      expect(editOp?.changedFields).toEqual({ title: 'New Title' });
+    });
+
+    it('computes changedFields with multiple changed fields', async () => {
+      const filePath = 'articles/article1.json';
+      const mainContent = { title: 'Old', body: 'Old Body', slug: 'same' };
+      const dirtyContent = { title: 'New', body: 'New Body', slug: 'same' };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockImplementation((_wkb, branch, paths) => {
+        const content = branch === 'dirty' ? JSON.stringify(dirtyContent) : JSON.stringify(mainContent);
+        return Promise.resolve(paths.map((p) => ({ path: p, content })));
+      });
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const editOp = ops.find((e) => e.phase === 'edit');
+      expect(editOp?.changedFields).toEqual({ title: 'New', body: 'New Body' });
+    });
+
+    it('computes empty changedFields when content is identical but status is modified', async () => {
+      const filePath = 'articles/article1.json';
+      const content = { title: 'Same' };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content: JSON.stringify(content) }]);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const editOp = ops.find((e) => e.phase === 'edit');
+      expect(editOp?.changedFields).toEqual({});
+    });
+
+    it('computes nested changedFields (e.g., Airtable fields wrapper)', async () => {
+      const filePath = 'articles/article1.json';
+      const mainContent = { id: 'rec1', fields: { Name: 'Old', Notes: 'Same' } };
+      const dirtyContent = { id: 'rec1', fields: { Name: 'New', Notes: 'Same' } };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockImplementation((_wkb, branch, paths) => {
+        const content = branch === 'dirty' ? JSON.stringify(dirtyContent) : JSON.stringify(mainContent);
+        return Promise.resolve(paths.map((p) => ({ path: p, content })));
+      });
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const editOp = ops.find((e) => e.phase === 'edit');
+      expect(editOp?.changedFields).toEqual({ fields: { Name: 'New' } });
+    });
+
+    it('reads main branch for the full edit batch', async () => {
+      const filePath = 'articles/article1.json';
+      const content = JSON.stringify({ title: 'Hello' });
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content }]);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      // Should have been called for both dirty AND main
+      const calls = scratchGitService.readRepoFilesByFolder.mock.calls;
+      expect(calls.some(([, branch]) => branch === 'dirty')).toBe(true);
+      expect(calls.some(([, branch]) => branch === 'main')).toBe(true);
+    });
+
+    it('sets changedFields to full content when main version is missing', async () => {
+      const filePath = 'articles/article1.json';
+      const dirtyContent = { title: 'New' };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockImplementation((_wkb, branch, paths) => {
+        if (branch === 'dirty') {
+          return Promise.resolve(paths.map((p) => ({ path: p, content: JSON.stringify(dirtyContent) })));
+        }
+        // main returns null
+        return Promise.resolve(paths.map((p) => ({ path: p, content: null })));
+      });
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const editOp = ops.find((e) => e.phase === 'edit');
+      expect(editOp?.changedFields).toEqual(dirtyContent);
+    });
+
+    it('computes changedFields for backfill entries (pseudo-ref diff)', async () => {
+      const filePath = 'articles/article1.json';
+      const originalContent = { title: 'Hello', ref: '@/new/record.json' };
+      const strippedContent = { title: 'Hello', ref: null };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([
+        { path: filePath, content: JSON.stringify(originalContent) },
+      ]);
+
+      refCleanerService.stripDeletedRecordRefs.mockReturnValueOnce(originalContent);
+      refCleanerService.stripPseudoRefs.mockReturnValueOnce(strippedContent);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const backfillOp = ops.find((e) => e.phase === 'backfill');
+      expect(backfillOp).toBeDefined();
+      // Backfill changedFields = diff(pass2 → pass1), capturing only the pseudo-ref field
+      expect(backfillOp?.changedFields).toEqual({ ref: '@/new/record.json' });
+    });
+
+    it('does not set changedFields for create operations', async () => {
+      const filePath = 'articles/new.json';
+      const content = JSON.stringify({ title: 'New Article' });
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'added' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content }]);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const createOp = ops.find((e) => e.phase === 'create');
+      expect(createOp?.changedFields).toBeUndefined();
+    });
+
+    it('does not set changedFields for delete operations', async () => {
+      const filePath = 'articles/old.json';
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'deleted' }]);
+      fileIndexService.getRecordIds.mockResolvedValue(new Map([['articles:old.json', 'rec_old']]));
+      fileReferenceService.findRefsToFiles.mockResolvedValue([]);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      const ops = getSavedOps();
+      const deleteOp = ops.find((e) => e.phase === 'delete');
+      expect(deleteOp?.changedFields).toBeUndefined();
+    });
+  });
+
   describe('batching', () => {
     it('calls readRepoFiles in batches of 100 for large edit sets', async () => {
       // 150 modified files → 2 batches

@@ -29,6 +29,7 @@ export interface PublishPlanOperationEntity {
   filePath: string;
   phase: string; // "create" | "edit" | "delete" | "backfill"
   content: unknown;
+  changedFields?: unknown;
   remoteRecordId: string | null;
   remoteTableId: string | null;
   dataFolderId: string | null;

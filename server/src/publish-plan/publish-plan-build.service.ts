@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
@@ -7,6 +8,7 @@ import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService, getRepoId } from '../scratch-git/scratch-git.service';
+import { computeChangedFields } from './diff-utils';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefCleanerService } from './ref-cleaner.service';
@@ -275,6 +277,7 @@ export class PublishPlanBuildService {
       filePath: string;
       phase: PublishPlanPhase;
       content: ParsedContent;
+      changedFields?: Record<string, unknown> | null;
       remoteRecordId?: string | null;
       dataFolderId?: string | null;
       status: string;
@@ -288,6 +291,7 @@ export class PublishPlanBuildService {
           filePath: e.filePath,
           phase: e.phase,
           content: e.content,
+          changedFields: (e.changedFields as Prisma.InputJsonValue) ?? undefined,
           remoteRecordId: e.remoteRecordId ?? null,
           dataFolderId: e.dataFolderId ?? null,
           status: e.status,
@@ -301,12 +305,9 @@ export class PublishPlanBuildService {
       const dirtyResults = await this.scratchGitService.readRepoFilesByFolder(repoId, 'dirty', editBatch);
       const dirtyMap = new Map(dirtyResults.map((r) => [r.path, r.content]));
 
-      const missingPaths = editBatch.filter((p) => !dirtyMap.get(p));
-      const mainMap = new Map<string, string | null>();
-      if (missingPaths.length > 0) {
-        const mainResults = await this.scratchGitService.readRepoFilesByFolder(repoId, 'main', missingPaths);
-        for (const r of mainResults) mainMap.set(r.path, r.content);
-      }
+      // Always read main branch for the full batch so we can compute changedFields diffs
+      const mainResults = await this.scratchGitService.readRepoFilesByFolder(repoId, 'main', editBatch);
+      const mainMap = new Map(mainResults.map((r) => [r.path, r.content]));
 
       for (const filePath of editBatch) {
         editPhaseProcessed++;
@@ -374,10 +375,18 @@ export class PublishPlanBuildService {
           const isPseudoStripped = pass2ContentStr !== pass1ContentStr;
 
           if (isUserModified || isRefCleared || isPseudoStripped) {
+            // Compute changedFields by diffing main vs dirty (after stripping)
+            const mainRaw = mainMap.get(filePath);
+            const mainObj = mainRaw ? (JSON.parse(mainRaw) as Record<string, unknown>) : null;
+            const changed = mainObj
+              ? computeChangedFields(mainObj, pass2ContentObj as Record<string, unknown>)
+              : (pass2ContentObj as Record<string, unknown>);
+
             planOperations.push({
               filePath,
               phase: 'edit',
               content: pass2ContentObj,
+              changedFields: changed,
               dataFolderId: dataFolderId || null,
               status: 'pending',
             });
@@ -386,10 +395,17 @@ export class PublishPlanBuildService {
 
             // Backfill Logic
             if (pass2ContentStr !== pass1ContentStr) {
+              // changedFields for backfill: diff between pseudo-stripped (pass2) and pre-pseudo (pass1)
+              const backfillChanged = computeChangedFields(
+                pass2ContentObj as Record<string, unknown>,
+                pass1ContentObj as Record<string, unknown>,
+              );
+
               planOperations.push({
                 filePath,
                 phase: 'backfill',
                 content: pass1ContentObj,
+                changedFields: backfillChanged,
                 dataFolderId: dataFolderId || null,
                 status: 'pending',
               });
