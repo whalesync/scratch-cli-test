@@ -1782,7 +1782,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
     // Verify the resolved file has the destination author ID
     const phase2PostFiles = writtenFilesByCall[writtenFilesByCall.length - 1];
     const phase2PostContent = JSON.parse(phase2PostFiles[0].content) as Record<string, unknown>;
-    expect(phase2PostContent.author_id).toBe('@/dest-authors/author1.json'); // Resolved to pseudo-ref!
+    expect(phase2PostContent.author_id).toBe('dest_author_1'); // Resolved to real destination remote ID
     expect(phase2PostContent.id).toBe(postTempId); // ID should be preserved
   });
 
@@ -2043,7 +2043,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
 
     const resolvedPostFiles = writtenFilesByCall[writtenFilesByCall.length - 1];
     const resolvedPostContent = JSON.parse(resolvedPostFiles[0].content) as Record<string, unknown>;
-    expect(resolvedPostContent.author_ids).toEqual(['@/dest-authors/auth1.json', '@/dest-authors/auth2.json']);
+    expect(resolvedPostContent.author_ids).toEqual(['dest_auth_1', 'dest_auth_2']); // Resolved to real destination remote IDs
   });
 
   it('should return error when FK references a non-existent record', async () => {

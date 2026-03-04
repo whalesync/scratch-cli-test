@@ -1,4 +1,4 @@
-import { SourceFkToDestFkOptions, TransformerTypes } from '@spinner/shared-types';
+import { isScratchPendingPublishId, SourceFkToDestFkOptions, TransformerTypes } from '@spinner/shared-types';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } from '../transformer.types';
@@ -84,12 +84,16 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
           error: `Could not resolve foreign key "${fkStr}" to a destination path in DataFolder ${typedOptions.referencedDataFolderId}`,
         };
       }
-      const pseudoRef = `@/${mapping.destinationFilePath}`;
-      resolved.push(pseudoRef);
+      // Use the real destination remote ID if it exists already, otherwise a reference to the file.
+      const ref =
+        mapping.destinationRemoteId && !isScratchPendingPublishId(mapping.destinationRemoteId)
+          ? mapping.destinationRemoteId
+          : `@/${mapping.destinationFilePath}`;
+      resolved.push(ref);
 
       // Check if the existing destination value already matches
       if (allMatch) {
-        allMatch = doesElementMatch(destElements!, resolved.length - 1, pseudoRef, mapping);
+        allMatch = doesElementMatch(destElements!, resolved.length - 1, ref, mapping);
       }
     }
 

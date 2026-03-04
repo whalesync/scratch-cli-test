@@ -1,4 +1,4 @@
-import { SourceFkToDestFkOptions } from '@spinner/shared-types';
+import { createScratchPendingPublishId, SourceFkToDestFkOptions } from '@spinner/shared-types';
 import { sourceFkToDestFkTransformer } from '../implementations/source-fk-to-dest-fk.transformer';
 import { FkMappingResult, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
 
@@ -258,6 +258,80 @@ describe('sourceFkToDestFkTransformer', () => {
       const lookup = createSimpleLookupTools({ src_1: 'authors/alice.json', src_2: 'authors/bob.json' });
       const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2'], lookup));
       expect(result).toEqual({ success: true, value: ['@/authors/alice.json', '@/authors/bob.json'] });
+    });
+  });
+
+  describe('destinationRemoteId vs file ref selection', () => {
+    it('should use real destinationRemoteId when it exists', async () => {
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: 'real-id-99' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
+      expect(result).toEqual({ success: true, value: 'real-id-99' });
+    });
+
+    it('should use file ref when destinationRemoteId is a pending publish placeholder', async () => {
+      const pendingId = createScratchPendingPublishId();
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: pendingId },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
+      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+    });
+
+    it('should use file ref when destinationRemoteId is null', async () => {
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: null },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(createContext('src_1', lookup));
+      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
+    });
+
+    it('should mix real IDs and file refs in arrays', async () => {
+      const pendingId = createScratchPendingPublishId();
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'authors/alice.json', destinationRemoteId: 'real-id-10' },
+        src_2: { destinationFilePath: 'authors/bob.json', destinationRemoteId: pendingId },
+        src_3: { destinationFilePath: 'authors/carol.json', destinationRemoteId: null },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(createContext(['src_1', 'src_2', 'src_3'], lookup));
+      expect(result).toEqual({
+        success: true,
+        value: ['real-id-10', '@/authors/bob.json', '@/authors/carol.json'],
+      });
+    });
+
+    it('should skip when destination matches real destinationRemoteId', async () => {
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: 'real-id-99' },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', 'real-id-99'),
+      );
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should skip when destination has pending publish ID matching mapping', async () => {
+      const pendingId = createScratchPendingPublishId();
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: pendingId },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', pendingId),
+      );
+      // doesElementMatch considers the pending ID a match via mapping.destinationRemoteId
+      expect(result).toEqual({ success: true, skip: true });
+    });
+
+    it('should NOT skip when destination has stale value and mapping has pending publish ID', async () => {
+      const pendingId = createScratchPendingPublishId();
+      const lookup = createLookupTools({
+        src_1: { destinationFilePath: 'dest-authors/alice.json', destinationRemoteId: pendingId },
+      });
+      const result = await sourceFkToDestFkTransformer.transform(
+        createContext('src_1', lookup, undefined, 'FOREIGN_KEY_MAPPING', 'stale-id-123'),
+      );
+      expect(result).toEqual({ success: true, value: '@/dest-authors/alice.json' });
     });
   });
 });

@@ -524,7 +524,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     expect(postsFkResult.errors).toEqual([]);
     expect(postsFkResult.recordsUpdated).toBe(MATCH_COUNT + CREATE_COUNT);
 
-    // Posts now have `tags` field containing @/dest-tags/slug.json pseudo-refs
+    // Posts now have `tags` field containing dest-tags remote IDs or refs for records to create.
     const allPostPaths = [...postsFkResult.updatedPaths];
     for (const postPath of allPostPaths) {
       const postContent = vfs.getAllFiles(DIRTY_BRANCH).get(postPath);
@@ -535,13 +535,27 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
 
       // Each pseudo-ref should be a valid path to a dest-tags file
       const tags = parsed.tags as string[];
+      const failures: string[] = [];
+
+      let targetPath = '';
       for (const tag of tags) {
-        expect(tag).toMatch(/^@\/dest-tags\/.+\.json$/);
-        // Strip @/ prefix and verify file exists on dirty branch
-        const targetPath = tag.substring(2);
+        if (tag.includes('tag-create-')) {
+          targetPath = tag.substring(2); // strip @/ prefix.
+        } else {
+          const file = destFileIndexEntries.find((entry) => entry.recordId === tag);
+          if (!file) {
+            failures.push(`No file index entry found for tag: ${tag}`);
+            continue;
+          }
+          targetPath = file.folderPath + '/' + file.filename;
+        }
+
         const targetFile = vfs.getAllFiles(DIRTY_BRANCH).get(targetPath);
-        expect(targetFile).toBeDefined();
+        if (!targetFile) {
+          failures.push(`Target file not found: ${targetPath} for tag: ${tag}`);
+        }
       }
+      expect(failures).toEqual([]);
     }
 
     // =====================================================================

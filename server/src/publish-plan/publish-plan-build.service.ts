@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
+import { FileDiffStatus, isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
 import { ParsedContent, Schema } from 'src/utils/objects';
@@ -459,7 +459,7 @@ export class PublishPlanBuildService {
             });
             createCount++;
             liveCounts.createsPlanned++;
-            if (filename.startsWith('scratch_pending_publish_')) {
+            if (isScratchPendingPublishId(filename)) {
               planOperations.push({
                 filePath: add.path,
                 phase: 'rename-files',
@@ -493,7 +493,7 @@ export class PublishPlanBuildService {
           createCount++;
           liveCounts.createsPlanned++;
 
-          if (filename.startsWith('scratch_pending_publish_')) {
+          if (isScratchPendingPublishId(filename)) {
             planOperations.push({
               filePath: add.path,
               phase: 'rename-files',
