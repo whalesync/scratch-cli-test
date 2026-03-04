@@ -165,8 +165,8 @@ export class DataFolderController {
     return { jobId: job.id ?? '' };
   }
 
-  @Post(':id/refresh-records')
-  async refreshRecords(
+  @Post(':id/pull-files')
+  async pullFiles(
     @Param('id') id: DataFolderId,
     @Body() body: { workbookId: string; filePaths: string[] },
     @Req() req: RequestWithUser,
@@ -210,9 +210,9 @@ export class DataFolderController {
       data: { lock: 'pull' },
     });
 
-    const job = await this.bullEnqueuerService.enqueueRefreshRecordsJob(workbookId, actor, id, filePaths);
+    const job = await this.bullEnqueuerService.enqueuePullFilesJob(workbookId, actor, id, filePaths);
 
-    this.posthogService.trackRefreshRecords(actor, workbookId, id);
+    this.posthogService.trackPullFiles(actor, workbookId, id);
 
     return { jobId: job.id ?? '' };
   }

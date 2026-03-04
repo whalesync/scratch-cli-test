@@ -113,9 +113,13 @@ var linkedPullCmd = &cobra.Command{
 After the server-side pull completes, a local download is triggered to sync
 the changes to your local disk.
 
+Use --file to pull specific file(s) by path instead of the full table.
+
 Examples:
   scratchmd linked pull
-  scratchmd linked pull df_abc123`,
+  scratchmd linked pull df_abc123
+  scratchmd linked pull --file path/to/file.json
+  scratchmd linked pull --file path/to/a.json --file path/to/b.json`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runLinkedPull,
 }
@@ -151,6 +155,7 @@ func init() {
 	linkedRemoveCmd.Flags().Bool("json", false, "Output as JSON")
 	linkedShowCmd.Flags().Bool("json", false, "Output as JSON")
 	linkedPullCmd.Flags().Bool("json", false, "Output as JSON")
+	linkedPullCmd.Flags().StringSlice("file", nil, "Pull specific file(s) by path instead of full table")
 	linkedPublishCmd.Flags().Bool("json", false, "Output as JSON")
 
 	// Command-specific flags
@@ -799,6 +804,7 @@ func runLinkedShow(cmd *cobra.Command, args []string) error {
 
 func runLinkedPull(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
+	filePaths, _ := cmd.Flags().GetStringSlice("file")
 
 	client, err := getAuthenticatedClient()
 	if err != nil {
@@ -810,9 +816,17 @@ func runLinkedPull(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resp, err := client.PullLinkedTable(workbookID, dataFolderID)
-	if err != nil {
-		return fmt.Errorf("failed to pull linked table: %w", err)
+	var resp *api.JobResponse
+	if len(filePaths) > 0 {
+		resp, err = client.PullLinkedTableFiles(workbookID, dataFolderID, filePaths)
+		if err != nil {
+			return fmt.Errorf("failed to pull files: %w", err)
+		}
+	} else {
+		resp, err = client.PullLinkedTable(workbookID, dataFolderID)
+		if err != nil {
+			return fmt.Errorf("failed to pull linked table: %w", err)
+		}
 	}
 
 	if !jsonOutput {

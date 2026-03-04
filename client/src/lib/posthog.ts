@@ -11,7 +11,7 @@ export enum PostHogEvents {
   PULL_FILES = 'pull_files',
   PUBLISH_ALL = 'publish_all',
   DISCARD_CHANGES = 'discard_changes',
-  REFRESH_RECORDS = 'refresh_records',
+  PULL_FILES_FROM_SOURCE = 'pull_files_from_source',
   WHALESYNC_IMPORT = 'whalesync_import',
   DELETE_WORKBOOK = 'delete_workbook',
 }
@@ -99,8 +99,8 @@ export function trackDiscardChanges(workbookId: string): void {
   captureEvent(PostHogEvents.DISCARD_CHANGES, { workbookId });
 }
 
-export function trackRefreshRecords(workbookId: string, dataFolderId: string): void {
-  captureEvent(PostHogEvents.REFRESH_RECORDS, { workbookId, dataFolderId });
+export function trackPullFilesFromSource(workbookId: string, dataFolderId: string): void {
+  captureEvent(PostHogEvents.PULL_FILES_FROM_SOURCE, { workbookId, dataFolderId });
 }
 
 export function trackWhalesyncImport(workbookId: string, syncCount: number): void {

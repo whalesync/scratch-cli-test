@@ -237,8 +237,8 @@ export class PostHogService implements OnModuleDestroy {
     });
   }
 
-  trackRefreshRecords(actor: Actor, workbookId: string, dataFolderId: string): void {
-    this.captureEvent(PostHogEventName.REFRESH_RECORDS, actor, {
+  trackPullFiles(actor: Actor, workbookId: string, dataFolderId: string): void {
+    this.captureEvent(PostHogEventName.PULL_FILES, actor, {
       workbookId,
       dataFolderId,
     });
@@ -394,7 +394,7 @@ export enum PostHogEventName {
   SYNC_UPDATED = 'sync_updated',
   SYNC_REMOVED = 'sync_removed',
   START_SYNC_RUN = 'start_sync_run',
-  REFRESH_RECORDS = 'refresh_records',
+  PULL_FILES = 'pull_files',
   RECORD_CREATED = 'record_created',
   RECORD_EDITED = 'record_edited',
   RECORD_DELETED = 'record_deleted',

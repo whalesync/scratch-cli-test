@@ -18,8 +18,8 @@ import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
+import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
-import { RefreshRecordsJobHandler } from './jobs/job-definitions/refresh-records.job';
 import { SyncDataFoldersJobHandler } from './jobs/job-definitions/sync-data-folders.job';
 import { JobData, JobDefinition, JobHandler } from './jobs/union-types';
 
@@ -65,7 +65,7 @@ export class JobHandlerService {
         ) as JobHandler<JobDefinition>;
 
       case 'refresh-records':
-        return new RefreshRecordsJobHandler(
+        return new PullFilesJobHandler(
           prisma,
           this.connectorService,
           this.connectorAccountService,

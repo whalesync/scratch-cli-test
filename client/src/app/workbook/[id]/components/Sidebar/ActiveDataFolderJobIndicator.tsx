@@ -62,7 +62,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
     const updated = progress.updatedPaths?.length ?? 0;
     cardContent = (
       <Stack gap={8}>
-        <Text12Regular>Refreshing records from {folder.connectorDisplayName}</Text12Regular>
+        <Text12Regular>Pulling files from {folder.connectorDisplayName}</Text12Regular>
         <Text12Regular c="var(--fg-secondary)">
           {updated} / {progress.totalRequested ?? 0} files
         </Text12Regular>

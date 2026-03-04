@@ -13,7 +13,7 @@ import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { workbookApi } from '@/lib/api/workbook';
-import { trackRefreshRecords } from '@/lib/posthog';
+import { trackPullFilesFromSource } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { OAuthService } from '@/types/oauth';
@@ -1135,18 +1135,18 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
     setContextMenu({ x: rect.right, y: rect.bottom });
   };
 
-  const handleRefreshFromSource = useCallback(async () => {
+  const handlePullFromSource = useCallback(async () => {
     if (!linkedFolderId) return;
     try {
-      const result = await dataFolderApi.refreshRecords(linkedFolderId, params.id as WorkbookId, [file.path]);
+      const result = await dataFolderApi.pullFiles(linkedFolderId, params.id as WorkbookId, [file.path]);
       if (result?.jobId) {
         useActiveJobsStore.getState().trackJobIds([result.jobId]);
         useActiveJobsStore.getState().refreshJobs();
-        ScratchpadNotifications.info({ message: 'Refreshing record from source' });
-        trackRefreshRecords(params.id as string, linkedFolderId);
+        ScratchpadNotifications.info({ message: 'Pulling file from source' });
+        trackPullFilesFromSource(params.id as string, linkedFolderId);
       }
     } catch {
-      ScratchpadNotifications.error({ message: 'Failed to refresh record from source' });
+      ScratchpadNotifications.error({ message: 'Failed to pull file from source' });
     }
   }, [linkedFolderId, file.path, params.id]);
 
@@ -1241,7 +1241,7 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
             ? [{ label: 'Test Transformer', icon: FlaskRoundIcon, onClick: openTestTransformer }]
             : []),
           ...(linkedFolderId && !isHiddenFile
-            ? [{ label: 'Refresh from source', icon: RefreshCwIcon, onClick: () => void handleRefreshFromSource() }]
+            ? [{ label: 'Pull from source', icon: RefreshCwIcon, onClick: () => void handlePullFromSource() }]
             : []),
           {
             label: 'Copy Path',

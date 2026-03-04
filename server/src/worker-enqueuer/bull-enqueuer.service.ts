@@ -8,8 +8,8 @@ import { Actor } from 'src/users/types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/publish-data-folder.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
+import { PullFilesJobDefinition } from '../worker/jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
-import { RefreshRecordsJobDefinition } from '../worker/jobs/job-definitions/refresh-records.job';
 import { SyncDataFoldersJobDefinition } from '../worker/jobs/job-definitions/sync-data-folders.job';
 
 @Injectable()
@@ -193,15 +193,15 @@ export class BullEnqueuerService implements OnModuleDestroy {
     return await this.enqueueJobWithId(data, id);
   }
 
-  async enqueueRefreshRecordsJob(
+  async enqueuePullFilesJob(
     workbookId: WorkbookId,
     actor: Actor,
     dataFolderId: DataFolderId,
     filePaths: string[],
-    initialPublicProgress?: RefreshRecordsJobDefinition['publicProgress'],
+    initialPublicProgress?: PullFilesJobDefinition['publicProgress'],
   ): Promise<Job> {
     const id = `refresh-records-${actor.userId}-${workbookId}-${createPlainId()}`;
-    const data: RefreshRecordsJobDefinition['data'] = {
+    const data: PullFilesJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
       organizationId: actor.organizationId,

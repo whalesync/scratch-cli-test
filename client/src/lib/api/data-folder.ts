@@ -70,20 +70,20 @@ export const dataFolderApi = {
     }
   },
 
-  refreshRecords: async (
+  pullFiles: async (
     dataFolderId: DataFolderId,
     workbookId: WorkbookId,
     filePaths: string[],
   ): Promise<{ jobId: string }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<{ jobId: string }>(`/data-folder/${dataFolderId}/refresh-records`, {
+      const res = await axios.post<{ jobId: string }>(`/data-folder/${dataFolderId}/pull-files`, {
         workbookId,
         filePaths,
       });
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to refresh records');
+      handleAxiosError(error, 'Failed to pull files');
     }
   },
 

@@ -202,6 +202,62 @@ export class CliLinkedController {
   }
 
   /**
+   * Pull specific files from the remote source for a linked table.
+   */
+  @Post('workbooks/:workbookId/linked/:folderId/pull-files')
+  async pullLinkedTableFiles(
+    @Req() req: RequestWithUser,
+    @Param('workbookId') workbookId: string,
+    @Param('folderId') folderId: string,
+    @Body() body: { filePaths: string[] },
+  ): Promise<{ jobId: string }> {
+    const actor = userToActor(req.user);
+    const wbId = workbookId as WorkbookId;
+    const dfId = folderId as DataFolderId;
+
+    // Verify the user has access to the workbook
+    const workbook = await this.workbookService.findOne(wbId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    // Verify the data folder exists and belongs to this workbook
+    const dataFolder = await this.dataFolderService.findOne(dfId, actor);
+    if (!dataFolder) {
+      throw new NotFoundException('Linked table not found');
+    }
+    if (dataFolder.workbookId !== wbId) {
+      throw new BadRequestException('Linked table does not belong to this workbook');
+    }
+    if (!dataFolder.connectorAccountId) {
+      throw new BadRequestException('Linked table does not have a connected source');
+    }
+
+    if (!body.filePaths || body.filePaths.length === 0) {
+      throw new BadRequestException('At least one file path is required');
+    }
+
+    // Check if folder is already locked by another operation
+    if (dataFolder.lock) {
+      throw new BadRequestException(
+        `Linked table "${dataFolder.name}" is currently locked by another ${dataFolder.lock} operation`,
+      );
+    }
+
+    // Acquire lock before enqueueing the job
+    await this.db.client.dataFolder.update({
+      where: { id: dfId },
+      data: { lock: 'pull' },
+    });
+
+    const job = await this.bullEnqueuerService.enqueuePullFilesJob(wbId, actor, dfId, body.filePaths);
+
+    this.posthogService.trackPullFiles(actor, wbId, dfId);
+
+    return { jobId: job.id ?? '' };
+  }
+
+  /**
    * Publish changes from the workbook to the CRM for a specific linked table.
    * Uses the publish-v2 pipeline (plan + run) for modern publish flow.
    */

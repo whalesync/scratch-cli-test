@@ -148,6 +148,11 @@ server/src/[resource]/
 └── dto/*.dto.ts                         # Request/response DTOs
 ```
 
+When creating or modifying REST API endpoints, update all consumers:
+
+- React client (`client/src/lib/api/`)
+- CLI (`scratch-cli/internal/api/` and `scratch-cli/internal/cmd/`)
+
 #### Real-time Updates
 
 Redis pub/sub → WebSocket gateway → connected clients. Multiple server instances coordinate via Redis.

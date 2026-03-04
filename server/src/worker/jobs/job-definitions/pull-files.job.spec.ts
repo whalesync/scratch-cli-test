@@ -7,10 +7,10 @@ import { ConnectorAccountService } from 'src/remote-service/connector-account/co
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
-import { RefreshRecordsJobHandler } from './refresh-records.job';
+import { PullFilesJobHandler } from './pull-files.job';
 
-describe('RefreshRecordsJobHandler', () => {
-  let handler: RefreshRecordsJobHandler;
+describe('PullFilesJobHandler', () => {
+  let handler: PullFilesJobHandler;
   let mockPrisma: jest.Mocked<PrismaClient>;
   let mockConnectorService: jest.Mocked<ConnectorsService>;
   let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
@@ -97,7 +97,7 @@ describe('RefreshRecordsJobHandler', () => {
       upsertBatch: jest.fn(),
     } as any;
 
-    handler = new RefreshRecordsJobHandler(
+    handler = new PullFilesJobHandler(
       mockPrisma,
       mockConnectorService,
       mockConnectorAccountService,

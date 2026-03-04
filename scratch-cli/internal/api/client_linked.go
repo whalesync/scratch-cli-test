@@ -178,6 +178,16 @@ func (c *Client) PullLinkedTable(workbookID, folderID string) (*JobResponse, err
 	return &result, nil
 }
 
+// PullLinkedTableFiles pulls specific files from the remote source for a linked table.
+func (c *Client) PullLinkedTableFiles(workbookID, folderID string, filePaths []string) (*JobResponse, error) {
+	var result JobResponse
+	body := map[string]interface{}{"filePaths": filePaths}
+	if err := c.doRequest(http.MethodPost, "workbooks/"+workbookID+"/linked/"+folderID+"/pull-files", body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // PublishLinkedTable publishes changes from the workbook to the CRM for a specific linked table.
 func (c *Client) PublishLinkedTable(workbookID, folderID string) (*JobResponse, error) {
 	var result JobResponse

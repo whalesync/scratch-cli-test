@@ -95,7 +95,7 @@ export const getJobDescription = (job: JobEntity): string => {
         const folderSuffix = progress?.folderName ? ` for ${progress.folderName}` : '';
         return `Pull ${count} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
       }
-      return 'Refresh data';
+      return 'Pull data';
     }
     default:
       return job.type;

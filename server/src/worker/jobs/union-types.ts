@@ -2,15 +2,15 @@ import { Job as BullMQPlainJob } from 'bullmq';
 import { Progress } from './base-types';
 import { PublishDataFolderJobDefinition } from './job-definitions/publish-data-folder.job';
 import { PublishJobDefinition } from './job-definitions/publish.job';
+import { PullFilesJobDefinition } from './job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from './job-definitions/pull-linked-folder-files.job';
-import { RefreshRecordsJobDefinition } from './job-definitions/refresh-records.job';
 import { SyncDataFoldersJobDefinition } from './job-definitions/sync-data-folders.job';
 
 export type JobDefinition =
   | PublishDataFolderJobDefinition
   | PublishJobDefinition
   | PullLinkedFolderFilesJobDefinition
-  | RefreshRecordsJobDefinition
+  | PullFilesJobDefinition
   | SyncDataFoldersJobDefinition;
 export type JobData = JobDefinition['data'];
 export type JobTypes = JobDefinition['type'];

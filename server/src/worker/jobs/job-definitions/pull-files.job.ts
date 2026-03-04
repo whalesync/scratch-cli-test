@@ -19,7 +19,7 @@ import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
 /** Maximum number of file paths to track in progress */
 const MAX_PROGRESS_PATHS = 1000;
 
-export type RefreshRecordsPublicProgress = {
+export type PullFilesPublicProgress = {
   status: 'pending' | 'active' | 'completed' | 'failed';
   folderId: string;
   folderName: string;
@@ -28,7 +28,7 @@ export type RefreshRecordsPublicProgress = {
   updatedPaths: string[];
 };
 
-export type RefreshRecordsJobDefinition = JobDefinitionBuilder<
+export type PullFilesJobDefinition = JobDefinitionBuilder<
   'refresh-records',
   {
     workbookId: WorkbookId;
@@ -37,19 +37,19 @@ export type RefreshRecordsJobDefinition = JobDefinitionBuilder<
     organizationId: string;
     filePaths: string[];
     progress?: JsonSafeObject;
-    initialPublicProgress?: RefreshRecordsPublicProgress;
+    initialPublicProgress?: PullFilesPublicProgress;
   },
-  RefreshRecordsPublicProgress,
+  PullFilesPublicProgress,
   Record<string, never>,
   void
 >;
 
 /**
- * This job refreshes specific records by ID from their remote source.
+ * This job pulls specific files by ID from their remote source.
  * It resolves file paths to record IDs via the FileIndex, then pulls
  * those records using the connector's pullRecordFilesByIds method.
  */
-export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecordsJobDefinition> {
+export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefinition> {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly connectorService: ConnectorsService,
@@ -64,15 +64,12 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
 
   async run(params: {
     jobId: string;
-    data: RefreshRecordsJobDefinition['data'];
-    progress: Progress<
-      RefreshRecordsJobDefinition['publicProgress'],
-      RefreshRecordsJobDefinition['initialJobProgress']
-    >;
+    data: PullFilesJobDefinition['data'];
+    progress: Progress<PullFilesJobDefinition['publicProgress'], PullFilesJobDefinition['initialJobProgress']>;
     abortSignal: AbortSignal;
     checkpoint: (
       progress: Omit<
-        Progress<RefreshRecordsJobDefinition['publicProgress'], RefreshRecordsJobDefinition['initialJobProgress']>,
+        Progress<PullFilesJobDefinition['publicProgress'], PullFilesJobDefinition['initialJobProgress']>,
         'timestamp'
       >,
     ) => Promise<void>;
@@ -114,7 +111,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
       throw new Error(`Schema not found for DataFolder ${data.dataFolderId}`);
     }
 
-    const publicProgress: RefreshRecordsPublicProgress = {
+    const publicProgress: PullFilesPublicProgress = {
       status: 'active',
       folderId: dataFolder.id,
       folderName: dataFolder.name,
@@ -128,7 +125,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
       data: {
         source: 'job',
         entityId: dataFolder.id,
-        message: 'Refreshing records from source',
+        message: 'Pulling files from source',
         jobId,
       },
     });
@@ -140,8 +137,8 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
     });
 
     WSLogger.debug({
-      source: 'RefreshRecordsJob',
-      message: 'Refreshing records for data folder',
+      source: 'PullFilesJob',
+      message: 'Pulling files for data folder',
       workbookId: dataFolder.workbookId,
       dataFolderId: dataFolder.id,
       filePathCount: data.filePaths.length,
@@ -162,8 +159,8 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
 
     if (recordIds.length === 0) {
       WSLogger.warn({
-        source: 'RefreshRecordsJob',
-        message: 'No record IDs found for the given file paths',
+        source: 'PullFilesJob',
+        message: 'No record IDs found for the given file paths — nothing to pull',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
         filePaths: data.filePaths,
@@ -179,7 +176,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'job-completed',
-        data: { entityId: dataFolder.id, source: 'job', message: 'No records to refresh', jobId },
+        data: { entityId: dataFolder.id, source: 'job', message: 'No files to pull', jobId },
       });
 
       return;
@@ -212,7 +209,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
       const { files } = callbackParams;
 
       WSLogger.debug({
-        source: 'RefreshRecordsJob',
+        source: 'PullFilesJob',
         message: 'Received files from connector',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
@@ -245,7 +242,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
           dataFolder.workbookId as WorkbookId,
           'main',
           batchGitFiles,
-          `Refresh ${builtFiles.length} record(s)`,
+          `Pull ${builtFiles.length} file(s)`,
         );
 
         await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
@@ -305,8 +302,8 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
             if (assetEntries.length > 0) {
               await this.assetIndexService.upsertBatch(assetEntries);
               WSLogger.info({
-                source: 'RefreshRecordsJob',
-                message: `Asset index updated: extracted assets from records`,
+                source: 'PullFilesJob',
+                message: `Asset index updated: extracted assets from pulled files`,
                 service: dataFolder.connectorService,
                 workbookId: dataFolder.workbookId,
                 assetCount: assetEntries.length,
@@ -315,7 +312,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
             }
           } catch (assetErr) {
             WSLogger.error({
-              source: 'RefreshRecordsJob',
+              source: 'PullFilesJob',
               message: 'Failed to update asset index',
               workbookId: dataFolder.workbookId,
               error: assetErr,
@@ -323,7 +320,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
           }
         } catch (err) {
           WSLogger.error({
-            source: 'RefreshRecordsJob',
+            source: 'PullFilesJob',
             message: 'Failed to update indices',
             workbookId: dataFolder.workbookId,
             error: err,
@@ -343,7 +340,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
         data: {
           entityId: dataFolder.id,
           source: 'job',
-          message: 'Refreshed records',
+          message: 'Pulled files',
           jobId,
         },
       });
@@ -372,8 +369,8 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
       });
 
       WSLogger.debug({
-        source: 'RefreshRecordsJob',
-        message: 'Refresh completed for data folder',
+        source: 'PullFilesJob',
+        message: 'Pull completed for data folder',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
       });
@@ -385,7 +382,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'job-completed',
-        data: { entityId: dataFolder.id, source: 'job', message: 'Refresh completed for data folder', jobId },
+        data: { entityId: dataFolder.id, source: 'job', message: 'Pull completed for data folder', jobId },
       });
     } catch (error) {
       publicProgress.status = 'failed';
@@ -402,8 +399,8 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
       });
 
       WSLogger.error({
-        source: 'RefreshRecordsJob',
-        message: 'Failed to refresh records for data folder',
+        source: 'PullFilesJob',
+        message: 'Failed to pull files for data folder',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -416,7 +413,7 @@ export class RefreshRecordsJobHandler implements JobHandlerBuilder<RefreshRecord
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
         type: 'job-failed',
-        data: { entityId: dataFolder.id, source: 'job', message: 'Refresh failed for data folder', jobId },
+        data: { entityId: dataFolder.id, source: 'job', message: 'Pull failed for data folder', jobId },
       });
 
       throw exceptionForConnectorError(error, connector);
