@@ -166,16 +166,33 @@ async function notifyCompletedJobs(workbookId: string, disappearedIds: string[])
     const runsUrl = RouteUrls.workbookRunsPageUrl(workbookId, jobKey);
 
     if (job.state === 'completed') {
-      ScratchpadNotifications.success({
-        title: `${label} completed`,
-        message: React.createElement(
-          'span',
-          null,
-          description,
-          ' — ',
-          React.createElement(Link, { href: runsUrl, style: { textDecoration: 'underline' } }, 'More info'),
-        ),
-      });
+      const progress = job.publicProgress as Record<string, unknown> | undefined;
+      const tables = Array.isArray(progress?.tables) ? (progress!.tables as Array<{ warnings?: unknown[] }>) : [];
+      const hasWarnings = tables.some((t) => t.warnings && t.warnings.length > 0);
+
+      if (hasWarnings) {
+        ScratchpadNotifications.warning({
+          title: `${label} completed with warnings`,
+          message: React.createElement(
+            'span',
+            null,
+            description,
+            ' — ',
+            React.createElement(Link, { href: runsUrl, style: { textDecoration: 'underline' } }, 'More info'),
+          ),
+        });
+      } else {
+        ScratchpadNotifications.success({
+          title: `${label} completed`,
+          message: React.createElement(
+            'span',
+            null,
+            description,
+            ' — ',
+            React.createElement(Link, { href: runsUrl, style: { textDecoration: 'underline' } }, 'More info'),
+          ),
+        });
+      }
     } else if (job.state === 'failed') {
       ScratchpadNotifications.error({
         title: `${label.charAt(0)}${label.slice(1).toLowerCase()} failed`,

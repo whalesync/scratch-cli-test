@@ -18,6 +18,9 @@ const MAX_PROGRESS_PATHS = 100;
 /** Maximum number of errors to track per category in progress */
 const MAX_PROGRESS_ERRORS = 100;
 
+/** Maximum number of warnings to track per category in progress */
+const MAX_PROGRESS_WARNINGS = 100;
+
 export type SyncDataFoldersPublicProgress = {
   totalFilesSynced: number;
   tables: {
@@ -32,6 +35,8 @@ export type SyncDataFoldersPublicProgress = {
     deletedPaths: string[];
     errorCount: number;
     errors: Array<{ sourceRemoteId: string; error: string }>;
+    warningCount: number;
+    warnings: Array<{ sourceRemoteId: string; warning: string }>;
     status: 'pending' | 'in_progress' | 'completed' | 'failed';
   }[];
 };
@@ -152,6 +157,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         deletedPaths: [] as string[],
         errorCount: 0,
         errors: [] as Array<{ sourceRemoteId: string; error: string }>,
+        warningCount: 0,
+        warnings: [] as Array<{ sourceRemoteId: string; warning: string }>,
         status: 'pending' as const,
       };
     });
@@ -209,13 +216,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         tableProgress.status = result.errors.length > 0 ? 'failed' : 'completed';
         totalFilesSynced += result.recordsCreated + result.recordsUpdated;
 
-        // Surface warnings as errors with "Warning:" prefix so they appear in the Runs page
+        // Store warnings in dedicated warnings array
         if (result.warnings.length > 0) {
-          const warningErrors = result.warnings.map((w) => ({
-            sourceRemoteId: w.sourceRemoteId,
-            error: `Warning: ${w.warning}`,
-          }));
-          tableProgress.errors = [...tableProgress.errors, ...warningErrors].slice(0, MAX_PROGRESS_ERRORS);
+          tableProgress.warnings = [...tableProgress.warnings, ...result.warnings].slice(0, MAX_PROGRESS_WARNINGS);
+          tableProgress.warningCount = tableProgress.warnings.length;
         }
 
         // Log any errors
@@ -276,13 +280,13 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
             errorCount: fkResult.errors.length,
           });
 
-          // Surface FK resolution warnings in progress
+          // Store FK resolution warnings in dedicated warnings array
           if (fkResult.warnings.length > 0) {
-            const warningErrors = fkResult.warnings.map((w) => ({
-              sourceRemoteId: w.sourceRemoteId,
-              error: `Warning: ${w.warning}`,
-            }));
-            tablesProgress[i].errors = [...tablesProgress[i].errors, ...warningErrors].slice(0, MAX_PROGRESS_ERRORS);
+            tablesProgress[i].warnings = [...tablesProgress[i].warnings, ...fkResult.warnings].slice(
+              0,
+              MAX_PROGRESS_WARNINGS,
+            );
+            tablesProgress[i].warningCount = tablesProgress[i].warnings.length;
           }
 
           if (fkResult.errors.length > 0) {

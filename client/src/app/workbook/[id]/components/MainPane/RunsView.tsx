@@ -72,10 +72,14 @@ const getTypeColor = (jobType: JobType): string => {
   }
 };
 
-const getStatusColor = (status: JobEntity['state']): string => {
+type EffectiveState = JobEntity['state'] | 'completed-with-warnings';
+
+const getStatusColor = (status: EffectiveState): string => {
   switch (status) {
     case 'completed':
       return 'var(--mantine-color-green-6)';
+    case 'completed-with-warnings':
+      return 'var(--mantine-color-orange-5)';
     case 'failed':
       return 'var(--mantine-color-red-6)';
     case 'active':
@@ -87,10 +91,12 @@ const getStatusColor = (status: JobEntity['state']): string => {
   }
 };
 
-const getStatusLabel = (status: JobEntity['state']): string => {
+const getStatusLabel = (status: EffectiveState): string => {
   switch (status) {
     case 'completed':
       return 'Success';
+    case 'completed-with-warnings':
+      return 'Warnings';
     case 'failed':
       return 'Failed';
     case 'active':
@@ -131,13 +137,20 @@ const formatTimestamp = (date?: Date | null): string => {
   });
 };
 
-/** Derive the effective state for a job, checking sync table-level failures in progress. */
-const getEffectiveState = (job: JobEntity): JobEntity['state'] => {
+/** Derive the effective state for a job, checking sync table-level failures and warnings in progress. */
+const getEffectiveState = (job: JobEntity): EffectiveState => {
   if (job.state !== 'completed') return job.state;
   const progress = job.publicProgress as Record<string, unknown> | undefined;
   if (!progress?.tables || !Array.isArray(progress.tables)) return job.state;
-  const hasTableFailure = (progress.tables as Array<{ status?: string }>).some((t) => t.status === 'failed');
-  return hasTableFailure ? 'failed' : job.state;
+  const tables = progress.tables as Array<{
+    status?: string;
+    warnings?: Array<{ sourceRemoteId: string; warning: string }>;
+  }>;
+  const hasTableFailure = tables.some((t) => t.status === 'failed');
+  if (hasTableFailure) return 'failed';
+  const hasWarnings = tables.some((t) => t.warnings && t.warnings.length > 0);
+  if (hasWarnings) return 'completed-with-warnings';
+  return job.state;
 };
 
 const getJobKey = (job: JobEntity): string => `${job.bullJobId}`;
@@ -829,18 +842,24 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
     updates?: number;
     deletes?: number;
     errorCount?: number;
+    warningCount?: number;
     createdPaths?: string[];
     updatedPaths?: string[];
     deletedPaths?: string[];
     errors?: Array<{ sourceRemoteId?: string; error?: string }>;
+    warnings?: Array<{ sourceRemoteId?: string; warning?: string }>;
     status?: string;
   }>;
   if (tables.length === 0) return null;
 
   const affectedFiles = collectAffectedFiles(tables);
   const hasErrors = tables.some((t) => (t.errorCount ?? t.errors?.length ?? 0) > 0);
+  const hasWarnings = tables.some((t) => (t.warningCount ?? t.warnings?.length ?? 0) > 0);
   const allErrors = tables.flatMap((t) =>
     (t.errors ?? []).map((e) => ({ tableName: t.name, sourceRemoteId: e.sourceRemoteId, error: e.error })),
+  );
+  const allWarnings = tables.flatMap((t) =>
+    (t.warnings ?? []).map((w) => ({ tableName: t.name, sourceRemoteId: w.sourceRemoteId, warning: w.warning })),
   );
 
   return (
@@ -854,6 +873,7 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
             <Table.Th>Updates</Table.Th>
             <Table.Th>Deletes</Table.Th>
             {hasErrors && <Table.Th>Errors</Table.Th>}
+            {hasWarnings && <Table.Th>Warnings</Table.Th>}
             <Table.Th>Status</Table.Th>
           </Table.Tr>
         </Table.Thead>
@@ -872,12 +892,26 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
                   </Text13Regular>
                 </Table.Td>
               )}
+              {hasWarnings && (
+                <Table.Td>
+                  <Text13Regular
+                    c={
+                      (table.warningCount ?? table.warnings?.length ?? 0) > 0
+                        ? 'var(--mantine-color-orange-6)'
+                        : undefined
+                    }
+                  >
+                    {table.warningCount ?? table.warnings?.length ?? 0}
+                  </Text13Regular>
+                </Table.Td>
+              )}
               <Table.Td>{table.status ?? '-'}</Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
       {allErrors.length > 0 && <SyncErrorsTable errors={allErrors} />}
+      {allWarnings.length > 0 && <SyncWarningsTable warnings={allWarnings} />}
       <AffectedFilesTable files={affectedFiles} />
     </>
   );
@@ -908,6 +942,40 @@ function SyncErrorsTable({
               <Table.Td style={{ fontFamily: 'monospace', fontSize: 12 }}>{err.sourceRemoteId ?? '-'}</Table.Td>
               <Table.Td>
                 <Text13Regular c="var(--mantine-color-red-6)">{err.error ?? 'Unknown error'}</Text13Regular>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Box>
+  );
+}
+
+function SyncWarningsTable({
+  warnings,
+}: {
+  warnings: Array<{ tableName?: string; sourceRemoteId?: string; warning?: string }>;
+}) {
+  return (
+    <Box mt="xs">
+      <Text12Medium c="var(--mantine-color-orange-6)" mb={4}>
+        Warnings ({warnings.length >= 100 ? '100+' : warnings.length})
+      </Text12Medium>
+      <Table striped highlightOnHover withColumnBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Table</Table.Th>
+            <Table.Th>Source Record</Table.Th>
+            <Table.Th>Warning</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {warnings.map((warn, i) => (
+            <Table.Tr key={i}>
+              <Table.Td>{warn.tableName ?? '-'}</Table.Td>
+              <Table.Td style={{ fontFamily: 'monospace', fontSize: 12 }}>{warn.sourceRemoteId ?? '-'}</Table.Td>
+              <Table.Td>
+                <Text13Regular c="var(--mantine-color-orange-6)">{warn.warning ?? 'Unknown warning'}</Text13Regular>
               </Table.Td>
             </Table.Tr>
           ))}
