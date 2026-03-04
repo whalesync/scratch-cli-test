@@ -14,6 +14,31 @@ use tracing_subscriber::EnvFilter;
 use config::Config;
 use state::AppState;
 
+use axum::extract::Request;
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
+use std::time::Instant;
+
+async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
+    let start = Instant::now();
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    
+    let response = next.run(req).await;
+    
+    let duration = start.elapsed();
+    if duration.as_millis() > 100 {
+        tracing::warn!(
+            "SLOW API CALL (>100ms): {} {} took {}ms",
+            method,
+            uri,
+            duration.as_millis()
+        );
+    }
+    
+    response
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize tracing
@@ -156,6 +181,7 @@ async fn main() {
         )
         .layer(CorsLayer::permissive())
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
+        .layer(middleware::from_fn(timing_middleware))
         .with_state(state.clone());
 
     let git_app = Router::new()
@@ -163,6 +189,7 @@ async fn main() {
         .route("/health", get(routes::system::health))
         .route("/{*repo_id_and_path}", axum::routing::any(routes::smart_http::git_backend))
         .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(timing_middleware))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.port);

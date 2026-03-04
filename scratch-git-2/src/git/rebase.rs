@@ -81,11 +81,9 @@ impl GitRepo {
         let conflicts: Vec<String> = Vec::new();
         let mut changes_to_commit: Vec<FileChange> = Vec::new();
 
-        let main_tree_files = self.get_tree_files(main_oid)?;
-
         for edit in &edits {
             if edit.status == "deleted" {
-                if main_tree_files.contains_key(&edit.path) {
+                if self.get_file_content(MAIN_BRANCH, &edit.path)?.is_some() {
                     changes_to_commit.push(FileChange {
                         path: edit.path.clone(),
                         content: None,

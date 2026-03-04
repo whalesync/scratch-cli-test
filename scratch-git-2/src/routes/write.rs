@@ -33,6 +33,7 @@ pub async fn commit_files(
     Query(query): Query<BranchQuery>,
     Json(body): Json<CommitFilesBody>,
 ) -> Response {
+
     let branch = query.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Update files".to_string());
 
@@ -44,6 +45,8 @@ pub async fn commit_files(
 
         write_locks
             .with_lock(&id, &branch_clone, || {
+
+                
                 let repos_dir = repos_dir.clone();
                 let id = id.clone();
                 let branch = branch_clone.clone();
@@ -66,6 +69,8 @@ pub async fn commit_files(
                             .collect();
 
                         git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+
+                        
                         Ok::<_, AppError>(json!({ "success": true }))
                     })
                     .await

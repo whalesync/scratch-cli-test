@@ -379,7 +379,9 @@ export class DevToolsController {
         where,
         include: {
           organization: { select: { name: true } },
-          connectorAccounts: { select: { id: true, displayName: true, service: true, createdAt: true } },
+          connectorAccounts: {
+            select: { id: true, displayName: true, service: true, createdAt: true, repoPath: true },
+          },
         },
         orderBy: { createdAt: 'desc' },
         take: limitNum,
@@ -395,6 +397,7 @@ export class DevToolsController {
         displayName: ca.displayName,
         service: ca.service as Service,
         createdAt: ca.createdAt.toISOString(),
+        repoPath: ca.repoPath,
       }));
       return {
         id: w.id as WorkbookId,

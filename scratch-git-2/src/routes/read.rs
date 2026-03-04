@@ -239,14 +239,55 @@ pub async fn files(
             let branch = body.branch.as_deref().unwrap_or(MAIN_BRANCH);
             let git_repo = GitRepo::open(&repos_dir, &id)?;
 
-            let results: Vec<_> = body
-                .paths
-                .iter()
-                .map(|path| {
-                    let content = git_repo.get_file_content(branch, path).unwrap_or(None);
-                    json!({ "path": path, "content": content })
-                })
-                .collect();
+            // Resolve commit ONCE for the whole batch
+            let commit_oid = match git_repo.resolve_ref(branch) {
+                Ok(oid) => oid,
+                Err(_) => {
+                    let results: Vec<_> = body.paths.iter().map(|path| json!({ "path": path, "content": serde_json::Value::Null })).collect();
+                    return Ok(json!(results));
+                }
+            };
+
+            // Group paths by folder to minimize tree traversals
+            let mut by_folder: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            for path in &body.paths {
+                let normalized = path.strip_prefix('/').unwrap_or(path);
+                let (folder, filename) = match normalized.rfind('/') {
+                    Some(idx) => (&normalized[..idx], &normalized[idx + 1..]),
+                    None => ("", normalized),
+                };
+                by_folder.entry(folder.to_string()).or_default().push(filename.to_string());
+            }
+
+            let mut results_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+
+            for (folder, filenames) in by_folder {
+                if let Ok(entries) = git_repo.read_tree_at_path(commit_oid, &folder) {
+                    let oid_map: std::collections::HashMap<&str, gix::ObjectId> = entries
+                        .iter()
+                        .filter(|(_, _, is_tree)| !*is_tree)
+                        .map(|(name, oid, _)| (name.as_str(), *oid))
+                        .collect();
+                    
+                    for filename in filenames {
+                        let full_path = if folder.is_empty() { filename.clone() } else { format!("{}/{}", folder, filename) };
+                        let content = oid_map.get(filename.as_str())
+                            .and_then(|oid| git_repo.read_blob_to_string(*oid).ok());
+                        results_map.insert(full_path, content);
+                    }
+                } else {
+                    for filename in filenames {
+                        let full_path = if folder.is_empty() { filename.clone() } else { format!("{}/{}", folder, filename) };
+                        results_map.insert(full_path, None);
+                    }
+                }
+            }
+
+            let results: Vec<_> = body.paths.iter().map(|path| {
+                let normalized = path.strip_prefix('/').unwrap_or(path).to_string();
+                let content = results_map.get(&normalized).cloned().flatten();
+                json!({ "path": path, "content": content })
+            }).collect();
 
             Ok::<_, AppError>(json!(results))
         }

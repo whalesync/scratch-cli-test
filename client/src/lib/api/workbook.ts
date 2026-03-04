@@ -229,7 +229,7 @@ export const workbookApi = {
   rebaseDirty: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<void> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      await axios.post(`/scratch-git/${workbookId}/rebase`, null, { params: { connectorAccountId } });
+      await axios.post(`/scratch-git/${workbookId}/rebase`, {}, { params: { connectorAccountId } });
     } catch (error) {
       handleAxiosError(error, 'Failed to rebase dirty branch');
       throw error;

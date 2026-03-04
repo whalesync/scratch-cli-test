@@ -72,37 +72,198 @@ impl GitRepo {
         oid_a: ObjectId,
         oid_b: ObjectId,
     ) -> Result<Vec<DirtyFile>, AppError> {
-        let files_a = self.get_tree_files(oid_a)?;
-        let files_b = self.get_tree_files(oid_b)?;
+        let repo = &self.repo;
+        let commit_a = repo
+            .find_commit(oid_a)
+            .map_err(|e| AppError::internal(format!("Failed to find commit a: {}", e)))?;
+        let tree_a = commit_a
+            .tree()
+            .map_err(|e| AppError::internal(format!("Failed to get tree a: {}", e)))?;
+
+        let commit_b = repo
+            .find_commit(oid_b)
+            .map_err(|e| AppError::internal(format!("Failed to find commit b: {}", e)))?;
+        let tree_b = commit_b
+            .tree()
+            .map_err(|e| AppError::internal(format!("Failed to get tree b: {}", e)))?;
 
         let mut dirty = Vec::new();
+        self.compare_trees_recursive(&tree_a, &tree_b, String::new(), &mut dirty)?;
+        Ok(dirty)
+    }
 
-        for (path, oid) in &files_b {
-            match files_a.get(path) {
-                None => dirty.push(DirtyFile {
-                    path: path.clone(),
-                    status: "added".to_string(),
-                    oid: Some(oid.clone()),
-                }),
-                Some(hash_a) if hash_a != oid => dirty.push(DirtyFile {
-                    path: path.clone(),
-                    status: "modified".to_string(),
-                    oid: Some(oid.clone()),
-                }),
-                _ => {}
+    fn compare_trees_recursive(
+        &self,
+        tree_a: &gix::Tree<'_>,
+        tree_b: &gix::Tree<'_>,
+        prefix: String,
+        dirty: &mut Vec<DirtyFile>,
+    ) -> Result<(), AppError> {
+        if tree_a.id() == tree_b.id() {
+            return Ok(());
+        }
+
+        let mut map_a = std::collections::HashMap::new();
+        for entry_ref in tree_a.iter() {
+            let e = entry_ref.map_err(|e| AppError::internal(format!("tree read a err: {}", e)))?;
+            map_a.insert(e.filename().to_vec(), (e.mode(), e.object_id()));
+        }
+
+        let mut entries_b = Vec::new();
+        for entry_ref in tree_b.iter() {
+            let e = entry_ref.map_err(|e| AppError::internal(format!("tree read b err: {}", e)))?;
+            entries_b.push((e.filename().to_vec(), e.mode(), e.object_id()));
+        }
+
+        // Compare entries from B against A
+        for (name, mode_b, oid_b) in entries_b {
+            let name_str = std::str::from_utf8(&name).unwrap_or("").to_string();
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                name_str.clone()
+            } else {
+                format!("{}/{}", prefix, name_str)
+            };
+
+            match map_a.remove(&name) {
+                Some((mode_a, oid_a)) => {
+                    if oid_a != oid_b {
+                        if mode_a.is_tree() && mode_b.is_tree() {
+                            let sub_tree_a = self.repo.find_object(oid_a)
+                                .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                                .try_into_tree()
+                                .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                            let sub_tree_b = self.repo.find_object(oid_b)
+                                .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                                .try_into_tree()
+                                .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                            self.compare_trees_recursive(&sub_tree_a, &sub_tree_b, path, dirty)?;
+                        } else if mode_a.is_blob() && mode_b.is_blob() {
+                            dirty.push(DirtyFile {
+                                path,
+                                status: "modified".to_string(),
+                                oid: Some(oid_b.to_string()),
+                            });
+                        } else {
+                            // Type fundamentally changed
+                            if mode_a.is_tree() {
+                                let sub_tree_a = self.repo.find_object(oid_a)
+                                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                                    .try_into_tree()
+                                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                                self.add_all_from_tree(&sub_tree_a, path.clone(), "deleted", dirty)?;
+                            } else {
+                                dirty.push(DirtyFile {
+                                    path: path.clone(),
+                                    status: "deleted".to_string(),
+                                    oid: None,
+                                });
+                            }
+
+                            if mode_b.is_tree() {
+                                let sub_tree_b = self.repo.find_object(oid_b)
+                                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                                    .try_into_tree()
+                                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                                self.add_all_from_tree(&sub_tree_b, path, "added", dirty)?;
+                            } else {
+                                dirty.push(DirtyFile {
+                                    path,
+                                    status: "added".to_string(),
+                                    oid: Some(oid_b.to_string()),
+                                });
+                            }
+                        }
+                    }
+                }
+                None => {
+                    // Added in B
+                    if mode_b.is_tree() {
+                        let sub_tree_b = self.repo.find_object(oid_b)
+                            .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                            .try_into_tree()
+                            .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                        self.add_all_from_tree(&sub_tree_b, path, "added", dirty)?;
+                    } else if mode_b.is_blob() {
+                        dirty.push(DirtyFile {
+                            path,
+                            status: "added".to_string(),
+                            oid: Some(oid_b.to_string()),
+                        });
+                    }
+                }
             }
         }
 
-        for path in files_a.keys() {
-            if !files_b.contains_key(path) {
+        // Remaining entries in A were deleted in B
+        for (name, (mode_a, oid_a)) in map_a {
+            let name_str = std::str::from_utf8(&name).unwrap_or("").to_string();
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                name_str.clone()
+            } else {
+                format!("{}/{}", prefix, name_str)
+            };
+
+            if mode_a.is_tree() {
+                let sub_tree_a = self.repo.find_object(oid_a)
+                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                    .try_into_tree()
+                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                self.add_all_from_tree(&sub_tree_a, path, "deleted", dirty)?;
+            } else if mode_a.is_blob() {
                 dirty.push(DirtyFile {
-                    path: path.clone(),
+                    path,
                     status: "deleted".to_string(),
                     oid: None,
                 });
             }
         }
 
-        Ok(dirty)
+        Ok(())
+    }
+
+    fn add_all_from_tree(
+        &self,
+        tree: &gix::Tree<'_>,
+        prefix: String,
+        status: &str,
+        dirty: &mut Vec<DirtyFile>,
+    ) -> Result<(), AppError> {
+        for entry_ref in tree.iter() {
+            let e = entry_ref.map_err(|e| AppError::internal(format!("read error: {}", e)))?;
+            let name_str = std::str::from_utf8(e.filename()).unwrap_or("").to_string();
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                name_str.clone()
+            } else {
+                format!("{}/{}", prefix, name_str)
+            };
+
+            if e.mode().is_tree() {
+                let sub_tree = self.repo.find_object(e.object_id())
+                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                    .try_into_tree()
+                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                self.add_all_from_tree(&sub_tree, path, status, dirty)?;
+            } else if e.mode().is_blob() {
+                dirty.push(DirtyFile {
+                    path,
+                    status: status.to_string(),
+                    oid: if status == "deleted" {
+                        None
+                    } else {
+                        Some(e.object_id().to_string())
+                    },
+                });
+            }
+        }
+        Ok(())
     }
 }

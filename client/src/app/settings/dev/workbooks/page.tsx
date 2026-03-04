@@ -159,7 +159,7 @@ function ConnectionsModal({
       opened={!!workbook}
       onClose={onClose}
       title={workbook ? `Connections — ${workbook.name ?? '(unnamed)'}` : ''}
-      size="lg"
+      size="xl"
       centered
     >
       {workbook &&
@@ -174,6 +174,7 @@ function ConnectionsModal({
                 <Table.Th>Service</Table.Th>
                 <Table.Th>Display name</Table.Th>
                 <Table.Th>ID</Table.Th>
+                <Table.Th>Repo path</Table.Th>
                 <Table.Th>Created</Table.Th>
                 {workbook.version >= 2 && <Table.Th>Git</Table.Th>}
               </Table.Tr>
@@ -195,6 +196,11 @@ function ConnectionsModal({
                   <Table.Td>
                     <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
                       {conn.id}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+                      {conn.repoPath ?? '—'}
                     </Text>
                   </Table.Td>
                   <Table.Td>

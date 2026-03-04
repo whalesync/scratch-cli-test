@@ -6,6 +6,7 @@ export interface AdminWorkbookConnectionDto {
   displayName: string;
   service: Service;
   createdAt: string;
+  repoPath: string | null;
 }
 
 export interface AdminWorkbookDto {
