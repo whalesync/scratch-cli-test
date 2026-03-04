@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 interface FolderOption {
   id: string;
   name: string;
+  path: string | null;
   connectorService: string | null;
 }
 
@@ -18,6 +19,35 @@ interface AddFolderMappingModalProps {
   onClose: () => void;
   onConfirm: (sourceId: string, destId: string) => void;
   allFolders: FolderOption[];
+}
+
+function buildGroupedOptions(folders: FolderOption[], excludeId: string | null) {
+  const grouped: Record<string, { value: string; label: string; connectorService: string | null }[]> = {};
+  const ungrouped: { value: string; label: string; connectorService: string | null }[] = [];
+
+  for (const f of folders) {
+    if (f.id === excludeId) continue;
+    const item = { value: f.id, label: f.name, connectorService: f.connectorService };
+
+    if (f.path) {
+      const segments = f.path.split('/');
+      // segments[0] is '' (before leading /), segments[1] is connector name — skip both
+      const middle = segments.slice(2, -1);
+      if (middle.length > 0) {
+        const groupLabel = middle.join(' / ');
+        (grouped[groupLabel] ??= []).push(item);
+        continue;
+      }
+    }
+    ungrouped.push(item);
+  }
+
+  const result: ({ group: string; items: typeof ungrouped } | (typeof ungrouped)[number])[] = [];
+  if (ungrouped.length > 0) result.push(...ungrouped);
+  for (const [group, items] of Object.entries(grouped)) {
+    result.push({ group, items });
+  }
+  return result;
 }
 
 const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
@@ -55,9 +85,7 @@ export function AddFolderMappingModal({ opened, onClose, onConfirm, allFolders }
             label="Source Folder"
             placeholder="Select source"
             style={{ flex: 1 }}
-            data={allFolders
-              .filter((f) => f.id !== destId)
-              .map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }))}
+            data={buildGroupedOptions(allFolders, destId)}
             value={sourceId}
             onChange={setSourceId}
             renderOption={renderFolderOption}
@@ -73,9 +101,7 @@ export function AddFolderMappingModal({ opened, onClose, onConfirm, allFolders }
             label="Destination Folder"
             placeholder="Select destination"
             style={{ flex: 1 }}
-            data={allFolders
-              .filter((f) => f.id !== sourceId)
-              .map((f) => ({ value: f.id, label: f.name, connectorService: f.connectorService }))}
+            data={buildGroupedOptions(allFolders, sourceId)}
             value={destId}
             onChange={setDestId}
             renderOption={renderFolderOption}
