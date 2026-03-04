@@ -70,6 +70,12 @@ _Data hygiene:_
 - No duplicate contacts by email address
 - Every CRM record must have a lead source
 
+_Change scope control:_
+
+- Only specific fields should be editable — the rest should be treated as locked
+- AI agents editing local files should only touch whitelisted fields, not rewrite entire records
+- A team member updating blog post content shouldn't accidentally modify SEO metadata or slugs
+
 These rules are specific to each customer's business — not something we can hardcode into connectors. Customers need a way to define their own checks and run them before publishing.
 
 ## Proposed Solution
@@ -202,6 +208,13 @@ Stored in `.scratch/validation.json` per data folder:
       "chars": ["\u2014"],
       "message": "Content should not contain emdashes",
       "severity": "warning"
+    },
+    {
+      "id": "field-editing-whitelist",
+      "type": "editable-fields",
+      "fields": ["fieldData.name", "fieldData.post-body", "fieldData.summary"],
+      "message": "Field was changed but is not in this folder's editable fields list",
+      "severity": "error"
     }
   ],
   "overrides": {
@@ -222,6 +235,7 @@ Built-in rule types for V1:
 | `max-length`       | `field`, `max`     | String field must not exceed the specified length           |
 | `no-newlines`      | `field`            | String field must not contain newline characters            |
 | `reference-exists` | `field`            | Referenced record must exist in the linked folder           |
+| `editable-fields`  | `fields[]`         | Only whitelisted fields may differ from their pulled values |
 
 Every rule — connector or user-defined — produces a common output:
 
