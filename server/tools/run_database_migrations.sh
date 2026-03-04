@@ -3,7 +3,7 @@ set -e
 
 if [ $# -ne 1 ]
 then
-  echo "You must provide the name of the environment as the first argument: 'test', 'staging', or 'production'."
+  echo "You must provide the name of the environment as the first argument: 'eu-test' or 'eu-production'."
   exit 1
 fi
 
@@ -32,18 +32,6 @@ ENVIRONMENT=$1
 
 # Validate environment argument and set project/zone
 case "$ENVIRONMENT" in
-    "test")
-        PROJECT="spv1-test"
-        ZONE="us-central1-c"
-        ;;
-    "staging")
-        PROJECT="spv1-staging"
-        ZONE="us-central1-c"
-        ;;
-    "production")
-        PROJECT="spv1-production"
-        ZONE="us-central1-c"
-        ;;
     "eu-test")
         PROJECT="spv1eu-test"
         ZONE="europe-west1-b"
@@ -56,7 +44,7 @@ case "$ENVIRONMENT" in
         ;;
     *)
         echo "Error: Invalid environment '$ENVIRONMENT'"
-        echo "Allowed values: 'test', 'staging', 'production', 'eu-test', or 'eu-production'"
+        echo "Allowed values: 'eu-test' or 'eu-production'"
         exit 1
         ;;
 esac

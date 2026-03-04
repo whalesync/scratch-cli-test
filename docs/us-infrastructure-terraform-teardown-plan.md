@@ -8,21 +8,11 @@ This document describes the procedure for destroying the test and production env
 
 1. **Terraform 1.13.4** installed (see `terraform/.terraform-version`)
 2. **GCP authentication** configured for the target projects (`spv1-test` and `spv1-production`)
-3. **Backups** of any data you want to preserve (databases, secrets, etc.)
-
-## Step 1: Back Up Data
-
-Before destroying anything, back up:
-
-- **Database dumps** — use `terraform/tools/dump_postgres_db.sh` for each environment
-- **Secrets** — export from Secret Manager (use `terraform/tools/get_secrets.sh`)
-- **Git service data** — any content on the Scratch Git GCE instances
-
-## Step 2: Disable CI/CD Pipelines
+## Step 1: Disable CI/CD Pipelines
 
 Disable any GitLab CI/CD pipelines that deploy to these environments to prevent Terraform resources from being re-created after destruction.
 
-## Step 3: Remove Deletion Protection
+## Step 2: Remove Deletion Protection
 
 Several resources have deletion protection that will cause `terraform destroy` to fail:
 
@@ -45,7 +35,7 @@ terraform init
 terraform apply
 ```
 
-## Step 4: Destroy Test Environment
+## Step 3: Destroy Test Environment
 
 Destroy test first to validate the process before touching production.
 
@@ -56,7 +46,7 @@ terraform plan -destroy    # Review what will be destroyed
 terraform destroy          # Type "yes" to confirm
 ```
 
-## Step 5: Destroy Production Environment
+## Step 4: Destroy Production Environment
 
 ```bash
 cd terraform/envs/production
@@ -65,7 +55,7 @@ terraform plan -destroy    # Review carefully!
 terraform destroy          # Type "yes" to confirm
 ```
 
-## Step 6: Clean Up State Buckets (Optional)
+## Step 5: Clean Up State Buckets (Optional)
 
 The GCS state buckets are not managed by Terraform and will remain after destroy:
 
