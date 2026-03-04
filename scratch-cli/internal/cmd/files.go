@@ -1064,7 +1064,7 @@ func diskToFileMap(rootDir string) (merge.FileMap, error) {
 		if info.IsDir() && name == ".git" {
 			return filepath.SkipDir
 		}
-		if name == ".scratchmd" || info.IsDir() {
+		if name == ".scratchmd" || name == ".schema.json" || info.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(absRoot, path)

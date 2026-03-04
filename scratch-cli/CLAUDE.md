@@ -196,6 +196,10 @@ The tool uses these config files:
 - `~/.scratchmd/credentials.yaml` - API tokens per server (created by `auth login`)
 - `scratchmd.config.yaml` - Project settings (optional)
 
+## Read-Only Files
+
+- **`.schema.json`**: Each linked table directory contains a `.schema.json` file describing the table schema. This file is **read-only** on the CLI side — it is managed by the server and excluded from `files upload`. The filter is in `diskToFileMap()` in `internal/cmd/files.go`.
+
 ## Development Guidelines
 
 1. **Commands go in internal/cmd/**: Each command gets its own file

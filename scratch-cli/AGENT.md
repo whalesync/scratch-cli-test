@@ -385,6 +385,10 @@ The CLI walks upward from the current directory to find these markers. This mean
 | Browser doesn't open | Use `--no-browser` flag and visit the URL manually |
 | Command hangs | Likely hit an interactive prompt; use `--yes` or non-interactive flags |
 
+## Read-Only Files
+
+- **`.schema.json`**: Each linked table directory contains a `.schema.json` file that describes the table schema (column names, types, etc.). This file is **read-only** — it is managed by the server and will not be uploaded during `files upload`. Local modifications to `.schema.json` are ignored.
+
 ## Merge Behavior
 
 - **Three-way merge**: Download and upload both use base/local/remote three-way merge.

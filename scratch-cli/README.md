@@ -84,6 +84,8 @@ scratchmd files download            # Download remote changes, three-way merge w
 scratchmd files upload              # Upload local changes to server
 ```
 
+> **Note**: `.schema.json` files in linked table directories are read-only. They describe the table schema and are managed by the server. Local changes to these files are not uploaded.
+
 ### Connections
 
 ```bash
