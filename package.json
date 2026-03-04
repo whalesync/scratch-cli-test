@@ -6,6 +6,7 @@
   "workspaces": [
     "client",
     "server",
+    "scratch-git-2",
     "scratch-git-tests",
     "packages/*"
   ],

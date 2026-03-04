@@ -1,0 +1,8 @@
+{
+  "name": "scratch-git-2",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "GIT_REPOS_DIR=$INIT_CWD/local/scratch-git-repos cargo run"
+  }
+}
