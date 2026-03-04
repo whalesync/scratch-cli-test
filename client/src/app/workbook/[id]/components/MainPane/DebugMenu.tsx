@@ -2,10 +2,14 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
+import { DeleteConfirmDialog, useDeleteConfirmDialog } from '@/app/components/modals/DeleteConfirmDialog';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
+import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
+import { trackDeleteWorkbook } from '@/lib/posthog';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
+import { RouteUrls } from '@/utils/route-urls';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { GitGcResponse, GitObjectCountsResponse, WorkbookId } from '@spinner/shared-types';
@@ -22,7 +26,9 @@ import {
   ServerCrashIcon,
   Trash2Icon,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { mutate } from 'swr';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { FileIndexModal } from '../modals/FileIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
@@ -45,7 +51,9 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
   const [assetIndexOpen, setAssetIndexOpen] = useState(false);
+  const router = useRouter();
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
+  const { open: openDeleteConfirmDialog, dialogProps: deleteDialogProps } = useDeleteConfirmDialog();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const [isRebasing, setIsRebasing] = useState(false);
   const [isGcing, setIsGcing] = useState(false);
@@ -64,6 +72,31 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
           notifications.show({
             title: 'Error',
             message: 'Failed to reset workbook',
+            color: 'red',
+          });
+          console.error(e);
+        }
+      },
+    });
+  };
+
+  const handleDeleteWorkbook = () => {
+    openDeleteConfirmDialog({
+      title: 'Delete Workbook',
+      message: 'This will permanently delete this workbook and all its data. This action cannot be undone.',
+      confirmPhrase: 'delete forever',
+      confirmLabel: 'Delete Workbook',
+      onConfirm: async () => {
+        try {
+          trackDeleteWorkbook(workbookId);
+          await workbookApi.delete(workbookId);
+          await usersApi.updateLastWorkbook(null);
+          await mutate(() => true, undefined, { revalidate: false });
+          router.push(RouteUrls.homePageUrl);
+        } catch (e) {
+          notifications.show({
+            title: 'Error',
+            message: 'Failed to delete workbook',
             color: 'red',
           });
           console.error(e);
@@ -190,6 +223,9 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleResetWorkbook}>
             Reset Workbook
           </Menu.Item>
+          <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleDeleteWorkbook}>
+            Delete Workbook
+          </Menu.Item>
 
           {isDevToolsEnabled && (
             <>
@@ -304,8 +340,9 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
         data={objectCountsData}
       />
 
-      {/* Confirm Dialog */}
+      {/* Confirm Dialogs */}
       <ConfirmDialog {...dialogProps} />
+      <DeleteConfirmDialog {...deleteDialogProps} />
     </>
   );
 }

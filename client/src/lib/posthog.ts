@@ -13,6 +13,7 @@ export enum PostHogEvents {
   DISCARD_CHANGES = 'discard_changes',
   REFRESH_RECORDS = 'refresh_records',
   WHALESYNC_IMPORT = 'whalesync_import',
+  DELETE_WORKBOOK = 'delete_workbook',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -104,4 +105,8 @@ export function trackRefreshRecords(workbookId: string, dataFolderId: string): v
 
 export function trackWhalesyncImport(workbookId: string, syncCount: number): void {
   captureEvent(PostHogEvents.WHALESYNC_IMPORT, { workbookId, syncCount });
+}
+
+export function trackDeleteWorkbook(workbookId: string): void {
+  captureEvent(PostHogEvents.DELETE_WORKBOOK, { workbookId });
 }
