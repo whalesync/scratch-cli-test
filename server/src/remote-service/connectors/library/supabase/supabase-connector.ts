@@ -366,7 +366,7 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
     tablesWithUnique?: Set<string>,
     tablesWithAutoGenPK?: Set<string>,
   ): TablePreview {
-    const displayName = t.table_schema === 'public' ? t.table_name : `${t.table_schema}.${t.table_name}`;
+    const displayName = t.table_name;
     const tableKey = `${t.table_schema}.${t.table_name}`;
     const hasUnique = tablesWithUnique ? tablesWithUnique.has(tableKey) : true;
     const hasAutoGenPK = tablesWithAutoGenPK ? tablesWithAutoGenPK.has(tableKey) : true;
@@ -467,12 +467,10 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
         title: tableName,
       });
 
-      const displayName = schema === 'public' ? tableName : `${schema}.${tableName}`;
-
       return {
         id,
         slug: tableName,
-        name: displayName,
+        name: tableName,
         schema: tableSchema,
         idColumnRemoteId: primaryKey,
         basePath: [schema],
