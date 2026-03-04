@@ -47,15 +47,14 @@ export default async function globalSetup() {
   }
 
   const reposDir = fs.mkdtempSync(path.join(os.tmpdir(), `scratch-git-test-${process.pid}-`));
-  const scratchGitDir = path.resolve(__dirname, '../../scratch-git');
+  const scratchGitBinary = path.resolve(__dirname, '../../scratch-git-2/target/debug/scratch-git-2');
 
-  const child: ChildProcess = spawn('npx', ['ts-node', 'git-scratch-api.ts'], {
-    cwd: scratchGitDir,
+  const child: ChildProcess = spawn(scratchGitBinary, [], {
     env: {
       ...process.env,
       PORT: String(TEST_PORT),
+      GIT_BACKEND_PORT: String(TEST_PORT + 1),
       GIT_REPOS_DIR: reposDir,
-      NODE_ENV: 'test',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
