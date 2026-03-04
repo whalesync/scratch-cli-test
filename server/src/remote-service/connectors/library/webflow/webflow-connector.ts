@@ -493,7 +493,7 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    const errors = _.get(error, 'errors');
+    const errors = _.get(error, 'body.errors');
     if (errors && Array.isArray(errors)) {
       const formattedError = {
         userFriendlyMessage: (errors as { message: string }[]).map((error) => error.message).join('; '),

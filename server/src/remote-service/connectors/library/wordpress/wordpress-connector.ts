@@ -3,7 +3,7 @@ import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import TurndownService from 'turndown';
 import { Connector } from '../../connector';
-import { extractErrorMessageFromAxiosError } from '../../error';
+import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import {
   WORDPRESS_BATCH_SIZE,
@@ -253,6 +253,9 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
     if (isAxiosError(error)) {
+      const commonError = extractCommonDetailsFromAxiosError(this, error);
+      if (commonError) return commonError;
+
       const message = extractErrorMessageFromAxiosError(this.service, error, ['message']);
       return {
         userFriendlyMessage: `Wordpress returned an error: ${message}`,

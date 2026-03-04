@@ -184,7 +184,7 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
       if (commonError) return commonError;
 
       return {
-        userFriendlyMessage: extractErrorMessageFromAxiosError(this.service, error),
+        userFriendlyMessage: extractErrorMessageFromAxiosError(this.service, error, ['error.message', 'error']),
         description: error.message,
         additionalContext: {
           status: error.response?.status,
