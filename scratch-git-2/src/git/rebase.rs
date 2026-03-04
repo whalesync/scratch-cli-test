@@ -13,37 +13,31 @@ impl GitRepo {
             Err(_) => {
                 // Create dirty from main
                 self.create_branch(DIRTY_BRANCH, main_oid)?;
-                return Ok((true, vec![]));
-            }
-        };
-
-        // 2. main == dirty → no-op, write merge_base tag
-        if main_oid == dirty_oid {
-            self.write_tag("merge_base", main_oid)?;
-            return Ok((true, vec![]));
-        }
-
-        // 3. Find merge base
-        let merge_base = match self.find_merge_base(main_oid, dirty_oid)? {
-            Some(mb) => mb,
-            None => {
-                // No merge base → fast-forward dirty to main
-                self.force_ref(DIRTY_BRANCH, main_oid)?;
                 self.write_tag("merge_base", main_oid)?;
                 return Ok((true, vec![]));
             }
         };
 
-        // 4. Get user changes (compare merge_base → dirty)
-        let user_changes = self.compare_commits(merge_base, dirty_oid)?;
-        if user_changes.is_empty() {
-            // No user changes → fast-forward
+        // 2. Fast path: dirty == merge_base means user has no edits.
+        //    Just advance dirty and merge_base to main.
+        let merge_base_oid = self.resolve_merge_base_or_main()?;
+        if dirty_oid == merge_base_oid {
             self.force_ref(DIRTY_BRANCH, main_oid)?;
             self.write_tag("merge_base", main_oid)?;
             return Ok((true, vec![]));
         }
 
-        // 5. Read content for each change (batch 50)
+        // 3. User has edits (dirty != merge_base). Perform 3-way merge rebase.
+        //    Get user changes (compare merge_base → dirty)
+        let user_changes = self.compare_commits(merge_base_oid, dirty_oid)?;
+        if user_changes.is_empty() {
+            // No actual file changes — fast-forward
+            self.force_ref(DIRTY_BRANCH, main_oid)?;
+            self.write_tag("merge_base", main_oid)?;
+            return Ok((true, vec![]));
+        }
+
+        // 4. Read content for each change (batch 50)
         let mut edits: Vec<EditInfo> = Vec::new();
         let batch_size = 50;
         for chunk in user_changes.chunks(batch_size) {
@@ -58,7 +52,7 @@ impl GitRepo {
                 } else {
                     let content = self.get_file_content(DIRTY_BRANCH, &change.path)?;
                     let base_content = if strategy == "diff3" && change.status == "modified" {
-                        self.get_file_content_by_commit(merge_base, &change.path)
+                        self.get_file_content_by_commit(merge_base_oid, &change.path)
                             .ok()
                             .flatten()
                     } else {
@@ -74,10 +68,10 @@ impl GitRepo {
             }
         }
 
-        // 6. Force dirty ref to main
+        // 5. Force dirty ref to main
         self.force_ref(DIRTY_BRANCH, main_oid)?;
 
-        // 7. Process edits
+        // 6. Process edits
         let conflicts: Vec<String> = Vec::new();
         let mut changes_to_commit: Vec<FileChange> = Vec::new();
 
@@ -119,12 +113,12 @@ impl GitRepo {
             }
         }
 
-        // 8. Commit changes on dirty
+        // 7. Commit changes on dirty
         if !changes_to_commit.is_empty() {
             self.commit_changes_to_ref(DIRTY_BRANCH, &changes_to_commit, "Rebase dirty on main")?;
         }
 
-        // Write merge_base tag
+        // 8. Write merge_base tag
         self.write_tag("merge_base", main_oid)?;
 
         Ok((true, conflicts))

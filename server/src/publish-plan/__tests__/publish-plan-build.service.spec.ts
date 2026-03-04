@@ -47,6 +47,7 @@ describe('PublishPlanService', () => {
       resolveRepoId: jest.fn().mockImplementation((wkbId: string) => Promise.resolve(wkbId)),
       getRepoStatus: jest.fn().mockResolvedValue([]),
       readRepoFilesByFolder: jest.fn().mockResolvedValue([]),
+      rebaseDirty: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     fileIndexService = {

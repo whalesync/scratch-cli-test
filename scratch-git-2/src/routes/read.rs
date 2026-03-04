@@ -125,15 +125,18 @@ pub async fn diff(
                 .ok_or_else(|| AppError::bad_request("Query param path is required"))?;
 
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let main_content = git_repo.get_file_content(MAIN_BRANCH, file_path)?;
+            let base_content = match git_repo.resolve_merge_base_or_main() {
+                Ok(oid) => git_repo.get_file_content_by_commit(oid, file_path)?,
+                Err(_) => None,
+            };
             let dirty_content = git_repo.get_file_content(DIRTY_BRANCH, file_path)?;
 
-            if main_content.is_none() && dirty_content.is_none() {
+            if base_content.is_none() && dirty_content.is_none() {
                 return Ok(serde_json::Value::Null);
             }
 
             Ok(json!({
-                "main": main_content,
+                "base": base_content,
                 "dirty": dirty_content,
             }))
         }

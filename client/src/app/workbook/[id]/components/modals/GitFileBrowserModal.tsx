@@ -12,7 +12,7 @@ interface GitFileBrowserModalProps {
 }
 
 export const GitFileBrowserModal = ({ workbookId, opened, onClose, connectorAccountId }: GitFileBrowserModalProps) => {
-  const [branch, setBranch] = useState<'main' | 'dirty'>('main');
+  const [branch, setBranch] = useState<'main' | 'dirty' | 'merge_base'>('main');
   const [currentPath, setCurrentPath] = useState('');
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [files, setFiles] = useState<GitFile[]>([]);
@@ -184,12 +184,13 @@ export const GitFileBrowserModal = ({ workbookId, opened, onClose, connectorAcco
         <Group align="center" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)', paddingBottom: '12px' }}>
           <Select
             value={branch}
-            onChange={(val) => setBranch(val as 'main' | 'dirty')}
+            onChange={(val) => setBranch(val as 'main' | 'dirty' | 'merge_base')}
             data={[
               { label: 'Main', value: 'main' },
               { label: 'Dirty', value: 'dirty' },
+              { label: 'Merge Base', value: 'merge_base' },
             ]}
-            w={100}
+            w={130}
             size="xs"
             allowDeselect={false}
           />

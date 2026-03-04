@@ -134,6 +134,14 @@ impl GitRepo {
         Ok(())
     }
 
+    /// Resolves the merge_base tag, falling back to main for repos that predate the tag.
+    pub fn resolve_merge_base_or_main(&self) -> Result<ObjectId, AppError> {
+        match self.resolve_ref("merge_base") {
+            Ok(oid) => Ok(oid),
+            Err(_) => self.resolve_ref(MAIN_BRANCH),
+        }
+    }
+
     pub fn delete_tag(&self, tag_name: &str) -> Result<(), AppError> {
         let full_ref = format!("refs/tags/{}", tag_name);
         match self.repo.find_reference(&full_ref) {

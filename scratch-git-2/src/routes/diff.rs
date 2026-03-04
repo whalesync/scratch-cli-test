@@ -18,7 +18,7 @@ pub async fn status(
         let id = id.clone();
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let main_oid = match git_repo.resolve_ref(MAIN_BRANCH) {
+            let merge_base_oid = match git_repo.resolve_merge_base_or_main() {
                 Ok(oid) => oid,
                 Err(_) => return Ok(json!([])),
             };
@@ -27,11 +27,11 @@ pub async fn status(
                 Err(_) => return Ok(json!([])),
             };
 
-            if main_oid == dirty_oid {
+            if merge_base_oid == dirty_oid {
                 return Ok(json!([]));
             }
 
-            let changes = git_repo.compare_commits(main_oid, dirty_oid)?;
+            let changes = git_repo.compare_commits(merge_base_oid, dirty_oid)?;
             Ok::<_, AppError>(serde_json::to_value(&changes).unwrap())
         }
     })
@@ -52,7 +52,7 @@ pub async fn has_dirty(
         let id = id.clone();
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let main_oid = match git_repo.resolve_ref(MAIN_BRANCH) {
+            let merge_base_oid = match git_repo.resolve_merge_base_or_main() {
                 Ok(oid) => oid,
                 Err(_) => return Ok(json!({ "dirty": false })),
             };
@@ -61,15 +61,15 @@ pub async fn has_dirty(
                 Err(_) => return Ok(json!({ "dirty": false })),
             };
 
-            if main_oid == dirty_oid {
+            if merge_base_oid == dirty_oid {
                 return Ok(json!({ "dirty": false }));
             }
 
             // Optimized: compare tree OIDs directly
-            let main_tree = git_repo.get_commit_tree_oid(main_oid)?;
+            let merge_base_tree = git_repo.get_commit_tree_oid(merge_base_oid)?;
             let dirty_tree = git_repo.get_commit_tree_oid(dirty_oid)?;
 
-            Ok::<_, AppError>(json!({ "dirty": main_tree != dirty_tree }))
+            Ok::<_, AppError>(json!({ "dirty": merge_base_tree != dirty_tree }))
         }
     })
     .await;
@@ -89,7 +89,7 @@ pub async fn count(
         let id = id.clone();
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let main_oid = match git_repo.resolve_ref(MAIN_BRANCH) {
+            let merge_base_oid = match git_repo.resolve_merge_base_or_main() {
                 Ok(oid) => oid,
                 Err(_) => return Ok(json!({ "count": 0 })),
             };
@@ -98,11 +98,11 @@ pub async fn count(
                 Err(_) => return Ok(json!({ "count": 0 })),
             };
 
-            if main_oid == dirty_oid {
+            if merge_base_oid == dirty_oid {
                 return Ok(json!({ "count": 0 }));
             }
 
-            let changes = git_repo.compare_commits(main_oid, dirty_oid)?;
+            let changes = git_repo.compare_commits(merge_base_oid, dirty_oid)?;
             Ok::<_, AppError>(json!({ "count": changes.len() }))
         }
     })
@@ -140,7 +140,7 @@ pub async fn folder_diff(
         let id = id.clone();
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let main_oid = match git_repo.resolve_ref(MAIN_BRANCH) {
+            let merge_base_oid = match git_repo.resolve_merge_base_or_main() {
                 Ok(oid) => oid,
                 Err(_) => return Ok(json!([])),
             };
@@ -149,11 +149,11 @@ pub async fn folder_diff(
                 Err(_) => return Ok(json!([])),
             };
 
-            if main_oid == dirty_oid {
+            if merge_base_oid == dirty_oid {
                 return Ok(json!([]));
             }
 
-            let all_changes = git_repo.compare_commits(main_oid, dirty_oid)?;
+            let all_changes = git_repo.compare_commits(merge_base_oid, dirty_oid)?;
             let folder_norm = folder.strip_prefix('/').unwrap_or(&folder);
             let prefix = if folder_norm.ends_with('/') {
                 folder_norm.to_string()

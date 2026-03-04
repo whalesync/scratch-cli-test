@@ -327,10 +327,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           repoId,
           'main',
           batchGitFiles,
-          `Sync batch of ${builtFiles.length} files`,
+          `Sync batch of ${builtFiles.length} files in ${dataFolder.path ?? dataFolder.name}`,
         );
-
-        await this.scratchGitService.rebaseDirty(repoId);
 
         // Update File Index & References (Best effort, after commit)
         try {
@@ -486,8 +484,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
             filesToDelete,
             `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
           );
-
-          await this.scratchGitService.rebaseDirty(repoId);
         }
       } catch (err) {
         WSLogger.error({
@@ -498,6 +494,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         });
         // Don't fail the job for cleanup errors
       }
+
+      // Rebase dirty once at the end of the job (not after every batch)
+      await this.scratchGitService.rebaseDirty(repoId);
 
       // Mark as completed
       publicProgress.status = 'completed';

@@ -120,25 +120,32 @@ describe('Repo Read', () => {
 
       const diff = await client.getFileDiff(repoId, 'doc.md');
       expect(diff).not.toBeNull();
-      expect(diff!.main).toBe('main-v');
+      expect(diff!.base).toBe('main-v');
       expect(diff!.dirty).toBe('dirty-v');
     });
 
-    it('should return null dirty when file only on main', async () => {
+    it('should return null dirty when file only on main (not yet rebased)', async () => {
       await client.commitFiles(repoId, [file('main-only.md', 'main')], 'add', 'main');
 
+      // merge_base has not been advanced yet — file is not visible in diff until rebase
       const diff = await client.getFileDiff(repoId, 'main-only.md');
-      expect(diff).not.toBeNull();
-      expect(diff!.main).toBe('main');
-      expect(diff!.dirty).toBeNull();
+      expect(diff).toBeNull();
     });
 
-    it('should return null main when file only on dirty', async () => {
+    it('should return both after rebase when file is on main then modified in dirty', async () => {
+      await client.commitFiles(repoId, [file('main-only.md', 'main')], 'add', 'main');
+      await client.rebase(repoId);
+
+      const diff = await client.getFileDiff(repoId, 'main-only.md');
+      expect(diff).toBeNull(); // dirty == merge_base, so no diff
+    });
+
+    it('should return null base when file only on dirty', async () => {
       await client.commitFiles(repoId, [file('dirty-only.md', 'dirty')], 'add', 'dirty');
 
       const diff = await client.getFileDiff(repoId, 'dirty-only.md');
       expect(diff).not.toBeNull();
-      expect(diff!.main).toBeNull();
+      expect(diff!.base).toBeNull();
       expect(diff!.dirty).toBe('dirty');
     });
 

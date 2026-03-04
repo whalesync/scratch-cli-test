@@ -156,6 +156,10 @@ export class PublishPlanBuildService {
     const wkbId = workbookId as WorkbookId;
     const repoId = await this.scratchGitService.resolveRepoId(wkbId, connectorAccountId);
 
+    // Ensure merge_base === main before diffing. This is a no-op in steady state (dirty==merge_base)
+    // and brings merge_base up to date if a pull job just finished without rebasing.
+    await this.scratchGitService.rebaseDirty(repoId);
+
     // Running counts — updated as each entry is planned and passed to onProgress
     const liveCounts = {
       editsPlanned: 0,

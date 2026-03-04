@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { WorkbookId } from '@spinner/shared-types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { Code2 } from 'lucide-react';
+import { Code2, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 // Import dayjs
@@ -93,6 +93,18 @@ export const GitGraphModal = ({ workbookId, opened, onClose, connectorAccountId 
   const title = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span>Git Graph</span>
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        onClick={() => {
+          setRenderKey((k) => k + 1);
+          fetchGraph();
+        }}
+        title="Refresh"
+        loading={loading}
+      >
+        <RefreshCw size={16} />
+      </ActionIcon>
       {data && (
         <ActionIcon
           size="sm"

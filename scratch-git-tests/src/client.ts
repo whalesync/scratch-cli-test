@@ -144,7 +144,7 @@ export class ScratchGitClient {
     return this.rawRequest('GET', `/api/repo/read/${id}/file?${params}`);
   }
 
-  async getFileDiff(id: string, filePath: string): Promise<{ main: string | null; dirty: string | null } | null> {
+  async getFileDiff(id: string, filePath: string): Promise<{ base: string | null; dirty: string | null } | null> {
     const params = new URLSearchParams({ path: filePath });
     return this.request('GET', `/api/repo/read/${id}/diff?${params}`);
   }

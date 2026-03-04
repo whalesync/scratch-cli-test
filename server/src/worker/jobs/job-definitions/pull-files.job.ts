@@ -245,8 +245,6 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
           `Pull ${builtFiles.length} file(s)`,
         );
 
-        await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
-
         // Update File Index & References (best effort)
         try {
           await this.fileIndexService.upsertBatch(
@@ -354,6 +352,9 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
 
     try {
       await connector.pullRecordFilesByIds(tableSpec, recordIds, callback);
+
+      // Rebase dirty once at the end of the job (not after every batch)
+      await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
 
       publicProgress.status = 'completed';
 

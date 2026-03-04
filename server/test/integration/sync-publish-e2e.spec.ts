@@ -1167,6 +1167,7 @@ class VirtualGitFs {
   constructor() {
     this.branches.set(MAIN_BRANCH, new Map());
     this.branches.set(DIRTY_BRANCH, new Map());
+    this.branches.set('merge_base', new Map());
   }
 
   seed(branch: string, files: { path: string; content: string }[]): void {
@@ -1184,22 +1185,20 @@ class VirtualGitFs {
     for (const p of paths) b.delete(p);
   }
 
-  /** Diff dirty vs main → list of changes */
+  /** Diff merge_base vs dirty → list of user changes */
   getStatus(): { path: string; status: 'added' | 'modified' | 'deleted' }[] {
-    const main = this.getBranch(MAIN_BRANCH);
+    const base = this.getBranch('merge_base');
     const dirty = this.getBranch(DIRTY_BRANCH);
     const result: { path: string; status: 'added' | 'modified' | 'deleted' }[] = [];
 
-    // Files in dirty but not main = added; files in both but different = modified
     for (const [path, content] of dirty) {
-      if (!main.has(path)) {
+      if (!base.has(path)) {
         result.push({ path, status: 'added' });
-      } else if (main.get(path) !== content) {
+      } else if (base.get(path) !== content) {
         result.push({ path, status: 'modified' });
       }
     }
-    // Files in main but not dirty = deleted
-    for (const path of main.keys()) {
+    for (const path of base.keys()) {
       if (!dirty.has(path)) {
         result.push({ path, status: 'deleted' });
       }
@@ -1212,9 +1211,31 @@ class VirtualGitFs {
     return paths.map((p) => ({ path: p, content: b.get(p) ?? null }));
   }
 
+  /** Rebase dirty onto main, preserving user edits relative to merge_base. */
   rebaseDirty(): void {
     const main = this.getBranch(MAIN_BRANCH);
-    this.branches.set(DIRTY_BRANCH, new Map(main));
+    const base = this.getBranch('merge_base');
+    const dirty = this.getBranch(DIRTY_BRANCH);
+
+    const userAdded = new Map<string, string>();
+    const userModified = new Map<string, string>();
+    const userDeleted = new Set<string>();
+
+    for (const [path, content] of dirty) {
+      if (!base.has(path)) userAdded.set(path, content);
+      else if (base.get(path) !== content) userModified.set(path, content);
+    }
+    for (const path of base.keys()) {
+      if (!dirty.has(path)) userDeleted.add(path);
+    }
+
+    const newDirty = new Map(main);
+    for (const [path, content] of userAdded) newDirty.set(path, content);
+    for (const [path, content] of userModified) newDirty.set(path, content);
+    for (const path of userDeleted) newDirty.delete(path);
+
+    this.branches.set(DIRTY_BRANCH, newDirty);
+    this.branches.set('merge_base', new Map(main));
   }
 
   getAllFiles(branch: string): Map<string, string> {
