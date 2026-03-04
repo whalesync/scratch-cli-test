@@ -26,6 +26,26 @@
 #   gitlab-runner start
 #
 # See docs/local-gitlab-runner.md for full details.
+#
+# ⚠️  "CANNOT LOCK REF" ERRORS
+#
+# If you see `error: cannot lock ref 'refs/remotes/origin/master'` during
+# the "Getting source from Git repository" step, you likely have two
+# gitlab-runner processes running simultaneously. Both pick up jobs using
+# the same runner token and build directory, causing a race condition
+# during git fetch. This is a known GitLab Runner issue:
+# https://gitlab.com/gitlab-org/gitlab-runner/-/issues/3688
+#
+# To fix, ensure only one gitlab-runner process is running:
+#
+#   ps aux | grep gitlab-runner
+#
+# A common cause is having both a Homebrew-managed launch agent
+# (homebrew.mxcl.gitlab-runner.plist) and a manually installed one
+# (gitlab-runner.plist) in ~/Library/LaunchAgents/. Remove the duplicate:
+#
+#   launchctl unload ~/Library/LaunchAgents/gitlab-runner.plist
+#   rm ~/Library/LaunchAgents/gitlab-runner.plist
 # =============================================================================
 
 include:
