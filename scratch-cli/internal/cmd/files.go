@@ -126,6 +126,200 @@ type DownloadResult struct {
 	Messages              []string `json:"messages"`
 }
 
+// loadConnectorMarker reads and parses a .scratchmd marker with connector key in a directory.
+func loadConnectorMarker(dir string) (*ConnectorMarker, error) {
+	data, err := os.ReadFile(filepath.Join(dir, ".scratchmd"))
+	if err != nil {
+		return nil, err
+	}
+
+	var marker ConnectorMarker
+	if err := yaml.Unmarshal(data, &marker); err != nil {
+		return nil, err
+	}
+
+	if marker.Connector.ID == "" {
+		return nil, fmt.Errorf("marker missing connector ID")
+	}
+
+	return &marker, nil
+}
+
+// findConnectorDirectories scans a workbook root for connector subdirectories.
+// A connector subdir contains a .scratchmd with connector info and a .git directory.
+func findConnectorDirectories(workbookDir string) ([]string, error) {
+	entries, err := os.ReadDir(workbookDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var dirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == ".git" {
+			continue
+		}
+		subDir := filepath.Join(workbookDir, entry.Name())
+		// Check for connector marker
+		if _, err := loadConnectorMarker(subDir); err != nil {
+			continue
+		}
+		// Check for .git directory
+		if info, err := os.Stat(filepath.Join(subDir, ".git")); err != nil || !info.IsDir() {
+			continue
+		}
+		dirs = append(dirs, subDir)
+	}
+	return dirs, nil
+}
+
+// downloadSingleRepo performs a download (fetch + three-way merge) for a single git repo directory.
+func downloadSingleRepo(repoDir string, creds *config.GlobalCredentials) (*DownloadResult, error) {
+	repo, err := git.PlainOpen(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open git repository at %s: %w", repoDir, err)
+	}
+
+	headRef, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	baseHash := headRef.Hash()
+
+	gitAuth := &APITokenAuth{Token: creds.APIToken}
+
+	err = repo.Fetch(&git.FetchOptions{
+		RemoteName: "origin",
+		RefSpecs: []gitconfig.RefSpec{
+			"refs/heads/dirty:refs/remotes/origin/dirty",
+		},
+		Auth:  gitAuth,
+		Depth: 0,
+		Force: true,
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		return nil, fmt.Errorf("failed to fetch remote changes: %w", err)
+	}
+
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", "dirty"), true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve remote dirty branch: %w", err)
+	}
+	remoteHash := remoteRef.Hash()
+
+	if baseHash == remoteHash {
+		return &DownloadResult{Status: "up_to_date"}, nil
+	}
+
+	baseMap, err := treeToFileMap(repo, baseHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read base tree: %w", err)
+	}
+
+	remoteMap, err := treeToFileMap(repo, remoteHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read remote tree: %w", err)
+	}
+
+	localMap, err := diskToFileMap(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read local files: %w", err)
+	}
+
+	actions := merge.ComputeMergeActions(baseMap, localMap, remoteMap)
+
+	stash := make(map[string][]byte)
+	var deletions []string
+	var messages []string
+	result := DownloadResult{Status: "downloaded"}
+
+	for _, act := range actions {
+		switch act.Action {
+		case merge.ActionKeepLocal:
+			if act.Local != nil {
+				stash[act.Path] = act.Local
+			}
+		case merge.ActionWriteRemote:
+			if act.Base == nil {
+				result.FilesCreated++
+			} else {
+				result.FilesUpdated++
+			}
+		case merge.ActionDelete:
+			result.FilesDeleted++
+			deletions = append(deletions, act.Path)
+			if act.WarningMsg != "" {
+				messages = append(messages, act.WarningMsg)
+			}
+		case merge.ActionMerge:
+			merged := mergeFileContent(act.Path, act.Base, act.Local, act.Remote)
+			stash[act.Path] = merged
+			result.FilesMerged++
+			if act.Base != nil {
+				result.ConflictsAutoResolved++
+			}
+		}
+	}
+
+	// Stash .scratchmd markers
+	markerPath := filepath.Join(repoDir, ".scratchmd")
+	markerData, readErr := os.ReadFile(markerPath)
+	if readErr == nil {
+		stash[".scratchmd"] = markerData
+	}
+	stashDataFolderMarkers(repoDir, stash)
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	err = wt.Reset(&git.ResetOptions{
+		Commit: remoteHash,
+		Mode:   git.HardReset,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to reset to remote state: %w", err)
+	}
+
+	for relPath, content := range stash {
+		fullPath := filepath.Join(repoDir, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			return nil, fmt.Errorf("failed to create directory for %s: %w", relPath, err)
+		}
+		if err := os.WriteFile(fullPath, content, 0644); err != nil {
+			return nil, fmt.Errorf("failed to write %s: %w", relPath, err)
+		}
+	}
+
+	for _, relPath := range deletions {
+		fullPath := filepath.Join(repoDir, filepath.FromSlash(relPath))
+		_ = os.Remove(fullPath)
+	}
+
+	if messages == nil {
+		messages = []string{}
+	}
+	result.Messages = messages
+	return &result, nil
+}
+
+// aggregateDownloadResults combines multiple DownloadResults into one.
+func aggregateDownloadResults(results []*DownloadResult) *DownloadResult {
+	agg := &DownloadResult{Status: "up_to_date", Messages: []string{}}
+	for _, r := range results {
+		if r.Status == "downloaded" {
+			agg.Status = "downloaded"
+		}
+		agg.FilesUpdated += r.FilesUpdated
+		agg.FilesCreated += r.FilesCreated
+		agg.FilesDeleted += r.FilesDeleted
+		agg.FilesMerged += r.FilesMerged
+		agg.ConflictsAutoResolved += r.ConflictsAutoResolved
+		agg.Messages = append(agg.Messages, r.Messages...)
+	}
+	return agg
+}
+
 func runFilesDownload(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
@@ -164,6 +358,13 @@ func runFilesDownload(cmd *cobra.Command, args []string) error {
 			marker = *m
 		}
 	} else {
+		// Check if we're inside a V2 connector subdirectory first.
+		connDir, connMarker, _ := findConnectorMarkerUpward(".")
+		if connDir != "" && connMarker != nil {
+			// We're inside a connector subdir — download just this repo.
+			return runSingleRepoDownload(connDir, jsonOutput)
+		}
+
 		// Auto-detect from current directory upward.
 		dir, m, err := findWorkbookMarkerUpward(".")
 		if err != nil {
@@ -190,190 +391,102 @@ func runFilesDownload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}
 
-	// 2. Open the local git repo.
-	repo, err := git.PlainOpen(workbookDir)
+	// V2 workbooks: iterate connector subdirectories
+	if marker.Version == "2" {
+		return runV2Download(workbookDir, creds, jsonOutput)
+	}
+
+	// V1: single repo download
+	result, err := downloadSingleRepo(workbookDir, creds)
 	if err != nil {
-		return fmt.Errorf("failed to open git repository at %s: %w", workbookDir, err)
+		return err
 	}
+	return printDownloadResult(result, jsonOutput)
+}
 
-	// 3. Get HEAD hash (= base state from last sync).
-	headRef, err := repo.Head()
+// runV2Download downloads all connector repos in a V2 workbook.
+func runV2Download(workbookDir string, creds *config.GlobalCredentials, jsonOutput bool) error {
+	connDirs, err := findConnectorDirectories(workbookDir)
 	if err != nil {
-		return fmt.Errorf("failed to get HEAD: %w", err)
-	}
-	baseHash := headRef.Hash()
-
-	// 4. Fetch remote dirty branch.
-	gitAuth := &APITokenAuth{Token: creds.APIToken}
-
-	err = repo.Fetch(&git.FetchOptions{
-		RemoteName: "origin",
-		RefSpecs: []gitconfig.RefSpec{
-			"refs/heads/dirty:refs/remotes/origin/dirty",
-		},
-		Auth:  gitAuth,
-		Depth: 0,
-		Force: true,
-	})
-	if err != nil && err != git.NoErrAlreadyUpToDate {
-		return fmt.Errorf("failed to fetch remote changes: %w", err)
+		return fmt.Errorf("failed to find connector directories: %w", err)
 	}
 
-	// 5. Resolve remote tip.
-	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", "dirty"), true)
-	if err != nil {
-		return fmt.Errorf("failed to resolve remote dirty branch: %w", err)
-	}
-	remoteHash := remoteRef.Hash()
-
-	// Already up to date?
-	if baseHash == remoteHash {
+	if len(connDirs) == 0 {
 		if jsonOutput {
-			result := DownloadResult{Status: "up_to_date"}
+			result := DownloadResult{Status: "up_to_date", Messages: []string{}}
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(result)
 		}
-		fmt.Println("Already up to date.")
+		fmt.Println("No connector directories found. Run 'scratchmd workbooks init' first.")
 		return nil
 	}
 
-	// 6. Build three file maps.
-	baseMap, err := treeToFileMap(repo, baseHash)
-	if err != nil {
-		return fmt.Errorf("failed to read base tree: %w", err)
-	}
-
-	remoteMap, err := treeToFileMap(repo, remoteHash)
-	if err != nil {
-		return fmt.Errorf("failed to read remote tree: %w", err)
-	}
-
-	localMap, err := diskToFileMap(workbookDir)
-	if err != nil {
-		return fmt.Errorf("failed to read local files: %w", err)
-	}
-
-	// 7. Compute merge actions.
-	actions := merge.ComputeMergeActions(baseMap, localMap, remoteMap)
-
-	// 8. Resolve merges and collect files to stash.
-	//    stash = files that need to be written back after hard reset.
-	stash := make(map[string][]byte)
-	var deletions []string
-	var messages []string
-	result := DownloadResult{Status: "downloaded"}
-
-	// Track file changes for output
-	type fileChange struct {
-		path       string
-		changeType fileChangeType
-	}
-	var changes []fileChange
-
-	for _, act := range actions {
-		switch act.Action {
-		case merge.ActionKeepLocal:
-			if act.Local != nil {
-				stash[act.Path] = act.Local
-			}
-
-		case merge.ActionWriteRemote:
-			if act.Base == nil {
-				result.FilesCreated++
-				changes = append(changes, fileChange{act.Path, fileAdded})
-			} else {
-				result.FilesUpdated++
-				changes = append(changes, fileChange{act.Path, fileModified})
-			}
-			// Remote content will be on disk after hard reset — no stash needed.
-
-		case merge.ActionDelete:
-			result.FilesDeleted++
-			deletions = append(deletions, act.Path)
-			changes = append(changes, fileChange{act.Path, fileDeleted})
-			if act.WarningMsg != "" {
-				messages = append(messages, act.WarningMsg)
-			}
-
-		case merge.ActionMerge:
-			merged := mergeFileContent(act.Path, act.Base, act.Local, act.Remote)
-			stash[act.Path] = merged
-			result.FilesMerged++
-			changes = append(changes, fileChange{act.Path, fileModified})
-			// If both sides changed, count as auto-resolved conflict.
-			if act.Base != nil {
-				result.ConflictsAutoResolved++
-			}
+	var results []*DownloadResult
+	for _, dir := range connDirs {
+		if !jsonOutput {
+			fmt.Printf("Downloading %s...\n", filepath.Base(dir))
 		}
-	}
-
-	// Stash the .scratchmd marker as a safety net (not tracked in git).
-	markerPath := filepath.Join(workbookDir, ".scratchmd")
-	markerData, err := os.ReadFile(markerPath)
-	if err == nil {
-		stash[".scratchmd"] = markerData
-	}
-
-	// Also stash any data-folder .scratchmd markers.
-	stashDataFolderMarkers(workbookDir, stash)
-
-	// 9. Hard reset worktree to remote commit.
-	wt, err := repo.Worktree()
-	if err != nil {
-		return fmt.Errorf("failed to get worktree: %w", err)
-	}
-
-	err = wt.Reset(&git.ResetOptions{
-		Commit: remoteHash,
-		Mode:   git.HardReset,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to reset to remote state: %w", err)
-	}
-
-	// 10. Write back stashed files.
-	for relPath, content := range stash {
-		fullPath := filepath.Join(workbookDir, filepath.FromSlash(relPath))
-
-		// Ensure parent directory exists.
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory for %s: %w", relPath, err)
+		r, err := downloadSingleRepo(dir, creds)
+		if err != nil {
+			return fmt.Errorf("failed to download %s: %w", filepath.Base(dir), err)
 		}
-
-		if err := os.WriteFile(fullPath, content, 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", relPath, err)
-		}
+		results = append(results, r)
 	}
 
-	// 11. Apply deletions.
-	for _, relPath := range deletions {
-		fullPath := filepath.Join(workbookDir, filepath.FromSlash(relPath))
-		_ = os.Remove(fullPath) // Ignore error if already gone.
+	agg := aggregateDownloadResults(results)
+	return printDownloadResult(agg, jsonOutput)
+}
+
+// runSingleRepoDownload downloads a single connector repo (when cwd is inside one).
+func runSingleRepoDownload(repoDir string, jsonOutput bool) error {
+	// Read the connector marker to find the server URL
+	connMarker, _ := loadConnectorMarker(repoDir)
+	serverURL := getServerURL()
+
+	// Try to get server URL from parent workbook marker
+	parent := filepath.Dir(repoDir)
+	if wbMarker, err := loadWorkbookMarker(parent); err == nil && wbMarker.Workbook.ServerURL != "" {
+		serverURL = wbMarker.Workbook.ServerURL
+	} else if connMarker != nil {
+		// Connector marker doesn't store server URL, use default
+		_ = connMarker
 	}
 
-	if messages == nil {
-		messages = []string{}
+	if !config.IsLoggedIn(serverURL) {
+		return fmt.Errorf("not logged in. Run 'scratchmd auth login' first")
 	}
-	result.Messages = messages
 
-	// 12. Print file changes.
+	creds, err := config.LoadGlobalCredentials(serverURL)
+	if err != nil {
+		return fmt.Errorf("failed to load credentials: %w", err)
+	}
+
+	result, dlErr := downloadSingleRepo(repoDir, creds)
+	if dlErr != nil {
+		return dlErr
+	}
+	return printDownloadResult(result, jsonOutput)
+}
+
+// printDownloadResult outputs a DownloadResult in JSON or human-readable format.
+func printDownloadResult(result *DownloadResult, jsonOutput bool) error {
 	if jsonOutput {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	}
 
-	if len(changes) == 0 {
-		fmt.Println("No changes.")
+	totalChanges := result.FilesCreated + result.FilesUpdated + result.FilesMerged + result.FilesDeleted
+	if totalChanges == 0 {
+		if result.Status == "up_to_date" {
+			fmt.Println("Already up to date.")
+		} else {
+			fmt.Println("No changes.")
+		}
 		return nil
 	}
 
-	for _, change := range changes {
-		printFileChange(change.path, change.changeType)
-	}
-
-	// Print summary
 	fmt.Println()
 	var summary []string
 	if result.FilesCreated > 0 {
@@ -392,11 +505,35 @@ func runFilesDownload(cmd *cobra.Command, args []string) error {
 		fmt.Println(strings.Join(summary, ", "))
 	}
 
-	for _, msg := range messages {
+	for _, msg := range result.Messages {
 		fmt.Printf("Warning: %s\n", msg)
 	}
 
 	return nil
+}
+
+// findConnectorMarkerUpward walks the current directory and parents looking for
+// a .scratchmd marker with a connector key.
+func findConnectorMarkerUpward(startDir string) (string, *ConnectorMarker, error) {
+	dir, err := filepath.Abs(startDir)
+	if err != nil {
+		return "", nil, err
+	}
+
+	for {
+		m, err := loadConnectorMarker(dir)
+		if err == nil && m != nil {
+			return dir, m, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return "", nil, nil
 }
 
 // UploadResult is the JSON output for files upload.
@@ -424,6 +561,221 @@ func fileMapEqual(a, b merge.FileMap) bool {
 	return true
 }
 
+// uploadSingleRepo performs an upload (merge + commit + push) for a single git repo directory.
+func uploadSingleRepo(repoDir string, creds *config.GlobalCredentials) (*UploadResult, error) {
+	repo, err := git.PlainOpen(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open git repository at %s: %w", repoDir, err)
+	}
+
+	headRef, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	originalBaseHash := headRef.Hash()
+
+	baseMap, err := treeToFileMap(repo, originalBaseHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read base tree: %w", err)
+	}
+
+	localMap, err := diskToFileMap(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read local files: %w", err)
+	}
+
+	if fileMapEqual(baseMap, localMap) {
+		return &UploadResult{Status: "no_changes", Messages: []string{}}, nil
+	}
+
+	gitAuth := &APITokenAuth{Token: creds.APIToken}
+	authorEmail := creds.Email
+	if authorEmail == "" {
+		authorEmail = "cli@scratch.md"
+	}
+
+	const maxRetries = 5
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err = repo.Fetch(&git.FetchOptions{
+			RemoteName: "origin",
+			RefSpecs: []gitconfig.RefSpec{
+				"refs/heads/dirty:refs/remotes/origin/dirty",
+			},
+			Auth:  gitAuth,
+			Depth: 0,
+			Force: true,
+		})
+		if err != nil && err != git.NoErrAlreadyUpToDate {
+			return nil, fmt.Errorf("failed to fetch remote changes: %w", err)
+		}
+
+		remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", "dirty"), true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve remote dirty branch: %w", err)
+		}
+		remoteHash := remoteRef.Hash()
+
+		remoteMap, err := treeToFileMap(repo, remoteHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read remote tree: %w", err)
+		}
+
+		actions := merge.ComputeMergeActions(baseMap, localMap, remoteMap)
+
+		mergedMap := make(merge.FileMap)
+		var messages []string
+		result := UploadResult{Status: "uploaded", Retries: attempt, Messages: []string{}}
+
+		for _, act := range actions {
+			switch act.Action {
+			case merge.ActionKeepLocal:
+				if act.Local != nil {
+					mergedMap[act.Path] = act.Local
+					remoteContent, inRemote := remoteMap[act.Path]
+					if !inRemote {
+						result.FilesUploaded++
+					} else if !bytes.Equal(act.Local, remoteContent) {
+						result.FilesUploaded++
+					}
+				}
+			case merge.ActionWriteRemote:
+				if act.Remote != nil {
+					mergedMap[act.Path] = act.Remote
+				}
+			case merge.ActionDelete:
+				_, inRemote := remoteMap[act.Path]
+				if inRemote {
+					result.FilesDeleted++
+				}
+				if act.WarningMsg != "" {
+					messages = append(messages, act.WarningMsg)
+				}
+			case merge.ActionMerge:
+				merged := mergeFileContent(act.Path, act.Base, act.Local, act.Remote)
+				mergedMap[act.Path] = merged
+				result.FilesMerged++
+				if act.Base != nil {
+					result.ConflictsAutoResolved++
+				}
+			}
+		}
+
+		if messages != nil {
+			result.Messages = messages
+		}
+
+		if fileMapEqual(mergedMap, remoteMap) {
+			return &UploadResult{Status: "up_to_date", Messages: []string{}}, nil
+		}
+
+		// Stash .scratchmd markers
+		markerStash := make(map[string][]byte)
+		markerPath := filepath.Join(repoDir, ".scratchmd")
+		markerData, readErr := os.ReadFile(markerPath)
+		if readErr == nil {
+			markerStash[".scratchmd"] = markerData
+		}
+		stashDataFolderMarkers(repoDir, markerStash)
+
+		wt, err := repo.Worktree()
+		if err != nil {
+			restoreMarkers(repoDir, markerStash)
+			return nil, fmt.Errorf("failed to get worktree: %w", err)
+		}
+
+		err = wt.Reset(&git.ResetOptions{
+			Commit: remoteHash,
+			Mode:   git.HardReset,
+		})
+		if err != nil {
+			restoreMarkers(repoDir, markerStash)
+			return nil, fmt.Errorf("failed to reset to remote state: %w", err)
+		}
+
+		for relPath, content := range mergedMap {
+			remoteContent, inRemote := remoteMap[relPath]
+			if inRemote && bytes.Equal(content, remoteContent) {
+				continue
+			}
+			fullPath := filepath.Join(repoDir, filepath.FromSlash(relPath))
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				restoreMarkers(repoDir, markerStash)
+				return nil, fmt.Errorf("failed to create directory for %s: %w", relPath, err)
+			}
+			if err := os.WriteFile(fullPath, content, 0644); err != nil {
+				restoreMarkers(repoDir, markerStash)
+				return nil, fmt.Errorf("failed to write %s: %w", relPath, err)
+			}
+		}
+
+		for relPath := range remoteMap {
+			if _, inMerged := mergedMap[relPath]; !inMerged {
+				fullPath := filepath.Join(repoDir, filepath.FromSlash(relPath))
+				_ = os.Remove(fullPath)
+			}
+		}
+
+		if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+			restoreMarkers(repoDir, markerStash)
+			return nil, fmt.Errorf("failed to stage changes: %w", err)
+		}
+
+		commitTime := time.Now()
+		_, err = wt.Commit("Upload from Scratch CLI", &git.CommitOptions{
+			Author: &object.Signature{
+				Name:  "Scratch CLI",
+				Email: authorEmail,
+				When:  commitTime,
+			},
+		})
+		if err != nil {
+			restoreMarkers(repoDir, markerStash)
+			return nil, fmt.Errorf("failed to commit: %w", err)
+		}
+
+		err = repo.Push(&git.PushOptions{
+			RemoteName: "origin",
+			RefSpecs: []gitconfig.RefSpec{
+				"refs/heads/dirty:refs/heads/dirty",
+			},
+			Auth: gitAuth,
+		})
+
+		if err == nil {
+			restoreMarkers(repoDir, markerStash)
+			return &result, nil
+		}
+
+		if err == git.ErrNonFastForwardUpdate {
+			restoreMarkers(repoDir, markerStash)
+			continue
+		}
+
+		restoreMarkers(repoDir, markerStash)
+		return nil, fmt.Errorf("failed to push: %w", err)
+	}
+
+	return nil, fmt.Errorf("upload failed after %d attempts due to concurrent changes on the server", maxRetries)
+}
+
+// aggregateUploadResults combines multiple UploadResults into one.
+func aggregateUploadResults(results []*UploadResult) *UploadResult {
+	agg := &UploadResult{Status: "no_changes", Messages: []string{}}
+	for _, r := range results {
+		if r.Status == "uploaded" {
+			agg.Status = "uploaded"
+		}
+		agg.FilesUploaded += r.FilesUploaded
+		agg.FilesMerged += r.FilesMerged
+		agg.FilesDeleted += r.FilesDeleted
+		agg.ConflictsAutoResolved += r.ConflictsAutoResolved
+		agg.Retries += r.Retries
+		agg.Messages = append(agg.Messages, r.Messages...)
+	}
+	return agg
+}
+
 func runFilesUpload(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
@@ -446,6 +798,12 @@ func runFilesUpload(cmd *cobra.Command, args []string) error {
 		}
 		marker = *m
 	} else {
+		// Check if we're inside a V2 connector subdirectory first.
+		connDir, connMarker, _ := findConnectorMarkerUpward(".")
+		if connDir != "" && connMarker != nil {
+			return runSingleRepoUpload(connDir, jsonOutput)
+		}
+
 		dir, m, err := findWorkbookMarkerUpward(".")
 		if err != nil {
 			return fmt.Errorf("failed to detect workbook: %w", err)
@@ -471,289 +829,122 @@ func runFilesUpload(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}
 
-	// 2. Open the local git repo and save base hash.
-	repo, err := git.PlainOpen(workbookDir)
-	if err != nil {
-		return fmt.Errorf("failed to open git repository at %s: %w", workbookDir, err)
+	// V2 workbooks: iterate connector subdirectories
+	if marker.Version == "2" {
+		return runV2Upload(workbookDir, creds, jsonOutput)
 	}
 
-	headRef, err := repo.Head()
+	// V1: single repo upload
+	result, err := uploadSingleRepo(workbookDir, creds)
 	if err != nil {
-		return fmt.Errorf("failed to get HEAD: %w", err)
+		return err
 	}
-	originalBaseHash := headRef.Hash()
+	return printUploadResult(result, jsonOutput)
+}
 
-	// 3. Read base and local maps (computed once, they don't change across retries).
-	baseMap, err := treeToFileMap(repo, originalBaseHash)
+// runV2Upload uploads all connector repos in a V2 workbook.
+func runV2Upload(workbookDir string, creds *config.GlobalCredentials, jsonOutput bool) error {
+	connDirs, err := findConnectorDirectories(workbookDir)
 	if err != nil {
-		return fmt.Errorf("failed to read base tree: %w", err)
-	}
-
-	localMap, err := diskToFileMap(workbookDir)
-	if err != nil {
-		return fmt.Errorf("failed to read local files: %w", err)
+		return fmt.Errorf("failed to find connector directories: %w", err)
 	}
 
-	// 4. Early exit if no local changes.
-	if fileMapEqual(baseMap, localMap) {
+	if len(connDirs) == 0 {
 		if jsonOutput {
 			result := UploadResult{Status: "no_changes", Messages: []string{}}
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(result)
 		}
-		fmt.Println("No local changes to upload.")
+		fmt.Println("No connector directories found.")
 		return nil
 	}
 
-	gitAuth := &APITokenAuth{Token: creds.APIToken}
-	authorEmail := creds.Email
-	if authorEmail == "" {
-		authorEmail = "cli@scratch.md"
+	var results []*UploadResult
+	for _, dir := range connDirs {
+		if !jsonOutput {
+			fmt.Printf("Uploading %s...\n", filepath.Base(dir))
+		}
+		r, err := uploadSingleRepo(dir, creds)
+		if err != nil {
+			return fmt.Errorf("failed to upload %s: %w", filepath.Base(dir), err)
+		}
+		results = append(results, r)
 	}
 
-	const maxRetries = 5
+	agg := aggregateUploadResults(results)
+	return printUploadResult(agg, jsonOutput)
+}
 
-	// 5. Retry loop with optimistic concurrency.
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// a. Fetch remote dirty branch.
-		err = repo.Fetch(&git.FetchOptions{
-			RemoteName: "origin",
-			RefSpecs: []gitconfig.RefSpec{
-				"refs/heads/dirty:refs/remotes/origin/dirty",
-			},
-			Auth:  gitAuth,
-			Depth: 0,
-			Force: true,
-		})
-		if err != nil && err != git.NoErrAlreadyUpToDate {
-			return fmt.Errorf("failed to fetch remote changes: %w", err)
-		}
+// runSingleRepoUpload uploads a single connector repo (when cwd is inside one).
+func runSingleRepoUpload(repoDir string, jsonOutput bool) error {
+	serverURL := getServerURL()
 
-		remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", "dirty"), true)
-		if err != nil {
-			return fmt.Errorf("failed to resolve remote dirty branch: %w", err)
-		}
-		remoteHash := remoteRef.Hash()
-
-		// b. Build remote map.
-		remoteMap, err := treeToFileMap(repo, remoteHash)
-		if err != nil {
-			return fmt.Errorf("failed to read remote tree: %w", err)
-		}
-
-		// c. Compute merge actions.
-		actions := merge.ComputeMergeActions(baseMap, localMap, remoteMap)
-
-		// d. Build merged map from actions.
-		mergedMap := make(merge.FileMap)
-		var messages []string
-		result := UploadResult{Status: "uploaded", Retries: attempt, Messages: []string{}}
-
-		// Track file changes for output
-		type fileChange struct {
-			path       string
-			changeType fileChangeType
-		}
-		var changes []fileChange
-
-		for _, act := range actions {
-			switch act.Action {
-			case merge.ActionKeepLocal:
-				if act.Local != nil {
-					mergedMap[act.Path] = act.Local
-					// Count as uploaded if content differs from remote.
-					remoteContent, inRemote := remoteMap[act.Path]
-					if !inRemote {
-						result.FilesUploaded++
-						changes = append(changes, fileChange{act.Path, fileAdded})
-					} else if !bytes.Equal(act.Local, remoteContent) {
-						result.FilesUploaded++
-						changes = append(changes, fileChange{act.Path, fileModified})
-					}
-				}
-
-			case merge.ActionWriteRemote:
-				if act.Remote != nil {
-					mergedMap[act.Path] = act.Remote
-				}
-
-			case merge.ActionDelete:
-				// File excluded from mergedMap = deleted.
-				_, inRemote := remoteMap[act.Path]
-				if inRemote {
-					result.FilesDeleted++
-					changes = append(changes, fileChange{act.Path, fileDeleted})
-				}
-				if act.WarningMsg != "" {
-					messages = append(messages, act.WarningMsg)
-				}
-
-			case merge.ActionMerge:
-				merged := mergeFileContent(act.Path, act.Base, act.Local, act.Remote)
-				mergedMap[act.Path] = merged
-				result.FilesMerged++
-				changes = append(changes, fileChange{act.Path, fileModified})
-				if act.Base != nil {
-					result.ConflictsAutoResolved++
-				}
-			}
-		}
-
-		if messages != nil {
-			result.Messages = messages
-		}
-
-		// e. If merged == remote, nothing to push.
-		if fileMapEqual(mergedMap, remoteMap) {
-			if jsonOutput {
-				result.Status = "up_to_date"
-				result.FilesUploaded = 0
-				result.FilesMerged = 0
-				result.FilesDeleted = 0
-				result.ConflictsAutoResolved = 0
-				encoder := json.NewEncoder(os.Stdout)
-				encoder.SetIndent("", "  ")
-				return encoder.Encode(result)
-			}
-			fmt.Println("Remote already has all local changes.")
-			return nil
-		}
-
-		// f. Stash .scratchmd markers.
-		markerStash := make(map[string][]byte)
-		markerPath := filepath.Join(workbookDir, ".scratchmd")
-		markerData, readErr := os.ReadFile(markerPath)
-		if readErr == nil {
-			markerStash[".scratchmd"] = markerData
-		}
-		stashDataFolderMarkers(workbookDir, markerStash)
-
-		// g. Hard reset to remote hash.
-		wt, err := repo.Worktree()
-		if err != nil {
-			restoreMarkers(workbookDir, markerStash)
-			return fmt.Errorf("failed to get worktree: %w", err)
-		}
-
-		err = wt.Reset(&git.ResetOptions{
-			Commit: remoteHash,
-			Mode:   git.HardReset,
-		})
-		if err != nil {
-			restoreMarkers(workbookDir, markerStash)
-			return fmt.Errorf("failed to reset to remote state: %w", err)
-		}
-
-		// h. Write merged files that differ from remote to disk.
-		for relPath, content := range mergedMap {
-			remoteContent, inRemote := remoteMap[relPath]
-			if inRemote && bytes.Equal(content, remoteContent) {
-				continue // Already on disk after hard reset.
-			}
-			fullPath := filepath.Join(workbookDir, filepath.FromSlash(relPath))
-			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-				restoreMarkers(workbookDir, markerStash)
-				return fmt.Errorf("failed to create directory for %s: %w", relPath, err)
-			}
-			if err := os.WriteFile(fullPath, content, 0644); err != nil {
-				restoreMarkers(workbookDir, markerStash)
-				return fmt.Errorf("failed to write %s: %w", relPath, err)
-			}
-		}
-
-		// i. Delete files in remote but not in merged.
-		for relPath := range remoteMap {
-			if _, inMerged := mergedMap[relPath]; !inMerged {
-				fullPath := filepath.Join(workbookDir, filepath.FromSlash(relPath))
-				_ = os.Remove(fullPath)
-			}
-		}
-
-		// j. Stage all changes in bulk (index is read/written once instead of per-file).
-		if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
-			restoreMarkers(workbookDir, markerStash)
-			return fmt.Errorf("failed to stage changes: %w", err)
-		}
-
-		// k. Commit.
-		commitTime := time.Now()
-		_, err = wt.Commit("Upload from Scratch CLI", &git.CommitOptions{
-			Author: &object.Signature{
-				Name:  "Scratch CLI",
-				Email: authorEmail,
-				When:  commitTime,
-			},
-		})
-		if err != nil {
-			restoreMarkers(workbookDir, markerStash)
-			return fmt.Errorf("failed to commit: %w", err)
-		}
-
-		// l. Push to remote dirty branch.
-		err = repo.Push(&git.PushOptions{
-			RemoteName: "origin",
-			RefSpecs: []gitconfig.RefSpec{
-				"refs/heads/dirty:refs/heads/dirty",
-			},
-			Auth: gitAuth,
-		})
-
-		if err == nil {
-			// m. Success — restore markers and output results.
-			restoreMarkers(workbookDir, markerStash)
-
-			if jsonOutput {
-				encoder := json.NewEncoder(os.Stdout)
-				encoder.SetIndent("", "  ")
-				return encoder.Encode(result)
-			}
-
-			if len(changes) == 0 {
-				fmt.Println("No changes.")
-				return nil
-			}
-
-			for _, change := range changes {
-				printFileChange(change.path, change.changeType)
-			}
-
-			// Print summary
-			fmt.Println()
-			var summary []string
-			if result.FilesUploaded > 0 {
-				summary = append(summary, fmt.Sprintf("%d uploaded", result.FilesUploaded))
-			}
-			if result.FilesMerged > 0 {
-				summary = append(summary, fmt.Sprintf("%d merged", result.FilesMerged))
-			}
-			if result.FilesDeleted > 0 {
-				summary = append(summary, fmt.Sprintf("%d deleted", result.FilesDeleted))
-			}
-			if len(summary) > 0 {
-				fmt.Println(strings.Join(summary, ", "))
-			}
-
-			for _, msg := range result.Messages {
-				fmt.Printf("Warning: %s\n", msg)
-			}
-
-			return nil
-		}
-
-		// n. Non-fast-forward → restore markers and retry.
-		if err == git.ErrNonFastForwardUpdate {
-			restoreMarkers(workbookDir, markerStash)
-			continue
-		}
-
-		// o. Other error → restore markers and return.
-		restoreMarkers(workbookDir, markerStash)
-		return fmt.Errorf("failed to push: %w", err)
+	// Try to get server URL from parent workbook marker
+	parent := filepath.Dir(repoDir)
+	if wbMarker, err := loadWorkbookMarker(parent); err == nil && wbMarker.Workbook.ServerURL != "" {
+		serverURL = wbMarker.Workbook.ServerURL
 	}
 
-	// 6. Max retries exhausted.
-	return fmt.Errorf("upload failed after %d attempts due to concurrent changes on the server", maxRetries)
+	if !config.IsLoggedIn(serverURL) {
+		return fmt.Errorf("not logged in. Run 'scratchmd auth login' first")
+	}
+
+	creds, err := config.LoadGlobalCredentials(serverURL)
+	if err != nil {
+		return fmt.Errorf("failed to load credentials: %w", err)
+	}
+
+	result, err := uploadSingleRepo(repoDir, creds)
+	if err != nil {
+		return err
+	}
+	return printUploadResult(result, jsonOutput)
+}
+
+// printUploadResult outputs an UploadResult in JSON or human-readable format.
+func printUploadResult(result *UploadResult, jsonOutput bool) error {
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	if result.Status == "no_changes" {
+		fmt.Println("No local changes to upload.")
+		return nil
+	}
+	if result.Status == "up_to_date" {
+		fmt.Println("Remote already has all local changes.")
+		return nil
+	}
+
+	totalChanges := result.FilesUploaded + result.FilesMerged + result.FilesDeleted
+	if totalChanges == 0 {
+		fmt.Println("No changes.")
+		return nil
+	}
+
+	fmt.Println()
+	var summary []string
+	if result.FilesUploaded > 0 {
+		summary = append(summary, fmt.Sprintf("%d uploaded", result.FilesUploaded))
+	}
+	if result.FilesMerged > 0 {
+		summary = append(summary, fmt.Sprintf("%d merged", result.FilesMerged))
+	}
+	if result.FilesDeleted > 0 {
+		summary = append(summary, fmt.Sprintf("%d deleted", result.FilesDeleted))
+	}
+	if len(summary) > 0 {
+		fmt.Println(strings.Join(summary, ", "))
+	}
+
+	for _, msg := range result.Messages {
+		fmt.Printf("Warning: %s\n", msg)
+	}
+
+	return nil
 }
 
 // restoreMarkers writes back stashed .scratchmd marker files.
@@ -790,6 +981,7 @@ func findWorkbookMarkerUpward(startDir string) (string, *WorkbookMarker, error) 
 }
 
 // loadWorkbookMarker reads and parses the .scratchmd marker in a directory.
+// Returns nil if the marker is a connector marker (not a workbook marker).
 func loadWorkbookMarker(dir string) (*WorkbookMarker, error) {
 	data, err := os.ReadFile(filepath.Join(dir, ".scratchmd"))
 	if err != nil {
@@ -803,6 +995,14 @@ func loadWorkbookMarker(dir string) (*WorkbookMarker, error) {
 
 	if marker.Workbook.ID == "" {
 		return nil, fmt.Errorf("marker missing workbook ID")
+	}
+
+	// Distinguish workbook markers from connector markers: connector markers
+	// also have workbook.id but lack serverUrl/initializedAt. We try to parse
+	// as a ConnectorMarker; if it succeeds, this is NOT a workbook marker.
+	var connCheck ConnectorMarker
+	if err := yaml.Unmarshal(data, &connCheck); err == nil && connCheck.Connector.ID != "" {
+		return nil, fmt.Errorf("marker is a connector marker, not a workbook marker")
 	}
 
 	return &marker, nil

@@ -11,15 +11,26 @@ type DataFolder struct {
 	Name string `json:"name"`
 }
 
+// ConnectorAccount represents a connector account in a V2 workbook.
+type ConnectorAccount struct {
+	ID          string       `json:"id"`
+	DisplayName string       `json:"displayName"`
+	Service     string       `json:"service"`
+	GitUrl      string       `json:"gitUrl"`
+	DataFolders []DataFolder `json:"dataFolders"`
+}
+
 // Workbook represents a workbook in the CLI response format.
 type Workbook struct {
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	CreatedAt   string       `json:"createdAt"`
-	UpdatedAt   string       `json:"updatedAt"`
-	TableCount  int          `json:"tableCount"`
-	DataFolders []DataFolder `json:"dataFolders"`
-	GitUrl      string       `json:"gitUrl"`
+	ID                string             `json:"id"`
+	Name              string             `json:"name"`
+	CreatedAt         string             `json:"createdAt"`
+	UpdatedAt         string             `json:"updatedAt"`
+	TableCount        int                `json:"tableCount"`
+	Version           int                `json:"version"`
+	DataFolders       []DataFolder       `json:"dataFolders"`
+	ConnectorAccounts []ConnectorAccount `json:"connectorAccounts"`
+	GitUrl            string             `json:"gitUrl"`
 }
 
 // WorkbookListResponse represents the response from the list workbooks endpoint.

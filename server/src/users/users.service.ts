@@ -46,7 +46,7 @@ export class UsersService {
     if (user) {
       // make sure the user has an api token
       if (user.apiTokens.length === 0) {
-        const newToken = await this.db.client.aPIToken.create({
+        const newToken = await this.db.client.apiToken.create({
           data: {
             id: createApiTokenId(),
             userId: user.id,
@@ -67,7 +67,7 @@ export class UsersService {
       if (existingWebsocketToken) {
         // check expiry and if expired, update it
         if (existingWebsocketToken.expiresAt < new Date()) {
-          const updatedToken = await this.db.client.aPIToken.update({
+          const updatedToken = await this.db.client.apiToken.update({
             where: { id: existingWebsocketToken.id },
             data: { expiresAt: generateWebsocketTokenExpirationDate() },
           });
@@ -76,7 +76,7 @@ export class UsersService {
           );
         }
       } else {
-        const newToken = await this.db.client.aPIToken.create({
+        const newToken = await this.db.client.apiToken.create({
           data: {
             id: createApiTokenId(),
             userId: user.id,
@@ -160,12 +160,12 @@ export class UsersService {
    */
   public async generateUserApiToken(userId: string): Promise<string> {
     // Delete any existing USER tokens for this user
-    await this.db.client.aPIToken.deleteMany({
+    await this.db.client.apiToken.deleteMany({
       where: { userId, type: TokenType.USER },
     });
 
     // Create a new USER token
-    const newToken = await this.db.client.aPIToken.create({
+    const newToken = await this.db.client.apiToken.create({
       data: {
         id: createApiTokenId(),
         userId,

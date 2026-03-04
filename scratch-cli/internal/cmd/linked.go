@@ -209,11 +209,18 @@ func loadDataFolderMarker(dir string) (*DataFolderMarker, error) {
 }
 
 // resolveWorkbookContext resolves workbook ID from --workbook flag or .scratchmd marker.
+// For V2 workbooks, also checks if we're inside a connector subdirectory.
 func resolveWorkbookContext(cmd *cobra.Command) (string, error) {
 	// Check --workbook flag first
 	workbookID, _ := cmd.Flags().GetString("workbook")
 	if workbookID != "" {
 		return workbookID, nil
+	}
+
+	// Check if we're inside a V2 connector subdirectory
+	_, connMarker, _ := findConnectorMarkerUpward(".")
+	if connMarker != nil {
+		return connMarker.Workbook.ID, nil
 	}
 
 	// Walk up looking for workbook marker

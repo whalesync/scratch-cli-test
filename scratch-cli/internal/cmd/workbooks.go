@@ -354,6 +354,26 @@ type DataFolderConfig struct {
 	Name string `yaml:"name"`
 }
 
+// ConnectorMarker represents the .scratchmd marker file in a V2 connector subdirectory
+type ConnectorMarker struct {
+	Version   string          `yaml:"version"`
+	Workbook  WorkbookRef     `yaml:"workbook"`
+	Connector ConnectorConfig `yaml:"connector"`
+}
+
+// WorkbookRef is a minimal workbook reference stored in connector markers
+type WorkbookRef struct {
+	ID   string `yaml:"id"`
+	Name string `yaml:"name"`
+}
+
+// ConnectorConfig represents the connector configuration in the marker file
+type ConnectorConfig struct {
+	ID          string `yaml:"id"`
+	DisplayName string `yaml:"displayName"`
+	Service     string `yaml:"service"`
+}
+
 // InitResult represents the result of a workbooks init operation (for JSON output)
 type InitResult struct {
 	WorkbookID   string `json:"workbookId"`
@@ -424,10 +444,6 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get workbook: %w", err)
 	}
 
-	if workbook.GitUrl == "" {
-		return fmt.Errorf("server did not return git URL for workbook")
-	}
-
 	// 3. Determine target directory
 	workbookName := workbook.Name
 	if workbookName == "" {
@@ -435,31 +451,39 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 	}
 	targetDir := filepath.Join(outputDir, workbookName)
 
-	// 4. Clone the git repository with API token auth
+	// Branch on V2 vs V1
+	if workbook.Version >= 2 {
+		return initV2Workbook(workbook, targetDir, serverURL, creds, jsonOutput)
+	}
+	return initV1Workbook(workbook, targetDir, serverURL, creds, jsonOutput)
+}
+
+func initV1Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *config.GlobalCredentials, jsonOutput bool) error {
+	if workbook.GitUrl == "" {
+		return fmt.Errorf("server did not return git URL for workbook")
+	}
+
 	gitAuth := &APITokenAuth{Token: creds.APIToken}
 
 	repo, err := git.PlainClone(targetDir, false, &git.CloneOptions{
 		URL:           workbook.GitUrl,
 		Auth:          gitAuth,
-		ReferenceName: "refs/heads/dirty", // Clone the dirty branch
+		ReferenceName: "refs/heads/dirty",
 		SingleBranch:  true,
-		Depth:         0, // Full clone to allow incremental push
+		Depth:         0,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to clone workbook: %w", err)
 	}
 
-	// 5. Set up remote tracking for future pulls
 	_, err = repo.CreateRemote(&gitconfig.RemoteConfig{
 		Name: "origin",
 		URLs: []string{workbook.GitUrl},
 	})
 	if err != nil && err != git.ErrRemoteExists {
-		// Ignore if remote already exists (it should from clone)
 		return fmt.Errorf("failed to configure remote: %w", err)
 	}
 
-	// 6. Create .scratchmd marker file (in addition to .git)
 	marker := WorkbookMarker{
 		Version: "1",
 		Workbook: WorkbookConfig{
@@ -479,30 +503,11 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write marker file: %w", err)
 	}
 
-	// 7. Create .scratchmd markers in each data folder
 	if err := createDataFolderMarkers(targetDir, workbook.DataFolders); err != nil {
 		return fmt.Errorf("failed to create data folder markers: %w", err)
 	}
 
-	// Count files for output (excluding .git directory)
-	fileCount := 0
-	err = filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		// Skip .git directory
-		if info.IsDir() && info.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		if !info.IsDir() {
-			fileCount++
-		}
-		return nil
-	})
-	if err != nil {
-		// Non-fatal, just for display
-		fileCount = -1
-	}
+	fileCount := countFiles(targetDir)
 
 	if jsonOutput {
 		result := InitResult{
@@ -516,17 +521,174 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 		return encoder.Encode(result)
 	}
 
-	// Human-readable output
 	fmt.Println()
 	if fileCount >= 0 {
-		fmt.Printf("Initialized workbook '%s' (%d files)\n", workbookName, fileCount)
+		fmt.Printf("Initialized workbook '%s' (%d files)\n", workbook.Name, fileCount)
 	} else {
-		fmt.Printf("Initialized workbook '%s'\n", workbookName)
+		fmt.Printf("Initialized workbook '%s'\n", workbook.Name)
 	}
 	fmt.Printf("  Directory: %s\n", targetDir)
 	fmt.Println()
-
 	return nil
+}
+
+func initV2Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *config.GlobalCredentials, jsonOutput bool) error {
+	// Create workbook root directory
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create workbook directory: %w", err)
+	}
+
+	// Write V2 workbook marker (no .git at root)
+	marker := WorkbookMarker{
+		Version: "2",
+		Workbook: WorkbookConfig{
+			ID:            workbook.ID,
+			Name:          workbook.Name,
+			ServerURL:     serverURL,
+			InitializedAt: time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+	markerData, err := yaml.Marshal(&marker)
+	if err != nil {
+		return fmt.Errorf("failed to marshal marker file: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, ".scratchmd"), markerData, 0644); err != nil {
+		return fmt.Errorf("failed to write marker file: %w", err)
+	}
+
+	if len(workbook.ConnectorAccounts) == 0 {
+		if jsonOutput {
+			result := InitResult{
+				WorkbookID:   workbook.ID,
+				WorkbookName: workbook.Name,
+				Directory:    targetDir,
+				FileCount:    0,
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(result)
+		}
+		fmt.Println()
+		fmt.Printf("Initialized workbook '%s' (no connections yet)\n", workbook.Name)
+		fmt.Printf("  Directory: %s\n", targetDir)
+		fmt.Println()
+		fmt.Println("Add a connection in the web app, then run 'scratchmd workbooks init' again.")
+		return nil
+	}
+
+	gitAuth := &APITokenAuth{Token: creds.APIToken}
+	totalFiles := 0
+
+	for _, ca := range workbook.ConnectorAccounts {
+		// Sanitize directory name: "Service - DisplayName"
+		connDirName := sanitizeFilename(ca.Service + " - " + ca.DisplayName)
+		connDir := filepath.Join(targetDir, connDirName)
+
+		if ca.GitUrl == "" {
+			fmt.Printf("  Skipping connector %s (no git URL)\n", ca.DisplayName)
+			continue
+		}
+
+		// Clone the connector's repo
+		repo, err := git.PlainClone(connDir, false, &git.CloneOptions{
+			URL:           ca.GitUrl,
+			Auth:          gitAuth,
+			ReferenceName: "refs/heads/dirty",
+			SingleBranch:  true,
+			Depth:         0,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to clone connector %s: %w", ca.DisplayName, err)
+		}
+
+		_, err = repo.CreateRemote(&gitconfig.RemoteConfig{
+			Name: "origin",
+			URLs: []string{ca.GitUrl},
+		})
+		if err != nil && err != git.ErrRemoteExists {
+			// Ignore if remote already exists
+		}
+
+		// Write connector marker
+		connMarker := ConnectorMarker{
+			Version: "2",
+			Workbook: WorkbookRef{
+				ID:   workbook.ID,
+				Name: workbook.Name,
+			},
+			Connector: ConnectorConfig{
+				ID:          ca.ID,
+				DisplayName: ca.DisplayName,
+				Service:     ca.Service,
+			},
+		}
+		connMarkerData, err := yaml.Marshal(&connMarker)
+		if err != nil {
+			return fmt.Errorf("failed to marshal connector marker: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(connDir, ".scratchmd"), connMarkerData, 0644); err != nil {
+			return fmt.Errorf("failed to write connector marker: %w", err)
+		}
+
+		// Create data folder markers inside the connector directory
+		if err := createDataFolderMarkers(connDir, ca.DataFolders); err != nil {
+			return fmt.Errorf("failed to create data folder markers for %s: %w", ca.DisplayName, err)
+		}
+
+		fc := countFiles(connDir)
+		if fc > 0 {
+			totalFiles += fc
+		}
+	}
+
+	if jsonOutput {
+		result := InitResult{
+			WorkbookID:   workbook.ID,
+			WorkbookName: workbook.Name,
+			Directory:    targetDir,
+			FileCount:    totalFiles,
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	}
+
+	fmt.Println()
+	fmt.Printf("Initialized workbook '%s' (%d files, %d connectors)\n", workbook.Name, totalFiles, len(workbook.ConnectorAccounts))
+	fmt.Printf("  Directory: %s\n", targetDir)
+	for _, ca := range workbook.ConnectorAccounts {
+		connDirName := sanitizeFilename(ca.Service + " - " + ca.DisplayName)
+		fmt.Printf("    %s/\n", connDirName)
+	}
+	fmt.Println()
+	return nil
+}
+
+// countFiles counts files in a directory, excluding .git dirs. Returns -1 on error.
+func countFiles(dir string) int {
+	count := 0
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && info.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return -1
+	}
+	return count
+}
+
+// sanitizeFilename replaces characters that are invalid in filenames.
+func sanitizeFilename(name string) string {
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "-", "?", "-", "\"", "-", "<", "-", ">", "-", "|", "-")
+	return replacer.Replace(name)
 }
 
 // findExistingWorkbookMarker scans the output directory for a .scratchmd marker

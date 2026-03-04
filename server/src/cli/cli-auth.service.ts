@@ -122,7 +122,7 @@ export class CliAuthService {
           userEmail = user?.email ?? undefined;
 
           // Get the token expiry date
-          const token = await this.db.client.aPIToken.findFirst({
+          const token = await this.db.client.apiToken.findFirst({
             where: {
               token: record.apiToken,
             },
@@ -207,7 +207,7 @@ export class CliAuthService {
       const newExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 180);
 
       // Look for an existing CLI API token for this user
-      const existingToken = await this.db.client.aPIToken.findFirst({
+      const existingToken = await this.db.client.apiToken.findFirst({
         where: {
           userId,
           type: TokenType.USER,
@@ -219,7 +219,7 @@ export class CliAuthService {
 
       if (existingToken) {
         // Update the existing token's expiry date
-        await this.db.client.aPIToken.update({
+        await this.db.client.apiToken.update({
           where: { id: existingToken.id },
           data: { expiresAt: newExpiresAt },
         });
@@ -227,7 +227,7 @@ export class CliAuthService {
       } else {
         // Create a new API token for CLI usage
         apiToken = generateApiToken();
-        await this.db.client.aPIToken.create({
+        await this.db.client.apiToken.create({
           data: {
             id: createApiTokenId(),
             userId,

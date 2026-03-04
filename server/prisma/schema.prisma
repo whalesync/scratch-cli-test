@@ -99,7 +99,7 @@ model User {
   settings                Json?                    @default("{}") // UserSettings object
   lastWorkbookId          String?
   lastWorkbook            Workbook?                @relation("UserLastWorkbook", fields: [lastWorkbookId], references: [id], onDelete: SetNull)
-  apiTokens               APIToken[]
+  apiTokens               ApiToken[]
   connectorAccounts       ConnectorAccount[]
   aiAgentCredentials      AiAgentCredential[]
   aiAgentTokenUsageEvents AiAgentTokenUsageEvent[]
@@ -111,7 +111,7 @@ model User {
   schedules               Schedule[]
 }
 
-model APIToken {
+model ApiToken {
   id        String    @id // type: APITokenId
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
@@ -123,6 +123,7 @@ model APIToken {
 
   @@unique([token])
   @@index([userId])
+  @@map("APIToken")
 }
 
 // Defines a set of credentials for the AI agent to use instead of the default ones, such as an OpenRouter API key

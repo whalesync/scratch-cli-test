@@ -80,6 +80,8 @@ export class AppModule implements NestModule {
         { path: '/cli/v1/folders/:id/files', method: RequestMethod.PUT },
         // Git proxy (uses raw body)
         { path: '/cli/v1/workbooks/:id/git/*path', method: RequestMethod.ALL },
+        // V2 per-connector git proxy (uses raw body)
+        { path: '/cli/v1/workbooks/:id/connectors/:connectorAccountId/git/*path', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

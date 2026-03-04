@@ -19,12 +19,15 @@ import type { Request, Response } from 'express';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { Readable } from 'stream';
 import {
+  CliConnectorAccountDto,
   CliWorkbookResponseDto,
   CreateCliWorkbookDto,
   ListWorkbooksQueryDto,
@@ -47,6 +50,8 @@ export class CliWorkbookController {
     private readonly workbookService: WorkbookService,
     private readonly configService: ScratchConfigService,
     private readonly posthogService: PostHogService,
+    private readonly db: DbService,
+    private readonly scratchGitService: ScratchGitService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
   }
@@ -107,7 +112,26 @@ export class CliWorkbookController {
     this.posthogService.trackCliListWorkbooks(actor, { scope: 'single', workbookId: id });
 
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    return this.toCliResponse(workbook, baseUrl);
+
+    // For V2 workbooks, load connector accounts with their data folders
+    let connectorAccounts: CliConnectorAccountDto[] | undefined;
+    if (workbook.version >= 2) {
+      const accounts = await this.db.client.connectorAccount.findMany({
+        where: { workbookId: id },
+        include: { dataFolders: { select: { id: true, name: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      connectorAccounts = accounts.map((ca) => ({
+        id: ca.id,
+        displayName: ca.displayName,
+        service: ca.service,
+        gitUrl: `${baseUrl}/cli/v1/workbooks/${id}/connectors/${ca.id}/git`,
+        dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name })),
+      }));
+    }
+
+    return this.toCliResponse(workbook, baseUrl, connectorAccounts);
   }
 
   /**
@@ -129,7 +153,64 @@ export class CliWorkbookController {
   }
 
   /**
-   * Git HTTP proxy endpoint.
+   * V2 per-connector git HTTP proxy endpoint.
+   * Proxies git operations for a specific connector account's repo.
+   */
+  @All(':id/connectors/:connectorAccountId/git/*path')
+  async connectorGitProxy(
+    @Req() req: RequestWithUser & Request,
+    @Param('id') id: string,
+    @Param('connectorAccountId') connectorAccountId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    const workbookId = id as WorkbookId;
+
+    // Verify access
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    this.posthogService.trackCliGitOperation(actor, workbookId, { method: req.method });
+
+    // Resolve the V2 composite repo ID
+    let repoId: string;
+    try {
+      repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    } catch (err) {
+      WSLogger.error({
+        source: 'CliWorkbookController.connectorGitProxy',
+        message: 'Failed to resolve V2 repo ID',
+        workbookId,
+        connectorAccountId,
+        error: err,
+      });
+      res.status(404).json({
+        statusCode: 404,
+        message: `Connector account ${connectorAccountId} not found or has no repo`,
+      });
+      return;
+    }
+
+    const gitPath = req.url.replace(`/cli/v1/workbooks/${id}/connectors/${connectorAccountId}/git`, '');
+    const targetUrl = `${this.gitBackendUrl}/${repoId}.git${gitPath}`;
+
+    WSLogger.info({
+      source: 'CliWorkbookController.connectorGitProxy',
+      message: `Proxying V2 git request`,
+      method: req.method,
+      targetUrl,
+      workbookId,
+      connectorAccountId,
+      repoId,
+    });
+
+    await this.proxyToGitBackend(targetUrl, workbookId, req, res);
+  }
+
+  /**
+   * Git HTTP proxy endpoint (V1 workbooks).
    * Proxies git operations to the internal git HTTP backend with authentication.
    * Supports: git clone, git fetch, git push, etc.
    */
@@ -161,6 +242,18 @@ export class CliWorkbookController {
       workbookId,
     });
 
+    await this.proxyToGitBackend(targetUrl, workbookId, req, res);
+  }
+
+  /**
+   * Proxy an HTTP request to the git backend and stream the response back.
+   */
+  private async proxyToGitBackend(
+    targetUrl: string,
+    workbookId: WorkbookId,
+    req: Request,
+    res: Response,
+  ): Promise<void> {
     // Stream the request body directly to the git backend without buffering.
     // This avoids body-parser size limits and reduces memory usage for large packfiles.
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
@@ -181,7 +274,7 @@ export class CliWorkbookController {
       });
     } catch (fetchError) {
       WSLogger.error({
-        source: 'CliWorkbookController.gitProxy',
+        source: 'CliWorkbookController.proxyToGitBackend',
         message: `Failed to connect to git backend`,
         targetUrl,
         gitBackendUrl: this.gitBackendUrl,
@@ -201,7 +294,7 @@ export class CliWorkbookController {
       const cloned = proxyResponse.clone();
       const responseBody = await cloned.text().catch(() => '(unable to read body)');
       WSLogger.error({
-        source: 'CliWorkbookController.gitProxy',
+        source: 'CliWorkbookController.proxyToGitBackend',
         message: `Git backend returned error`,
         targetUrl,
         workbookId,
@@ -244,19 +337,27 @@ export class CliWorkbookController {
       name: string | null;
       createdAt: Date;
       updatedAt: Date;
+      version?: number;
       snapshotTables?: unknown[];
       dataFolders?: { id: string; name: string }[];
     },
     baseUrl?: string,
+    connectorAccounts?: CliConnectorAccountDto[],
   ): CliWorkbookResponseDto {
+    const version = workbook.version ?? 1;
+    const isV2 = version >= 2;
+
     return {
       id: workbook.id,
       name: workbook.name ?? undefined,
       createdAt: workbook.createdAt.toISOString(),
       updatedAt: workbook.updatedAt.toISOString(),
       tableCount: workbook.snapshotTables?.length ?? 0,
-      dataFolders: workbook.dataFolders?.map((df) => ({ id: df.id, name: df.name })),
-      gitUrl: baseUrl ? `${baseUrl}/cli/v1/workbooks/${workbook.id}/git` : undefined,
+      version,
+      // V1: top-level dataFolders and gitUrl; V2: nested under connectorAccounts
+      dataFolders: !isV2 ? workbook.dataFolders?.map((df) => ({ id: df.id, name: df.name })) : undefined,
+      gitUrl: !isV2 && baseUrl ? `${baseUrl}/cli/v1/workbooks/${workbook.id}/git` : undefined,
+      connectorAccounts: isV2 ? connectorAccounts : undefined,
     };
   }
 }

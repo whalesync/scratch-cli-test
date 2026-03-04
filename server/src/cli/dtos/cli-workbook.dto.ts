@@ -37,6 +37,17 @@ export class CliDataFolderDto {
 }
 
 /**
+ * CLI response format for a connector account (V2 workbooks).
+ */
+export class CliConnectorAccountDto {
+  readonly id?: string;
+  readonly displayName?: string;
+  readonly service?: string;
+  readonly gitUrl?: string;
+  readonly dataFolders?: CliDataFolderDto[];
+}
+
+/**
  * CLI response format for a workbook.
  * Simplified version for CLI output.
  */
@@ -46,7 +57,9 @@ export class CliWorkbookResponseDto {
   readonly createdAt?: string;
   readonly updatedAt?: string;
   readonly tableCount?: number;
+  readonly version?: number;
   readonly dataFolders?: CliDataFolderDto[];
+  readonly connectorAccounts?: CliConnectorAccountDto[];
   readonly gitUrl?: string;
 }
 
