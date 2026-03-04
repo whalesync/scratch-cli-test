@@ -84,6 +84,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     ) => Promise<void>;
   }) {
     const { jobId, data, checkpoint, progress } = params;
+    if (!data?.dataFolderIds?.length) {
+      throw new Error(`Invalid job data: dataFolderIds is ${JSON.stringify(data?.dataFolderIds)}`);
+    }
     const folderCount = data.dataFolderIds.length;
 
     // Fetch all folders upfront to validate they share the same connection

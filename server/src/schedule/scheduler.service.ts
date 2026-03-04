@@ -132,14 +132,28 @@ export class SchedulerService {
 
     switch (schedule.action) {
       case 'PULL':
-        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, [
-          schedule.entityId as DataFolderId,
-        ]);
+        if (schedule.entityId) {
+          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, [
+            schedule.entityId as DataFolderId,
+          ]);
+        } else {
+          WSLogger.info({
+            source: 'SchedulerService.enqueueJob',
+            message: `No entity ID found for pull schedule ${schedule.id}. Skipping.`,
+          });
+        }
         break;
       case 'PUBLISH':
-        await this.bullEnqueuerService.enqueuePublishDataFolderJob(workbookId, actor, [
-          schedule.entityId as DataFolderId,
-        ]);
+        if (schedule.entityId) {
+          await this.bullEnqueuerService.enqueuePublishDataFolderJob(workbookId, actor, [
+            schedule.entityId as DataFolderId,
+          ]);
+        } else {
+          WSLogger.info({
+            source: 'SchedulerService.enqueueJob',
+            message: `No entity ID found for publish schedule ${schedule.id}. Skipping.`,
+          });
+        }
         break;
       case 'SYNC':
         await this.bullEnqueuerService.enqueueSyncDataFoldersJob(workbookId, schedule.entityId as SyncId, actor);

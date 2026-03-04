@@ -668,6 +668,22 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       await expect(handler.run({ ...params, jobId: 'test-job-id' })).rejects.toThrow('DataFolder');
     });
 
+    it('should throw descriptive error when dataFolderIds is undefined', async () => {
+      const params = createMockParams({
+        data: { workbookId: 'wkb_123', userId: 'usr_123', organizationId: 'org_123' },
+      });
+
+      await expect(handler.run({ ...params, jobId: 'test-job-id' })).rejects.toThrow('Invalid job data: dataFolderIds');
+    });
+
+    it('should throw descriptive error when dataFolderIds is an empty array', async () => {
+      const params = createMockParams({
+        data: { workbookId: 'wkb_123', dataFolderIds: [], userId: 'usr_123', organizationId: 'org_123' },
+      });
+
+      await expect(handler.run({ ...params, jobId: 'test-job-id' })).rejects.toThrow('Invalid job data: dataFolderIds');
+    });
+
     it('should update dataFolder lock and lastSyncTime on success', async () => {
       const dataFolder = createMockDataFolder();
       const connectorAccount = createMockConnectorAccount();
