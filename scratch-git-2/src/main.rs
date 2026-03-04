@@ -94,6 +94,10 @@ async fn main() {
             get(routes::manage::count_objects),
         )
         .route("/api/repo/manage/{id}/gc", post(routes::manage::gc))
+        .route(
+            "/api/repo/manage/copy",
+            post(routes::manage::copy_repo),
+        )
         // Read
         .route("/api/repo/read/{id}/list", get(routes::read::list))
         .route("/api/repo/read/{id}/file", get(routes::read::file))

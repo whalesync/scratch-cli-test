@@ -551,4 +551,21 @@ export const workbookApi = {
       throw error;
     }
   },
+
+  moveRepo: async (
+    connectorAccountId: string,
+    newRepoPath: string,
+  ): Promise<{ success: boolean; oldRepoPath: string; newRepoPath: string }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ success: boolean; oldRepoPath: string; newRepoPath: string }>(
+        `/dev-tools/connections/${connectorAccountId}/move-repo`,
+        { newRepoPath },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to move repo');
+      throw error;
+    }
+  },
 };

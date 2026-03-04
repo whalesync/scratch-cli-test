@@ -37,13 +37,26 @@ pub async fn delete_repo(
     Path(id): Path<String>,
 ) -> Response {
     let result = tokio::task::spawn_blocking({
-        let repos_dir = state.repos_dir.clone();
+        let state = state.clone();
         let id = id.clone();
         move || {
-            let repo_path = repos_dir.join(format!("{}.git", id));
+            let repo_path = state.repo_path(&id);
             if repo_path.exists() {
                 std::fs::remove_dir_all(&repo_path)
                     .map_err(|e| AppError::internal(format!("Failed to delete repo: {}", e)))?;
+            }
+            // Best-effort cleanup of empty parent dirs up to repos_dir
+            let mut dir = repo_path.parent();
+            while let Some(parent) = dir {
+                if parent == state.repos_dir {
+                    break;
+                }
+                if std::fs::read_dir(parent).map(|mut d| d.next().is_none()).unwrap_or(false) {
+                    let _ = std::fs::remove_dir(parent);
+                    dir = parent.parent();
+                } else {
+                    break;
+                }
             }
             Ok::<_, AppError>(json!({ "success": true }))
         }
@@ -261,4 +274,94 @@ pub async fn gc(
         Ok(inner) => envelope_result(&state, &id, inner),
         Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
     }
+}
+
+#[derive(Deserialize)]
+pub struct CopyBody {
+    pub from: String,
+    pub to: String,
+}
+
+pub async fn copy_repo(
+    State(state): State<AppState>,
+    Json(body): Json<CopyBody>,
+) -> Response {
+    let result = tokio::task::spawn_blocking({
+        let state = state.clone();
+        move || {
+            // Sanitize paths: strip leading slashes, reject path traversal
+            let from_id = body.from.trim_start_matches('/');
+            let to_id = body.to.trim_start_matches('/');
+            if from_id.is_empty() || to_id.is_empty() {
+                return Err(AppError::bad_request("from and to must be non-empty"));
+            }
+            if from_id.contains("..") || to_id.contains("..") {
+                return Err(AppError::bad_request("Path traversal (..) is not allowed"));
+            }
+
+            let from_path = state.repo_path(from_id);
+            let to_path = state.repo_path(to_id);
+
+            if !from_path.exists() {
+                return Err(AppError::not_found(format!(
+                    "Source repo not found: {}",
+                    body.from
+                )));
+            }
+            if to_path.exists() {
+                return Err(AppError::conflict(format!(
+                    "Destination repo already exists: {}",
+                    body.to
+                )));
+            }
+
+            // Create parent directories for the destination
+            if let Some(parent) = to_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::internal(format!("Failed to create destination dirs: {}", e))
+                })?;
+            }
+
+            // Recursive copy
+            copy_dir_recursive(&from_path, &to_path)?;
+
+            Ok::<_, AppError>(json!({
+                "success": true,
+                "from": body.from,
+                "to": body.to,
+            }))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, "copy", inner),
+        Err(e) => envelope_error(&state, None, AppError::internal(e.to_string())),
+    }
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), AppError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| AppError::internal(format!("Failed to create dir {:?}: {}", dst, e)))?;
+
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| AppError::internal(format!("Failed to read dir {:?}: {}", src, e)))?
+    {
+        let entry = entry
+            .map_err(|e| AppError::internal(format!("Failed to read entry: {}", e)))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                AppError::internal(format!(
+                    "Failed to copy {:?} -> {:?}: {}",
+                    src_path, dst_path, e
+                ))
+            })?;
+        }
+    }
+    Ok(())
 }

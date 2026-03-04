@@ -48,7 +48,7 @@ pub async fn git_backend(
         path_info
     );
 
-    let git_project_root = repo_path.parent().unwrap_or(&repo_path).to_str().unwrap_or("");
+    let git_project_root = repos_dir.to_str().unwrap_or("");
     let query_string = req.uri().query().unwrap_or("");
 
     let content_type = headers

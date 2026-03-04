@@ -7,7 +7,7 @@ import { ParsedContent, Schema } from 'src/utils/objects';
 import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
-import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService, getRepoId } from '../scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { computeChangedFields } from './diff-utils';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
@@ -36,11 +36,11 @@ export class PublishPlanBuildService {
       return [repoId];
     }
     const connAccounts = await this.db.client.connectorAccount.findMany({
-      where: { workbookId },
-      select: { id: true },
+      where: { workbookId, repoPath: { not: null } },
+      select: { repoPath: true },
     });
     if (connAccounts.length === 0) return [workbookId];
-    return connAccounts.map((ca) => getRepoId(workbook.version, workbookId, workbook.organizationId, ca.id));
+    return connAccounts.map((ca) => ca.repoPath as string);
   }
 
   /**

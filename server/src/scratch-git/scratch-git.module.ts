@@ -11,6 +11,6 @@ import { ScratchGitService } from './scratch-git.service';
   imports: [ConfigModule, ScratchConfigModule, DbModule],
   controllers: [ScratchGitController],
   providers: [ScratchGitService, ScratchGitClient, MigrationService],
-  exports: [ScratchGitService, MigrationService],
+  exports: [ScratchGitService, ScratchGitClient, MigrationService],
 })
 export class ScratchGitModule {}

@@ -907,6 +907,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         workbookId,
         userId,
         encryptedCredentials: {},
+        repoPath: getRepoId(2, workbookId, orgId, connectorAccountId),
       },
     });
 

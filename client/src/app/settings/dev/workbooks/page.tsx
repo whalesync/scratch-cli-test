@@ -2,6 +2,7 @@
 
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import MainContent from '@/app/components/layouts/MainContent';
+import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
 import {
@@ -32,7 +33,7 @@ import {
   Service,
   WorkbookId,
 } from '@spinner/shared-types';
-import { BookOpenIcon, DatabaseIcon, GitMergeIcon, MoreVerticalIcon, Trash2Icon } from 'lucide-react';
+import { BookOpenIcon, DatabaseIcon, GitMergeIcon, MoreVerticalIcon, MoveIcon, Trash2Icon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
@@ -99,11 +100,15 @@ function useGitActions() {
 function GitActionsMenu({
   workbookId,
   connectorAccountId,
+  repoPath,
   gitActions,
+  onMoveRepo,
 }: {
   workbookId: WorkbookId;
   connectorAccountId?: string;
+  repoPath?: string | null;
   gitActions: ReturnType<typeof useGitActions>;
+  onMoveRepo?: () => void;
 }) {
   return (
     <Menu shadow="md" width={200} position="bottom-end">
@@ -138,6 +143,14 @@ function GitActionsMenu({
         >
           GC (Aggressive)
         </Menu.Item>
+        {repoPath && onMoveRepo && (
+          <>
+            <Menu.Divider />
+            <Menu.Item leftSection={<MoveIcon size={14} />} onClick={onMoveRepo}>
+              Move Repo
+            </Menu.Item>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   );
@@ -149,76 +162,97 @@ function ConnectionsModal({
   workbook,
   onClose,
   gitActions,
+  onRefresh,
 }: {
   workbook: AdminWorkbookDto | null;
   onClose: () => void;
   gitActions: ReturnType<typeof useGitActions>;
+  onRefresh: () => void;
 }) {
+  const [moveConn, setMoveConn] = useState<AdminWorkbookConnectionDto | null>(null);
+
   return (
-    <Modal
-      opened={!!workbook}
-      onClose={onClose}
-      title={workbook ? `Connections — ${workbook.name ?? '(unnamed)'}` : ''}
-      size="xl"
-      centered
-    >
-      {workbook &&
-        (workbook.connections.length === 0 ? (
-          <Text c="dimmed" size="sm">
-            No connections
-          </Text>
-        ) : (
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Service</Table.Th>
-                <Table.Th>Display name</Table.Th>
-                <Table.Th>ID</Table.Th>
-                <Table.Th>Repo path</Table.Th>
-                <Table.Th>Created</Table.Th>
-                {workbook.version >= 2 && <Table.Th>Git</Table.Th>}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {workbook.connections.map((conn) => (
-                <Table.Tr key={conn.id}>
-                  <Table.Td>
-                    <Group gap="xs" wrap="nowrap">
-                      <ConnectorIcon connector={conn.service} size={16} />
-                      <Badge size="xs" variant="outline">
-                        {conn.service}
-                      </Badge>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="sm">{conn.displayName}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
-                      {conn.id}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
-                      {conn.repoPath ?? '—'}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="dimmed">
-                      {new Date(conn.createdAt).toLocaleDateString()}
-                    </Text>
-                  </Table.Td>
-                  {workbook.version >= 2 && (
-                    <Table.Td>
-                      <GitActionsMenu workbookId={workbook.id} connectorAccountId={conn.id} gitActions={gitActions} />
-                    </Table.Td>
-                  )}
+    <>
+      <Modal
+        opened={!!workbook}
+        onClose={onClose}
+        title={workbook ? `Connections — ${workbook.name ?? '(unnamed)'}` : ''}
+        size="xl"
+        centered
+      >
+        {workbook &&
+          (workbook.connections.length === 0 ? (
+            <Text c="dimmed" size="sm">
+              No connections
+            </Text>
+          ) : (
+            <Table>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Service</Table.Th>
+                  <Table.Th>Display name</Table.Th>
+                  <Table.Th>ID</Table.Th>
+                  <Table.Th>Repo path</Table.Th>
+                  <Table.Th>Created</Table.Th>
+                  {workbook.version >= 2 && <Table.Th>Git</Table.Th>}
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        ))}
-    </Modal>
+              </Table.Thead>
+              <Table.Tbody>
+                {workbook.connections.map((conn) => (
+                  <Table.Tr key={conn.id}>
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap">
+                        <ConnectorIcon connector={conn.service} size={16} />
+                        <Badge size="xs" variant="outline">
+                          {conn.service}
+                        </Badge>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{conn.displayName}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+                        {conn.id}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+                        {conn.repoPath ?? '—'}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">
+                        {new Date(conn.createdAt).toLocaleDateString()}
+                      </Text>
+                    </Table.Td>
+                    {workbook.version >= 2 && (
+                      <Table.Td>
+                        <GitActionsMenu
+                          workbookId={workbook.id}
+                          connectorAccountId={conn.id}
+                          repoPath={conn.repoPath}
+                          gitActions={gitActions}
+                          onMoveRepo={() => setMoveConn(conn)}
+                        />
+                      </Table.Td>
+                    )}
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          ))}
+      </Modal>
+      {moveConn && moveConn.repoPath && (
+        <MoveRepoModal
+          opened={!!moveConn}
+          onClose={() => setMoveConn(null)}
+          connectorAccountId={moveConn.id}
+          currentRepoPath={moveConn.repoPath}
+          onSuccess={onRefresh}
+        />
+      )}
+    </>
   );
 }
 
@@ -576,6 +610,7 @@ export default function WorkbooksDevPage() {
         workbook={connectionsWorkbook}
         onClose={() => setConnectionsWorkbook(null)}
         gitActions={gitActions}
+        onRefresh={fetchWorkbooks}
       />
       <Modal
         opened={gitActions.objectCountsModalOpen}

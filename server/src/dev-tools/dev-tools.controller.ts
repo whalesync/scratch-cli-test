@@ -42,6 +42,7 @@ import { DbService } from 'src/db/db.service';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { getPlanTypeFromString } from 'src/payment/plans';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
+import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
 import { User } from 'src/users/entities/user.entity';
 import { userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
@@ -74,6 +75,7 @@ export class DevToolsController {
     private readonly devToolsService: DevToolsService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly jobService: JobService,
+    private readonly scratchGitClient: ScratchGitClient,
   ) {}
 
   @Post('users/change-organization')
@@ -441,6 +443,56 @@ export class DevToolsController {
       success: true,
       jobId: job.id,
       message: 'Sync data folders job queued successfully',
+    };
+  }
+
+  /* Move a connection's git repo to a new path (copy -> update DB -> delete old) */
+  @Post('connections/:id/move-repo')
+  async moveRepo(
+    @Param('id') connectorAccountId: string,
+    @Body() body: { newRepoPath: string },
+    @Req() req: RequestWithUser,
+  ) {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can move repos');
+    }
+
+    const account = await this.dbService.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId },
+      select: { id: true, repoPath: true, displayName: true },
+    });
+
+    if (!account) {
+      throw new NotFoundException(`Connector account ${connectorAccountId} not found`);
+    }
+    if (!account.repoPath) {
+      throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
+    }
+    if (account.repoPath === body.newRepoPath) {
+      throw new BadRequestException('New repo path is the same as the current one');
+    }
+
+    // 1. Copy repo on the git server
+    await this.scratchGitClient.copyRepo(account.repoPath, body.newRepoPath);
+
+    // 2. Update repoPath in the database
+    await this.dbService.client.connectorAccount.update({
+      where: { id: connectorAccountId },
+      data: { repoPath: body.newRepoPath },
+    });
+
+    // 3. Delete the old repo
+    try {
+      await this.scratchGitClient.deleteRepo(account.repoPath);
+    } catch (e) {
+      // Log but don't fail — the copy and DB update succeeded
+      console.warn(`[DevTools] Failed to delete old repo ${account.repoPath}:`, e);
+    }
+
+    return {
+      success: true,
+      oldRepoPath: account.repoPath,
+      newRepoPath: body.newRepoPath,
     };
   }
 }

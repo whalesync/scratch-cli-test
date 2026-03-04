@@ -52,6 +52,7 @@ import {
   GitMergeIcon,
   InfoIcon,
   MoreHorizontalIcon,
+  MoveIcon,
   RefreshCwIcon,
   RouteIcon,
   SettingsIcon,
@@ -67,6 +68,7 @@ import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
 import { GitGraphModal } from '../modals/GitGraphModal';
 import { GitObjectCountsModal } from '../modals/GitObjectCountsModal';
+import { MoveRepoModal } from '../modals/MoveRepoModal';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
 import { TestTransformerModal } from '../modals/TestTransformerModal';
 import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsModal';
@@ -320,6 +322,7 @@ export function ConnectionNode({
   const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
   const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
   const [isRebasing, setIsRebasing] = useState(false);
+  const [moveRepoOpen, setMoveRepoOpen] = useState(false);
 
   const handleGitGc = async (aggressive: boolean = false) => {
     if (!connectorAccount) return;
@@ -628,6 +631,12 @@ export function ConnectionNode({
                         onClick: () => void handleGetObjectCounts(),
                         disabled: isLoadingObjectCounts,
                       },
+                      {
+                        label: 'Move Repo',
+                        icon: MoveIcon,
+                        devtool: true,
+                        onClick: () => setMoveRepoOpen(true),
+                      },
                     ],
                   },
                 ]
@@ -709,6 +718,14 @@ export function ConnectionNode({
             data={objectCountsData}
             repoPath={connectorAccount.repoPath}
           />
+          {connectorAccount.repoPath && (
+            <MoveRepoModal
+              opened={moveRepoOpen}
+              onClose={() => setMoveRepoOpen(false)}
+              connectorAccountId={connectorAccount.id}
+              currentRepoPath={connectorAccount.repoPath}
+            />
+          )}
         </>
       )}
     </>
