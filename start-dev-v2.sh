@@ -142,6 +142,16 @@ echo -e "${YELLOW}  Starting Spinner Development Servers${NC}"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 
+# Auto-migrate old git repos to the git-ignored local folder
+if [ -d "$SCRIPT_DIR/scratch-git/repos" ]; then
+    echo -e "${YELLOW}Migrating old git repositories to new local directory...${NC}"
+    mkdir -p "$SCRIPT_DIR/local/scratch-git-repos"
+    mv "$SCRIPT_DIR/scratch-git/repos/"* "$SCRIPT_DIR/local/scratch-git-repos/" 2>/dev/null || true
+    rm -rf "$SCRIPT_DIR/scratch-git/repos"
+    echo -e "${GREEN}Migration complete.${NC}"
+    echo ""
+fi
+
 # Check if Docker services are running
 if ! docker ps 2>/dev/null | grep -q postgres; then
     echo -e "${RED}Warning: PostgreSQL container doesn't appear to be running.${NC}"
@@ -171,7 +181,7 @@ SERVER_PID=$!
 echo -e "${YELLOW}[SCRATCH-GIT]${NC} Starting scratch-git-2 on port 3100..."
 (
     cd "$SCRIPT_DIR/scratch-git-2"
-    GIT_REPOS_DIR="$SCRIPT_DIR/scratch-git-2/repos" cargo run 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
+    GIT_REPOS_DIR="$SCRIPT_DIR/local/scratch-git-repos" cargo run 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
 ) &
 SCRATCH_GIT_PID=$!
 
