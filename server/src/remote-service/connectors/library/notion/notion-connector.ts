@@ -505,45 +505,51 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
 
       if (notionError.code === APIErrorCode.Unauthorized) {
         return {
-          userFriendlyMessage: 'The credentials Scratch uses to communicate with Notion are no longer valid.',
+          userFriendlyMessage: `The credentials Scratch uses to communicate with Notion are no longer valid. Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
       if (notionError.code === APIErrorCode.RateLimited) {
         return {
-          userFriendlyMessage: ErrorMessageTemplates.API_QUOTA_EXCEEDED('Notion'),
+          userFriendlyMessage: `${ErrorMessageTemplates.API_QUOTA_EXCEEDED('Notion')} Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
       if (notionError.code === APIErrorCode.ObjectNotFound) {
         return {
-          userFriendlyMessage: 'The Notion object you are trying to access does not exist.',
+          userFriendlyMessage: `Notion object not found: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
       if (notionError.code === APIErrorCode.InvalidRequest) {
         return {
-          userFriendlyMessage: 'The request you are trying to make is invalid.',
+          userFriendlyMessage: `Notion invalid request: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
       if (notionError.code === APIErrorCode.InternalServerError) {
         return {
-          userFriendlyMessage: 'An internal server error occurred while connecting to Notion.',
+          userFriendlyMessage: `An internal server error occurred while connecting to Notion. Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
       if (notionError.code === APIErrorCode.ServiceUnavailable) {
         return {
-          userFriendlyMessage: 'The Notion service is unavailable. Please try again later.',
+          userFriendlyMessage: `The Notion service is unavailable. Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
+
+      // Catch-all for any other Notion API error codes (e.g. ValidationError, ConflictError)
+      return {
+        userFriendlyMessage: `Notion API error (${notionError.code}): ${notionError.message}`,
+        description: notionError.message,
+      };
     }
     return this.fallbackErrorDetails(error);
   }

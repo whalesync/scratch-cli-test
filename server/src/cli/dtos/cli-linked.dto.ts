@@ -16,6 +16,10 @@ export class CreateCliLinkedTableDto {
   @IsString({ each: true })
   @IsOptional()
   tableId?: string[];
+
+  @IsString()
+  @IsOptional()
+  filter?: string;
 }
 
 export type ValidatedCreateCliLinkedTableDto = Required<

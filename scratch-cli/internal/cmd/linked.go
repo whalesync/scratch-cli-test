@@ -161,6 +161,7 @@ func init() {
 	linkedAddCmd.Flags().String("connection-id", "", "Connector account ID (non-interactive)")
 	linkedAddCmd.Flags().StringSlice("table-id", nil, "Table ID(s) to link (non-interactive)")
 	linkedAddCmd.Flags().String("name", "", "Name for the linked table (non-interactive)")
+	linkedAddCmd.Flags().String("filter", "", "Connector filter expression (JSON string)")
 }
 
 // --- Context Resolution ---
@@ -468,6 +469,8 @@ func runLinkedAdd(cmd *cobra.Command, args []string) error {
 	tableIDs, _ := cmd.Flags().GetStringSlice("table-id")
 	name, _ := cmd.Flags().GetString("name")
 
+	filter, _ := cmd.Flags().GetString("filter")
+
 	if connectionID != "" && len(tableIDs) > 0 {
 		// Non-interactive mode: check if the table is disabled or has restricted creates
 		var matchedTable *api.TablePreview
@@ -494,6 +497,7 @@ func runLinkedAdd(cmd *cobra.Command, args []string) error {
 			Name:               name,
 			ConnectorAccountID: connectionID,
 			TableID:            tableIDs,
+			Filter:             filter,
 		}
 
 		result, err := client.CreateLinkedTable(workbookID, req)

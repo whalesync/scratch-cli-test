@@ -105,6 +105,7 @@ export class CliLinkedController {
         workbookId: workbookId as WorkbookId,
         connectorAccountId: validatedDto.connectorAccountId,
         tableId: validatedDto.tableId,
+        filter: validatedDto.filter,
       },
       actor,
     );

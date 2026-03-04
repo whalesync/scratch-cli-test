@@ -104,6 +104,7 @@ type CreateLinkedTableRequest struct {
 	Name               string   `json:"name"`
 	ConnectorAccountID string   `json:"connectorAccountId"`
 	TableID            []string `json:"tableId"`
+	Filter             string   `json:"filter,omitempty"`
 }
 
 // JobResponse represents a response containing a job ID.
