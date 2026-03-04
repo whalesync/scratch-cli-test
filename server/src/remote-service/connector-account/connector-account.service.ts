@@ -273,9 +273,73 @@ export class ConnectorAccountService {
     if (!account) {
       throw new NotFoundException('ConnectorAccount not found');
     }
+
+    // Fetch all DataFolders for this connection (needed for schedule cleanup and V1 git cleanup)
+    const dataFolders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, connectorAccountId: id },
+      select: { id: true, path: true },
+    });
+
+    const folderIds = dataFolders.map((f) => f.id);
+
+    // Delete schedules targeting these folders (no FK cascade to DataFolder)
+    if (folderIds.length > 0) {
+      await this.db.client.schedule.deleteMany({
+        where: { entityId: { in: folderIds } },
+      });
+    }
+
+    // Delete publish plans for this connection (no FK cascade to ConnectorAccount)
+    await this.db.client.publishPlan.deleteMany({
+      where: { workbookId, connectorAccountId: id },
+    });
+
+    // Delete all DataFolders (cascades to SyncTablePair, SyncForeignKeyRecord, SyncRemoteIdMapping)
+    await this.db.client.dataFolder.deleteMany({
+      where: { workbookId, connectorAccountId: id },
+    });
+
+    // Clean up git data
+    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId }, select: { version: true } });
+    if (workbook && workbook.version >= 2) {
+      // V2: each connection has its own repo — delete it entirely
+      try {
+        if (account.repoPath) {
+          await this.scratchGitService.deleteRepo(account.repoPath);
+        }
+      } catch (err) {
+        WSLogger.error({
+          source: 'ConnectorAccountService.remove',
+          message: 'Failed to delete git repo during connection removal',
+          error: err,
+          workbookId,
+          connectorAccountId: id,
+        });
+      }
+    } else if (workbook) {
+      // V1: shared repo — remove each folder's data individually
+      for (const folder of dataFolders) {
+        if (folder.path) {
+          try {
+            await this.scratchGitService.removeDataFolder(workbookId, folder.path);
+          } catch (err) {
+            WSLogger.error({
+              source: 'ConnectorAccountService.remove',
+              message: `Failed to remove git data for folder ${folder.path} during connection removal`,
+              error: err,
+              workbookId,
+              connectorAccountId: id,
+            });
+          }
+        }
+      }
+    }
+
+    // Delete the ConnectorAccount record
     await this.db.client.connectorAccount.delete({
       where: { id, workbookId },
     });
+
     this.posthogService.trackRemoveDataSource(actor, account);
 
     await this.auditLogService.logEvent({
