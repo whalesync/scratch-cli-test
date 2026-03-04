@@ -27,10 +27,12 @@
       "dependsOn": ["^build"]
     },
     "format": {
-      "dependsOn": ["^format"]
+      "dependsOn": [],
+      "cache": false
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "cache": false
     },
     "test:integration": {
       "dependsOn": ["^build"],
