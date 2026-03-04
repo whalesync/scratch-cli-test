@@ -46,3 +46,13 @@ export const PG_TIMESTAMP_TYPES = new Set(['timestamp', 'timestamp without time 
 export const PG_DATE_TYPES = new Set(['date']);
 
 export const PG_JSON_TYPES = new Set(['json', 'jsonb']);
+
+export interface PostgresForeignKey {
+  constraint_name: string;
+  table_schema: string;
+  table_name: string;
+  column_name: string;
+  foreign_table_schema: string;
+  foreign_table_name: string;
+  foreign_column_name: string;
+}

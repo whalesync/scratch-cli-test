@@ -406,6 +406,16 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   });
 
   describe('run', () => {
+    const defaultTableSpec: BaseJsonTableSpec = {
+      idColumnRemoteId: 'id',
+      slugColumnRemoteId: 'slug',
+      titleColumnRemoteId: ['title'],
+      id: { remoteId: ['tbl_abc'], wsId: 'tbl_abc' },
+      slug: 'example',
+      name: 'Example',
+      schema: Type.Object({}),
+    };
+
     const createMockDataFolder = (overrides?: any) => ({
       id: 'dfld_123' as DataFolderId,
       workbookId: 'wkb_123' as WorkbookId,
@@ -413,12 +423,10 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       path: '/test-folder',
       connectorService: 'airtable',
       connectorAccountId: 'coa_123',
+      tableId: ['tbl_abc'],
       filter: null as string | null,
-      schema: {
-        idColumnRemoteId: 'id',
-        slugColumnRemoteId: 'slug',
-        titleColumnRemoteId: ['title'],
-      } as BaseJsonTableSpec,
+      options: null as any,
+      schema: defaultTableSpec,
       ...overrides,
     });
 
@@ -428,7 +436,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       credentials: { apiKey: 'test-key' },
     });
 
-    const createMockConnector = () => ({
+    const createMockConnector = (tableSpecOverrides?: Partial<BaseJsonTableSpec>) => ({
+      fetchJsonTableSpec: jest.fn().mockResolvedValue({ ...defaultTableSpec, ...tableSpecOverrides }),
       pullRecordFiles: jest.fn(),
       extractConnectorErrorDetails: jest.fn().mockReturnValue({
         userFriendlyMessage: 'An error occurred',
@@ -808,6 +817,118 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       await handler.run({ ...params, jobId: 'test-job-id' });
 
       expect(params.checkpoint).toHaveBeenCalled();
+    });
+
+    it('should fetch fresh schema from connector before pulling', async () => {
+      const freshSchema: BaseJsonTableSpec = {
+        ...defaultTableSpec,
+        schema: Type.Object({ newField: Type.String() }),
+      };
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      mockConnector.fetchJsonTableSpec.mockResolvedValue(freshSchema);
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+        await callback({ files: [], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // Verify connector.fetchJsonTableSpec was called with the folder's tableId
+      expect(mockConnector.fetchJsonTableSpec).toHaveBeenCalledWith({
+        wsId: 'tbl_abc',
+        remoteId: ['tbl_abc'],
+      });
+
+      // Verify fresh schema was saved to DB
+      expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'dfld_123' },
+          data: expect.objectContaining({
+            schema: freshSchema,
+            lastSchemaRefreshAt: expect.any(Date),
+          }),
+        }),
+      );
+
+      // Verify fresh schema was written to git
+      expect(mockScratchGitService.writeSchemaToGit).toHaveBeenCalledWith('wkb_123', '/test-folder', freshSchema);
+
+      // Verify pullRecordFiles was called with the fresh schema
+      expect(mockConnector.pullRecordFiles).toHaveBeenCalledWith(
+        freshSchema,
+        expect.any(Function),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('should apply user field overrides to fetched schema', async () => {
+      const dataFolder = createMockDataFolder({
+        options: {
+          idFieldOverride: 'custom_id',
+          nameFieldOverride: 'custom_name',
+        },
+      });
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+        // Verify the spec passed to pullRecordFiles has the overrides applied
+        expect(spec.idColumnRemoteId).toBe('custom_id');
+        expect(spec.titleColumnRemoteId).toEqual(['custom_name']);
+        await callback({ files: [], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // Verify schema saved to DB has overrides applied
+      expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'dfld_123' },
+          data: expect.objectContaining({
+            schema: expect.objectContaining({
+              idColumnRemoteId: 'custom_id',
+              titleColumnRemoteId: ['custom_name'],
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('should propagate schema fetch errors', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      mockConnector.fetchJsonTableSpec.mockRejectedValue(new Error('API rate limit exceeded'));
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await expect(handler.run({ ...params, jobId: 'test-job-id' })).rejects.toThrow();
+
+      // Verify pullRecordFiles was NOT called (schema fetch failed first)
+      expect(mockConnector.pullRecordFiles).not.toHaveBeenCalled();
     });
   });
 });

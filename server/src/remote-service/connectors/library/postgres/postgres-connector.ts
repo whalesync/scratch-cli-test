@@ -2,6 +2,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, PostgresColumnType, Service } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
+import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { PostgresClient, PostgresClientError } from './postgres-client';
 import {
@@ -134,20 +135,58 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const tableName = id.remoteId[1] ?? id.wsId;
-    const columns = await this.client.getTableColumns(tableName);
-    const primaryKey = await this.client.getPrimaryKeyColumn(tableName);
+
+    const [columns, primaryKey, foreignKeys] = await Promise.all([
+      this.client.getTableColumns(tableName),
+      this.client.getPrimaryKeyColumn(tableName),
+      this.client.getForeignKeys(tableName),
+    ]);
+
+    // Build a map from column name → linked table ID
+    const fkMap = new Map<string, string>();
+    for (const fk of foreignKeys) {
+      if (fk.foreign_table_name) {
+        const linkedTableId =
+          fk.foreign_table_schema === 'public'
+            ? fk.foreign_table_name
+            : `${fk.foreign_table_schema}.${fk.foreign_table_name}`;
+        fkMap.set(fk.column_name, linkedTableId);
+      }
+    }
 
     const schemaProperties: Record<string, TSchema> = {};
+    let titleColumnRemoteId: string[] | undefined;
+    let slugColumnRemoteId: string | undefined;
+
+    const titleCandidates = ['name', 'title', 'display_name', 'label'];
+
     for (const col of columns) {
       const isNullable = col.is_nullable === 'YES';
       const hasDefault = col.column_default !== null;
       const { schema } = mapPgType(col.data_type, col.udt_name, isNullable);
+
+      // Annotate foreign key columns
+      const linkedTableId = fkMap.get(col.column_name);
+      if (linkedTableId) {
+        (schema as Record<string, unknown>)[FOREIGN_KEY_OPTIONS] = { linkedTableId };
+      }
+
       // Columns that are nullable or have a default value (including serial/identity)
       // are not required for inserts, so mark them optional
       schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(schema) : schema;
+
+      // Title heuristic: first text-type column matching a known name
+      if (!titleColumnRemoteId && titleCandidates.includes(col.column_name) && PG_TEXT_TYPES.has(col.udt_name)) {
+        titleColumnRemoteId = [col.column_name];
+      }
+
+      // Slug heuristic: column named "slug"
+      if (col.column_name === 'slug') {
+        slugColumnRemoteId = 'slug';
+      }
     }
 
-    const schema = Type.Object(schemaProperties, {
+    const tableSchema = Type.Object(schemaProperties, {
       $id: `postgres/${tableName}`,
       title: tableName,
     });
@@ -156,8 +195,10 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
       id,
       slug: tableName,
       name: tableName,
-      schema,
+      schema: tableSchema,
       idColumnRemoteId: primaryKey,
+      titleColumnRemoteId,
+      slugColumnRemoteId,
       basePath: id.remoteId[0] ? [id.remoteId[0]] : ['public'],
       generatedAt: new Date().toISOString(),
     };

@@ -44,3 +44,6 @@ node_modules/
 repos/
 
 .claude/worktrees
+
+# Test report artifacts
+junit.xml

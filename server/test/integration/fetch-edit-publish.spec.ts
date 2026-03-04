@@ -180,8 +180,8 @@ describe('Fetch → Edit → Publish Integration', () => {
 
   beforeEach(async () => {
     // ── 0. Clean up any leftover state from a previous run ───────────────────
-    await pool.query(`DROP TABLE IF EXISTS ${POSTS_TABLE}`);
-    await pool.query(`DROP TABLE IF EXISTS ${AUTHORS_TABLE}`);
+    await pool.query(`DROP TABLE IF EXISTS ${POSTS_TABLE} CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS ${AUTHORS_TABLE} CASCADE`);
     // Clean Scratch DB by workbookId if it was set from a prior run
     if (workbookId) {
       await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
@@ -195,21 +195,28 @@ describe('Fetch → Edit → Publish Integration', () => {
     if (userId) await prisma.user.delete({ where: { id: userId } }).catch(() => {});
     if (orgId) await prisma.organization.delete({ where: { id: orgId } }).catch(() => {});
 
-    // ── 1. Create test tables ────────────────────────────────────────────────
-    await pool.query(`
-      CREATE TABLE ${AUTHORS_TABLE} (
-        id               SERIAL PRIMARY KEY,
-        name             VARCHAR(255) NOT NULL,
-        best_friend_id   INTEGER,
-        favorite_post_id INTEGER
-      )
-    `);
+    // ── 1. Create test tables (with FK constraints for pg_catalog detection) ─
+    // Create posts first (without author_id FK, since authors doesn't exist yet)
     await pool.query(`
       CREATE TABLE ${POSTS_TABLE} (
         id        SERIAL PRIMARY KEY,
         title     VARCHAR(255) NOT NULL,
         author_id INTEGER
       )
+    `);
+    // Create authors with FKs to itself (best_friend_id) and posts (favorite_post_id)
+    await pool.query(`
+      CREATE TABLE ${AUTHORS_TABLE} (
+        id               SERIAL PRIMARY KEY,
+        name             VARCHAR(255) NOT NULL,
+        best_friend_id   INTEGER REFERENCES ${AUTHORS_TABLE}(id),
+        favorite_post_id INTEGER REFERENCES ${POSTS_TABLE}(id)
+      )
+    `);
+    // Now add the author_id FK from posts → authors
+    await pool.query(`
+      ALTER TABLE ${POSTS_TABLE}
+        ADD CONSTRAINT fk_posts_author FOREIGN KEY (author_id) REFERENCES ${AUTHORS_TABLE}(id)
     `);
 
     // ── 2. Seed initial data ─────────────────────────────────────────────────
@@ -456,8 +463,8 @@ describe('Fetch → Edit → Publish Integration', () => {
   afterEach(async () => {
     if (process.env.SKIP_CLEANUP === '1') return;
 
-    await pool.query(`DROP TABLE IF EXISTS ${POSTS_TABLE}`);
-    await pool.query(`DROP TABLE IF EXISTS ${AUTHORS_TABLE}`);
+    await pool.query(`DROP TABLE IF EXISTS ${POSTS_TABLE} CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS ${AUTHORS_TABLE} CASCADE`);
     if (workbookId) {
       await prisma.publishPlanOperation.deleteMany({ where: { plan: { workbookId } } });
       await prisma.publishPlan.deleteMany({ where: { workbookId } });

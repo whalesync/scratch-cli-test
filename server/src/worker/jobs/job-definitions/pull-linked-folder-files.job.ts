@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { type ConnectorPullOptions, DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
-import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
+import type { ConnectorFile } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
@@ -185,15 +185,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       throw new Error(`DataFolder ${dataFolderId} does not have a connector service`);
     }
 
-    // Read schema from git first, fall back to DB
-    let tableSpec: BaseJsonTableSpec;
-    if (dataFolder.path) {
-      const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, dataFolder.path);
-      tableSpec = gitSchema ?? (dataFolder.schema as BaseJsonTableSpec);
-    } else {
-      tableSpec = dataFolder.schema as BaseJsonTableSpec;
-    }
-
     const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
 
     const publicProgress: PullLinkedFolderFilesPublicProgress = {
@@ -254,6 +245,38 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       decryptedCredentials: decryptedConnectorAccount,
       userId: data.userId,
     });
+
+    // Fetch fresh schema from the remote connector
+    const tableSpec = await connector.fetchJsonTableSpec({
+      wsId: dataFolder.tableId[0],
+      remoteId: dataFolder.tableId,
+    });
+
+    // Re-apply user field overrides from options
+    const options =
+      dataFolder.options && typeof dataFolder.options === 'object' && !Array.isArray(dataFolder.options)
+        ? dataFolder.options
+        : {};
+    const idOverride = 'idFieldOverride' in options ? (options as Record<string, unknown>).idFieldOverride : undefined;
+    const nameOverride =
+      'nameFieldOverride' in options ? (options as Record<string, unknown>).nameFieldOverride : undefined;
+    if (typeof idOverride === 'string') {
+      tableSpec.idColumnRemoteId = idOverride;
+    }
+    if (typeof nameOverride === 'string') {
+      tableSpec.titleColumnRemoteId = [nameOverride];
+    }
+
+    // Persist refreshed schema to DB
+    await this.prisma.dataFolder.update({
+      where: { id: dataFolder.id },
+      data: { schema: tableSpec, lastSchemaRefreshAt: new Date() },
+    });
+
+    // Write refreshed schema to git
+    if (dataFolder.path) {
+      await this.scratchGitService.writeSchemaToGit(repoId, dataFolder.path, tableSpec);
+    }
 
     let gitFiles: { path: string; content: string }[] = [];
     const usedFileNames = new Set<string>();
@@ -491,11 +514,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           lastSyncTime: new Date(),
         },
       });
-
-      // Write schema to git repo after successful pull
-      if (dataFolder.path && dataFolder.schema) {
-        await this.scratchGitService.writeSchemaToGit(repoId, dataFolder.path, dataFolder.schema as BaseJsonTableSpec);
-      }
 
       WSLogger.debug({
         source: 'PullLinkedFolderFilesJob',

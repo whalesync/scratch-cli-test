@@ -1,5 +1,5 @@
 import { Pool, type PoolConfig } from 'pg';
-import { PostgresColumnInfo } from './postgres-types';
+import { PostgresColumnInfo, PostgresForeignKey } from './postgres-types';
 
 export class PostgresClientError extends Error {
   constructor(
@@ -98,6 +98,36 @@ export class PostgresClient {
     );
 
     return result.rows[0]?.column_name ?? 'id';
+  }
+
+  /**
+   * Get single-column foreign key constraints for a table.
+   */
+  async getForeignKeys(tableName: string): Promise<PostgresForeignKey[]> {
+    await this.validateTableName(tableName);
+
+    const result = await this.pool.query<PostgresForeignKey>(
+      `SELECT
+         con.conname   AS constraint_name,
+         n.nspname     AS table_schema,
+         cl.relname    AS table_name,
+         att.attname   AS column_name,
+         fn.nspname    AS foreign_table_schema,
+         fcl.relname   AS foreign_table_name,
+         fatt.attname  AS foreign_column_name
+       FROM pg_catalog.pg_constraint con
+       JOIN pg_catalog.pg_class cl       ON con.conrelid = cl.oid
+       JOIN pg_catalog.pg_namespace n    ON cl.relnamespace = n.oid
+       JOIN pg_catalog.pg_attribute att  ON att.attrelid = con.conrelid AND att.attnum = ANY(con.conkey)
+       JOIN pg_catalog.pg_class fcl      ON con.confrelid = fcl.oid
+       JOIN pg_catalog.pg_namespace fn   ON fcl.relnamespace = fn.oid
+       JOIN pg_catalog.pg_attribute fatt ON fatt.attrelid = con.confrelid AND fatt.attnum = ANY(con.confkey)
+       WHERE con.contype = 'f'
+         AND array_length(con.conkey, 1) = 1
+         AND cl.relname = $1 AND n.nspname = 'public'`,
+      [tableName],
+    );
+    return result.rows;
   }
 
   /**
