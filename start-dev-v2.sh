@@ -89,18 +89,6 @@ echo -e "${YELLOW}Installing client dependencies...${NC}"
 echo -e "${GREEN}Client dependencies installed${NC}"
 echo ""
 
-# Install scratch-git-2-http-backend dependencies
-echo -e "${YELLOW}Installing scratch-git-2-http-backend dependencies...${NC}"
-(
-    cd "$SCRIPT_DIR/scratch-git-2-http-backend"
-    yarn install --silent
-) || {
-    echo -e "${RED}Failed to install scratch-git-2-http-backend dependencies${NC}"
-    exit 1
-}
-echo -e "${GREEN}scratch-git-2-http-backend dependencies installed${NC}"
-echo ""
-
 # Build scratch-git-2 (Rust)
 echo -e "${YELLOW}Building scratch-git-2...${NC}"
 (
@@ -117,8 +105,6 @@ echo ""
 CLIENT_PID=""
 SERVER_PID=""
 SCRATCH_GIT_PID=""
-SCRATCH_GIT_HTTP_PID=""
-
 cleanup() {
     echo -e "\n${YELLOW}Shutting down all services...${NC}"
 
@@ -137,11 +123,6 @@ cleanup() {
         kill "$SCRATCH_GIT_PID" 2>/dev/null || true
     fi
 
-    if [ -n "$SCRATCH_GIT_HTTP_PID" ] && kill -0 "$SCRATCH_GIT_HTTP_PID" 2>/dev/null; then
-        echo -e "${YELLOW}Stopping scratch-git HTTP backend...${NC}"
-        kill "$SCRATCH_GIT_HTTP_PID" 2>/dev/null || true
-    fi
-
     # Wait a moment for graceful shutdown
     sleep 1
 
@@ -149,7 +130,6 @@ cleanup() {
     [ -n "$CLIENT_PID" ] && kill -9 "$CLIENT_PID" 2>/dev/null || true
     [ -n "$SERVER_PID" ] && kill -9 "$SERVER_PID" 2>/dev/null || true
     [ -n "$SCRATCH_GIT_PID" ] && kill -9 "$SCRATCH_GIT_PID" 2>/dev/null || true
-    [ -n "$SCRATCH_GIT_HTTP_PID" ] && kill -9 "$SCRATCH_GIT_HTTP_PID" 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -191,23 +171,15 @@ SERVER_PID=$!
 echo -e "${YELLOW}[SCRATCH-GIT]${NC} Starting scratch-git-2 on port 3100..."
 (
     cd "$SCRIPT_DIR/scratch-git-2"
-    GIT_REPOS_DIR="$SCRIPT_DIR/scratch-git/repos" cargo run 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
+    GIT_REPOS_DIR="$SCRIPT_DIR/scratch-git-2/repos" cargo run 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
 ) &
 SCRATCH_GIT_PID=$!
-
-# Start scratch-git-2-http-backend (port 3101)
-echo -e "${YELLOW}[SCRATCH-GIT-HTTP]${NC} Starting Git HTTP backend on port 3101..."
-(
-    cd "$SCRIPT_DIR/scratch-git-2-http-backend"
-    GIT_REPOS_DIR="$SCRIPT_DIR/scratch-git/repos" yarn run dev 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT-HTTP]${NC} $line"; done
-) &
-SCRATCH_GIT_HTTP_PID=$!
 
 echo ""
 echo -e "${YELLOW}========================================${NC}"
 echo -e "  ${BLUE}Client${NC}:       http://localhost:3000"
 echo -e "  ${GREEN}Server${NC}:       http://localhost:3010"
-echo -e "  ${YELLOW}scratch-git-2${NC}: http://localhost:3100 (API), http://localhost:3101 (HTTP backend)"
+echo -e "  ${YELLOW}scratch-git-2${NC}: http://localhost:3100 (API) + :3101 (HTTP backend)"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"

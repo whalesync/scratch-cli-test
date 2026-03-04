@@ -1,5 +1,7 @@
 # Git Scaling Strategy
 
+> **Note (March 2026):** The git backend microservice has been rewritten from Node.js/isomorphic-git to Rust. The original `scratch-git/` directory has been removed and replaced by `scratch-git-2/`. The architecture sections below describe the original Node.js implementation for historical context; the Rust rewrite addresses many of the performance concerns identified here (particularly the isomorphic-git bottlenecks).
+
 Analysis and recommendations for scaling the git-based storage layer in Scratch (scratch-git) to handle 100k-1M files per repo with frequent updates and many concurrent users.
 
 ## Table of Contents
@@ -20,8 +22,8 @@ Analysis and recommendations for scaling the git-based storage layer in Scratch 
 
 ### Components
 
-- **scratch-git** (`/scratch-git`): Standalone Node.js microservice on port 3100 (API) and 3101 (git HTTP backend)
-- **Server** (`/server/src/scratch-git`): NestJS HTTP client that proxies requests to scratch-git
+- **scratch-git-2** (`/scratch-git-2`): Standalone Rust microservice on port 3100 (API) and 3101 (git HTTP backend). Replaced the original Node.js/isomorphic-git implementation (`/scratch-git`, now removed).
+- **Server** (`/server/src/scratch-git`): NestJS HTTP client that proxies requests to scratch-git-2
 
 ### Storage Model
 

@@ -31,7 +31,7 @@ Full [Documentation](./client/README.md)
 This monorepo uses [Turborepo](https://turbo.build/) for unified build and dev orchestration across all packages. Run these commands from the **root directory**:
 
 ```bash
-# Start all dev servers (client, server, scratch-git, shared-types watch)
+# Start all dev servers (client, server, shared-types watch)
 yarn dev
 
 # Build all packages with caching and correct dependency ordering
@@ -61,7 +61,7 @@ yarn test:integration
 
 - `client/` - Next.js web app
 - `server/` - NestJS API server
-- `scratch-git/` - Git utilities
+- `scratch-git-2/` - Rust git microservice (ports 3100 API + 3101 HTTP backend)
 - `packages/*` - Shared packages (e.g., `shared-types`)
 
 You can still run commands in individual packages (e.g., `cd server && yarn test`), but the root commands are recommended for full-stack development.

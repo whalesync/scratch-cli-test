@@ -285,25 +285,6 @@ build and test scratch-cli:
 # SCRATCH-GIT SUBPROJECT
 # =============================================================================
 
-.build-and-test-scratch-git:
-  stage: build and test
-  interruptible: true
-  script:
-    - cd scratch-git
-    - !reference [.use_nvm, script]
-    - yarn build
-    # enable this once we have fixed all the linting on the scratch-git project
-    # - yarn run lint
-
-build and test scratch-git:
-  extends: .build-and-test-scratch-git
-  rules:
-    - !reference [.rules, skip_for_local_runner_users]
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes: !reference [.changes, scratch-git]
-    - !reference [.rules, on_merge_to_master]
-    - !reference [.rules, on_merge_to_prod]
-
 .build-scratch-git-docker-image:
   stage: build and test
   extends:
@@ -313,7 +294,7 @@ build and test scratch-git:
     - docker:26-dind
   artifacts:
     paths:
-      - scratch-git/image.tar
+      - scratch-git-2/image.tar
     expire_in: 1 hour
   script:
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
@@ -323,7 +304,7 @@ build and test scratch-git:
       --build-arg BUILD_VERSION="${BUILD_VERSION}"
       -t spinner/spinner-scratch-git
       -f scratch-git-2/Dockerfile .
-    - docker save spinner/spinner-scratch-git > scratch-git/image.tar
+    - docker save spinner/spinner-scratch-git > scratch-git-2/image.tar
 
 build scratch-git docker image:
   extends: .build-scratch-git-docker-image

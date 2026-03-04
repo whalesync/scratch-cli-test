@@ -9,6 +9,7 @@ push client image to test artifact registry:
   needs:
     - job: build client docker image for test
       artifacts: true
+      optional: true
   extends:
     - .gcp_eu_test_env # sets before_script and variables
     - .docker_builder_image
@@ -36,6 +37,7 @@ push client image to production artifact registry:
   needs:
     - job: build client docker image for production
       artifacts: true
+      optional: true
   extends:
     - .gcp_eu_production_env # sets before_script and variables
     - .docker_builder_image
@@ -61,6 +63,7 @@ push server image to test artifact registry:
   needs:
     - job: build server docker image
       artifacts: true
+      optional: true
   extends:
     - .gcp_eu_test_env # sets before_script and variables
     - .docker_builder_image
@@ -88,6 +91,7 @@ push server image to production artifact registry:
   needs:
     - job: build server docker image
       artifacts: true
+      optional: true
   extends:
     - .gcp_eu_production_env # sets before_script and variables
     - .docker_builder_image
@@ -113,6 +117,7 @@ push scratch-git image to test artifact registry:
   needs:
     - job: build scratch-git docker image
       artifacts: true
+      optional: true
   extends:
     - .gcp_eu_test_env # sets before_script and variables
     - .docker_builder_image
@@ -121,7 +126,7 @@ push scratch-git image to test artifact registry:
     - docker:26-dind
   script:
     - !reference [.setup_docker_gcp_auth, script]
-    - docker load -i scratch-git/image.tar
+    - docker load -i scratch-git-2/image.tar
     # Push twice, tagged as both 'latest' and '$CI_COMMIT_SHORT_SHA'
     - docker tag spinner/spinner-scratch-git:latest ${GCP_REGISTRY_URL}/spinner-scratch-git:$CI_COMMIT_SHORT_SHA
     - docker push ${GCP_REGISTRY_URL}/spinner-scratch-git:$CI_COMMIT_SHORT_SHA
@@ -140,6 +145,7 @@ push scratch-git image to production artifact registry:
   needs:
     - job: build scratch-git docker image
       artifacts: true
+      optional: true
   extends:
     - .gcp_eu_production_env # sets before_script and variables
     - .docker_builder_image
@@ -148,7 +154,7 @@ push scratch-git image to production artifact registry:
     - docker:26-dind
   script:
     - !reference [.setup_docker_gcp_auth, script]
-    - docker load -i scratch-git/image.tar
+    - docker load -i scratch-git-2/image.tar
     - docker tag spinner/spinner-scratch-git:latest ${GCP_REGISTRY_URL}/spinner-scratch-git:$CI_COMMIT_SHORT_SHA
     - docker push ${GCP_REGISTRY_URL}/spinner-scratch-git:$CI_COMMIT_SHORT_SHA
     - docker tag spinner/spinner-scratch-git:latest ${GCP_REGISTRY_URL}/spinner-scratch-git:latest
