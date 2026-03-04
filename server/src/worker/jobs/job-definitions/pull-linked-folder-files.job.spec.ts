@@ -426,7 +426,6 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       tableId: ['tbl_abc'],
       filter: null as string | null,
       options: null as any,
-      schema: defaultTableSpec,
       ...overrides,
     });
 
@@ -849,12 +848,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         remoteId: ['tbl_abc'],
       });
 
-      // Verify fresh schema was saved to DB
+      // Verify lastSchemaRefreshAt was saved to DB (schema column no longer written)
       expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'dfld_123' },
           data: expect.objectContaining({
-            schema: freshSchema,
             lastSchemaRefreshAt: expect.any(Date),
           }),
         }),
@@ -899,16 +897,13 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
       await handler.run({ ...params, jobId: 'test-job-id' });
 
-      // Verify schema saved to DB has overrides applied
-      expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
+      // Verify overrides were applied — check the schema written to git has overrides
+      expect(mockScratchGitService.writeSchemaToGit).toHaveBeenCalledWith(
+        'wkb_123',
+        '/test-folder',
         expect.objectContaining({
-          where: { id: 'dfld_123' },
-          data: expect.objectContaining({
-            schema: expect.objectContaining({
-              idColumnRemoteId: 'custom_id',
-              titleColumnRemoteId: ['custom_name'],
-            }),
-          }),
+          idColumnRemoteId: 'custom_id',
+          titleColumnRemoteId: ['custom_name'],
         }),
       );
     });

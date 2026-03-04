@@ -270,7 +270,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // Persist refreshed schema to DB
     await this.prisma.dataFolder.update({
       where: { id: dataFolder.id },
-      data: { schema: tableSpec, lastSchemaRefreshAt: new Date() },
+      data: { lastSchemaRefreshAt: new Date() },
     });
 
     // Write refreshed schema to git

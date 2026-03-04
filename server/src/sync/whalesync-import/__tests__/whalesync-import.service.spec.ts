@@ -2,6 +2,7 @@ import type { DataFolder, DataFolderId } from '@spinner/shared-types';
 import { Service } from '@spinner/shared-types';
 import { convertWhalesyncExport } from '../whalesync-import.service';
 import {
+  buildSchemasMap,
   makeAirtableSchema,
   makeAnnotatedAirtableSchema,
   makeAnnotatedWebflowSchema,
@@ -74,16 +75,19 @@ function buildAirtableToWebflowScenario(opts?: { syncDirection?: 'left' | 'right
   const leftFolder = makeDataFolder({
     connectorService: Service.AIRTABLE,
     tableId: ['appAAA', 'tblPROD'],
-    schema: makeAirtableSchema(['Title', 'Price']),
   });
 
   const rightFolder = makeDataFolder({
     connectorService: Service.WEBFLOW,
     tableId: ['site111', 'col111'],
-    schema: makeWebflowSchema(['name', 'slug']),
   });
 
-  return { wsExport, leftFolder, rightFolder, leftTable, rightTable, leftCol, rightCol };
+  const schemas = buildSchemasMap(
+    [leftFolder, makeAirtableSchema(['Title', 'Price'])],
+    [rightFolder, makeWebflowSchema(['name', 'slug'])],
+  );
+
+  return { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable, leftCol, rightCol };
 }
 
 // ---------------------------------------------------------------------------
@@ -93,9 +97,11 @@ function buildAirtableToWebflowScenario(opts?: { syncDirection?: 'left' | 'right
 describe('convertWhalesyncExport', () => {
   describe('one-way left→right', () => {
     it('produces one SaveSyncBody with correct source/dest mapping', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'left',
+      });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(1);
       expect(result.unmatchedFolders).toHaveLength(0);
@@ -114,9 +120,11 @@ describe('convertWhalesyncExport', () => {
 
   describe('one-way right→left', () => {
     it('swaps source and destination', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'right' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'right',
+      });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(1);
 
@@ -131,9 +139,11 @@ describe('convertWhalesyncExport', () => {
 
   describe('bidirectional', () => {
     it('produces two SaveSyncBody entries', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'both' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'both',
+      });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(2);
       expect(result.syncs[0].displayName).toContain('Left \u2192 Right');
@@ -149,9 +159,11 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('adds a bidirectional split caveat', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'both' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'both',
+      });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const biCaveat = result.caveats.find((c) => c.message.includes('Bidirectional'));
       expect(biCaveat).toBeDefined();
@@ -212,30 +224,31 @@ describe('convertWhalesyncExport', () => {
         ],
       });
 
-      const folders: DataFolder[] = [
-        makeDataFolder({
-          connectorService: Service.AIRTABLE,
-          tableId: ['appAAA', 'tblA'],
-          schema: makeAirtableSchema(['Title']),
-        }),
-        makeDataFolder({
-          connectorService: Service.AIRTABLE,
-          tableId: ['appAAA', 'tblB'],
-          schema: makeAirtableSchema(['Status']),
-        }),
-        makeDataFolder({
-          connectorService: Service.WEBFLOW,
-          tableId: ['site111', 'colA'],
-          schema: makeWebflowSchema(['name']),
-        }),
-        makeDataFolder({
-          connectorService: Service.WEBFLOW,
-          tableId: ['site111', 'colB'],
-          schema: makeWebflowSchema(['status']),
-        }),
-      ];
+      const folder1 = makeDataFolder({
+        connectorService: Service.AIRTABLE,
+        tableId: ['appAAA', 'tblA'],
+      });
+      const folder2 = makeDataFolder({
+        connectorService: Service.AIRTABLE,
+        tableId: ['appAAA', 'tblB'],
+      });
+      const folder3 = makeDataFolder({
+        connectorService: Service.WEBFLOW,
+        tableId: ['site111', 'colA'],
+      });
+      const folder4 = makeDataFolder({
+        connectorService: Service.WEBFLOW,
+        tableId: ['site111', 'colB'],
+      });
+      const folders: DataFolder[] = [folder1, folder2, folder3, folder4];
+      const schemas = buildSchemasMap(
+        [folder1, makeAirtableSchema(['Title'])],
+        [folder2, makeAirtableSchema(['Status'])],
+        [folder3, makeWebflowSchema(['name'])],
+        [folder4, makeWebflowSchema(['status'])],
+      );
 
-      const result = convertWhalesyncExport(folders, wsExport);
+      const result = convertWhalesyncExport(folders, wsExport, schemas);
 
       expect(result.syncs).toHaveLength(2);
       // Left→Right sync: only table pair 1
@@ -323,7 +336,7 @@ describe('convertWhalesyncExport', () => {
 
   describe('caveats', () => {
     it('flags delete behavior "sync" as warning', () => {
-      const { wsExport, leftFolder, rightFolder, leftTable, rightTable, leftCol, rightCol } =
+      const { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable, leftCol, rightCol } =
         buildAirtableToWebflowScenario();
 
       wsExport.tablePairs = [
@@ -338,7 +351,7 @@ describe('convertWhalesyncExport', () => {
         }),
       ];
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const deleteCaveat = result.caveats.find((c) => c.message.includes('Delete syncing'));
       expect(deleteCaveat).toBeDefined();
@@ -346,7 +359,7 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('flags filters as warning', () => {
-      const { wsExport, leftFolder, rightFolder, leftTable, rightTable, leftCol, rightCol } =
+      const { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable, leftCol, rightCol } =
         buildAirtableToWebflowScenario();
 
       wsExport.tablePairs = [
@@ -366,7 +379,7 @@ describe('convertWhalesyncExport', () => {
         }),
       ];
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const filterCaveat = result.caveats.find((c) => c.message.includes('Filter'));
       expect(filterCaveat).toBeDefined();
@@ -374,7 +387,7 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('flags invalid syncDirection as warning', () => {
-      const { wsExport, leftFolder, rightFolder, leftTable, rightTable } = buildAirtableToWebflowScenario();
+      const { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable } = buildAirtableToWebflowScenario();
 
       wsExport.tablePairs = [
         makeWhalesyncTablePair({
@@ -384,7 +397,7 @@ describe('convertWhalesyncExport', () => {
         }),
       ];
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const invalidCaveat = result.caveats.find((c) => c.message.includes('invalid sync direction'));
       expect(invalidCaveat).toBeDefined();
@@ -392,7 +405,7 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('flags non-empty transforms as warning', () => {
-      const { wsExport, leftFolder, rightFolder, leftTable, rightTable, leftCol, rightCol } =
+      const { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable, leftCol, rightCol } =
         buildAirtableToWebflowScenario();
 
       wsExport.tablePairs = [
@@ -416,7 +429,7 @@ describe('convertWhalesyncExport', () => {
         }),
       ];
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const transformCaveat = result.caveats.find((c) => c.message.includes('transforms'));
       expect(transformCaveat).toBeDefined();
@@ -462,15 +475,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title']),
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name']),
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title'])],
+        [rightFolder, makeWebflowSchema(['name'])],
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const readOnlyCaveat = result.caveats.find((c) => c.message.includes('read-only'));
       expect(readOnlyCaveat).toBeDefined();
@@ -480,9 +495,11 @@ describe('convertWhalesyncExport', () => {
 
   describe('column matching', () => {
     it('matches columns by last path segment name', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'left',
+      });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const tm = result.syncs[0].mappings.tableMappings[0];
       expect(tm.columnMappings).toHaveLength(1);
@@ -546,15 +563,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title', 'Price']),
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name', 'slug']),
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title', 'Price'])],
+        [rightFolder, makeWebflowSchema(['name', 'slug'])],
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(2);
 
@@ -615,15 +634,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title', 'Price']), // No "NonExistent"
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name']),
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title', 'Price'])], // No "NonExistent"
+        [rightFolder, makeWebflowSchema(['name'])],
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       // Column skipped
       expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
@@ -679,35 +700,45 @@ describe('convertWhalesyncExport', () => {
 
   describe('first-match DataFolder deduplication', () => {
     it('uses the first DataFolder when multiple match the same key', () => {
-      const { wsExport, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const {
+        wsExport,
+        rightFolder,
+        schemas: baseSchemas,
+      } = buildAirtableToWebflowScenario({
+        syncDirection: 'left',
+      });
 
       const firstFolder = makeDataFolder({
         id: 'dfd_first00001' as DataFolderId,
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title']),
       });
       const secondFolder = makeDataFolder({
         id: 'dfd_second0001' as DataFolderId,
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title']),
       });
+      const schemas = new Map([
+        ...baseSchemas,
+        ...buildSchemasMap([firstFolder, makeAirtableSchema(['Title'])], [secondFolder, makeAirtableSchema(['Title'])]),
+      ]);
 
-      const result = convertWhalesyncExport([firstFolder, secondFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([firstFolder, secondFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(1);
       expect(result.syncs[0].mappings.tableMappings[0].sourceDataFolderId).toBe('dfd_first00001');
     });
 
     it('skips DataFolders with null connectorService or empty tableId', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'left',
+      });
 
       const badFolder1 = makeDataFolder({ connectorService: null, tableId: ['appAAA', 'tblPROD'] });
       const badFolder2 = makeDataFolder({ connectorService: Service.AIRTABLE, tableId: [] });
 
       // Bad folders come first but should be skipped; real folders should be used
-      const result = convertWhalesyncExport([badFolder1, badFolder2, leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([badFolder1, badFolder2, leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(1);
       expect(result.syncs[0].mappings.tableMappings[0].sourceDataFolderId).toBe(leftFolder.id);
@@ -716,30 +747,34 @@ describe('convertWhalesyncExport', () => {
 
   describe('null schema', () => {
     it('returns empty column mappings when source schema is null', () => {
-      const { wsExport, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, rightFolder, schemas } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
 
+      // Override leftFolder without schema in the map
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: null,
       });
+      // Only rightFolder has a schema — leftFolder has none
+      const overriddenSchemas = new Map([...schemas].filter(([key]) => key !== leftFolder.id));
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, overriddenSchemas);
 
       expect(result.syncs).toHaveLength(1);
       expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
     });
 
     it('returns empty column mappings when destination schema is null', () => {
-      const { wsExport, leftFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, leftFolder, schemas } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
 
+      // Override rightFolder without schema in the map
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: null,
       });
+      // Only leftFolder has a schema — rightFolder has none
+      const overriddenSchemas = new Map([...schemas].filter(([key]) => key !== rightFolder.id));
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, overriddenSchemas);
 
       expect(result.syncs).toHaveLength(1);
       expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
@@ -795,15 +830,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title']), // Capital T — does NOT match "title"
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name']),
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title'])], // Capital T — does NOT match "title"
+        [rightFolder, makeWebflowSchema(['name'])],
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       // "title" does not match "Title" — column is skipped
       expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
@@ -859,15 +896,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title']),
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name', 'slug']), // No "nonexistent_field"
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title'])],
+        [rightFolder, makeWebflowSchema(['name', 'slug'])], // No "nonexistent_field"
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
 
@@ -925,15 +964,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title']),
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name']),
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title'])],
+        [rightFolder, makeWebflowSchema(['name'])],
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs).toHaveLength(2);
 
@@ -1000,15 +1041,17 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: makeAirtableSchema(['Title', 'Price']),
       });
       const rightFolder = makeDataFolder({
         connectorService: Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: makeWebflowSchema(['name', 'slug']),
       });
+      const schemas = buildSchemasMap(
+        [leftFolder, makeAirtableSchema(['Title', 'Price'])],
+        [rightFolder, makeWebflowSchema(['name', 'slug'])],
+      );
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(2);
@@ -1019,9 +1062,11 @@ describe('convertWhalesyncExport', () => {
 
   describe('displayName format', () => {
     it('includes the Whalesync sync name and direction', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
+        syncDirection: 'left',
+      });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs[0].displayName).toBe('My Whalesync Sync (Left \u2192 Right)');
     });
@@ -1029,10 +1074,10 @@ describe('convertWhalesyncExport', () => {
 
   describe('sync-level caveats', () => {
     it('flags active (continuous) sync as info caveat', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario();
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario();
 
       // Default fixture has syncState: 'ACTIVE'
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const continuousCaveat = result.caveats.find((c) => c.message.includes('Continuous'));
       expect(continuousCaveat).toBeDefined();
@@ -1040,17 +1085,17 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('does not flag paused sync', () => {
-      const { wsExport, leftFolder, rightFolder } = buildAirtableToWebflowScenario();
+      const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario();
       wsExport.sync.syncState = 'PAUSED';
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const continuousCaveat = result.caveats.find((c) => c.message.includes('Continuous'));
       expect(continuousCaveat).toBeUndefined();
     });
 
     it('flags first-run merge winner preference as info caveat', () => {
-      const { wsExport, leftFolder, rightFolder, leftTable, rightTable, leftCol, rightCol } =
+      const { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable, leftCol, rightCol } =
         buildAirtableToWebflowScenario();
 
       wsExport.tablePairs = [
@@ -1069,7 +1114,7 @@ describe('convertWhalesyncExport', () => {
         }),
       ];
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mergeCaveat = result.caveats.find((c) => c.message.includes('merge winner'));
       expect(mergeCaveat).toBeDefined();
@@ -1078,7 +1123,7 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('does not flag initializeOnMergeWinner "either"', () => {
-      const { wsExport, leftFolder, rightFolder, leftTable, rightTable, leftCol, rightCol } =
+      const { wsExport, leftFolder, rightFolder, schemas, leftTable, rightTable, leftCol, rightCol } =
         buildAirtableToWebflowScenario();
 
       wsExport.sync.syncState = 'PAUSED';
@@ -1098,7 +1143,7 @@ describe('convertWhalesyncExport', () => {
         }),
       ];
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mergeCaveat = result.caveats.find((c) => c.message.includes('merge winner'));
       expect(mergeCaveat).toBeUndefined();
@@ -1145,26 +1190,25 @@ describe('convertWhalesyncExport', () => {
       const leftFolder = makeDataFolder({
         connectorService: opts.leftService ?? Service.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
-        schema: opts.leftSchema,
       });
       const rightFolder = makeDataFolder({
         connectorService: opts.rightService ?? Service.WEBFLOW,
         tableId: ['site111', 'col111'],
-        schema: opts.rightSchema,
       });
+      const schemas = buildSchemasMap([leftFolder, opts.leftSchema], [rightFolder, opts.rightSchema]);
 
-      return { wsExport, leftFolder, rightFolder };
+      return { wsExport, leftFolder, rightFolder, schemas };
     }
 
     it('matches by remote field ID even when names differ', () => {
-      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+      const { wsExport, leftFolder, rightFolder, schemas } = buildCascadeScenario({
         leftCol: { name: 'Renamed Title', remoteId: 'fldABC' },
         rightCol: { name: 'Renamed Name', remoteId: 'wf_abc123' },
         leftSchema: makeAnnotatedAirtableSchema([{ name: 'Title', remoteFieldId: 'fldABC' }]),
         rightSchema: makeAnnotatedWebflowSchema([{ name: 'name', remoteFieldId: 'wf_abc123' }]),
       });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
@@ -1173,7 +1217,7 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('falls back to slug when no remote field ID annotation exists', () => {
-      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+      const { wsExport, leftFolder, rightFolder, schemas } = buildCascadeScenario({
         leftCol: { name: 'Title', remoteId: 'fldABC' },
         rightCol: { name: 'name', remoteId: 'wf_abc123' },
         // Plain schemas without annotations — slug matching only
@@ -1181,7 +1225,7 @@ describe('convertWhalesyncExport', () => {
         rightSchema: makeWebflowSchema(['name']),
       });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
@@ -1192,14 +1236,14 @@ describe('convertWhalesyncExport', () => {
     it('falls back to description when slug does not match', () => {
       // Webflow case: WS column name is "Adoption Price", schema key is "adoption-price"
       // Slug match fails, but description "Adoption Price" matches
-      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+      const { wsExport, leftFolder, rightFolder, schemas } = buildCascadeScenario({
         leftCol: { name: 'Adoption Price', remoteId: 'fldABC' },
         rightCol: { name: 'Adoption Price', remoteId: 'nomatch' },
         leftSchema: makeAnnotatedAirtableSchema([{ name: 'Adoption Price', remoteFieldId: 'fldABC' }]),
         rightSchema: makeAnnotatedWebflowSchema([{ name: 'adoption-price', description: 'Adoption Price' }]),
       });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
@@ -1211,7 +1255,7 @@ describe('convertWhalesyncExport', () => {
       // WS column name is "FieldA" and remoteId is "fldB"
       // Schema has FieldA (remoteId fldA) and FieldB (remoteId fldB)
       // Should match FieldB by remote ID, not FieldA by name
-      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+      const { wsExport, leftFolder, rightFolder, schemas } = buildCascadeScenario({
         leftCol: { name: 'FieldA', remoteId: 'fldB' },
         rightCol: { name: 'name', remoteId: 'wf_name' },
         leftSchema: makeAnnotatedAirtableSchema([
@@ -1221,7 +1265,7 @@ describe('convertWhalesyncExport', () => {
         rightSchema: makeAnnotatedWebflowSchema([{ name: 'name', remoteFieldId: 'wf_name' }]),
       });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
@@ -1230,14 +1274,14 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('skips column with caveat when no cascade level matches', () => {
-      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+      const { wsExport, leftFolder, rightFolder, schemas } = buildCascadeScenario({
         leftCol: { name: 'NoMatch', remoteId: 'fldNOPE' },
         rightCol: { name: 'name', remoteId: 'wf_name' },
         leftSchema: makeAnnotatedAirtableSchema([{ name: 'Title', remoteFieldId: 'fldTITLE', description: 'Title' }]),
         rightSchema: makeAnnotatedWebflowSchema([{ name: 'name', remoteFieldId: 'wf_name' }]),
       });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       expect(result.syncs[0].mappings.tableMappings[0].columnMappings).toHaveLength(0);
 
@@ -1248,14 +1292,14 @@ describe('convertWhalesyncExport', () => {
 
     it('matches both sides independently through different cascade levels', () => {
       // Source matches by remote ID, destination matches by description
-      const { wsExport, leftFolder, rightFolder } = buildCascadeScenario({
+      const { wsExport, leftFolder, rightFolder, schemas } = buildCascadeScenario({
         leftCol: { name: 'Old Name', remoteId: 'fldABC' },
         rightCol: { name: 'Adoption Price', remoteId: 'nomatch' },
         leftSchema: makeAnnotatedAirtableSchema([{ name: 'Title', remoteFieldId: 'fldABC' }]),
         rightSchema: makeAnnotatedWebflowSchema([{ name: 'adoption-price', description: 'Adoption Price' }]),
       });
 
-      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport);
+      const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);

@@ -348,8 +348,7 @@ model DataFolder {
   // Service type (required when linked to a connector, optional otherwise)
   connectorService Service?
 
-  // A schema object that describes the data in the files stored in the folder
-  // Only used by Linked Folders
+  // @deprecated — schema is now stored in git (.schema.json). This column will be dropped in a future migration.
   schema              Json?
   lastSchemaRefreshAt DateTime
 

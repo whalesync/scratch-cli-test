@@ -15,13 +15,12 @@ export class SchemaHelperService {
   ) {}
 
   /**
-   * Reads schema from git first, falling back to the DB value.
+   * Reads schema from git.
    */
-  private async readSchemaWithFallback(
+  private async readSchemaFromGit(
     workbookId: string,
     connectorAccountId: string | null,
     folderPath: string | null,
-    dbSchema: unknown,
   ): Promise<BaseJsonTableSpec | null> {
     if (folderPath) {
       try {
@@ -33,16 +32,15 @@ export class SchemaHelperService {
         if (gitSchema) return gitSchema;
       } catch (error) {
         WSLogger.error({
-          source: 'SchemaHelperService.readSchemaWithFallback',
-          message: 'Failed to read schema from git, falling back to DB',
+          source: 'SchemaHelperService.readSchemaFromGit',
+          message: 'Failed to read schema from git',
           error,
           workbookId,
           folderPath,
         });
       }
     }
-    // Fallback to DB schema
-    return (dbSchema as BaseJsonTableSpec) || null;
+    return null;
   }
 
   /**
@@ -64,14 +62,13 @@ export class SchemaHelperService {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
         },
-        select: { schema: true, connectorAccountId: true, path: true },
+        select: { connectorAccountId: true, path: true },
       });
 
-      const spec = await this.readSchemaWithFallback(
+      const spec = await this.readSchemaFromGit(
         workbookId,
         dataFolder?.connectorAccountId ?? null,
         dataFolder?.path ?? null,
-        dataFolder?.schema,
       );
       if (cache) {
         cache.set(folderPath, spec);
@@ -120,7 +117,7 @@ export class SchemaHelperService {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
         },
-        select: { id: true, tableId: true, schema: true, connectorAccountId: true, path: true },
+        select: { id: true, tableId: true, connectorAccountId: true, path: true },
       });
 
       if (!dataFolder) {
@@ -130,12 +127,7 @@ export class SchemaHelperService {
         return null;
       }
 
-      const spec = await this.readSchemaWithFallback(
-        workbookId,
-        dataFolder.connectorAccountId,
-        dataFolder.path,
-        dataFolder.schema,
-      );
+      const spec = await this.readSchemaFromGit(workbookId, dataFolder.connectorAccountId, dataFolder.path);
       const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec: spec! };
       if (cache) {
         cache.set(folderPath, result);
@@ -167,14 +159,13 @@ export class SchemaHelperService {
     try {
       const dataFolder = await this.db.client.dataFolder.findUnique({
         where: { id: dataFolderId },
-        select: { schema: true, connectorAccountId: true, path: true, workbookId: true },
+        select: { connectorAccountId: true, path: true, workbookId: true },
       });
 
-      const spec = await this.readSchemaWithFallback(
+      const spec = await this.readSchemaFromGit(
         dataFolder?.workbookId ?? '',
         dataFolder?.connectorAccountId ?? null,
         dataFolder?.path ?? null,
-        dataFolder?.schema,
       );
       if (cache) {
         cache.set(dataFolderId, spec);

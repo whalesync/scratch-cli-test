@@ -260,7 +260,6 @@ export class DataFolderService {
           parentId: parentFolderId ?? null,
           path: folderPath,
           lock: 'pull',
-          schema: tableSpec,
           lastSchemaRefreshAt: new Date(),
           version: 1,
           tableId: dto.tableId,
@@ -694,7 +693,6 @@ export class DataFolderService {
         dataFolder.workbookId as WorkbookId,
         dataFolder.connectorAccountId,
         dataFolder.path,
-        dataFolder.schema ? (dataFolder.schema as Record<string, unknown>) : null,
       );
 
       if (!schema) {
@@ -870,15 +868,14 @@ export class DataFolderService {
   }
 
   /**
-   * Reads schema from git first, falling back to the DB value.
+   * Reads schema from git.
    */
   async readSchema(
     workbookId: WorkbookId,
     connectorAccountId: string | null | undefined,
     folderPath: string | null,
-    dbSchema: Record<string, unknown> | null,
   ): Promise<BaseJsonTableSpec | null> {
-    if (!folderPath) return (dbSchema as BaseJsonTableSpec) ?? null;
+    if (!folderPath) return null;
     try {
       const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId ?? undefined);
       const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
@@ -886,13 +883,13 @@ export class DataFolderService {
     } catch (error) {
       WSLogger.error({
         source: 'DataFolderService.readSchema',
-        message: 'Failed to read schema from git, falling back to DB',
+        message: 'Failed to read schema from git',
         error,
         workbookId,
         folderPath,
       });
     }
-    return (dbSchema as BaseJsonTableSpec) ?? null;
+    return null;
   }
 
   /**
@@ -900,7 +897,7 @@ export class DataFolderService {
    */
   async getStoredSchema(id: DataFolderId, actor: Actor): Promise<Record<string, unknown> | null> {
     const folder = await this.findOne(id, actor);
-    return await this.readSchema(folder.workbookId, folder.connectorAccountId, folder.path, folder.schema);
+    return await this.readSchema(folder.workbookId, folder.connectorAccountId, folder.path);
   }
 
   /**
@@ -945,7 +942,7 @@ export class DataFolderService {
       // Persist refreshed schema with overrides
       await this.db.client.dataFolder.update({
         where: { id },
-        data: { schema: tableSpec, lastSchemaRefreshAt: new Date() },
+        data: { lastSchemaRefreshAt: new Date() },
       });
 
       // Write schema to git repo

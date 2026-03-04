@@ -16,8 +16,6 @@ export interface DataFolder {
   connectorAccountId: string | null;
   connectorDisplayName: string | null;
   connectorService: Service | null;
-  /** @deprecated Read from git via ScratchGitService.readSchemaFromGit() instead. DB column retained for fallback. */
-  schema: Record<string, unknown> | null;
   lastSchemaRefreshAt: string | null;
   parentId: string | null;
   path: string | null;

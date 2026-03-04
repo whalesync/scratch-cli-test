@@ -189,21 +189,28 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
         continue;
       }
 
-      // Read schema from git first, fall back to DB
-      let tableSpec: BaseJsonTableSpec;
+      // Read schema from git
+      let tableSpec: BaseJsonTableSpec | null = null;
       if (dataFolder.path && dataFolder.connectorAccountId) {
         try {
           const schemaRepoId = await this.scratchGitService.resolveRepoId(
             data.workbookId,
             dataFolder.connectorAccountId,
           );
-          const gitSchema = await this.scratchGitService.readSchemaFromGit(schemaRepoId, dataFolder.path);
-          tableSpec = gitSchema ?? (dataFolder.schema as BaseJsonTableSpec);
+          tableSpec = await this.scratchGitService.readSchemaFromGit(schemaRepoId, dataFolder.path);
         } catch {
-          tableSpec = dataFolder.schema as BaseJsonTableSpec;
+          // schema will remain null
         }
-      } else {
-        tableSpec = dataFolder.schema as BaseJsonTableSpec;
+      }
+
+      if (!tableSpec) {
+        WSLogger.warn({
+          source: 'PublishDataFolderJob',
+          message: 'Skipping folder - schema not found in git',
+          dataFolderId: dataFolder.id,
+        });
+        currentFolder.status = 'failed';
+        continue;
       }
 
       // Mark folder as in_progress

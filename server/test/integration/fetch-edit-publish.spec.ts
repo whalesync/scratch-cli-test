@@ -346,7 +346,6 @@ describe('Fetch → Edit → Publish Integration', () => {
         workbookId,
         connectorAccountId,
         connectorService: Service.POSTGRES,
-        schema: authorsTableSpec as unknown as any,
         lastSchemaRefreshAt: new Date(),
         tableId: ['public', AUTHORS_TABLE],
       },
@@ -361,7 +360,6 @@ describe('Fetch → Edit → Publish Integration', () => {
         workbookId,
         connectorAccountId,
         connectorService: Service.POSTGRES,
-        schema: postsTableSpec as unknown as any,
         lastSchemaRefreshAt: new Date(),
         tableId: ['public', POSTS_TABLE],
       },
@@ -394,7 +392,13 @@ describe('Fetch → Edit → Publish Integration', () => {
         .fn()
         .mockImplementation(async (_repoId: string, branch: string, paths: string[]) => vfs.readFiles(branch, paths)),
       runGitGc: jest.fn().mockResolvedValue(undefined),
-      readSchemaFromGit: jest.fn().mockResolvedValue(null),
+      readSchemaFromGit: jest.fn().mockImplementation(async (_repoId: string, folderPath: string) => {
+        const schemas: Record<string, unknown> = {
+          [`/${AUTHORS_FOLDER}`]: authorsTableSpec,
+          [`/${POSTS_FOLDER}`]: postsTableSpec,
+        };
+        return schemas[folderPath] ?? null;
+      }),
       writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
     } as unknown as ScratchGitService;
 

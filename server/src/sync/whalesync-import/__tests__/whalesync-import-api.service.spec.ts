@@ -119,15 +119,19 @@ describe('WhalesyncImportApiService', () => {
         makeDataFolder({
           connectorService: Service.AIRTABLE,
           tableId: ['appAAA', 'tblPROD'],
-          schema: makeAirtableSchema(['Title']),
         }),
         makeDataFolder({
           connectorService: Service.WEBFLOW,
           tableId: ['site111', 'col111'],
-          schema: makeWebflowSchema(['name']),
         }),
       ];
-      const { service } = buildService({ dataFolders });
+      const { service, dataFolderService } = buildService({ dataFolders });
+      // Mock readSchema to return schemas from git
+      const airtableSpec = { schema: makeAirtableSchema(['Title']) } as unknown;
+      const webflowSpec = { schema: makeWebflowSchema(['name']) } as unknown;
+      (dataFolderService as { readSchema: jest.Mock }).readSchema
+        .mockResolvedValueOnce(airtableSpec)
+        .mockResolvedValueOnce(webflowSpec);
 
       const result = await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
 
@@ -209,6 +213,50 @@ describe('WhalesyncImportApiService', () => {
         'https://custom.example.com/rest/core-bases/cb_123/export',
         expect.anything(),
       );
+    });
+
+    it('should handle readSchema failure for one folder gracefully', async () => {
+      const leftCol = makeWhalesyncColumn({ name: 'Title' });
+      const rightCol = makeWhalesyncColumn({ name: 'name', connectorType: 'webflow' });
+      const leftTable = makeWhalesyncTable({ remoteId: 'tblPROD', connectorType: 'airtable', columns: [leftCol] });
+      const rightTable = makeWhalesyncTable({ remoteId: 'col111', connectorType: 'webflow', columns: [rightCol] });
+
+      const wsExport = makeWhalesyncExport({
+        sources: {
+          left: makeWhalesyncSource({ connectorType: 'airtable', remoteBaseId: 'appAAA', tables: [leftTable] }),
+          right: makeWhalesyncSource({ connectorType: 'webflow', remoteBaseId: 'site111', tables: [rightTable] }),
+        },
+        tablePairs: [
+          makeWhalesyncTablePair({
+            leftTableId: leftTable.id,
+            rightTableId: rightTable.id,
+            syncDirection: 'left',
+            columnPairs: [
+              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+            ],
+          }),
+        ],
+      });
+      mockedAxios.get.mockResolvedValue({ data: wsExport });
+
+      const dataFolders = [
+        makeDataFolder({ connectorService: Service.AIRTABLE, tableId: ['appAAA', 'tblPROD'] }),
+        makeDataFolder({ connectorService: Service.WEBFLOW, tableId: ['site111', 'col111'] }),
+      ];
+      const { service, dataFolderService } = buildService({ dataFolders });
+
+      // First folder's schema fails, second succeeds
+      const webflowSpec = { schema: makeWebflowSchema(['name']) } as unknown;
+      (dataFolderService as { readSchema: jest.Mock }).readSchema
+        .mockRejectedValueOnce(new Error('git error'))
+        .mockResolvedValueOnce(webflowSpec);
+
+      const result = await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
+
+      expect(result).toHaveProperty('syncs');
+      expect(result).toHaveProperty('caveats');
+      expect(result).toHaveProperty('unmatchedFolders');
+      expect(Array.isArray(result.syncs)).toBe(true);
     });
   });
 

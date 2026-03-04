@@ -82,14 +82,6 @@ async function bootstrap() {
         path: '/folder',
         name: 'folder',
         lastSchemaRefreshAt: new Date(),
-        // index: 0, // Removed as it doesn't exist in schema
-        schema: {
-          id: 'rt_folder',
-          slug: 'folder',
-          name: 'folder',
-          schema: schemaContentForDf,
-          idColumnRemoteId: 'id',
-        } as any,
       },
     });
     const dfId = dataFolder.id;

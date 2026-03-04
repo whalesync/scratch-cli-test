@@ -35,6 +35,7 @@ interface ResolvedTable {
 export function convertWhalesyncExport(
   dataFolders: DataFolder[],
   wsExport: WhalesyncSyncExport,
+  schemas?: Map<string, Record<string, unknown>>,
 ): WhalesyncImportResult {
   const caveats: Caveat[] = [];
   const unmatchedFolders: UnmatchedFolder[] = [];
@@ -56,7 +57,7 @@ export function convertWhalesyncExport(
   generateSyncLevelCaveats(wsExport, caveats);
 
   // C–E. Build SaveSyncBody[] from table pairs
-  const syncs = buildSyncs(wsExport, resolvedTables, caveats);
+  const syncs = buildSyncs(wsExport, resolvedTables, caveats, schemas);
 
   return { syncs, caveats, unmatchedFolders };
 }
@@ -119,6 +120,7 @@ function buildSyncs(
   wsExport: WhalesyncSyncExport,
   resolvedTables: Map<string, ResolvedTable>,
   caveats: Caveat[],
+  schemas?: Map<string, Record<string, unknown>>,
 ): SaveSyncBody[] {
   // Collect table pairs per direction
   const leftToRight: WhalesyncExportTablePair[] = [];
@@ -166,10 +168,10 @@ function buildSyncs(
   const syncs: SaveSyncBody[] = [];
 
   if (leftToRight.length > 0) {
-    syncs.push(buildOneSyncBody(wsExport, resolvedTables, leftToRight, 'left', caveats));
+    syncs.push(buildOneSyncBody(wsExport, resolvedTables, leftToRight, 'left', caveats, schemas));
   }
   if (rightToLeft.length > 0) {
-    syncs.push(buildOneSyncBody(wsExport, resolvedTables, rightToLeft, 'right', caveats));
+    syncs.push(buildOneSyncBody(wsExport, resolvedTables, rightToLeft, 'right', caveats, schemas));
   }
 
   return syncs;
@@ -182,6 +184,7 @@ function buildOneSyncBody(
   pairs: WhalesyncExportTablePair[],
   sourceDirection: 'left' | 'right',
   caveats: Caveat[],
+  schemas?: Map<string, Record<string, unknown>>,
 ): SaveSyncBody {
   const directionLabel = sourceDirection === 'left' ? 'Left \u2192 Right' : 'Right \u2192 Left';
 
@@ -205,7 +208,7 @@ function buildOneSyncBody(
       });
     }
 
-    const columnMappings = resolveColumnMappings(pair, sourceDirection, sourceResolved, destResolved, caveats);
+    const columnMappings = resolveColumnMappings(pair, sourceDirection, sourceResolved, destResolved, caveats, schemas);
 
     tableMappings.push({
       sourceDataFolderId: sourceResolved.dataFolder.id,
@@ -231,9 +234,10 @@ function resolveColumnMappings(
   sourceResolved: ResolvedTable,
   destResolved: ResolvedTable,
   caveats: Caveat[],
+  schemas?: Map<string, Record<string, unknown>>,
 ): ColumnMapping[] {
-  const sourceSchema = sourceResolved.dataFolder.schema;
-  const destSchema = destResolved.dataFolder.schema;
+  const sourceSchema = schemas?.get(sourceResolved.dataFolder.id) ?? null;
+  const destSchema = schemas?.get(destResolved.dataFolder.id) ?? null;
 
   if (!sourceSchema || !destSchema) return [];
 

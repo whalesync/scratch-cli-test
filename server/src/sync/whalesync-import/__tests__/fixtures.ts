@@ -204,7 +204,6 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     connectorAccountId: null,
     connectorDisplayName: null,
     connectorService: Service.AIRTABLE,
-    schema: makeAirtableSchema(['Title', 'Price']),
     lastSchemaRefreshAt: null,
     parentId: null,
     path: '/products',
@@ -216,4 +215,11 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     schedules: [],
     ...overrides,
   };
+}
+
+/** Build a schemas map from [folder, schema] pairs for use with convertWhalesyncExport. */
+export function buildSchemasMap(
+  ...pairs: [DataFolder, Record<string, unknown>][]
+): Map<string, Record<string, unknown>> {
+  return new Map(pairs.map(([folder, schema]) => [folder.id, schema]));
 }

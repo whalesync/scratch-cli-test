@@ -64,13 +64,6 @@ export function TableDetail({ folder, workbookId }: TableDetailProps) {
               {isLoading ? '...' : stats.dirtyCount}
             </TextMono12Regular>
           </Group>
-
-          {folder.schema && (
-            <Group justify="space-between">
-              <Text13Regular c="var(--fg-secondary)">Fields</Text13Regular>
-              <TextMono12Regular>{Object.keys(folder.schema).length}</TextMono12Regular>
-            </Group>
-          )}
         </Stack>
       </Stack>
     </Box>

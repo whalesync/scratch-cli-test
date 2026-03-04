@@ -335,12 +335,19 @@ describe('SyncService - syncTableMapping', () => {
   // Track written files for verification
   let writtenFiles: Array<{ path: string; content: string }>;
 
+  // Schema map keyed by folder path — readSchemaFromGit returns the right schema per folder
+  let gitSchemasByPath: Record<string, Record<string, unknown>>;
+
   beforeAll(() => {
     prisma = new PrismaClient();
   });
 
   beforeEach(async () => {
     writtenFiles = [];
+    gitSchemasByPath = {
+      '/src': { idColumnRemoteId: 'id' },
+      '/dest': { idColumnRemoteId: 'id' },
+    };
 
     dbService = { client: prisma } as unknown as DbService;
 
@@ -370,6 +377,9 @@ describe('SyncService - syncTableMapping', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
+      readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
+        return Promise.resolve(gitSchemasByPath[folderPath] ?? null);
+      }),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
@@ -420,7 +430,7 @@ describe('SyncService - syncTableMapping', () => {
     });
     workbookId = wbId;
 
-    // Create source and destination data folders with schema containing idColumnRemoteId
+    // Create source and destination data folders
     const srcFolderId = createDataFolderId();
     await prisma.dataFolder.create({
       data: {
@@ -428,7 +438,6 @@ describe('SyncService - syncTableMapping', () => {
         name: 'Source Folder',
         workbookId,
         path: '/src',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -441,7 +450,6 @@ describe('SyncService - syncTableMapping', () => {
         name: 'Destination Folder',
         workbookId,
         path: '/dest',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -1288,7 +1296,9 @@ describe('SyncService - syncTableMapping', () => {
   });
 
   it('should handle dot-separated idColumnRemoteId when parsing records', async () => {
-    // Source folder uses a nested ID column
+    // Source folder uses a nested ID column — register its schema in the git mock
+    gitSchemasByPath['/nested-src'] = { idColumnRemoteId: 'sys.id' };
+
     const nestedIdFolderId = createDataFolderId();
     await prisma.dataFolder.create({
       data: {
@@ -1296,7 +1306,6 @@ describe('SyncService - syncTableMapping', () => {
         name: 'Nested ID Source',
         workbookId,
         path: '/nested-src',
-        schema: { idColumnRemoteId: 'sys.id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -1534,6 +1543,15 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
+      readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
+        const schemas: Record<string, Record<string, unknown>> = {
+          '/src-authors': { idColumnRemoteId: 'id' },
+          '/dest-authors': { idColumnRemoteId: 'id' },
+          '/src-posts': { idColumnRemoteId: 'id' },
+          '/dest-posts': { idColumnRemoteId: 'id' },
+        };
+        return Promise.resolve(schemas[folderPath] ?? null);
+      }),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
@@ -1590,7 +1608,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Source Authors',
         workbookId,
         path: '/src-authors',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -1603,7 +1620,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Dest Authors',
         workbookId,
         path: '/dest-authors',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -1616,7 +1632,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -1629,7 +1644,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Dest Posts',
         workbookId,
         path: '/dest-posts',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -2280,6 +2294,14 @@ describe('SyncService - lookup_field transformer', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
+      readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
+        const schemas: Record<string, Record<string, unknown>> = {
+          '/src-categories': { idColumnRemoteId: 'id' },
+          '/src-posts': { idColumnRemoteId: 'id' },
+          '/dest-posts': { idColumnRemoteId: 'id' },
+        };
+        return Promise.resolve(schemas[folderPath] ?? null);
+      }),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
@@ -2336,7 +2358,6 @@ describe('SyncService - lookup_field transformer', () => {
         name: 'Source Categories',
         workbookId,
         path: '/src-categories',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -2349,7 +2370,6 @@ describe('SyncService - lookup_field transformer', () => {
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -2362,7 +2382,6 @@ describe('SyncService - lookup_field transformer', () => {
         name: 'Dest Posts',
         workbookId,
         path: '/dest-posts',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });

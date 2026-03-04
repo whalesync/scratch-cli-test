@@ -44,26 +44,25 @@ export class WhalesyncImportApiService {
 
     const wsExport = await this.fetchBottlenoseExport(parsed.data.whalesyncApiToken, parsed.data.coreBaseId);
     const dataFolders = await this.dataFolderService.listAll(workbookId, actor);
-    await this.hydrateSchemas(dataFolders, workbookId);
-    return convertWhalesyncExport(dataFolders, wsExport);
+    const schemas = await this.hydrateSchemas(dataFolders, workbookId);
+    return convertWhalesyncExport(dataFolders, wsExport, schemas);
   }
 
   /**
-   * Hydrate each DataFolder's schema from git (.schema.json).
-   * The DB `schema` column is deprecated; the source of truth is the git repo.
+   * Hydrate each DataFolder with schema from git (.schema.json).
+   * Returns a map of folder ID -> schema for use by the converter.
    */
-  private async hydrateSchemas(dataFolders: DataFolder[], workbookId: WorkbookId): Promise<void> {
+  private async hydrateSchemas(
+    dataFolders: DataFolder[],
+    workbookId: WorkbookId,
+  ): Promise<Map<string, Record<string, unknown>>> {
+    const schemaMap = new Map<string, Record<string, unknown>>();
     await Promise.all(
       dataFolders.map(async (folder) => {
         try {
-          const spec = await this.dataFolderService.readSchema(
-            workbookId,
-            folder.connectorAccountId,
-            folder.path,
-            folder.schema,
-          );
-          if (spec) {
-            folder.schema = (spec.schema as Record<string, unknown>) ?? null;
+          const spec = await this.dataFolderService.readSchema(workbookId, folder.connectorAccountId, folder.path);
+          if (spec?.schema) {
+            schemaMap.set(folder.id, spec.schema as Record<string, unknown>);
           }
         } catch (error) {
           WSLogger.warn({
@@ -75,6 +74,7 @@ export class WhalesyncImportApiService {
         }
       }),
     );
+    return schemaMap;
   }
 
   private async fetchBottlenoseExport(apiToken: string, coreBaseId: string): Promise<WhalesyncSyncExport> {

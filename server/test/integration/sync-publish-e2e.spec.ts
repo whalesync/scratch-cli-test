@@ -95,6 +95,28 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // ---- Mock: ScratchGitService ----
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
+      readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
+        const schemas: Record<string, Record<string, unknown>> = {
+          '/src-tags': { idColumnRemoteId: 'id' },
+          '/dest-tags': { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
+          '/src-posts': { idColumnRemoteId: 'id' },
+          '/dest-posts': {
+            idColumnRemoteId: 'id',
+            slugColumnRemoteId: 'slug',
+            schema: {
+              type: 'object',
+              properties: {
+                tags: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  'x-scratch-foreign-key': { linkedTableId: destTagsFolderId },
+                },
+              },
+            },
+          },
+        };
+        return Promise.resolve(schemas[folderPath] ?? null);
+      }),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_wkbId: WorkbookId, branch: string, files: { path: string; content: string }[]) => {
@@ -278,7 +300,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         name: 'Source Tags',
         workbookId,
         path: '/src-tags',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -292,7 +313,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         workbookId,
         path: '/dest-tags',
         connectorAccountId,
-        schema: { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -305,7 +325,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -319,20 +338,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         workbookId,
         path: '/dest-posts',
         connectorAccountId,
-        schema: {
-          idColumnRemoteId: 'id',
-          slugColumnRemoteId: 'slug',
-          schema: {
-            type: 'object',
-            properties: {
-              tags: {
-                type: 'array',
-                items: { type: 'string' },
-                'x-scratch-foreign-key': { linkedTableId: destTagsFolderId },
-              },
-            },
-          },
-        },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -706,6 +711,28 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         .mockImplementation((wkbId: WorkbookId, connAcctId?: string) =>
           Promise.resolve(connAcctId ? getRepoId(2, wkbId, orgId, connAcctId) : wkbId),
         ),
+      readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
+        const schemas: Record<string, Record<string, unknown>> = {
+          '/src-tags': { idColumnRemoteId: 'id' },
+          '/dest-tags': { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
+          '/src-posts': { idColumnRemoteId: 'id' },
+          '/dest-posts': {
+            idColumnRemoteId: 'id',
+            slugColumnRemoteId: 'slug',
+            schema: {
+              type: 'object',
+              properties: {
+                tags: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  'x-scratch-foreign-key': { linkedTableId: destTagsFolderId },
+                },
+              },
+            },
+          },
+        };
+        return Promise.resolve(schemas[folderPath] ?? null);
+      }),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation((_repoId: string, branch: string, files: { path: string; content: string }[]) => {
@@ -890,7 +917,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         name: 'Source Tags',
         workbookId,
         path: '/src-tags',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -904,7 +930,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         workbookId,
         path: '/dest-tags',
         connectorAccountId,
-        schema: { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -917,7 +942,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        schema: { idColumnRemoteId: 'id' },
         lastSchemaRefreshAt: new Date(),
       },
     });
@@ -931,20 +955,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         workbookId,
         path: '/dest-posts',
         connectorAccountId,
-        schema: {
-          idColumnRemoteId: 'id',
-          slugColumnRemoteId: 'slug',
-          schema: {
-            type: 'object',
-            properties: {
-              tags: {
-                type: 'array',
-                items: { type: 'string' },
-                'x-scratch-foreign-key': { linkedTableId: destTagsFolderId },
-              },
-            },
-          },
-        },
         lastSchemaRefreshAt: new Date(),
       },
     });
