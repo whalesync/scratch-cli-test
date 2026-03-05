@@ -20,6 +20,7 @@ import { PosthogModule } from './posthog/posthog.module';
 import { PublishPlanModule } from './publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from './remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from './remote-service/connectors/connectors.module';
+import { ShopifyWebhooksModule } from './remote-service/connectors/library/shopify/controllers/shopify-webhooks.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { ScratchGitModule } from './scratch-git/scratch-git.module';
 import { SlackNotificationModule } from './slack/slack-notification.module';
@@ -53,6 +54,7 @@ import { WorkerModule } from './worker/workers.module';
     JobModule,
     PublishPlanModule,
     ScheduleModule,
+    ShopifyWebhooksModule,
     ...(ScratchConfigService.isAPIService() ? [DevToolsModule, BugReportModule, CodeMigrationsModule] : []),
     ...(ScratchConfigService.isTaskWorkerService() ? [WorkerModule] : []),
     ...(ScratchConfigService.isCronService() ? [CronModule] : []),
@@ -69,13 +71,20 @@ export class AppModule implements NestModule {
       // NOTE! Stripe webhooks require access to the unparsed body to check the signatures. Connector webhooks need the
       // raw body because we have no idea ahead of time what format the body will be in.
       .apply(RawBodyMiddleware)
-      .forRoutes({ path: '/payment/webhook', method: RequestMethod.POST })
+      .forRoutes(
+        { path: '/payment/webhook', method: RequestMethod.POST },
+        { path: '/shopify/webhooks/*path', method: RequestMethod.POST },
+      )
       .apply(JsonBodyMiddleware)
       .exclude(
         // Import suggestions endpoint
         { path: '/workbook/:id/tables/:tableId/import-suggestions', method: RequestMethod.POST },
         // Payment webhook
         { path: '/payment/webhook', method: RequestMethod.POST },
+        // Shopify GDPR webhooks
+        { path: '/shopify/webhooks/customers-data-request', method: RequestMethod.POST },
+        { path: '/shopify/webhooks/customers-redact', method: RequestMethod.POST },
+        { path: '/shopify/webhooks/shop-redact', method: RequestMethod.POST },
         // CLI folder files upload (multipart/form-data)
         { path: '/cli/v1/folders/:id/files', method: RequestMethod.PUT },
         // Git proxy (uses raw body)

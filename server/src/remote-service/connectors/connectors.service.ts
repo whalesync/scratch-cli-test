@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AuthType, ConnectorAccount } from '@prisma/client';
-import { Service } from '@spinner/shared-types';
+import { isShopifyConnectorExtras, Service } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { OAuthService } from '../../oauth/oauth.service';
 import { RateLimiter } from '../../rate-limiter/rate-limiter';
@@ -177,22 +177,19 @@ export class ConnectorsService {
           throw new ConnectorInstantiationError('Connector account is required for Shopify', service);
         }
         const shopifyRateLimiter = this.createRateLimiter(service, connectorAccount);
+        if (!isShopifyConnectorExtras(connectorAccount.extras)) {
+          throw new ConnectorInstantiationError('Shop domain is required for Shopify', service);
+        }
+        const { shopDomain } = connectorAccount.extras;
         if (connectorAccount.authType === AuthType.OAUTH) {
           const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
-          const shopDomain = decryptedCredentials?.oauthWorkspaceId;
-          if (!shopDomain) {
-            throw new ConnectorInstantiationError('Shop domain is required for Shopify OAuth', service);
-          }
           return new ShopifyConnector({ shopDomain, accessToken }, { rateLimiter: shopifyRateLimiter });
         } else {
           if (!decryptedCredentials?.apiKey) {
             throw new ConnectorInstantiationError('Access token (API key) is required for Shopify', service);
           }
-          if (!decryptedCredentials?.shopDomain) {
-            throw new ConnectorInstantiationError('Shop domain is required for Shopify', service);
-          }
           return new ShopifyConnector(
-            { shopDomain: decryptedCredentials.shopDomain, accessToken: decryptedCredentials.apiKey },
+            { shopDomain, accessToken: decryptedCredentials.apiKey },
             { rateLimiter: shopifyRateLimiter },
           );
         }

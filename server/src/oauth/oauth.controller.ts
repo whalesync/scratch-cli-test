@@ -25,11 +25,11 @@ export class OAuthController {
    * Gets the OAuth authorization request redirect URL for a connector (service).
    */
   @Post(':service/initiate')
-  initiateOAuth(
+  async initiateOAuth(
     @Param('service') service: string,
     @Req() req: RequestWithUser,
     @Body() body: OAuthInitiateOptionsDto,
-  ): OAuthInitiateResponse {
+  ): Promise<OAuthInitiateResponse> {
     const dto = body as ValidatedOAuthInitiateOptionsDto;
     return this.oauthService.initiateOAuth(service, userToActor(req.user), dto);
   }

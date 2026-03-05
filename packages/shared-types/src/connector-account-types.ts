@@ -1,5 +1,30 @@
 // Types related to connector accounts
 
+// ============= Connector Extras =============
+
+/**
+ * Extras stored on Shopify ConnectorAccount records.
+ * The shop domain is stored unencrypted in `extras` so it can be queried directly (e.g. GDPR shop/redact).
+ */
+export interface ShopifyConnectorExtras {
+  shopDomain: string;
+}
+
+/**
+ * Type guard for ShopifyConnectorExtras.
+ * Validates that the extras JSON has a `shopDomain` string property.
+ */
+export function isShopifyConnectorExtras(extras: unknown): extras is ShopifyConnectorExtras {
+  return (
+    typeof extras === 'object' &&
+    extras !== null &&
+    'shopDomain' in extras &&
+    typeof (extras as Record<string, unknown>).shopDomain === 'string'
+  );
+}
+
+// ============= Credentials =============
+
 export interface SupabaseProjectCredentials {
   projectRef: string;
   projectName: string;
@@ -16,8 +41,6 @@ export interface DecryptedCredentials {
   endpoint?: string;
   // Moco specific
   domain?: string;
-  // Shopify specific
-  shopDomain?: string;
   // PostgreSQL specific
   connectionString?: string;
   // Supabase multi-project (OAuth)

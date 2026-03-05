@@ -10,6 +10,7 @@ import {
   ConnectorAccountId,
   createConnectorAccountId,
   Service,
+  ShopifyConnectorExtras,
   TableDiscoveryMode,
   UpdateConnectorAccountDto,
   ValidatedCreateConnectorAccountDto,
@@ -77,15 +78,21 @@ export class ConnectorAccountService {
       );
     }
 
-    const { credentials: parsedCredentials, extras } = await this.parseUserProvidedParams(
+    const { credentials: parsedCredentials, extras: parsedExtras } = await this.parseUserProvidedParams(
       createDto.userProvidedParams || {},
       createDto.service,
     );
 
-    const credentials: DecryptedCredentials = parsedCredentials;
+    // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
+    let extras: Record<string, string> = { ...parsedExtras };
+    if (createDto.service === Service.SHOPIFY && parsedCredentials.shopDomain) {
+      const shopifyExtras: ShopifyConnectorExtras = { shopDomain: parsedCredentials.shopDomain };
+      extras = { ...extras, ...shopifyExtras };
+      delete parsedCredentials.shopDomain;
+    }
 
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(
-      credentials as unknown as DecryptedCredentials,
+      parsedCredentials as unknown as DecryptedCredentials,
     );
 
     if (!actor.organizationId) {
@@ -230,6 +237,15 @@ export class ConnectorAccountService {
       Object.assign(decryptedCredentials, updateDto.userProvidedParams);
     }
 
+    // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
+    let extras = updateDto.extras;
+    const credentialsRecord = decryptedCredentials as Record<string, unknown>;
+    if (currentAccount.service === 'SHOPIFY' && typeof credentialsRecord.shopDomain === 'string') {
+      const shopifyExtras: ShopifyConnectorExtras = { shopDomain: credentialsRecord.shopDomain };
+      extras = { ...(extras || (currentAccount.extras as Record<string, unknown> | null) || {}), ...shopifyExtras };
+      delete credentialsRecord.shopDomain;
+    }
+
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
 
     const account = await this.db.client.connectorAccount.update({
@@ -238,7 +254,7 @@ export class ConnectorAccountService {
         displayName: updateDto.displayName,
         encryptedCredentials: encryptedCredentials as Record<string, any>,
         modifier: updateDto.modifier,
-        extras: updateDto.extras,
+        extras,
         healthStatus: null,
         healthStatusLastCheckedAt: null,
       },
@@ -268,6 +284,46 @@ export class ConnectorAccountService {
     if (!account) {
       throw new NotFoundException('ConnectorAccount not found');
     }
+
+    await this.removeConnectionData(account);
+
+    this.posthogService.trackRemoveDataSource(actor, account);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'delete',
+      message: `Deleted connection ${account.displayName}`,
+      entityId: account.id as ConnectorAccountId,
+    });
+  }
+
+  /**
+   * Remove a connection and all its data without requiring an Actor.
+   * Used for system-level operations like Shopify GDPR shop/redact webhooks.
+   *
+   * TODO: Remerge this with remove() once there are system-level Actors to use.
+   */
+  async removeBySystem(workbookId: WorkbookId, id: string): Promise<void> {
+    const account = await this.findOneByIdAdmin(id);
+    await this.removeConnectionData(account);
+
+    await this.auditLogService.logEvent({
+      actor: {
+        userId: 'system',
+        organizationId: 'system',
+      },
+      eventType: 'delete',
+      message: `Deleted connection ${account.displayName} by system`,
+      entityId: account.id as ConnectorAccountId,
+    });
+  }
+
+  /**
+   * Core cleanup logic shared by remove() and removeBySystem().
+   * Deletes schedules, publish plans, DataFolders, git data, and the ConnectorAccount record.
+   */
+  private async removeConnectionData(account: ConnectorAccount): Promise<void> {
+    const { id, workbookId } = account;
 
     // Fetch all DataFolders for this connection (needed for schedule cleanup)
     const dataFolders = await this.db.client.dataFolder.findMany({
@@ -300,7 +356,7 @@ export class ConnectorAccountService {
         await this.scratchGitService.deleteRepo(account.repoPath);
       } catch (err) {
         WSLogger.error({
-          source: 'ConnectorAccountService.remove',
+          source: 'ConnectorAccountService.removeConnectionData',
           message: 'Failed to delete git repo during connection removal',
           error: err,
           workbookId,
@@ -312,15 +368,6 @@ export class ConnectorAccountService {
     // Delete the ConnectorAccount record
     await this.db.client.connectorAccount.delete({
       where: { id, workbookId },
-    });
-
-    this.posthogService.trackRemoveDataSource(actor, account);
-
-    await this.auditLogService.logEvent({
-      actor,
-      eventType: 'delete',
-      message: `Deleted connection ${account.displayName}`,
-      entityId: account.id as ConnectorAccountId,
     });
   }
 

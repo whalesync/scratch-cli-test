@@ -8,7 +8,9 @@ import {
 import { AuthType, ConnectorAccount } from '@prisma/client';
 import {
   createConnectorAccountId,
+  isShopifyConnectorExtras,
   Service,
+  ShopifyConnectorExtras,
   SupabaseProjectCredentials,
   ValidatedOAuthInitiateOptionsDto,
   WorkbookId,
@@ -86,10 +88,25 @@ export class OAuthService {
    * then generates the authorization URL that the client should redirect the user to.
    * Supports both system-managed OAuth apps and custom OAuth client credentials.
    */
-  initiateOAuth(service: string, actor: Actor, options: ValidatedOAuthInitiateOptionsDto): OAuthInitiateResponse {
+  async initiateOAuth(
+    service: string,
+    actor: Actor,
+    options: ValidatedOAuthInitiateOptionsDto,
+  ): Promise<OAuthInitiateResponse> {
     const provider = this.providers.get(service);
     if (!provider) {
       throw new BadRequestException(`Unsupported OAuth service: ${service}`);
+    }
+
+    // For reauthorization, look up the shop domain from the existing account's extras
+    let shopDomain = options.shopDomain;
+    if (options.connectorAccountId && service === 'SHOPIFY' && !shopDomain) {
+      const existingAccount = await this.db.client.connectorAccount.findUnique({
+        where: { id: options.connectorAccountId },
+      });
+      if (existingAccount && isShopifyConnectorExtras(existingAccount.extras)) {
+        shopDomain = existingAccount.extras.shopDomain;
+      }
     }
 
     // Embed connection method and optional custom client info into state (base64 JSON)
@@ -113,7 +130,7 @@ export class OAuthService {
       connectionName: options.connectionName,
       returnPage: options.returnPage,
       connectorAccountId: options.connectorAccountId,
-      shopDomain: options.shopDomain,
+      shopDomain,
       codeVerifier,
       ts: Date.now(),
     };
@@ -121,7 +138,7 @@ export class OAuthService {
 
     const authUrl = provider.generateAuthUrl(actor.userId, state, {
       clientId: options.connectionMethod === 'OAUTH_CUSTOM' ? options.customClientId : undefined,
-      shopDomain: options.shopDomain,
+      shopDomain,
       codeChallenge,
     });
 
@@ -286,13 +303,15 @@ export class OAuthService {
     },
   ) {
     const serviceEnum = this.mapServiceStringToEnum(service);
+    const isShopify = serviceEnum === Service.SHOPIFY;
 
     // Prepare credentials for encryption
+    // For Shopify, the shop domain is stored in extras (not encrypted) so it can be queried directly
     const credentials: DecryptedCredentials = {
       oauthAccessToken: tokenResponse.access_token,
       oauthRefreshToken: tokenResponse.refresh_token,
       oauthExpiresAt: this.expiresInToOAuthExpiresAt(tokenResponse.expires_in),
-      oauthWorkspaceId: tokenResponse.workspace_id,
+      oauthWorkspaceId: isShopify ? undefined : tokenResponse.workspace_id,
       customOAuthClientId:
         connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? connectionInfo.customClientId : undefined,
       customOAuthClientSecret:
@@ -315,6 +334,10 @@ export class OAuthService {
     const accountId = createConnectorAccountId();
     const repoPath = getDefaultRepoPath(actor.organizationId, workbookId, accountId);
 
+    // Store non-sensitive metadata in extras for direct querying (e.g. GDPR shop/redact lookups)
+    const extras: ShopifyConnectorExtras | undefined =
+      isShopify && tokenResponse.workspace_id ? { shopDomain: tokenResponse.workspace_id } : undefined;
+
     const newConnectorAccount = await this.db.client.connectorAccount.create({
       data: {
         id: accountId,
@@ -327,6 +350,7 @@ export class OAuthService {
         authType: AuthType.OAUTH,
         repoPath,
         encryptedCredentials: encryptedCredentials as Record<string, any>,
+        extras: extras as Record<string, string> | undefined,
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),
       },
@@ -365,12 +389,15 @@ export class OAuthService {
       connectionName?: string;
     },
   ): Promise<void> {
+    const isShopify = connectorAccount.service === 'SHOPIFY';
+
     // Prepare credentials for encryption
+    // For Shopify, the shop domain is stored in extras (not encrypted) so it can be queried directly
     const credentials: DecryptedCredentials = {
       oauthAccessToken: tokenResponse.access_token,
       oauthRefreshToken: tokenResponse.refresh_token,
       oauthExpiresAt: this.expiresInToOAuthExpiresAt(tokenResponse.expires_in),
-      oauthWorkspaceId: tokenResponse.workspace_id,
+      oauthWorkspaceId: isShopify ? undefined : tokenResponse.workspace_id,
       customOAuthClientId:
         connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? connectionInfo.customClientId : undefined,
       customOAuthClientSecret:
@@ -379,11 +406,15 @@ export class OAuthService {
 
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(credentials);
 
-    // Create new account
+    // Store non-sensitive metadata in extras for direct querying (e.g. GDPR shop/redact lookups)
+    const extras: ShopifyConnectorExtras | undefined =
+      isShopify && tokenResponse.workspace_id ? { shopDomain: tokenResponse.workspace_id } : undefined;
+
     await this.db.client.connectorAccount.update({
       where: { id: connectorAccount.id },
       data: {
         encryptedCredentials: encryptedCredentials as Record<string, any>,
+        ...(extras ? { extras: { ...extras } } : {}),
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),
       },

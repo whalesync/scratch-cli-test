@@ -275,7 +275,6 @@ export class DevToolsController {
       'password',
       'endpoint',
       'domain',
-      'shopDomain',
       'connectionString',
       'supabaseProjects',
       'oauthAccessToken',
