@@ -61,7 +61,7 @@ func supportedServices() []string {
 var connectionsCmd = &cobra.Command{
 	Use:   "connections",
 	Short: "Manage connections",
-	Long: `Manage connections (connector accounts) in a workbook.
+	Long: `Manage connections (connector accounts) in a workspace.
 
 Commands:
   connections list      List all connections
@@ -72,22 +72,22 @@ Commands:
 
 var connectionsListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all connections in the workbook",
-	Long: `List all connections in a workbook.
+	Short: "List all connections in the workspace",
+	Long: `List all connections in a workspace.
 
-If run inside a workbook directory (contains .scratchmd marker), the workbook
-is detected automatically. Otherwise, use the --workbook flag.
+If run inside a workspace directory (contains .scratchmd marker), the workspace
+is detected automatically. Otherwise, use the --workspace flag.
 
 Examples:
   scratchmd connections list
-  scratchmd connections list --workbook wb_abc123`,
+  scratchmd connections list --workspace wb_abc123`,
 	RunE: runConnectionsList,
 }
 
 var connectionsAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Authorize a new connection",
-	Long: `Create a new connection in the workbook.
+	Long: `Create a new connection in the workspace.
 
 In interactive mode (no flags), you will be prompted for the service and
 its required credentials. In non-interactive mode, provide --service and
@@ -111,7 +111,7 @@ var connectionsShowCmd = &cobra.Command{
 
 Examples:
   scratchmd connections show conn_abc123
-  scratchmd connections show conn_abc123 --workbook wb_abc123`,
+  scratchmd connections show conn_abc123 --workspace wb_abc123`,
 	Args: cobra.ExactArgs(1),
 	RunE: runConnectionsShow,
 }
@@ -119,7 +119,7 @@ Examples:
 var connectionsRemoveCmd = &cobra.Command{
 	Use:   "remove <id>",
 	Short: "Delete a connection",
-	Long: `Delete a connection from the workbook.
+	Long: `Delete a connection from the workspace.
 
 Examples:
   scratchmd connections remove conn_abc123
@@ -130,7 +130,9 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(connectionsCmd)
-	connectionsCmd.PersistentFlags().String("workbook", "", "Workbook ID (auto-detected from .scratchmd if not set)")
+	connectionsCmd.PersistentFlags().String("workspace", "", "Workspace ID (auto-detected from .scratchmd if not set)")
+	connectionsCmd.PersistentFlags().String("workbook", "", "Workspace ID (auto-detected from .scratchmd if not set)")
+	connectionsCmd.PersistentFlags().MarkHidden("workbook")
 
 	connectionsCmd.AddCommand(connectionsListCmd)
 	connectionsCmd.AddCommand(connectionsAddCmd)
@@ -175,7 +177,7 @@ func runConnectionsList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(connections) == 0 {
-		fmt.Println("No connections found in this workbook.")
+		fmt.Println("No connections found in this workspace.")
 		fmt.Println()
 		fmt.Println("Add a connection with: scratchmd connections add")
 		return nil

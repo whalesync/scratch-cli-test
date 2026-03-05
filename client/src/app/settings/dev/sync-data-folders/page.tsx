@@ -25,7 +25,7 @@ export default function SyncDataFoldersDevPage() {
     if (!workbookId.trim()) {
       notifications.show({
         title: 'Error',
-        message: 'Please provide a workbook ID',
+        message: 'Please provide a workspace ID',
         color: 'red',
       });
       return;
@@ -89,8 +89,8 @@ export default function SyncDataFoldersDevPage() {
               </Group>
 
               <TextInput
-                label="Workbook ID"
-                description="The ID of the workbook (e.g., wbk_...)"
+                label="Workspace ID"
+                description="The ID of the workspace (e.g., wbk_...)"
                 placeholder="wbk_abc123"
                 value={workbookId}
                 onChange={(e) => setWorkbookId(e.currentTarget.value)}

@@ -65,8 +65,8 @@ func printFileChange(path string, changeType fileChangeType) {
 
 var filesCmd = &cobra.Command{
 	Use:   "files",
-	Short: "Manage workbook files",
-	Long: `Manage files in a workbook.
+	Short: "Manage workspace files",
+	Long: `Manage files in a workspace.
 
 Commands:
   files download    Fetch remote changes and merge with local edits
@@ -74,13 +74,13 @@ Commands:
 }
 
 var filesDownloadCmd = &cobra.Command{
-	Use:   "download [workbook-id]",
+	Use:   "download [workspace-id]",
 	Short: "Download remote changes and merge with local edits",
 	Long: `Fetch the latest changes from the server's dirty branch and three-way
 merge them with any local edits.
 
-If run inside a workbook directory (contains .scratchmd marker), the workbook
-is detected automatically. Otherwise, pass the workbook ID as an argument.
+If run inside a workspace directory (contains .scratchmd marker), the workspace
+is detected automatically. Otherwise, pass the workspace ID as an argument.
 
 Examples:
   scratchmd files download
@@ -90,14 +90,14 @@ Examples:
 }
 
 var filesUploadCmd = &cobra.Command{
-	Use:   "upload [workbook-id]",
+	Use:   "upload [workspace-id]",
 	Short: "Push local changes to the server",
 	Long: `Upload local changes to the server's dirty branch using three-way merge
 with optimistic concurrency. If the remote branch changes during upload, the
 operation is retried automatically.
 
-If run inside a workbook directory (contains .scratchmd marker), the workbook
-is detected automatically. Otherwise, pass the workbook ID as an argument.
+If run inside a workspace directory (contains .scratchmd marker), the workspace
+is detected automatically. Otherwise, pass the workspace ID as an argument.
 
 Examples:
   scratchmd files upload
@@ -331,6 +331,8 @@ func runFilesDownload(cmd *cobra.Command, args []string) error {
 	var workbookID string
 	if len(args) > 0 {
 		workbookID = args[0]
+	} else if flag := cmd.Flags().Lookup("workspace"); flag != nil && flag.Value.String() != "" {
+		workbookID = flag.Value.String()
 	} else if flag := cmd.Flags().Lookup("workbook"); flag != nil && flag.Value.String() != "" {
 		workbookID = flag.Value.String()
 	}
@@ -345,10 +347,10 @@ func runFilesDownload(cmd *cobra.Command, args []string) error {
 			// Scan current directory children.
 			dir, err := findExistingWorkbookMarker(".", workbookID)
 			if err != nil {
-				return fmt.Errorf("failed to find workbook: %w", err)
+				return fmt.Errorf("failed to find workspace: %w", err)
 			}
 			if dir == "" {
-				return fmt.Errorf("workbook %s not found in current directory. Run 'scratchmd workbooks init %s' first", workbookID, workbookID)
+				return fmt.Errorf("workspace %s not found in current directory. Run 'scratchmd workspaces init %s' first", workbookID, workbookID)
 			}
 			workbookDir = dir
 			m, err := loadWorkbookMarker(workbookDir)
@@ -368,10 +370,10 @@ func runFilesDownload(cmd *cobra.Command, args []string) error {
 		// Auto-detect from current directory upward.
 		dir, m, err := findWorkbookMarkerUpward(".")
 		if err != nil {
-			return fmt.Errorf("failed to detect workbook: %w", err)
+			return fmt.Errorf("failed to detect workspace: %w", err)
 		}
 		if dir == "" {
-			return fmt.Errorf("not inside a workbook directory. Run from a workbook directory or pass a workbook ID")
+			return fmt.Errorf("not inside a workspace directory. Run from a workspace directory or pass a workspace ID")
 		}
 		workbookDir = dir
 		marker = *m
@@ -418,7 +420,7 @@ func runV2Download(workbookDir string, creds *config.GlobalCredentials, jsonOutp
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(result)
 		}
-		fmt.Println("No connector directories found. Run 'scratchmd workbooks init' first.")
+		fmt.Println("No connector directories found. Run 'scratchmd workspaces init' first.")
 		return nil
 	}
 
@@ -786,10 +788,10 @@ func runFilesUpload(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		dir, err := findExistingWorkbookMarker(".", args[0])
 		if err != nil {
-			return fmt.Errorf("failed to find workbook: %w", err)
+			return fmt.Errorf("failed to find workspace: %w", err)
 		}
 		if dir == "" {
-			return fmt.Errorf("workbook %s not found in current directory. Run 'scratchmd workbooks init %s' first", args[0], args[0])
+			return fmt.Errorf("workspace %s not found in current directory. Run 'scratchmd workspaces init %s' first", args[0], args[0])
 		}
 		workbookDir = dir
 		m, err := loadWorkbookMarker(workbookDir)
@@ -806,10 +808,10 @@ func runFilesUpload(cmd *cobra.Command, args []string) error {
 
 		dir, m, err := findWorkbookMarkerUpward(".")
 		if err != nil {
-			return fmt.Errorf("failed to detect workbook: %w", err)
+			return fmt.Errorf("failed to detect workspace: %w", err)
 		}
 		if dir == "" {
-			return fmt.Errorf("not inside a workbook directory. Run from a workbook directory or pass a workbook ID")
+			return fmt.Errorf("not inside a workspace directory. Run from a workspace directory or pass a workspace ID")
 		}
 		workbookDir = dir
 		marker = *m

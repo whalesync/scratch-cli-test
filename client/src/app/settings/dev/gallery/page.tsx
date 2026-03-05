@@ -790,7 +790,7 @@ export default function DevComponentGalleryPage() {
               <div>
                 <ConfigSection
                   title="Default Model"
-                  description="Set the default LLM to use in your conversations in new workbooks."
+                  description="Set the default LLM to use in your conversations in new workspaces."
                 >
                   <Group justify="space-between">
                     <Group gap="xs" wrap="nowrap">

@@ -32,14 +32,14 @@ var rootCmd = &cobra.Command{
   auth status                    Show current auth state
 
 ══════════════════════════════════════════════════════════════════════════════
-                                WORKBOOKS
+                               WORKSPACES
 ══════════════════════════════════════════════════════════════════════════════
 
-  workbooks list                 List all workbooks
-  workbooks create               Create a new workbook
-  workbooks show <id>            Show workbook details
-  workbooks delete <id>          Delete a workbook
-  workbooks init <id>            Clone workbook files to local directory
+  workspaces list                List all workspaces
+  workspaces create              Create a new workspace
+  workspaces show <id>           Show workspace details
+  workspaces delete <id>         Delete a workspace
+  workspaces init <id>           Clone workspace files to local directory
 
 ══════════════════════════════════════════════════════════════════════════════
                                   FILES
@@ -52,7 +52,7 @@ var rootCmd = &cobra.Command{
                                CONNECTIONS
 ══════════════════════════════════════════════════════════════════════════════
 
-  connections list               List all connections in the workbook
+  connections list               List all connections in the workspace
   connections add                Authorize a new connection
   connections show <id>          Show connection details
   connections remove <id>        Delete a connection
@@ -62,12 +62,12 @@ var rootCmd = &cobra.Command{
 ══════════════════════════════════════════════════════════════════════════════
 
   linked available               List available tables from connections
-  linked list                    List linked tables in a workbook
-  linked add                     Link a new table to a workbook
-  linked remove [id]             Unlink a table from a workbook
+  linked list                    List linked tables in a workspace
+  linked add                     Link a new table to a workspace
+  linked remove [id]             Unlink a table from a workspace
   linked show [id]               Show linked table details
-  linked pull [id]               Pull CRM changes into the workbook
-  linked publish [id]            Publish workbook changes to the CRM
+  linked pull [id]               Pull CRM changes into the workspace
+  linked publish [id]            Publish workspace changes to the CRM
 
 ══════════════════════════════════════════════════════════════════════════════
                                  SYNCS

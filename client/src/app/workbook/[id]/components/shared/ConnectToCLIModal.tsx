@@ -64,7 +64,7 @@ const CommandBlock = ({ command }: { command: string }) => (
 );
 
 export function ConnectToCLIModal({ workbookId, opened, onClose }: ConnectToCLIModalProps) {
-  const initCommand = `scratchmd workbooks init ${workbookId}`;
+  const initCommand = `scratchmd workspaces init ${workbookId}`;
 
   return (
     <Modal
@@ -123,9 +123,9 @@ export function ConnectToCLIModal({ workbookId, opened, onClose }: ConnectToCLIM
         <Group gap="md" align="flex-start" wrap="nowrap">
           <StepNumber number={3} />
           <Stack gap="xs" style={{ flex: 1 }}>
-            <Text16Medium>Clone this workbook to your computer</Text16Medium>
+            <Text16Medium>Clone this workspace to your computer</Text16Medium>
             <Text13Regular c="dimmed">
-              Run this command in your terminal to download a local copy of this workbook.
+              Run this command in your terminal to download a local copy of this workspace.
             </Text13Regular>
             <Box pt="xs">
               <CommandBlock command={initCommand} />

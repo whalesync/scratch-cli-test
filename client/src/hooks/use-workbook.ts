@@ -85,7 +85,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
       triggerPull?: boolean,
     ): Promise<DataFolder> => {
       if (!id) {
-        throw new Error('Workbook not found');
+        throw new Error('Workspace not found');
       }
 
       const dto: CreateDataFolderDto = {

@@ -37,7 +37,7 @@ export default function HomePage() {
 
   // Show loader while redirecting
   if (shouldRedirect) {
-    return <FullPageLoader message="Loading your project..." />;
+    return <FullPageLoader message="Loading your workspace..." />;
   }
 
   const handleSelectWorkbook = async (workbook: Workbook) => {
@@ -47,7 +47,7 @@ export default function HomePage() {
   };
 
   const handleCreateProject = async () => {
-    const name = projectName.trim() || 'My project';
+    const name = projectName.trim() || 'My workspace';
     setIsCreating(true);
     try {
       const newWorkbook = await workbookApi.create({ name });
@@ -101,8 +101,8 @@ export default function HomePage() {
             <TextTitle2>Welcome to Scratch</TextTitle2>
             <Text13Regular c="dimmed" ta="center">
               {hasWorkbooks
-                ? 'Select a project to continue, or create a new one.'
-                : 'Enter a name for your first project to get started.'}
+                ? 'Select a workspace to continue, or create a new one.'
+                : 'Enter a name for your first workspace to get started.'}
             </Text13Regular>
           </Stack>
 
@@ -143,7 +143,7 @@ export default function HomePage() {
                 leftSection={<PlusIcon size={16} />}
                 onClick={() => setShowCreateForm(true)}
               >
-                Create new project
+                Create new workspace
               </ButtonSecondaryOutline>
             </Stack>
           )}
@@ -152,7 +152,7 @@ export default function HomePage() {
           {(!hasWorkbooks || showCreateForm) && (
             <Stack gap="sm" w="100%">
               <TextInput
-                placeholder="My project"
+                placeholder="My workspace"
                 value={projectName}
                 onChange={(e) => setProjectName(e.currentTarget.value)}
                 onKeyDown={handleKeyDown}
@@ -166,11 +166,11 @@ export default function HomePage() {
                 }}
               />
               <ButtonPrimaryLight fullWidth onClick={handleCreateProject} loading={isCreating}>
-                Create project
+                Create workspace
               </ButtonPrimaryLight>
               {hasWorkbooks && showCreateForm && (
                 <ButtonSecondaryOutline fullWidth onClick={() => setShowCreateForm(false)}>
-                  Back to project list
+                  Back to workspace list
                 </ButtonSecondaryOutline>
               )}
             </Stack>

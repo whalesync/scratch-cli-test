@@ -33,7 +33,7 @@ export const jobApi = {
       const res = await axios.get<JobEntity[]>(`/jobs/workbook/${workbookId}/active`);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to fetch active jobs for workbook');
+      handleAxiosError(error, 'Failed to fetch active jobs for workspace');
       return [];
     }
   },

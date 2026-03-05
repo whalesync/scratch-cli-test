@@ -23,49 +23,49 @@ var linkedCmd = &cobra.Command{
 
 Commands:
   linked available    List available tables from connections
-  linked list         List linked tables in a workbook
-  linked add          Link a new table to a workbook
-  linked remove       Unlink a table from a workbook
+  linked list         List linked tables in a workspace
+  linked add          Link a new table to a workspace
+  linked remove       Unlink a table from a workspace
   linked show         Show linked table details
-  linked pull         Pull CRM changes into the workbook
-  linked publish      Publish workbook changes to the CRM`,
+  linked pull         Pull CRM changes into the workspace
+  linked publish      Publish workspace changes to the CRM`,
 }
 
 var linkedAvailableCmd = &cobra.Command{
 	Use:   "available <connection-id>",
-	Short: "List available tables from a connection in the current workbook",
-	Long: `List tables available from a specific connection in the current workbook.
+	Short: "List available tables from a connection in the current workspace",
+	Long: `List tables available from a specific connection in the current workspace.
 
 If no connection ID is provided, lists all connections so you can pick one.
 
-This command requires a workbook context — run from inside a workbook directory
-or use the --workbook flag.
+This command requires a workspace context — run from inside a workspace directory
+or use the --workspace flag.
 
 Examples:
   scratchmd linked available conn_abc123
-  scratchmd linked available --workbook wb_abc123`,
+  scratchmd linked available --workspace wb_abc123`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runLinkedAvailable,
 }
 
 var linkedListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List linked tables in a workbook",
-	Long: `List all linked tables in a workbook, grouped by connector.
+	Short: "List linked tables in a workspace",
+	Long: `List all linked tables in a workspace, grouped by connector.
 
-If run inside a workbook directory (contains .scratchmd marker), the workbook
-is detected automatically. Otherwise, use the --workbook flag.
+If run inside a workspace directory (contains .scratchmd marker), the workspace
+is detected automatically. Otherwise, use the --workspace flag.
 
 Examples:
   scratchmd linked list
-  scratchmd linked list --workbook wb_abc123`,
+  scratchmd linked list --workspace wb_abc123`,
 	RunE: runLinkedList,
 }
 
 var linkedAddCmd = &cobra.Command{
 	Use:   "add",
-	Short: "Link a new table to a workbook",
-	Long: `Interactively select a connection and table to link to the workbook.
+	Short: "Link a new table to a workspace",
+	Long: `Interactively select a connection and table to link to the workspace.
 
 In non-interactive mode, provide --connection-id, --table-id, and --name flags.
 
@@ -77,8 +77,8 @@ Examples:
 
 var linkedRemoveCmd = &cobra.Command{
 	Use:   "remove [id]",
-	Short: "Unlink a table from a workbook",
-	Long: `Remove a linked table from the workbook. The data in the CRM is not affected.
+	Short: "Unlink a table from a workspace",
+	Long: `Remove a linked table from the workspace. The data in the CRM is not affected.
 
 If run inside a data folder directory (contains .scratchmd with dataFolder key),
 the folder ID is detected automatically. Otherwise, pass it as an argument.
@@ -107,8 +107,8 @@ Examples:
 
 var linkedPullCmd = &cobra.Command{
 	Use:   "pull [id]",
-	Short: "Pull CRM changes into the workbook",
-	Long: `Pull the latest changes from the CRM into the workbook for a linked table.
+	Short: "Pull CRM changes into the workspace",
+	Long: `Pull the latest changes from the CRM into the workspace for a linked table.
 
 After the server-side pull completes, a local download is triggered to sync
 the changes to your local disk.
@@ -126,8 +126,8 @@ Examples:
 
 var linkedPublishCmd = &cobra.Command{
 	Use:   "publish [id]",
-	Short: "Publish workbook changes to the CRM",
-	Long: `Publish local changes from the workbook to the CRM for a linked table.
+	Short: "Publish workspace changes to the CRM",
+	Long: `Publish local changes from the workspace to the CRM for a linked table.
 
 Examples:
   scratchmd linked publish
@@ -138,7 +138,9 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(linkedCmd)
-	linkedCmd.PersistentFlags().String("workbook", "", "Workbook ID (auto-detected from .scratchmd if not set)")
+	linkedCmd.PersistentFlags().String("workspace", "", "Workspace ID (auto-detected from .scratchmd if not set)")
+	linkedCmd.PersistentFlags().String("workbook", "", "Workspace ID (auto-detected from .scratchmd if not set)")
+	linkedCmd.PersistentFlags().MarkHidden("workbook")
 
 	linkedCmd.AddCommand(linkedAvailableCmd)
 	linkedCmd.AddCommand(linkedListCmd)
@@ -217,8 +219,11 @@ func loadDataFolderMarker(dir string) (*DataFolderMarker, error) {
 // resolveWorkbookContext resolves workbook ID from --workbook flag or .scratchmd marker.
 // For V2 workbooks, also checks if we're inside a connector subdirectory.
 func resolveWorkbookContext(cmd *cobra.Command) (string, error) {
-	// Check --workbook flag first
-	workbookID, _ := cmd.Flags().GetString("workbook")
+	// Check --workspace flag first, then --workbook for backwards compatibility
+	workbookID, _ := cmd.Flags().GetString("workspace")
+	if workbookID == "" {
+		workbookID, _ = cmd.Flags().GetString("workbook")
+	}
 	if workbookID != "" {
 		return workbookID, nil
 	}
@@ -232,10 +237,10 @@ func resolveWorkbookContext(cmd *cobra.Command) (string, error) {
 	// Walk up looking for workbook marker
 	_, m, err := findWorkbookMarkerUpward(".")
 	if err != nil {
-		return "", fmt.Errorf("failed to detect workbook: %w", err)
+		return "", fmt.Errorf("failed to detect workspace: %w", err)
 	}
 	if m == nil {
-		return "", fmt.Errorf("not inside a workbook directory. Use --workbook flag or run from a workbook directory")
+		return "", fmt.Errorf("not inside a workspace directory. Use --workspace flag or run from a workspace directory")
 	}
 
 	return m.Workbook.ID, nil
@@ -338,14 +343,14 @@ func runLinkedAvailable(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(connections) == 0 {
-			fmt.Println("No connections found in this workbook.")
+			fmt.Println("No connections found in this workspace.")
 			fmt.Println()
-			fmt.Println("Add a connection in your workbook at https://app.scratch.md to see available tables.")
+			fmt.Println("Add a connection in your workspace at https://app.scratch.md to see available tables.")
 			return nil
 		}
 
 		fmt.Println()
-		fmt.Println("Connections in this workbook:")
+		fmt.Println("Connections in this workspace:")
 		for _, conn := range connections {
 			fmt.Printf("  - %s (%s)  ID: %s\n", conn.DisplayName, conn.Service, conn.ID)
 		}
@@ -430,7 +435,7 @@ func runLinkedList(cmd *cobra.Command, args []string) error {
 	}
 
 	if totalFolders == 0 {
-		fmt.Println("No linked tables found in this workbook.")
+		fmt.Println("No linked tables found in this workspace.")
 		fmt.Println()
 		fmt.Println("Link a table with: scratchmd linked add")
 		return nil
@@ -537,7 +542,7 @@ func runLinkedAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(connections) == 0 {
-		return fmt.Errorf("no connections found in this workbook. Add a connection in your workbook at https://app.scratch.md first")
+		return fmt.Errorf("no connections found in this workspace. Add a connection in your workspace at https://app.scratch.md first")
 	}
 
 	var selectedConnection api.Connection

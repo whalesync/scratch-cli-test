@@ -67,14 +67,14 @@ scratchmd auth logout               # Remove stored credentials
 scratchmd auth status               # Show current authentication status
 ```
 
-### Workbooks
+### Workspaces
 
 ```bash
-scratchmd workbooks list            # List all workbooks
-scratchmd workbooks create --name "My Workbook"  # Create a new workbook
-scratchmd workbooks show <id>       # Show workbook details
-scratchmd workbooks delete <id>     # Delete a workbook
-scratchmd workbooks init <id>       # Clone workbook files to local directory
+scratchmd workspaces list            # List all workspaces
+scratchmd workspaces create --name "My Workspace"  # Create a new workspace
+scratchmd workspaces show <id>       # Show workspace details
+scratchmd workspaces delete <id>     # Delete a workspace
+scratchmd workspaces init <id>       # Clone workspace files to local directory
 ```
 
 ### Files
@@ -89,7 +89,7 @@ scratchmd files upload              # Upload local changes to server
 ### Connections
 
 ```bash
-scratchmd connections list          # List all connections in the workbook
+scratchmd connections list          # List all connections in the workspace
 scratchmd connections add           # Authorize a new connection (interactive)
 scratchmd connections show <id>     # Show connection details
 scratchmd connections remove <id>   # Delete a connection
@@ -99,12 +99,12 @@ scratchmd connections remove <id>   # Delete a connection
 
 ```bash
 scratchmd linked available          # List available tables from connections
-scratchmd linked list               # List linked tables in a workbook
-scratchmd linked add                # Link a new table to a workbook
+scratchmd linked list               # List linked tables in a workspace
+scratchmd linked add                # Link a new table to a workspace
 scratchmd linked remove [id]        # Unlink a table
 scratchmd linked show [id]          # Show linked table details + pending changes
-scratchmd linked pull [id]          # Pull CRM changes into the workbook
-scratchmd linked publish [id]       # Publish workbook changes to the CRM
+scratchmd linked pull [id]          # Pull CRM changes into the workspace
+scratchmd linked publish [id]       # Publish workspace changes to the CRM
 ```
 
 ### Syncs

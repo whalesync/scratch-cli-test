@@ -58,7 +58,7 @@ export function SyncJsonReferencePanel({
         <Tooltip
           label={
             hasLinkedFolders
-              ? 'Copy workbook context for an AI agent'
+              ? 'Copy workspace context for an AI agent'
               : 'Link at least one folder before using AI assist'
           }
         >

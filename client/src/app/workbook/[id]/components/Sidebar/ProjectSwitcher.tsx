@@ -13,8 +13,8 @@ import { ArrowUpCircleIcon, CheckIcon, ChevronDownIcon, FlaskRoundIcon, PencilIc
 import { useRouter } from 'next/navigation';
 import { useCallback, useRef, useState } from 'react';
 
-// Project colors for differentiation
-const PROJECT_COLORS = [
+// Workspace colors for differentiation
+const WORKSPACE_COLORS = [
   '#9BF9EB', // teal (default)
   'var(--mantine-color-violet-4)',
   'var(--mantine-color-blue-4)',
@@ -26,8 +26,8 @@ const PROJECT_COLORS = [
   'var(--mantine-color-yellow-4)',
 ];
 
-function getProjectColor(index: number): string {
-  return PROJECT_COLORS[index % PROJECT_COLORS.length];
+function getWorkspaceColor(index: number): string {
+  return WORKSPACE_COLORS[index % WORKSPACE_COLORS.length];
 }
 
 // Scratch logo component for project icon
@@ -175,7 +175,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
           >
             <Group justify="space-between" wrap="nowrap">
               <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-                <ScratchLogo size={21} backgroundColor={getProjectColor(currentIndex)} />
+                <ScratchLogo size={21} backgroundColor={getWorkspaceColor(currentIndex)} />
                 <Text13Medium truncate style={{ flex: 1 }}>
                   {currentWorkbook.name ?? 'Untitled'}
                 </Text13Medium>
@@ -200,7 +200,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
               >
                 <Group justify="space-between" wrap="nowrap" style={{ width: '100%' }}>
                   <Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-                    <ScratchLogo size={21} backgroundColor={getProjectColor(index)} />
+                    <ScratchLogo size={21} backgroundColor={getWorkspaceColor(index)} />
                     <Text13Regular truncate style={{ flex: 1 }}>
                       {workbook.name ?? 'Untitled'}
                     </Text13Regular>
@@ -249,26 +249,26 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
 
           <Menu.Divider />
 
-          {/* New Project */}
+          {/* New Workspace */}
           <Menu.Item onClick={handleOpenCreate} leftSection={<PlusIcon size={14} />}>
-            <Text13Regular c="var(--fg-secondary)">New Project</Text13Regular>
+            <Text13Regular c="var(--fg-secondary)">New Workspace</Text13Regular>
           </Menu.Item>
 
-          {/* New Project V1 (admin only) */}
+          {/* New Workspace V1 (admin only) */}
           {isAdmin && (
             <Menu.Item onClick={handleOpenCreateV1} leftSection={<FlaskRoundIcon size={14} />} data-devtool>
-              <Text13Regular c="var(--mantine-color-devTool-8)">New Project (V1)</Text13Regular>
+              <Text13Regular c="var(--mantine-color-devTool-8)">New Workspace (V1)</Text13Regular>
             </Menu.Item>
           )}
         </Menu.Dropdown>
       </Menu>
 
       {/* Rename Modal */}
-      <Modal opened={renameModalOpened} onClose={closeRenameModal} title="Rename Project" size="sm" centered>
+      <Modal opened={renameModalOpened} onClose={closeRenameModal} title="Rename Workspace" size="sm" centered>
         <Stack gap="md">
           <TextInput
-            label="Project Name"
-            placeholder="My Project"
+            label="Workspace Name"
+            placeholder="My Workspace"
             value={newName}
             onChange={(e) => setNewName(e.currentTarget.value)}
             data-autofocus
@@ -293,14 +293,14 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
       <Modal
         opened={createModalOpened}
         onClose={closeCreateModal}
-        title={createVersionRef.current === 1 ? 'New Project (V1)' : 'New Project'}
+        title={createVersionRef.current === 1 ? 'New Workspace (V1)' : 'New Workspace'}
         size="sm"
         centered
       >
         <Stack gap="md">
           <TextInput
-            label="Project Name"
-            placeholder="My Project"
+            label="Workspace Name"
+            placeholder="My Workspace"
             value={createName}
             onChange={(e) => setCreateName(e.currentTarget.value)}
             data-autofocus

@@ -469,7 +469,7 @@ export default function WorkbooksDevPage() {
   if (isUserLoading) {
     return (
       <MainContent>
-        <MainContent.BasicHeader title="Workbooks Admin" Icon={BookOpenIcon} />
+        <MainContent.BasicHeader title="Workspaces Admin" Icon={BookOpenIcon} />
         <MainContent.Body>
           <Center h="100%">
             <Group>
@@ -485,7 +485,7 @@ export default function WorkbooksDevPage() {
   if (!isAdmin) {
     return (
       <MainContent>
-        <MainContent.BasicHeader title="Workbooks Admin" Icon={BookOpenIcon} />
+        <MainContent.BasicHeader title="Workspaces Admin" Icon={BookOpenIcon} />
         <MainContent.Body>
           <Center h="100%">
             <Text c="red">You do not have permission to view this page. Admin access is required.</Text>
@@ -499,14 +499,14 @@ export default function WorkbooksDevPage() {
 
   return (
     <MainContent>
-      <MainContent.BasicHeader title="Workbooks Admin" Icon={BookOpenIcon} />
+      <MainContent.BasicHeader title="Workspaces Admin" Icon={BookOpenIcon} />
       <MainContent.Body>
         <Stack gap="md">
           {/* Filters */}
           <Group gap="sm" align="flex-end">
             <TextInput
               label="Search"
-              placeholder="Workbook or org name..."
+              placeholder="Workspace or org name..."
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
               style={{ flex: 1, maxWidth: 360 }}
@@ -547,7 +547,7 @@ export default function WorkbooksDevPage() {
               />
             </Stack>
             <Text size="sm" c="dimmed" style={{ alignSelf: 'center', paddingBottom: 4 }}>
-              {total} workbook{total !== 1 ? 's' : ''}
+              {total} workspace{total !== 1 ? 's' : ''}
             </Text>
           </Group>
 
@@ -556,16 +556,16 @@ export default function WorkbooksDevPage() {
             <Center h="200px">
               <Group>
                 <Loader size="sm" />
-                <Text>Loading workbooks...</Text>
+                <Text>Loading workspaces...</Text>
               </Group>
             </Center>
           ) : loadError ? (
             <Center h="200px">
-              <Text c="red">Failed to load workbooks</Text>
+              <Text c="red">Failed to load workspaces</Text>
             </Center>
           ) : workbooks.length === 0 ? (
             <Center h="200px">
-              <Text c="dimmed">No workbooks found</Text>
+              <Text c="dimmed">No workspaces found</Text>
             </Center>
           ) : (
             <>

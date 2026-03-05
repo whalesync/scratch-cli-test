@@ -37,7 +37,7 @@ function FolderLabel({
       {connectorService && <ConnectorIcon connector={connectorService} size={16} p={0} />}
       <Text13Medium>{name}</Text13Medium>
       {missingFolder && (
-        <Tooltip label="This folder no longer exists in the workbook">
+        <Tooltip label="This folder no longer exists in the workspace">
           <Box display="inline-flex">
             <StyledLucideIcon Icon={AlertCircle} size={10} c="var(--mantine-color-red-6)" />
           </Box>

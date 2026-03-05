@@ -60,7 +60,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
 
   const handleResetWorkbook = () => {
     openConfirmDialog({
-      title: 'Reset Workbook',
+      title: 'Reset Workspace',
       message: 'This will remove all data folders. Any unpublished changes will be lost. This action cannot be undone.',
       confirmLabel: 'Reset',
       variant: 'danger',
@@ -71,7 +71,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
         } catch (e) {
           notifications.show({
             title: 'Error',
-            message: 'Failed to reset workbook',
+            message: 'Failed to reset workspace',
             color: 'red',
           });
           console.error(e);
@@ -82,10 +82,10 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
 
   const handleDeleteWorkbook = () => {
     openDeleteConfirmDialog({
-      title: 'Delete Workbook',
-      message: 'This will permanently delete this workbook and all its data. This action cannot be undone.',
+      title: 'Delete Workspace',
+      message: 'This will permanently delete this workspace and all its data. This action cannot be undone.',
       confirmPhrase: 'delete forever',
-      confirmLabel: 'Delete Workbook',
+      confirmLabel: 'Delete Workspace',
       onConfirm: async () => {
         try {
           trackDeleteWorkbook(workbookId);
@@ -96,7 +96,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
         } catch (e) {
           notifications.show({
             title: 'Error',
-            message: 'Failed to delete workbook',
+            message: 'Failed to delete workspace',
             color: 'red',
           });
           console.error(e);
@@ -113,14 +113,14 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
       await workbookApi.migrateToV2(workbookId);
       notifications.show({
         title: 'Success',
-        message: 'Workbook migrated to V2',
+        message: 'Workspace migrated to V2',
         color: 'green',
       });
       window.location.reload();
     } catch (e) {
       notifications.show({
         title: 'Error',
-        message: 'Failed to migrate workbook to V2',
+        message: 'Failed to migrate workspace to V2',
         color: 'red',
       });
       console.error(e);
@@ -221,10 +221,10 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
             </Menu.Item>
           )}
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleResetWorkbook}>
-            Reset Workbook
+            Reset Workspace
           </Menu.Item>
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleDeleteWorkbook}>
-            Delete Workbook
+            Delete Workspace
           </Menu.Item>
 
           {isDevToolsEnabled && (
@@ -315,7 +315,7 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
                   })
                 }
               >
-                Test Workbook Error
+                Test Workspace Error
               </Menu.Item>
             </>
           )}

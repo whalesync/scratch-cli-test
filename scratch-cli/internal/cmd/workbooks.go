@@ -46,39 +46,40 @@ var _ transport.AuthMethod = &APITokenAuth{}
 
 // workbooksCmd represents the workbooks command
 var workbooksCmd = &cobra.Command{
-	Use:   "workbooks",
-	Short: "Manage workbooks",
-	Long: `Manage your workbooks in Scratch.md.
+	Use:     "workspaces",
+	Aliases: []string{"workbooks"},
+	Short:   "Manage workspaces",
+	Long: `Manage your workspaces in Scratch.md.
 
 Commands:
-  workbooks list      List all workbooks
-  workbooks create    Create a new workbook
-  workbooks show      Show workbook details
-  workbooks delete    Delete a workbook
-  workbooks init      Initialize a local copy of a workbook`,
+  workspaces list      List all workspaces
+  workspaces create    Create a new workspace
+  workspaces show      Show workspace details
+  workspaces delete    Delete a workspace
+  workspaces init      Initialize a local copy of a workspace`,
 }
 
 // workbooksListCmd represents the workbooks list command
 var workbooksListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all workbooks",
-	Long:  `List all workbooks for your account.`,
+	Short: "List all workspaces",
+	Long:  `List all workspaces for your account.`,
 	RunE:  runWorkbooksList,
 }
 
 // workbooksCreateCmd represents the workbooks create command
 var workbooksCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a new workbook",
-	Long:  `Create a new workbook in your account.`,
+	Short: "Create a new workspace",
+	Long:  `Create a new workspace in your account.`,
 	RunE:  runWorkbooksCreate,
 }
 
 // workbooksShowCmd represents the workbooks show command
 var workbooksShowCmd = &cobra.Command{
 	Use:   "show <id>",
-	Short: "Show workbook details",
-	Long:  `Show details for a specific workbook.`,
+	Short: "Show workspace details",
+	Long:  `Show details for a specific workspace.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorkbooksShow,
 }
@@ -86,25 +87,25 @@ var workbooksShowCmd = &cobra.Command{
 // workbooksDeleteCmd represents the workbooks delete command
 var workbooksDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
-	Short: "Delete a workbook",
-	Long:  `Delete a workbook from your account.`,
+	Short: "Delete a workspace",
+	Long:  `Delete a workspace from your account.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorkbooksDelete,
 }
 
 // workbooksInitCmd represents the workbooks init command
 var workbooksInitCmd = &cobra.Command{
-	Use:   "init <workbook-id>",
-	Short: "Initialize a local copy of a workbook",
-	Long: `Initialize a local directory with a workbook's files.
+	Use:   "init <workspace-id>",
+	Short: "Initialize a local copy of a workspace",
+	Long: `Initialize a local directory with a workspace's files.
 
-Downloads all files from the workbook and creates a .scratchmd marker file
-to track the workbook association.
+Downloads all files from the workspace and creates a .scratchmd marker file
+to track the workspace association.
 
 Example:
-  scratchmd workbooks init abc123
-  scratchmd workbooks init abc123 --output ./my-project
-  scratchmd workbooks init abc123 --force  # Overwrite existing directory`,
+  scratchmd workspaces init abc123
+  scratchmd workspaces init abc123 --output ./my-project
+  scratchmd workspaces init abc123 --force  # Overwrite existing directory`,
 	Args: cobra.ExactArgs(1),
 	RunE: runWorkbooksInit,
 }
@@ -123,7 +124,7 @@ func init() {
 	workbooksListCmd.Flags().Bool("json", false, "Output as JSON")
 
 	// Flags for workbooks create
-	workbooksCreateCmd.Flags().String("name", "", "Workbook name")
+	workbooksCreateCmd.Flags().String("name", "", "Workspace name")
 	workbooksCreateCmd.Flags().Bool("json", false, "Output as JSON")
 
 	// Flags for workbooks show
@@ -178,7 +179,7 @@ func runWorkbooksList(cmd *cobra.Command, args []string) error {
 
 	result, err := client.ListWorkbooks(sortBy, sortOrder)
 	if err != nil {
-		return fmt.Errorf("failed to list workbooks: %w", err)
+		return fmt.Errorf("failed to list workspaces: %w", err)
 	}
 
 	if jsonOutput {
@@ -189,14 +190,14 @@ func runWorkbooksList(cmd *cobra.Command, args []string) error {
 
 	// Human-readable output
 	if len(result.Workbooks) == 0 {
-		fmt.Println("No workbooks found.")
+		fmt.Println("No workspaces found.")
 		fmt.Println()
-		fmt.Println("Create one with: scratchmd workbooks create --name \"My Workbook\"")
+		fmt.Println("Create one with: scratchmd workspaces create --name \"My Workspace\"")
 		return nil
 	}
 
 	fmt.Println()
-	fmt.Printf("Found %d workbook(s):\n", len(result.Workbooks))
+	fmt.Printf("Found %d workspace(s):\n", len(result.Workbooks))
 	fmt.Println()
 
 	for _, wb := range result.Workbooks {
@@ -224,7 +225,7 @@ func runWorkbooksCreate(cmd *cobra.Command, args []string) error {
 
 	workbook, err := client.CreateWorkbook(name)
 	if err != nil {
-		return fmt.Errorf("failed to create workbook: %w", err)
+		return fmt.Errorf("failed to create workspace: %w", err)
 	}
 
 	if jsonOutput {
@@ -235,7 +236,7 @@ func runWorkbooksCreate(cmd *cobra.Command, args []string) error {
 
 	// Human-readable output
 	fmt.Println()
-	fmt.Println("Workbook created successfully!")
+	fmt.Println("Workspace created successfully!")
 	fmt.Println()
 	displayName := workbook.Name
 	if displayName == "" {
@@ -260,7 +261,7 @@ func runWorkbooksShow(cmd *cobra.Command, args []string) error {
 
 	workbook, err := client.GetWorkbook(id)
 	if err != nil {
-		return fmt.Errorf("failed to get workbook: %w", err)
+		return fmt.Errorf("failed to get workspace: %w", err)
 	}
 
 	if jsonOutput {
@@ -297,7 +298,7 @@ func runWorkbooksDelete(cmd *cobra.Command, args []string) error {
 	// First get the workbook to show name in confirmation
 	workbook, err := client.GetWorkbook(id)
 	if err != nil {
-		return fmt.Errorf("failed to get workbook: %w", err)
+		return fmt.Errorf("failed to get workspace: %w", err)
 	}
 
 	displayName := workbook.Name
@@ -307,7 +308,7 @@ func runWorkbooksDelete(cmd *cobra.Command, args []string) error {
 
 	// Confirmation prompt
 	if !yes {
-		fmt.Printf("Are you sure you want to delete workbook \"%s\" (%s)? [y/N] ", displayName, id)
+		fmt.Printf("Are you sure you want to delete workspace \"%s\" (%s)? [y/N] ", displayName, id)
 		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
@@ -321,10 +322,10 @@ func runWorkbooksDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.DeleteWorkbook(id); err != nil {
-		return fmt.Errorf("failed to delete workbook: %w", err)
+		return fmt.Errorf("failed to delete workspace: %w", err)
 	}
 
-	fmt.Printf("Workbook \"%s\" deleted successfully.\n", displayName)
+	fmt.Printf("Workspace \"%s\" deleted successfully.\n", displayName)
 	return nil
 }
 
@@ -408,7 +409,7 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 	// 1. Check if workbook is already initialized in the output directory
 	existingDir, err := findExistingWorkbookMarker(outputDir, workbookID)
 	if err != nil {
-		return fmt.Errorf("failed to check for existing workbook: %w", err)
+		return fmt.Errorf("failed to check for existing workspace: %w", err)
 	}
 
 	if existingDir != "" {
@@ -418,9 +419,9 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("failed to remove existing directory: %w", err)
 			}
 		} else if jsonOutput {
-			return fmt.Errorf("workbook %s is already initialized at %s (use --force to overwrite)", workbookID, existingDir)
+			return fmt.Errorf("workspace %s is already initialized at %s (use --force to overwrite)", workbookID, existingDir)
 		} else {
-			fmt.Printf("\nWorkbook is already initialized at %q.\n", existingDir)
+			fmt.Printf("\nWorkspace is already initialized at %q.\n", existingDir)
 			fmt.Print("Overwrite with fresh files? [y/N]: ")
 
 			reader := bufio.NewReader(os.Stdin)
@@ -442,7 +443,7 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 	// 2. Get workbook metadata (includes git URL)
 	workbook, err := client.GetWorkbook(workbookID)
 	if err != nil {
-		return fmt.Errorf("failed to get workbook: %w", err)
+		return fmt.Errorf("failed to get workspace: %w", err)
 	}
 
 	// 3. Determine target directory
@@ -461,7 +462,7 @@ func runWorkbooksInit(cmd *cobra.Command, args []string) error {
 
 func initV1Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *config.GlobalCredentials, jsonOutput bool) error {
 	if workbook.GitUrl == "" {
-		return fmt.Errorf("server did not return git URL for workbook")
+		return fmt.Errorf("server did not return git URL for workspace")
 	}
 
 	gitAuth := &APITokenAuth{Token: creds.APIToken}
@@ -474,7 +475,7 @@ func initV1Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 		Depth:         0,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to clone workbook: %w", err)
+		return fmt.Errorf("failed to clone workspace: %w", err)
 	}
 
 	_, err = repo.CreateRemote(&gitconfig.RemoteConfig{
@@ -524,9 +525,9 @@ func initV1Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 
 	fmt.Println()
 	if fileCount >= 0 {
-		fmt.Printf("Initialized workbook '%s' (%d files)\n", workbook.Name, fileCount)
+		fmt.Printf("Initialized workspace '%s' (%d files)\n", workbook.Name, fileCount)
 	} else {
-		fmt.Printf("Initialized workbook '%s'\n", workbook.Name)
+		fmt.Printf("Initialized workspace '%s'\n", workbook.Name)
 	}
 	fmt.Printf("  Directory: %s\n", targetDir)
 	fmt.Println()
@@ -536,7 +537,7 @@ func initV1Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 func initV2Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *config.GlobalCredentials, jsonOutput bool) error {
 	// Create workbook root directory
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create workbook directory: %w", err)
+		return fmt.Errorf("failed to create workspace directory: %w", err)
 	}
 
 	// Write V2 workbook marker (no .git at root)
@@ -570,10 +571,10 @@ func initV2Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 			return encoder.Encode(result)
 		}
 		fmt.Println()
-		fmt.Printf("Initialized workbook '%s' (no connections yet)\n", workbook.Name)
+		fmt.Printf("Initialized workspace '%s' (no connections yet)\n", workbook.Name)
 		fmt.Printf("  Directory: %s\n", targetDir)
 		fmt.Println()
-		fmt.Println("Add a connection in the web app, then run 'scratchmd workbooks init' again.")
+		fmt.Println("Add a connection in the web app, then run 'scratchmd workspaces init' again.")
 		return nil
 	}
 
@@ -656,7 +657,7 @@ func initV2Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 	}
 
 	fmt.Println()
-	fmt.Printf("Initialized workbook '%s' (%d files, %d connectors)\n", workbook.Name, totalFiles, len(workbook.ConnectorAccounts))
+	fmt.Printf("Initialized workspace '%s' (%d files, %d connectors)\n", workbook.Name, totalFiles, len(workbook.ConnectorAccounts))
 	fmt.Printf("  Directory: %s\n", targetDir)
 	for _, ca := range workbook.ConnectorAccounts {
 		connDirName := sanitizeFilename(ca.Service + " - " + ca.DisplayName)

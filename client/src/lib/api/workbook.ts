@@ -47,7 +47,7 @@ export const workbookApi = {
       });
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to fetch workbooks');
+      handleAxiosError(error, 'Failed to fetch workspaces');
     }
   },
 
@@ -57,7 +57,7 @@ export const workbookApi = {
       const res = await axios.get<Workbook>(`/workbook/${id}`);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to fetch workbook');
+      handleAxiosError(error, 'Failed to fetch workspace');
     }
   },
 
@@ -67,7 +67,7 @@ export const workbookApi = {
       const res = await axios.post<Workbook>('/workbook', dto);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to create a workbook');
+      handleAxiosError(error, 'Failed to create a workspace');
     }
   },
 
@@ -77,7 +77,7 @@ export const workbookApi = {
       const res = await axios.patch<Workbook>(`/workbook/${id}`, updateDto);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to update workbook');
+      handleAxiosError(error, 'Failed to update workspace');
     }
   },
 
@@ -96,7 +96,7 @@ export const workbookApi = {
       const axios = API_CONFIG.getAxiosInstance();
       await axios.delete(`/workbook/${id}`);
     } catch (error) {
-      handleAxiosError(error, 'Failed to delete workbook');
+      handleAxiosError(error, 'Failed to delete workspace');
     }
   },
 
@@ -147,7 +147,7 @@ export const workbookApi = {
       const res = await axios.post<{ success: boolean; message: string }>(`/scratch-git/${workbookId}/backup`);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to backup workbook');
+      handleAxiosError(error, 'Failed to backup workspace');
       throw error;
     }
   },
@@ -357,7 +357,7 @@ export const workbookApi = {
       const axios = API_CONFIG.getAxiosInstance();
       await axios.post(`/workbook/${workbookId}/reset`);
     } catch (error) {
-      handleAxiosError(error, 'Failed to reset workbook');
+      handleAxiosError(error, 'Failed to reset workspace');
       throw error;
     }
   },
@@ -536,7 +536,7 @@ export const workbookApi = {
       });
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to list workbooks');
+      handleAxiosError(error, 'Failed to list workspaces');
       throw error;
     }
   },
@@ -547,7 +547,7 @@ export const workbookApi = {
       const res = await axios.post<{ success: boolean }>(`/scratch-git/${workbookId}/migrate-to-v2`);
       return res.data;
     } catch (error) {
-      handleAxiosError(error, 'Failed to migrate workbook to v2');
+      handleAxiosError(error, 'Failed to migrate workspace to v2');
       throw error;
     }
   },

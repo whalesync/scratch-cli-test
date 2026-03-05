@@ -73,14 +73,14 @@ scratchmd auth logout             # Remove stored credentials
 scratchmd auth status             # Show current authentication status
 ```
 
-### Workbooks
+### Workspaces
 
 ```bash
-scratchmd workbooks list          # List all workbooks
-scratchmd workbooks create        # Create a new workbook
-scratchmd workbooks show <id>     # Show workbook details
-scratchmd workbooks delete <id>   # Delete a workbook
-scratchmd workbooks init <id>     # Clone workbook files to local directory
+scratchmd workspaces list          # List all workspaces
+scratchmd workspaces create        # Create a new workspace
+scratchmd workspaces show <id>     # Show workspace details
+scratchmd workspaces delete <id>   # Delete a workspace
+scratchmd workspaces init <id>     # Clone workspace files to local directory
 ```
 
 ### Files
@@ -93,7 +93,7 @@ scratchmd files upload            # Upload local changes to server
 ### Connections
 
 ```bash
-scratchmd connections list        # List all connections in the workbook
+scratchmd connections list        # List all connections in the workspace
 scratchmd connections add         # Authorize a new connection (interactive or via flags)
 scratchmd connections show <id>   # Show connection details
 scratchmd connections remove <id> # Delete a connection
@@ -103,12 +103,12 @@ scratchmd connections remove <id> # Delete a connection
 
 ```bash
 scratchmd linked available        # List available tables from connections
-scratchmd linked list             # List linked tables in a workbook
-scratchmd linked add              # Link a new table to a workbook
+scratchmd linked list             # List linked tables in a workspace
+scratchmd linked add              # Link a new table to a workspace
 scratchmd linked remove [id]      # Unlink a table
 scratchmd linked show [id]        # Show linked table details + pending changes
-scratchmd linked pull [id]        # Pull CRM changes into the workbook
-scratchmd linked publish [id]     # Publish workbook changes to the CRM
+scratchmd linked pull [id]        # Pull CRM changes into the workspace
+scratchmd linked publish [id]     # Publish workspace changes to the CRM
 ```
 
 ### Syncs
@@ -128,16 +128,16 @@ scratchmd syncs run <id>          # Execute a sync and wait for completion
 |------|-------|-------------|
 | `--json` | most subcommands | Output as JSON (stdout) |
 | `--yes` | destructive commands | Skip confirmation prompts |
-| `--workbook <id>` | linked, syncs, connections | Override workbook auto-detection |
+| `--workspace <id>` | linked, syncs, connections | Override workspace auto-detection |
 | `--scratch-url <url>` | global | Override scratch server URL |
 | `--config <path>` | global | Config file path (default: `.scratchmd.config.yaml`) |
 | `-v, --verbose` | global | Enable verbose output |
 | `--no-browser` | auth login | Don't open browser automatically |
 | `--server <url>` | auth commands | Override the auth server URL |
-| `-o, --output <dir>` | workbooks init | Output directory for clone |
-| `--force` | workbooks init | Overwrite existing local copy |
-| `--sort-by` | workbooks list | Sort field (name, createdAt, updatedAt) |
-| `--sort-order` | workbooks list | Sort direction (asc, desc) |
+| `-o, --output <dir>` | workspaces init | Output directory for clone |
+| `--force` | workspaces init | Overwrite existing local copy |
+| `--sort-by` | workspaces list | Sort field (name, createdAt, updatedAt) |
+| `--sort-order` | workspaces list | Sort direction (asc, desc) |
 | `--connection-id` | linked add | Connection ID (non-interactive mode) |
 | `--table-id` | linked add | Table ID (non-interactive, repeatable) |
 | `--name` | linked add, connections add | Display name |

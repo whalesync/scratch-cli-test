@@ -43,7 +43,7 @@ export default function NewWorkbookLayout({ children }: LayoutProps) {
   }, [workbookId, openWorkbook, closeWorkbook, reset, connect, disconnect]);
 
   if (isLoading && !workbook) {
-    return <FullPageLoader message="Loading workbook..." />;
+    return <FullPageLoader message="Loading workspace..." />;
   }
 
   if (error || !workbook) {
@@ -52,8 +52,8 @@ export default function NewWorkbookLayout({ children }: LayoutProps) {
         <MainContent.BasicHeader title="" />
         <MainContent.Body>
           <ErrorInfo
-            title="Workbook not found."
-            description="We were unable to find the workbook you are looking for."
+            title="Workspace not found."
+            description="We were unable to find the workspace you are looking for."
             action={
               <Info.ActionButton
                 label="Return home"

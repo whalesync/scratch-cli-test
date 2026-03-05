@@ -7,7 +7,7 @@ Quick reference for AI agents using the scratchmd CLI programmatically.
 - **Always use `--json`** on commands that support it. JSON goes to **stdout**, errors/progress to **stderr**.
 - **Always use `--yes`** on destructive commands (`delete`, `remove`) to skip interactive confirmation prompts.
 - **Always use non-interactive flags** for `linked add` (`--connection-id`, `--table-id`, `--name`) — the interactive mode uses terminal prompts that will hang in non-interactive environments.
-- **Context auto-detection**: Most commands auto-detect the workbook/data-folder from `.scratchmd` marker files in the current directory (walks upward). Run commands from within the workbook directory to skip passing IDs.
+- **Context auto-detection**: Most commands auto-detect the workspace/data-folder from `.scratchmd` marker files in the current directory (walks upward). Run commands from within the workbook directory to skip passing IDs.
 - **Exit codes**: `0` = success, `1` = error (check stderr for message).
 
 ---
@@ -18,14 +18,14 @@ Quick reference for AI agents using the scratchmd CLI programmatically.
 # 1. Authenticate (one-time, interactive — requires browser)
 scratchmd auth login
 
-# 2. List workbooks
-scratchmd workbooks list --json
+# 2. List workspaces
+scratchmd workspaces list --json
 
-# 3. Initialize a workbook locally (clones files to disk)
-scratchmd workbooks init <workbook-id> --json
+# 3. Initialize a workspace locally (clones files to disk)
+scratchmd workspaces init <workspace-id> --json
 
-# 4. Navigate into the workbook directory
-cd <WorkbookName>
+# 4. Navigate into the workspace directory
+cd <WorkspaceName>
 
 # 5. Download latest changes from server
 scratchmd files download --json
@@ -41,10 +41,10 @@ scratchmd connections add --service WEBFLOW --param apiKey=<key> --json
 # 9. Link a table from the connection
 scratchmd linked add --connection-id <conn-id> --table-id <table-id> --name "My Table" --json
 
-# 10. Pull CRM changes into workbook (async — polls until done, then downloads)
+# 10. Pull CRM changes into workspace (async — polls until done, then downloads)
 scratchmd linked pull --json
 
-# 11. Publish workbook changes to CRM (async — polls until done, then downloads)
+# 11. Publish workspace changes to CRM (async — polls until done, then downloads)
 scratchmd linked publish --json
 ```
 
@@ -64,22 +64,22 @@ scratchmd auth status               # Show current authentication status
 
 > **Note**: `auth login` is interactive and requires a browser. No `--json` flag available.
 
-### Workbooks
+### Workspaces
 
 ```bash
-scratchmd workbooks list --json                                # List all workbooks
-scratchmd workbooks list --json --sort-by name --sort-order asc # Sort by name/createdAt/updatedAt, asc/desc
-scratchmd workbooks create --name "My Workbook" --json         # Create a new workbook
-scratchmd workbooks show <id> --json                           # Show workbook details
-scratchmd workbooks delete <id> --yes                          # Delete a workbook (--yes skips confirmation)
-scratchmd workbooks init <id> --json                           # Clone workbook files to local directory
-scratchmd workbooks init <id> --json -o ./path                 # Clone to a specific output directory
-scratchmd workbooks init <id> --json --force                   # Overwrite existing local copy
+scratchmd workspaces list --json                                # List all workspaces
+scratchmd workspaces list --json --sort-by name --sort-order asc # Sort by name/createdAt/updatedAt, asc/desc
+scratchmd workspaces create --name "My Workspace" --json         # Create a new workspace
+scratchmd workspaces show <id> --json                           # Show workspace details
+scratchmd workspaces delete <id> --yes                          # Delete a workspace (--yes skips confirmation)
+scratchmd workspaces init <id> --json                           # Clone workspace files to local directory
+scratchmd workspaces init <id> --json -o ./path                 # Clone to a specific output directory
+scratchmd workspaces init <id> --json --force                   # Overwrite existing local copy
 ```
 
 ### Linked Tables
 
-All `linked` subcommands accept `--workbook <id>` to specify the workbook. If omitted, the workbook is auto-detected from the current directory's `.scratchmd` marker.
+All `linked` subcommands accept `--workspace <id>` to specify the workspace. If omitted, the workspace is auto-detected from the current directory's `.scratchmd` marker.
 
 Commands that take `[id]` auto-detect the data folder ID when run from within a data folder directory.
 
@@ -90,7 +90,7 @@ scratchmd linked available <connection-id> --json        # List tables from a sp
 scratchmd linked available --json --refresh              # Force refresh from connector
 
 # Management
-scratchmd linked list --json                             # List linked tables in workbook
+scratchmd linked list --json                             # List linked tables in workspace
 scratchmd linked show [id] --json                        # Show linked table details + pending changes
 scratchmd linked add --json \                            # Link a table (non-interactive mode)
   --connection-id <conn-id> \
@@ -103,22 +103,22 @@ scratchmd linked add --json \                            # Link multiple tables 
 scratchmd linked remove [id] --json --yes                # Unlink a table (--yes skips confirmation)
 
 # Sync
-scratchmd linked pull [id] --json                        # Pull CRM changes into workbook (async)
-scratchmd linked publish [id] --json                     # Publish workbook changes to CRM (async)
+scratchmd linked pull [id] --json                        # Pull CRM changes into workspace (async)
+scratchmd linked publish [id] --json                     # Publish workspace changes to CRM (async)
 ```
 
 ### Files
 
 ```bash
 scratchmd files download --json              # Download remote changes, three-way merge with local edits
-scratchmd files download <workbook-id> --json # Download for a specific workbook (when not in workbook dir)
+scratchmd files download <workspace-id> --json # Download for a specific workspace (when not in workspace dir)
 scratchmd files upload --json                # Upload local changes to server
-scratchmd files upload <workbook-id> --json  # Upload for a specific workbook
+scratchmd files upload <workspace-id> --json  # Upload for a specific workspace
 ```
 
 ### Connections
 
-All `connections` subcommands accept `--workbook <id>` to specify the workbook. If omitted, the workbook is auto-detected from the current directory's `.scratchmd` marker.
+All `connections` subcommands accept `--workspace <id>` to specify the workspace. If omitted, the workspace is auto-detected from the current directory's `.scratchmd` marker.
 
 ```bash
 # List connections
@@ -145,7 +145,7 @@ scratchmd connections remove <id> --json --yes
 
 ### Syncs
 
-All `syncs` subcommands accept `--workbook <id>`. If omitted, auto-detected from the current directory.
+All `syncs` subcommands accept `--workspace <id>`. If omitted, auto-detected from the current directory.
 
 ```bash
 scratchmd syncs list --json                                          # List sync configurations
@@ -172,7 +172,7 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
 
 ## JSON Output Shapes
 
-### workbooks list
+### workspaces list
 
 ```json
 {
@@ -183,16 +183,16 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
 }
 ```
 
-### workbooks create / workbooks show
+### workspaces create / workspaces show
 
 ```json
 { "id": "...", "name": "...", "tableCount": 0, "createdAt": "...", "updatedAt": "...", "gitUrl": "..." }
 ```
 
-### workbooks init
+### workspaces init
 
 ```json
-{ "workbookId": "...", "workbookName": "...", "directory": "./MyWorkbook", "fileCount": 12 }
+{ "workbookId": "...", "workbookName": "...", "directory": "./MyWorkspace", "fileCount": 12 }
 ```
 
 ### files download
@@ -341,12 +341,12 @@ With `--no-wait`, returns immediately:
 
 The CLI uses `.scratchmd` YAML marker files to auto-detect context:
 
-**Workbook root** (created by `workbooks init`):
+**Workspace root** (created by `workspaces init`):
 ```yaml
 version: "1"
 workbook:
   id: "wb_abc123"
-  name: "My Workbook"
+  name: "My Workspace"
   serverUrl: "https://api.scratch.md"
   initializedAt: "2024-01-15T10:30:00Z"
 ```
@@ -360,8 +360,8 @@ dataFolder:
 ```
 
 The CLI walks upward from the current directory to find these markers. This means:
-- From `MyWorkbook/` — workbook context is detected for `files`, `linked list`, etc.
-- From `MyWorkbook/BlogPosts/` — both workbook and data folder context are detected for `linked show`, `linked pull`, etc.
+- From `MyWorkspace/` — workspace context is detected for `files`, `linked list`, etc.
+- From `MyWorkspace/BlogPosts/` — both workspace and data folder context are detected for `linked show`, `linked pull`, etc.
 
 ---
 
@@ -380,7 +380,7 @@ The CLI walks upward from the current directory to find these markers. This mean
 |-------|----------|
 | `"not logged in"` | Run `scratchmd auth login` |
 | `"Token expired"` | Run `scratchmd auth login` to get a new token |
-| `"not inside a workbook directory"` | Run from a directory with `.scratchmd` marker, or pass the workbook ID explicitly |
+| `"not inside a workspace directory"` | Run from a directory with `.scratchmd` marker, or pass the workspace ID explicitly |
 | `"upload failed after 5 attempts"` | Concurrent server changes caused all retries to fail; try again |
 | Browser doesn't open | Use `--no-browser` flag and visit the URL manually |
 | Command hangs | Likely hit an interactive prompt; use `--yes` or non-interactive flags |

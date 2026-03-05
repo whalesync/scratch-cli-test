@@ -15,7 +15,7 @@ import (
 var syncsCmd = &cobra.Command{
 	Use:   "syncs",
 	Short: "Manage sync configurations",
-	Long: `Manage sync configurations for a workbook.
+	Long: `Manage sync configurations for a workspace.
 
 Commands:
   syncs list        List sync configurations
@@ -29,14 +29,14 @@ Commands:
 var syncsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List sync configurations",
-	Long: `List all sync configurations for a workbook.
+	Long: `List all sync configurations for a workspace.
 
-If run inside a workbook directory (contains .scratchmd marker), the workbook
-is detected automatically. Otherwise, use the --workbook flag.
+If run inside a workspace directory (contains .scratchmd marker), the workspace
+is detected automatically. Otherwise, use the --workspace flag.
 
 Examples:
   scratchmd syncs list
-  scratchmd syncs list --workbook wb_abc123
+  scratchmd syncs list --workspace wb_abc123
   scratchmd syncs list --json`,
 	RunE: runSyncsList,
 }
@@ -63,7 +63,7 @@ The --config flag accepts either a file path or inline JSON.
 Examples:
   scratchmd syncs create --config sync-config.json
   scratchmd syncs create --config '{"displayName":"My Sync","mappings":{"version":1,"tableMappings":[...]}}'
-  scratchmd syncs create --workbook wb_abc123 --config sync-config.json`,
+  scratchmd syncs create --workspace wb_abc123 --config sync-config.json`,
 	RunE: runSyncsCreate,
 }
 
@@ -108,7 +108,9 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(syncsCmd)
-	syncsCmd.PersistentFlags().String("workbook", "", "Workbook ID (auto-detected from .scratchmd if not set)")
+	syncsCmd.PersistentFlags().String("workspace", "", "Workspace ID (auto-detected from .scratchmd if not set)")
+	syncsCmd.PersistentFlags().String("workbook", "", "Workspace ID (auto-detected from .scratchmd if not set)")
+	syncsCmd.PersistentFlags().MarkHidden("workbook")
 
 	syncsCmd.AddCommand(syncsListCmd)
 	syncsCmd.AddCommand(syncsShowCmd)
@@ -187,7 +189,7 @@ func runSyncsList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(syncs) == 0 {
-		fmt.Println("No syncs found in this workbook.")
+		fmt.Println("No syncs found in this workspace.")
 		fmt.Println()
 		fmt.Println("Create one with: scratchmd syncs create --config sync-config.json")
 		return nil
