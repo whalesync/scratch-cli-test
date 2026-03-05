@@ -22,6 +22,7 @@ import { exceptionForConnectorError } from 'src/remote-service/connectors/error'
 import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { RunContext } from 'src/worker/jobs/base-types';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
@@ -162,7 +163,11 @@ export class DataFolderService {
     return new DataFolderEntity(dataFolder, schedules);
   }
 
-  async createFolder(dto: ValidatedCreateDataFolderDto, actor: Actor): Promise<DataFolderEntity> {
+  async createFolder(
+    dto: ValidatedCreateDataFolderDto,
+    actor: Actor,
+    runContext: RunContext,
+  ): Promise<DataFolderEntity> {
     const { name, workbookId, connectorAccountId, filter } = dto;
     const parentFolderId = (dto as { parentFolderId?: string }).parentFolderId;
 
@@ -295,19 +300,25 @@ export class DataFolderService {
       // Trigger pull job (defaults to true if not specified)
       if (dto.triggerPull !== false) {
         try {
-          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, [dataFolderId], {
-            totalFiles: 0,
-            folderCount: 1,
-            connectionName: createdDataFolder.connectorAccount?.displayName ?? 'Unknown connection',
-            folderId: dataFolderId,
-            folderName: createdDataFolder.name,
-            connector: createdDataFolder.connectorService ?? 'unknown',
-            filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
-            status: 'pending',
-            createdPaths: [],
-            updatedPaths: [],
-            deletedPaths: [],
-          });
+          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
+            workbookId,
+            actor,
+            [dataFolderId],
+            {
+              totalFiles: 0,
+              folderCount: 1,
+              connectionName: createdDataFolder.connectorAccount?.displayName ?? 'Unknown connection',
+              folderId: dataFolderId,
+              folderName: createdDataFolder.name,
+              connector: createdDataFolder.connectorService ?? 'unknown',
+              filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+              status: 'pending',
+              createdPaths: [],
+              updatedPaths: [],
+              deletedPaths: [],
+            },
+            runContext,
+          );
           WSLogger.info({
             source: 'DataFolderService.createFolder',
             message: 'Started pulling files for newly created data folder',

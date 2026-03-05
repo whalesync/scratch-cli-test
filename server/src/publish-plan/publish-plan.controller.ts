@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
 import { Progress } from 'src/types/progress';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
@@ -69,6 +70,7 @@ export class PublishPlanController {
       body.folderPath,
       body.filePath,
       initialProgress,
+      createRunContext('web'),
     );
     await this.publishPlanService.setActiveJob(pipelineId, job.id!.toString());
     return { jobId: job.id, pipelineId };
@@ -95,6 +97,7 @@ export class PublishPlanController {
       body.pipelineId,
       body.executeSinglePhase,
       initialProgress,
+      createRunContext('web'),
     );
     await this.publishPlanService.setActiveJob(body.pipelineId, job.id!.toString());
     return { jobId: job.id };

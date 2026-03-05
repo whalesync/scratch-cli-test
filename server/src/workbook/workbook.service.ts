@@ -16,6 +16,7 @@ import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { RunContext } from 'src/worker/jobs/base-types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { WorkbookEventService } from './workbook-event.service';
 
@@ -369,7 +370,12 @@ export class WorkbookService {
     return updatedWorkbook;
   }
 
-  async pullFiles(id: WorkbookId, actor: Actor, dataFolderIds?: string[]): Promise<PullFilesResponseDto> {
+  async pullFiles(
+    id: WorkbookId,
+    actor: Actor,
+    dataFolderIds: string[] | undefined,
+    runContext: RunContext,
+  ): Promise<PullFilesResponseDto> {
     // Verify the workbook exists and the user has access
     const workbook = await this.findOneOrThrow(id, actor);
 
@@ -442,6 +448,7 @@ export class WorkbookService {
           updatedPaths: [],
           deletedPaths: [],
         },
+        runContext,
       );
       jobs.push({ id: job.id as string });
     }

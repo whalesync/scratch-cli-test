@@ -30,6 +30,7 @@ export enum IdPrefixes {
   SYNC_TABLE_PAIR = 'stp_', // Pair of source=>destination tables in a Sync
   SCHEDULE = 'sch_', // Schedule
   SCRATCH_PENDING_PUBLISH = 'scratch_pending_publish_', // Temporary ID for sync-created records before publishing
+  RUN = 'run_', // Run
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -281,4 +282,15 @@ export function isScratchPendingPublishId(id: unknown): id is ScratchPendingPubl
 
 export function createScratchPendingPublishId(): ScratchPendingPublishId {
   return createId(IdPrefixes.SCRATCH_PENDING_PUBLISH) as ScratchPendingPublishId;
+}
+
+// ------- Run -------
+export type RunId = PrefixedId<IdPrefixes.RUN>;
+
+export function isRunId(id: unknown): id is RunId {
+  return isId(id, IdPrefixes.RUN);
+}
+
+export function createRunId(): RunId {
+  return createId(IdPrefixes.RUN) as RunId;
 }

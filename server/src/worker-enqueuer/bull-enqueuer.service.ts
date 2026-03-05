@@ -1,10 +1,11 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { createPlainId, DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
+import { createPlainId, DataFolderId, RunId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { Job, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { JobService } from 'src/job/job.service';
 import { Actor } from 'src/users/types';
+import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/publish-data-folder.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
@@ -62,7 +63,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
     workbookId: WorkbookId,
     actor: Actor,
     dataFolderIds: DataFolderId[],
-    initialPublicProgress?: PullLinkedFolderFilesJobDefinition['publicProgress'],
+    initialPublicProgress: PullLinkedFolderFilesJobDefinition['publicProgress'] | undefined,
+    runContext: RunContext,
   ): Promise<Job> {
     const id = `pull-linked-folder-files-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PullLinkedFolderFilesJobDefinition['data'] = {
@@ -79,6 +81,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       data,
       bullJobId: id,
       workbookId,
+      runId: runContext.runId as RunId,
+      runContext,
     });
     return await this.enqueueJobWithId(data, id);
   }
@@ -87,7 +91,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
     workbookId: WorkbookId,
     actor: Actor,
     dataFolderIds: DataFolderId[],
-    initialPublicProgress?: PublishDataFolderJobDefinition['publicProgress'],
+    initialPublicProgress: PublishDataFolderJobDefinition['publicProgress'] | undefined,
+    runContext: RunContext,
   ): Promise<Job> {
     const id = `publish-data-folder-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PublishDataFolderJobDefinition['data'] = {
@@ -104,6 +109,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       data,
       bullJobId: id,
       workbookId,
+      runId: runContext.runId as RunId,
+      runContext,
     });
     return await this.enqueueJobWithId(data, id);
   }
@@ -112,7 +119,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
     workbookId: WorkbookId,
     syncId: SyncId,
     actor: Actor,
-    initialPublicProgress?: SyncDataFoldersJobDefinition['publicProgress'],
+    initialPublicProgress: SyncDataFoldersJobDefinition['publicProgress'] | undefined,
+    runContext: RunContext,
   ): Promise<Job> {
     const id = `sync-data-folders-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: SyncDataFoldersJobDefinition['data'] = {
@@ -129,6 +137,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       data,
       bullJobId: id,
       workbookId,
+      runId: runContext.runId as RunId,
+      runContext,
     });
     return await this.enqueueJobWithId(data, id);
   }
@@ -137,11 +147,12 @@ export class BullEnqueuerService implements OnModuleDestroy {
     workbookId: WorkbookId,
     actor: Actor,
     pipelineId: string,
-    connectorAccountId?: string,
-    runAfterPlan?: boolean,
-    folderPath?: string,
-    filePath?: string,
-    initialProgress?: import('src/types/progress').Progress,
+    connectorAccountId: string | undefined,
+    runAfterPlan: boolean | undefined,
+    folderPath: string | undefined,
+    filePath: string | undefined,
+    initialProgress: import('src/types/progress').Progress | undefined,
+    runContext: RunContext,
   ): Promise<Job> {
     const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
@@ -161,6 +172,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       bullJobId: id,
       workbookId,
       progress: initialProgress,
+      runId: runContext.runId as RunId,
+      runContext,
     });
     return await this.enqueueJobWithId(data, id);
   }
@@ -169,8 +182,9 @@ export class BullEnqueuerService implements OnModuleDestroy {
     workbookId: WorkbookId,
     actor: Actor,
     pipelineId: string,
-    executeSinglePhase?: boolean,
-    initialProgress?: import('src/types/progress').Progress,
+    executeSinglePhase: boolean | undefined,
+    initialProgress: import('src/types/progress').Progress | undefined,
+    runContext: RunContext,
   ): Promise<Job> {
     const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
@@ -189,6 +203,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       bullJobId: id,
       workbookId,
       progress: initialProgress,
+      runId: runContext.runId as RunId,
+      runContext,
     });
     return await this.enqueueJobWithId(data, id);
   }
@@ -198,7 +214,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
     actor: Actor,
     dataFolderId: DataFolderId,
     filePaths: string[],
-    initialPublicProgress?: PullFilesJobDefinition['publicProgress'],
+    initialPublicProgress: PullFilesJobDefinition['publicProgress'] | undefined,
+    runContext: RunContext,
   ): Promise<Job> {
     const id = `refresh-records-${actor.userId}-${workbookId}-${createPlainId()}`;
     const data: PullFilesJobDefinition['data'] = {
@@ -217,6 +234,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       bullJobId: id,
       workbookId,
       dataFolderId,
+      runId: runContext.runId as RunId,
+      runContext,
     });
     return await this.enqueueJobWithId(data, id);
   }

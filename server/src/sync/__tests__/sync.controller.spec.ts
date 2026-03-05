@@ -255,6 +255,8 @@ describe('SyncController', () => {
         WORKBOOK_ID,
         SYNC_ID,
         expect.objectContaining({ organizationId: workbookOrgId }),
+        undefined,
+        expect.objectContaining({ trigger: 'web' }),
       );
     });
 
@@ -272,6 +274,8 @@ describe('SyncController', () => {
         WORKBOOK_ID,
         SYNC_ID,
         expect.objectContaining({ organizationId: ORG_ID }),
+        undefined,
+        expect.objectContaining({ trigger: 'web' }),
       );
     });
 

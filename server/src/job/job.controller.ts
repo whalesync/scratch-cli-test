@@ -10,6 +10,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { RunId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { userToActor } from '../users/types';
@@ -59,6 +60,12 @@ export class JobController {
   ): Promise<{ success: boolean; message: string }> {
     const actor = userToActor(req.user);
     return await this.jobService.cancelJob(jobId, actor);
+  }
+
+  @Get('run/:runId')
+  async getJobsByRunId(@Param('runId') runId: string): Promise<JobEntity[]> {
+    const dbJobs = await this.jobService.getJobsByRunId(runId as RunId);
+    return dbJobs.map(dbJobToJobEntity);
   }
 
   @Post('bulk-status')

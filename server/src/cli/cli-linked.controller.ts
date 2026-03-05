@@ -27,6 +27,7 @@ import { userToActor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { CreateCliLinkedTableDto, ValidatedCreateCliLinkedTableDto } from './dtos/cli-linked.dto';
 
 /**
@@ -108,6 +109,7 @@ export class CliLinkedController {
         filter: validatedDto.filter,
       },
       actor,
+      createRunContext('cli'),
     );
   }
 
@@ -198,7 +200,7 @@ export class CliLinkedController {
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
 
-    return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, [folderId]);
+    return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, [folderId], createRunContext('cli'));
   }
 
   /**
@@ -250,7 +252,14 @@ export class CliLinkedController {
       data: { lock: 'pull' },
     });
 
-    const job = await this.bullEnqueuerService.enqueuePullFilesJob(wbId, actor, dfId, body.filePaths);
+    const job = await this.bullEnqueuerService.enqueuePullFilesJob(
+      wbId,
+      actor,
+      dfId,
+      body.filePaths,
+      undefined,
+      createRunContext('cli'),
+    );
 
     this.posthogService.trackPullFiles(actor, wbId, dfId);
 
@@ -321,6 +330,9 @@ export class CliLinkedController {
       dataFolder.connectorAccountId,
       true, // runAfterPlan
       dataFolder.path,
+      undefined,
+      undefined,
+      createRunContext('cli'),
     );
 
     await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());

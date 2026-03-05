@@ -22,6 +22,7 @@ import { SyncService } from 'src/sync/sync.service';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createRunContext } from 'src/worker/jobs/base-types';
 
 /**
  * Controller for CLI sync operations.
@@ -122,10 +123,16 @@ export class CliSyncController {
       throw new NotFoundException('Sync not found');
     }
 
-    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(workbookId, syncId as SyncId, {
-      userId: req.user.id,
-      organizationId: req.user.organizationId ?? workbook.organizationId,
-    });
+    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
+      workbookId,
+      syncId as SyncId,
+      {
+        userId: req.user.id,
+        organizationId: req.user.organizationId ?? workbook.organizationId,
+      },
+      undefined,
+      createRunContext('cli'),
+    );
 
     this.posthogService.trackStartSyncRun(userToActor(req.user), sync);
 

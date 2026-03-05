@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
-import { TransformerTypes } from '@spinner/shared-types';
+import { RunId, TransformerTypes } from '@spinner/shared-types';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -11,6 +11,7 @@ import { findTransformerConfigs } from '../../../sync/transformers';
 import { Actor } from '../../../users/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
+import { createRunContext } from '../base-types';
 
 /** Maximum number of file paths to track per category in progress */
 const MAX_PROGRESS_PATHS = 100;
@@ -68,6 +69,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
 
   async run(params: {
     jobId: string;
+    runId?: string;
     data: SyncDataFoldersJobDefinition['data'];
     progress: Progress<
       SyncDataFoldersJobDefinition['publicProgress'],
@@ -81,7 +83,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       >,
     ) => Promise<void>;
   }) {
-    const { data, checkpoint } = params;
+    const { jobId, runId, data, checkpoint } = params;
 
     WSLogger.info({
       source: 'SyncDataFoldersJob',
@@ -370,6 +372,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
               pipelineId,
               connectorAccountId,
               true, // runAfterPlan
+              undefined,
+              undefined,
+              undefined,
+              createRunContext('job', { runId: runId as RunId, parentJobId: jobId }),
             );
 
             await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());

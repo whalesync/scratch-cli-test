@@ -28,6 +28,7 @@ import {
   RenameDataFolderDto,
   UpdateDataFolderDto,
 } from '@spinner/shared-types';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
@@ -63,7 +64,7 @@ export class DataFolderController {
       throw new NotFoundException('Workbook not found');
     }
 
-    return await this.dataFolderService.createFolder(dto, actor);
+    return await this.dataFolderService.createFolder(dto, actor, createRunContext('web'));
   }
 
   @Get(':id')
@@ -158,7 +159,13 @@ export class DataFolderController {
     });
 
     // Enqueue the publish job with single folder as array
-    const job = await this.bullEnqueuerService.enqueuePublishDataFolderJob(workbookId, actor, [id]);
+    const job = await this.bullEnqueuerService.enqueuePublishDataFolderJob(
+      workbookId,
+      actor,
+      [id],
+      undefined,
+      createRunContext('web'),
+    );
 
     this.posthogService.trackPublishDataFromWorkbook(actor, workbook, { dataFolderCount: 1 });
 
@@ -210,7 +217,14 @@ export class DataFolderController {
       data: { lock: 'pull' },
     });
 
-    const job = await this.bullEnqueuerService.enqueuePullFilesJob(workbookId, actor, id, filePaths);
+    const job = await this.bullEnqueuerService.enqueuePullFilesJob(
+      workbookId,
+      actor,
+      id,
+      filePaths,
+      undefined,
+      createRunContext('web'),
+    );
 
     this.posthogService.trackPullFiles(actor, workbookId, id);
 

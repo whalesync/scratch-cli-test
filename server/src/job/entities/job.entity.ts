@@ -2,6 +2,7 @@ import { DbJob } from '@prisma/client';
 import { JobState } from 'bullmq';
 import { Progress } from 'src/types/progress';
 import { JsonSafeObject } from 'src/utils/objects';
+import { RunContext } from 'src/worker/jobs/base-types';
 
 export type DbJobStatus =
   | JobState
@@ -21,6 +22,7 @@ export interface JobEntity<TPublicProgress = JsonSafeObject> {
   processedOn?: Date | null;
   finishedOn?: Date | null;
   failedReason?: string | null;
+  runContext?: RunContext | null;
 }
 
 export function dbJobToJobEntity(dbJob: DbJob): JobEntity {
@@ -37,5 +39,6 @@ export function dbJobToJobEntity(dbJob: DbJob): JobEntity {
     processedOn: dbJob.processedOn,
     finishedOn: dbJob.finishedOn,
     failedReason: dbJob.error,
+    runContext: dbJob.runContext as RunContext | null,
   };
 }

@@ -22,6 +22,7 @@ export type BullMqJob<TDefinition extends JobDefinition = JobDefinition> = BullM
 export type JobHandler<TDefinition extends JobDefinition> = {
   run: (params: {
     jobId: string;
+    runId?: string;
     data: TDefinition['data'];
     progress: Progress<TDefinition['publicProgress'], TDefinition['initialJobProgress']>;
     abortSignal: AbortSignal;

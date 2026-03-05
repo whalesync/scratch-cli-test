@@ -295,10 +295,13 @@ model DbJob {
   processedOn       DateTime? // When job actually started processing
   finishedOn        DateTime? // When job completed (success or failure)
   cancelRequestedAt DateTime? // When cancellation was requested (checked by worker checkpoints)
+  runId             String? // A grouping ID that links jobs that are part of the same run. use RunId type. Just used for indexing and filtering
+  runContext        Json? // The context of the run that triggered this job, use RunContext type.
 
   @@index([userId])
   @@index([workbookId])
   @@index([dataFolderId])
+  @@index([runId])
   @@index([status])
   @@index([type])
   @@map("Job")

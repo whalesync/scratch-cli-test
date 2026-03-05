@@ -2,7 +2,9 @@ import type { PrismaClient } from '@prisma/client';
 import { Service, type DataFolderId, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
+import { createRunContext } from '../base-types';
 // Non type imports
+import { RunId } from '@spinner/shared-types';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
@@ -69,6 +71,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
 
   async run(params: {
     jobId: string;
+    runId?: string;
     data: PublishDataFolderJobDefinition['data'];
     progress: Progress<
       PublishDataFolderJobDefinition['publicProgress'],
@@ -85,7 +88,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
       >,
     ) => Promise<void>;
   }) {
-    const { jobId, data, checkpoint, progress } = params;
+    const { jobId, runId, data, checkpoint, progress } = params;
 
     // Fetch all DataFolders with their connector accounts
     const dataFolders = await this.prisma.dataFolder.findMany({
@@ -232,6 +235,8 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
         data.workbookId,
         { userId: data.userId, organizationId: data.organizationId },
         [dataFolder.id as DataFolderId],
+        undefined,
+        createRunContext('job', { runId: runId as RunId, parentJobId: jobId }),
       );
 
       WSLogger.debug({
@@ -341,6 +346,8 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
           data.workbookId,
           { userId: data.userId, organizationId: data.organizationId },
           [dataFolder.id as DataFolderId],
+          undefined,
+          createRunContext('job', { runId: runId as RunId, parentJobId: jobId }),
         );
 
         WSLogger.debug({

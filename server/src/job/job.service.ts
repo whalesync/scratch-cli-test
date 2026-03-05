@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbJob } from '@prisma/client';
-import { createJobId } from '@spinner/shared-types';
+import { createJobId, RunId } from '@spinner/shared-types';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { Progress } from 'src/types/progress';
+import { RunContext } from 'src/worker/jobs/base-types';
 import { DbService } from '../db/db.service';
 import { Actor } from '../users/types';
 import { DbJobStatus, dbJobToJobEntity, JobEntity } from './entities/job.entity';
@@ -39,6 +40,8 @@ export class JobService {
     workbookId?: string;
     dataFolderId?: string;
     progress?: Progress;
+    runId?: RunId;
+    runContext?: RunContext;
   }): Promise<DbJob> {
     const job = await this.db.client.dbJob.create({
       data: {
@@ -51,6 +54,8 @@ export class JobService {
         bullJobId: params.bullJobId,
         progress: params.progress ?? undefined,
         status: 'created',
+        runId: params.runId,
+        runContext: params.runContext ?? undefined,
       },
     });
     return job;
@@ -188,6 +193,13 @@ export class JobService {
 
     await queue.close();
     return results;
+  }
+
+  async getJobsByRunId(runId: RunId): Promise<DbJob[]> {
+    return this.db.client.dbJob.findMany({
+      where: { runId },
+      orderBy: { createdAt: 'asc' },
+    });
   }
 
   async getJobByBullJobId(bullJobId: string): Promise<DbJob | null> {

@@ -30,6 +30,7 @@ import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { userToActor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { SyncService } from './sync.service';
 import { WhalesyncImportApiService } from './whalesync-import';
 
@@ -115,10 +116,16 @@ export class SyncController {
       throw new NotFoundException(`Sync ${syncId} not found`);
     }
 
-    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(workbookId, syncId, {
-      userId: req.user.id,
-      organizationId: req.user.organizationId ?? workbook.organizationId,
-    });
+    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
+      workbookId,
+      syncId,
+      {
+        userId: req.user.id,
+        organizationId: req.user.organizationId ?? workbook.organizationId,
+      },
+      undefined,
+      createRunContext('web'),
+    );
 
     this.posthogService.trackStartSyncRun(userToActor(req.user), sync);
 

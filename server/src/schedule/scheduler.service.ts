@@ -6,6 +6,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScheduleService } from './schedule.service';
 import { actionToJobType, SCHEDULE_DEBOUNCE_WINDOW_MS } from './schedule.types';
 
@@ -130,12 +131,18 @@ export class SchedulerService {
     const actor = await this.buildActor(schedule);
     const workbookId = schedule.workbookId as WorkbookId;
 
+    const runContext = createRunContext('scheduler');
+
     switch (schedule.action) {
       case 'PULL':
         if (schedule.entityId) {
-          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(workbookId, actor, [
-            schedule.entityId as DataFolderId,
-          ]);
+          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
+            workbookId,
+            actor,
+            [schedule.entityId as DataFolderId],
+            undefined,
+            runContext,
+          );
         } else {
           WSLogger.info({
             source: 'SchedulerService.enqueueJob',
@@ -145,9 +152,13 @@ export class SchedulerService {
         break;
       case 'PUBLISH':
         if (schedule.entityId) {
-          await this.bullEnqueuerService.enqueuePublishDataFolderJob(workbookId, actor, [
-            schedule.entityId as DataFolderId,
-          ]);
+          await this.bullEnqueuerService.enqueuePublishDataFolderJob(
+            workbookId,
+            actor,
+            [schedule.entityId as DataFolderId],
+            undefined,
+            runContext,
+          );
         } else {
           WSLogger.info({
             source: 'SchedulerService.enqueueJob',
@@ -156,7 +167,13 @@ export class SchedulerService {
         }
         break;
       case 'SYNC':
-        await this.bullEnqueuerService.enqueueSyncDataFoldersJob(workbookId, schedule.entityId as SyncId, actor);
+        await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
+          workbookId,
+          schedule.entityId as SyncId,
+          actor,
+          undefined,
+          runContext,
+        );
         break;
     }
 

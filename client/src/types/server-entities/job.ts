@@ -1,3 +1,9 @@
+export interface RunContext {
+  runId: string;
+  trigger: 'web' | 'scheduler' | 'cli' | 'job';
+  parentJobId?: string;
+}
+
 export interface JobEntity<TPublicProgress = object> {
   bullJobId?: string | null;
   dbJobId?: string | null;
@@ -10,4 +16,5 @@ export interface JobEntity<TPublicProgress = object> {
   processedOn?: Date | null;
   finishedOn?: Date | null;
   failedReason?: string | null;
+  runContext?: RunContext | null;
 }

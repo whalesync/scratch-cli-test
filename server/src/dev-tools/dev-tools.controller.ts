@@ -48,6 +48,7 @@ import { userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { DbJobStatus, dbJobToJobEntity } from '../job/entities/job.entity';
 import { JobService } from '../job/job.service';
 import { DevToolsService } from './dev-tools.service';
@@ -434,10 +435,16 @@ export class DevToolsController {
       throw new NotFoundException(`Workbook ${body.workbookId} not found`);
     }
 
-    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(body.workbookId, body.syncId, {
-      userId: workbook.userId ?? req.user.id,
-      organizationId: workbook.organizationId,
-    });
+    const job = await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
+      body.workbookId,
+      body.syncId,
+      {
+        userId: workbook.userId ?? req.user.id,
+        organizationId: workbook.organizationId,
+      },
+      undefined,
+      createRunContext('web'),
+    );
 
     return {
       success: true,

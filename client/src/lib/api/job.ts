@@ -58,4 +58,15 @@ export const jobApi = {
       throw error;
     }
   },
+
+  getJobsByRunId: async (runId: string): Promise<JobEntity[]> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<JobEntity[]>(`/jobs/run/${runId}`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch jobs for run');
+      return [];
+    }
+  },
 };
