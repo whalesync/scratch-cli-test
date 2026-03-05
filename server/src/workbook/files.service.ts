@@ -326,6 +326,11 @@ export class FilesService {
         continue;
       }
 
+      // Cap at 500 to avoid expensive lookups on very large files
+      if (remoteIds.length > 500) {
+        remoteIds.length = 500;
+      }
+
       // FileIndex uses folderPath without leading slash
       const targetFolderPathForIndex = targetFolder.path.replace(/^\//, '');
 
