@@ -12,6 +12,7 @@ import { useFolderFileList } from '@/hooks/use-folder-file-list';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
+import { filesApi } from '@/lib/api/files';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
@@ -794,6 +795,16 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
     }
   };
 
+  // Download all files as ZIP
+  const handleDownloadAll = async () => {
+    setContextMenu(null);
+    try {
+      await filesApi.downloadFolder(workbookId, folder.id);
+    } catch {
+      notifications.show({ title: 'Download failed', message: 'Could not download files', color: 'red' });
+    }
+  };
+
   // Refresh handler for this table (just revalidate SWR)
   const handleRefreshTable = async () => {
     try {
@@ -1029,6 +1040,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
           position={contextMenu}
           items={[
             { label: 'Pull this table', icon: DownloadIcon, onClick: handlePullTable },
+            { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
             {
               label: 'New File',
               icon: FilePlusIcon,

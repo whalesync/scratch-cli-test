@@ -99,4 +99,30 @@ export const filesApi = {
       handleAxiosError(error, 'Failed to delete file');
     }
   },
+
+  /**
+   * Download all files in a data folder as a ZIP archive.
+   * GET /workbooks/:workbookId/files/download?folderId=...
+   */
+  downloadFolder: async (workbookId: WorkbookId, folderId: DataFolderId): Promise<void> => {
+    try {
+      const axiosInstance = API_CONFIG.getAxiosInstance();
+      const res = await axiosInstance.get(`/workbooks/${workbookId}/files/download`, {
+        params: { folderId },
+        responseType: 'blob',
+      });
+      const contentDisposition = res.headers['content-disposition'] as string | undefined;
+      const filename = contentDisposition?.match(/filename="(.+)"/)?.[1] ?? 'download.zip';
+      const url = URL.createObjectURL(res.data as Blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to download folder');
+    }
+  },
 };

@@ -5,12 +5,14 @@ import {
   Delete,
   Get,
   HttpCode,
+  InternalServerErrorException,
   NotFoundException,
   Param,
   Patch,
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -23,6 +25,8 @@ import {
   UpdateFileDto,
   ValidatedCreateFileDto,
 } from '@spinner/shared-types';
+import archiver from 'archiver';
+import type { Response } from 'express';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
@@ -162,6 +166,75 @@ export class FilesController {
         workbookId,
       });
       throw e;
+    }
+  }
+
+  /**
+   * Download all files in a data folder as a ZIP archive.
+   * GET /workbooks/:workbookId/files/download?folderId=...
+   */
+  @Get('download')
+  async downloadFolder(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('folderId') folderId: DataFolderId,
+    @Query('branch') branch: string = DIRTY_BRANCH,
+    @Req() req: RequestWithUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.filesService.verifyWorkbookAccess(workbookId, userToActor(req.user));
+
+    const folder = await this.db.client.dataFolder.findUnique({ where: { id: folderId } });
+    if (!folder || !folder.path) {
+      throw new NotFoundException('Data folder not found');
+    }
+
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
+    const folderPath = folder.path.replace(/^\//, '');
+    const zipName = `${folder.name}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.pipe(res);
+
+    archive.on('error', (err) => {
+      WSLogger.error({
+        source: 'FilesController.downloadFolder',
+        message: 'Archive error',
+        error: err,
+        workbookId,
+        folderId,
+      });
+      if (!res.headersSent) {
+        throw new InternalServerErrorException('Failed to create archive');
+      }
+    });
+
+    try {
+      const PAGE_SIZE = 100;
+      let cursor: string | undefined;
+      do {
+        const page = await this.scratchGitService.getRepoFilesPaginated(repoId, branch, folderPath, PAGE_SIZE, cursor);
+        for (const file of page.files) {
+          archive.append(file.content, { name: file.name });
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
+
+      await archive.finalize();
+    } catch (e) {
+      WSLogger.error({
+        source: 'FilesController.downloadFolder',
+        message: 'Failed to download folder',
+        error: e,
+        workbookId,
+        folderId,
+      });
+      archive.abort();
+      if (!res.headersSent) {
+        throw new InternalServerErrorException('Failed to download folder');
+      }
     }
   }
 }
