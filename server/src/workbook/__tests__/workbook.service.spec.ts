@@ -105,18 +105,6 @@ describe('WorkbookService', () => {
   });
 
   describe('delete', () => {
-    it('deletes a V1 workbook with single git repo', async () => {
-      (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(createMockWorkbook(1));
-
-      await service.delete(WORKBOOK_ID, ACTOR);
-
-      expect(scratchGitService.deleteRepo).toHaveBeenCalledWith(WORKBOOK_ID);
-      expect(fileIndexService.deleteForWorkbook).toHaveBeenCalledWith(WORKBOOK_ID);
-      expect(fileReferenceService.deleteForWorkbook).toHaveBeenCalledWith(WORKBOOK_ID);
-      expect(dbService.client.dbJob.deleteMany).toHaveBeenCalledWith({ where: { workbookId: WORKBOOK_ID } });
-      expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });
-    });
-
     it('deletes a V2 workbook with per-connection repos', async () => {
       (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(createMockWorkbook(2));
       (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([{ id: 'ca_1' }, { id: 'ca_2' }]);

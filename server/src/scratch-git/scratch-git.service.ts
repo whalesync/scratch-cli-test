@@ -22,32 +22,19 @@ export const MAIN_BRANCH = 'main';
 export const DIRTY_BRANCH = 'dirty';
 export const SCHEMA_JSON_FILENAME = '.schema.json';
 
-/** Separator used in V2 composite repo IDs (must match Rust constant in state.rs) */
-const V2_ID_SEPARATOR = '--';
+/** Separator used in composite repo IDs (must match Rust constant in state.rs) */
+const REPO_ID_SEPARATOR = '--';
 
-export type RepoId = WorkbookId | `${string}--${string}--${string}`;
+export type RepoId = `${string}--${string}--${string}`;
 
 /**
- * Returns the repo ID to pass to scratch-git for a given workbook.
- *
- * - V1: plain `workbookId`  →  `repos/{workbookId}.git`
- * - V2: `{orgId}--{workbookId}--{connAccountId}`  →  `repos-v2/{orgId}/{workbookId}/{connAccountId}.git`
+ * Returns the repo ID to pass to scratch-git for a given workbook connection.
+ * Format: `{orgId}--{workbookId}--{connAccountId}`  →  `repos-v2/{orgId}/{workbookId}/{connAccountId}.git`
  *
  * The Rust backend splits on `--` and constructs the nested directory path.
  */
-export function getRepoId(
-  workbookVersion: number,
-  workbookId: WorkbookId,
-  orgId?: string,
-  connAccountId?: string,
-): RepoId {
-  if (workbookVersion >= 2) {
-    if (!orgId || !connAccountId) {
-      throw new Error(`V2 repo ID requires orgId and connAccountId (workbookId=${workbookId})`);
-    }
-    return [orgId, workbookId, connAccountId].join(V2_ID_SEPARATOR) as RepoId;
-  }
-  return workbookId;
+export function getDefaultRepoPath(orgId: string, workbookId: WorkbookId, connAccountId: string): RepoId {
+  return [orgId, workbookId, connAccountId].join(REPO_ID_SEPARATOR) as RepoId;
 }
 
 @Injectable()
@@ -58,17 +45,14 @@ export class ScratchGitService {
   ) {}
 
   /**
-   * Resolves the effective repo ID for a workbook.
-   * For V1 workbooks returns workbookId directly.
-   * For V2 workbooks returns the composite `{orgId}--{workbookId}--{connAccountId}` ID.
-   * Throws if connectorAccountId is missing for a V2 workbook.
+   * Resolves the repo ID for a workbook connection.
+   * Returns the composite `{orgId}--{workbookId}--{connAccountId}` ID from the connector account's repoPath.
+   * Throws if connectorAccountId is missing or has no repoPath.
    */
-  async resolveRepoId(workbookId: WorkbookId, connectorAccountId?: string): Promise<RepoId> {
-    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
-    if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
-    if (workbook.version < 2) return workbookId;
-    if (!connectorAccountId) throw new Error(`connectorAccountId required for V2 workbook ${workbookId}`);
-
+  async resolveRepoId(_workbookId: WorkbookId, connectorAccountId: string | undefined | null): Promise<RepoId> {
+    if (!connectorAccountId) {
+      throw new Error('No connector account ID provided');
+    }
     const account = await this.db.client.connectorAccount.findUnique({ where: { id: connectorAccountId } });
     if (account?.repoPath) {
       return account.repoPath as RepoId;

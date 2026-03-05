@@ -157,41 +157,6 @@ describe('ConnectorAccountService', () => {
       expect(dbService.client.connectorAccount.delete).toHaveBeenCalled();
     });
 
-    it('V1 workbook — removes each folder from shared git repo', async () => {
-      const account = createMockAccount({ repoPath: null });
-      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
-      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
-        { id: 'df_1', path: '/folder1' },
-        { id: 'df_2', path: '/folder2' },
-      ]);
-      (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ version: 1 });
-
-      await service.remove(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
-
-      // V1: removeDataFolder called per folder
-      expect(scratchGitService.removeDataFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/folder1');
-      expect(scratchGitService.removeDataFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/folder2');
-      // deleteRepo NOT called for V1
-      expect(scratchGitService.deleteRepo).not.toHaveBeenCalled();
-      // Account deleted
-      expect(dbService.client.connectorAccount.delete).toHaveBeenCalled();
-    });
-
-    it('V1 workbook — skips removeDataFolder for folders with null path', async () => {
-      const account = createMockAccount({ repoPath: null });
-      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
-      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
-        { id: 'df_1', path: '/folder1' },
-        { id: 'df_2', path: null },
-      ]);
-      (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ version: 1 });
-
-      await service.remove(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
-
-      expect(scratchGitService.removeDataFolder).toHaveBeenCalledTimes(1);
-      expect(scratchGitService.removeDataFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/folder1');
-    });
-
     it('continues DB cleanup when git deletion fails', async () => {
       const account = createMockAccount();
       (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);

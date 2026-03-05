@@ -85,7 +85,7 @@ export class FilesService {
       ? await this.db.client.dataFolder
           .findUnique({ where: { id: parentFolderId as string }, select: { connectorAccountId: true } })
           .then((df) => this.scratchGitService.resolveRepoId(workbookId, df?.connectorAccountId ?? undefined))
-      : await this.scratchGitService.resolveRepoId(workbookId);
+      : await this.scratchGitService.resolveRepoId(workbookId, null);
 
     await this.scratchGitService.commitFile(repoId, fullPath, content, `Create file ${createFileDto.name}`);
 
@@ -409,7 +409,7 @@ export class FilesService {
       where: { workbookId, path: folderPath },
       select: { connectorAccountId: true },
     });
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId);
 
     try {
       await this.scratchGitService.renameFiles(

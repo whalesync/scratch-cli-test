@@ -4,7 +4,6 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { DeleteConfirmDialog, useDeleteConfirmDialog } from '@/app/components/modals/DeleteConfirmDialog';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackDeleteWorkbook } from '@/lib/posthog';
@@ -12,15 +11,11 @@ import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { RouteUrls } from '@/utils/route-urls';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { GitGcResponse, GitObjectCountsResponse, WorkbookId } from '@spinner/shared-types';
+import { WorkbookId } from '@spinner/shared-types';
 import {
-  ArrowUpCircleIcon,
   ChevronRightIcon,
   DatabaseIcon,
   EllipsisVertical,
-  FileCodeIcon,
-  GitGraphIcon,
-  GitMergeIcon,
   ImageIcon,
   LinkIcon,
   ServerCrashIcon,
@@ -31,23 +26,14 @@ import { useState } from 'react';
 import { mutate } from 'swr';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { FileIndexModal } from '../modals/FileIndexModal';
-import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
-import { GitGcModal } from '../modals/GitGcModal';
-import { GitGraphModal } from '../modals/GitGraphModal';
-import { GitObjectCountsModal } from '../modals/GitObjectCountsModal';
 import { RefIndexModal } from '../modals/RefIndexModal';
 
 interface DebugMenuProps {
   workbookId: WorkbookId;
-  workbookVersion?: number;
 }
 
-export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
+export function DebugMenu({ workbookId }: DebugMenuProps) {
   const { isDevToolsEnabled } = useDevTools();
-  const { user } = useScratchPadUser();
-  const isAdmin = user?.isAdmin ?? false;
-  const [gitGraphOpen, setGitGraphOpen] = useState(false);
-  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
   const [assetIndexOpen, setAssetIndexOpen] = useState(false);
@@ -55,8 +41,6 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const { open: openDeleteConfirmDialog, dialogProps: deleteDialogProps } = useDeleteConfirmDialog();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
-  const [isRebasing, setIsRebasing] = useState(false);
-  const [isGcing, setIsGcing] = useState(false);
 
   const handleResetWorkbook = () => {
     openConfirmDialog({
@@ -105,101 +89,6 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
     });
   };
 
-  const [isMigratingToV2, setIsMigratingToV2] = useState(false);
-
-  const handleMigrateToV2 = async () => {
-    setIsMigratingToV2(true);
-    try {
-      await workbookApi.migrateToV2(workbookId);
-      notifications.show({
-        title: 'Success',
-        message: 'Workspace migrated to V2',
-        color: 'green',
-      });
-      window.location.reload();
-    } catch (e) {
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to migrate workspace to V2',
-        color: 'red',
-      });
-      console.error(e);
-    } finally {
-      setIsMigratingToV2(false);
-    }
-  };
-
-  const handleManualRebase = async () => {
-    setIsRebasing(true);
-    try {
-      await workbookApi.rebaseDirty(workbookId);
-      notifications.show({
-        title: 'Success',
-        message: 'Rebase complete',
-        color: 'green',
-      });
-      window.location.reload();
-    } catch (e) {
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to rebase',
-        color: 'red',
-      });
-      console.error(e);
-    } finally {
-      setIsRebasing(false);
-    }
-  };
-
-  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
-  const [gcModalOpen, setGcModalOpen] = useState(false);
-  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
-  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
-  const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
-
-  // ... handleManualRebase ...
-
-  const handleGetObjectCounts = async () => {
-    setIsLoadingObjectCounts(true);
-    try {
-      const result = await workbookApi.getObjectCounts(workbookId);
-      setObjectCountsData(result);
-      setObjectCountsModalOpen(true);
-    } catch (e) {
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to get object counts',
-        color: 'red',
-      });
-      console.error(e);
-    } finally {
-      setIsLoadingObjectCounts(false);
-    }
-  };
-
-  const handleGitGc = async (aggressive: boolean = false) => {
-    setIsGcing(true);
-    try {
-      const result = await workbookApi.runGitGc(workbookId, aggressive);
-      setGcData(result);
-      setGcModalOpen(true);
-      notifications.show({
-        title: 'Success',
-        message: 'Git GC complete',
-        color: 'green',
-      });
-    } catch (e) {
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to run Git GC',
-        color: 'red',
-      });
-      console.error(e);
-    } finally {
-      setIsGcing(false);
-    }
-  };
-
   return (
     <>
       <Menu shadow="md" width={200} position="bottom-end">
@@ -210,16 +99,6 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
         </Menu.Target>
 
         <Menu.Dropdown>
-          {isAdmin && workbookVersion < 2 && (
-            <Menu.Item
-              data-devtool
-              leftSection={<ArrowUpCircleIcon size={16} />}
-              onClick={handleMigrateToV2}
-              disabled={isMigratingToV2}
-            >
-              Migrate to V2
-            </Menu.Item>
-          )}
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleResetWorkbook}>
             Reset Workspace
           </Menu.Item>
@@ -235,53 +114,14 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
                 <Menu.Target>
                   <Menu.Item
                     data-devtool
-                    leftSection={<GitGraphIcon size={16} />}
+                    leftSection={<DatabaseIcon size={16} />}
                     rightSection={<ChevronRightIcon size={14} />}
                   >
-                    Git Tools
+                    Index Tools
                   </Menu.Item>
                 </Menu.Target>
 
                 <Menu.Dropdown>
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<GitGraphIcon size={16} />}
-                    onClick={() => setGitGraphOpen(true)}
-                  >
-                    Git Graph
-                  </Menu.Item>
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<FileCodeIcon size={16} />}
-                    onClick={() => setFileBrowserOpen(true)}
-                  >
-                    Git File Browser
-                  </Menu.Item>
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<GitMergeIcon size={16} />}
-                    onClick={handleManualRebase}
-                    disabled={isRebasing}
-                  >
-                    Manual Rebase
-                  </Menu.Item>
-
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<GitGraphIcon size={16} />}
-                    onClick={() => handleGitGc(false)}
-                    disabled={isGcing}
-                  >
-                    Run Git GC (Standard)
-                  </Menu.Item>
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<Trash2Icon size={16} />}
-                    onClick={() => handleGitGc(true)}
-                    disabled={isGcing}
-                  >
-                    Run Git GC (Aggressive)
-                  </Menu.Item>
                   <Menu.Item
                     data-devtool
                     leftSection={<DatabaseIcon size={16} />}
@@ -291,14 +131,6 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
                   </Menu.Item>
                   <Menu.Item data-devtool leftSection={<LinkIcon size={16} />} onClick={() => setRefIndexOpen(true)}>
                     Ref Index
-                  </Menu.Item>
-                  <Menu.Item
-                    data-devtool
-                    leftSection={<GitGraphIcon size={16} />}
-                    onClick={handleGetObjectCounts}
-                    disabled={isLoadingObjectCounts}
-                  >
-                    Get Object Counts
                   </Menu.Item>
                 </Menu.Dropdown>
               </Menu>
@@ -322,23 +154,11 @@ export function DebugMenu({ workbookId, workbookVersion = 1 }: DebugMenuProps) {
         </Menu.Dropdown>
       </Menu>
 
-      <GitGraphModal opened={gitGraphOpen} onClose={() => setGitGraphOpen(false)} workbookId={workbookId} />
-
-      <GitFileBrowserModal opened={fileBrowserOpen} onClose={() => setFileBrowserOpen(false)} workbookId={workbookId} />
-
       <FileIndexModal opened={fileIndexOpen} onClose={() => setFileIndexOpen(false)} workbookId={workbookId} />
 
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
 
       <AssetIndexModal opened={assetIndexOpen} onClose={() => setAssetIndexOpen(false)} workbookId={workbookId} />
-
-      <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
-
-      <GitObjectCountsModal
-        opened={objectCountsModalOpen}
-        onClose={() => setObjectCountsModalOpen(false)}
-        data={objectCountsData}
-      />
 
       {/* Confirm Dialogs */}
       <ConfirmDialog {...dialogProps} />

@@ -11,7 +11,7 @@ import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
-import { getRepoId, MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
@@ -105,19 +105,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const connectionName = folders[0]?.connectorAccount?.displayName ?? 'Unknown connection';
     const connectorAccountId = folders[0]?.connectorAccountId ?? null;
 
-    // Look up workbook version to determine which repo path to use
-    const workbook = await this.prisma.workbook.findUnique({ where: { id: data.workbookId } });
-    const workbookVersion = workbook?.version ?? 1;
-
-    const repoId =
-      workbookVersion >= 2 && connectorAccountId
-        ? getRepoId(workbookVersion, data.workbookId, data.organizationId, connectorAccountId)
-        : data.workbookId;
-
-    // For V2 workbooks, ensure the repo exists (e.g. new connection added after migration)
-    if (workbookVersion >= 2 && connectorAccountId) {
-      await this.scratchGitService.initRepo(repoId);
+    if (!connectorAccountId) {
+      throw new Error(`All folders in pull job must belong to a connection`);
     }
+
+    const repoId = await this.scratchGitService.resolveRepoId(data.workbookId, connectorAccountId);
+
+    // Ensure the repo exists (e.g. new connection added after migration)
+    await this.scratchGitService.initRepo(repoId);
 
     const totalFilesAccumulator = { count: 0 };
     for (const dataFolderId of data.dataFolderIds) {

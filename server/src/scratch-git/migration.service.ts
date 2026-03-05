@@ -3,7 +3,7 @@ import { WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { ScratchGitClient } from './scratch-git.client';
-import { DIRTY_BRANCH, getRepoId, MAIN_BRANCH } from './scratch-git.service';
+import { DIRTY_BRANCH, getDefaultRepoPath, MAIN_BRANCH } from './scratch-git.service';
 
 const MIGRATION_BATCH_SIZE = 500;
 
@@ -85,7 +85,7 @@ export class MigrationService {
   }): Promise<void> {
     const { v1RepoId, workbookId, orgId, connAccount } = params;
 
-    const v2RepoId = getRepoId(2, workbookId, orgId, connAccount.id);
+    const v2RepoId = getDefaultRepoPath(orgId, workbookId, connAccount.id);
 
     WSLogger.info({
       source: 'MigrationService.migrateConnection',

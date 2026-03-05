@@ -21,27 +21,19 @@ export class ScratchGitController {
   ) {}
 
   /**
-   * For V2 workbooks with no connectorAccountId, returns all per-connection repo IDs.
-   * For V1 workbooks or when connectorAccountId is provided, returns a single-element array.
+   * When connectorAccountId is provided, returns that connection's repo ID.
+   * Otherwise returns all per-connection repo IDs for the workbook.
    */
   private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
-    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
-    if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
-
-    if (workbook.version < 2 || connectorAccountId) {
+    if (connectorAccountId) {
       const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
       return [repoId];
     }
 
-    // V2 with no connectorAccountId: aggregate across all connections
     const connAccounts = await this.db.client.connectorAccount.findMany({
       where: { workbookId, repoPath: { not: null } },
       select: { repoPath: true },
     });
-
-    if (connAccounts.length === 0) {
-      return [workbookId]; // no connections yet — nothing to check
-    }
 
     return connAccounts.map((ca) => ca.repoPath as string);
   }

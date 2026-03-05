@@ -58,6 +58,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     } as unknown as jest.Mocked<WorkbookEventService>;
 
     mockScratchGitService = {
+      resolveRepoId: jest.fn().mockResolvedValue('wkb_123'),
       initRepo: jest.fn().mockResolvedValue(undefined),
       commitFilesToBranch: jest.fn(),
       rebaseDirty: jest.fn(),

@@ -27,11 +27,9 @@ export class PublishPlanBuildService {
     private readonly schemaService: SchemaHelperService,
   ) {}
 
-  /** Returns all relevant repo IDs for a workbook. For V2 without a connectorAccountId, returns one per connection. */
+  /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
   private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
-    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
-    if (!workbook) throw new Error(`Workbook ${workbookId} not found`);
-    if (workbook.version < 2 || connectorAccountId) {
+    if (connectorAccountId) {
       const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
       return [repoId];
     }
@@ -39,7 +37,6 @@ export class PublishPlanBuildService {
       where: { workbookId, repoPath: { not: null } },
       select: { repoPath: true },
     });
-    if (connAccounts.length === 0) return [workbookId];
     return connAccounts.map((ca) => ca.repoPath as string);
   }
 

@@ -194,7 +194,7 @@ function ConnectionsModal({
                   <Table.Th>ID</Table.Th>
                   <Table.Th>Repo path</Table.Th>
                   <Table.Th>Created</Table.Th>
-                  {workbook.version >= 2 && <Table.Th>Git</Table.Th>}
+                  <Table.Th>Git</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -226,17 +226,15 @@ function ConnectionsModal({
                         {new Date(conn.createdAt).toLocaleDateString()}
                       </Text>
                     </Table.Td>
-                    {workbook.version >= 2 && (
-                      <Table.Td>
-                        <GitActionsMenu
-                          workbookId={workbook.id}
-                          connectorAccountId={conn.id}
-                          repoPath={conn.repoPath}
-                          gitActions={gitActions}
-                          onMoveRepo={() => setMoveConn(conn)}
-                        />
-                      </Table.Td>
-                    )}
+                    <Table.Td>
+                      <GitActionsMenu
+                        workbookId={workbook.id}
+                        connectorAccountId={conn.id}
+                        repoPath={conn.repoPath}
+                        gitActions={gitActions}
+                        onMoveRepo={() => setMoveConn(conn)}
+                      />
+                    </Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -325,16 +323,9 @@ function ConnectionCountCell({
 function WorkbookRow({
   workbook,
   onShowConnections,
-  onMigrate,
-  isMigrating,
-  migrationError,
-  gitActions,
 }: {
   workbook: AdminWorkbookDto;
   onShowConnections: (w: AdminWorkbookDto) => void;
-  onMigrate: (id: WorkbookId) => void;
-  isMigrating: boolean;
-  migrationError: boolean;
   gitActions: ReturnType<typeof useGitActions>;
 }) {
   return (
@@ -356,45 +347,9 @@ function WorkbookRow({
         <ConnectionCountCell connections={workbook.connections} onClick={() => onShowConnections(workbook)} />
       </Table.Td>
       <Table.Td>
-        <Badge color={workbook.version === 1 ? 'gray' : 'blue'} variant="outline" size="sm">
-          v{workbook.version}
-        </Badge>
-      </Table.Td>
-      <Table.Td>
         <Text size="sm" c="dimmed">
           {new Date(workbook.createdAt).toLocaleDateString()}
         </Text>
-      </Table.Td>
-      <Table.Td>
-        <Group gap="xs" wrap="nowrap">
-          {workbook.version >= 2 ? (
-            <Tooltip label="Already on v2">
-              <Badge color="blue" variant="light" size="sm">
-                v2 ✓
-              </Badge>
-            </Tooltip>
-          ) : (
-            <Tooltip
-              label={
-                migrationError
-                  ? 'Migration failed — check server logs'
-                  : 'Migrate repo structure to v2 (one repo per connection)'
-              }
-            >
-              <Button
-                size="xs"
-                variant="outline"
-                color={migrationError ? 'red' : undefined}
-                loading={isMigrating}
-                onClick={() => onMigrate(workbook.id)}
-              >
-                → v2
-              </Button>
-            </Tooltip>
-          )}
-          {/* V1 git actions — one repo per workbook */}
-          {workbook.version < 2 && <GitActionsMenu workbookId={workbook.id} gitActions={gitActions} />}
-        </Group>
       </Table.Td>
     </Table.Tr>
   );
@@ -416,9 +371,6 @@ export default function WorkbooksDevPage() {
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
-
-  const [migratingId, setMigratingId] = useState<WorkbookId | null>(null);
-  const [errorId, setErrorId] = useState<WorkbookId | null>(null);
 
   const [connectionsWorkbook, setConnectionsWorkbook] = useState<AdminWorkbookDto | null>(null);
 
@@ -452,19 +404,6 @@ export default function WorkbooksDevPage() {
   useEffect(() => {
     if (isAdmin) fetchWorkbooks();
   }, [isAdmin, fetchWorkbooks]);
-
-  const handleMigrateToV2 = async (workbookId: WorkbookId) => {
-    setMigratingId(workbookId);
-    setErrorId(null);
-    try {
-      await workbookApi.migrateToV2(workbookId);
-      await fetchWorkbooks();
-    } catch {
-      setErrorId(workbookId);
-    } finally {
-      setMigratingId(null);
-    }
-  };
 
   if (isUserLoading) {
     return (
@@ -576,9 +515,7 @@ export default function WorkbooksDevPage() {
                     <Table.Th>Name</Table.Th>
                     <Table.Th>Org</Table.Th>
                     <Table.Th>Connections</Table.Th>
-                    <Table.Th>Version</Table.Th>
                     <Table.Th>Created</Table.Th>
-                    <Table.Th>Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -587,9 +524,6 @@ export default function WorkbooksDevPage() {
                       key={workbook.id}
                       workbook={workbook}
                       onShowConnections={setConnectionsWorkbook}
-                      onMigrate={handleMigrateToV2}
-                      isMigrating={migratingId === workbook.id}
-                      migrationError={errorId === workbook.id}
                       gitActions={gitActions}
                     />
                   ))}

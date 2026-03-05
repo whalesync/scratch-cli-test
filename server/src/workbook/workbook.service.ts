@@ -39,7 +39,7 @@ export class WorkbookService {
   ) {}
 
   async create(createWorkbookDto: ValidatedCreateWorkbookDto, actor: Actor): Promise<WorkbookCluster.Workbook> {
-    const { name, version } = createWorkbookDto;
+    const { name } = createWorkbookDto;
 
     const workbookId = createWorkbookId();
 
@@ -49,7 +49,7 @@ export class WorkbookService {
         userId: actor.userId,
         organizationId: actor.organizationId,
         name: name ?? `New workbook`,
-        ...(version !== undefined ? { version } : { version: 2 }),
+        version: 2,
       },
       include: WorkbookCluster._validator.include,
     });
@@ -87,37 +87,22 @@ export class WorkbookService {
   async delete(id: WorkbookId, actor: Actor): Promise<void> {
     const workbook = await this.findOneOrThrow(id, actor); // Permissions
 
-    // Delete Git Repos
-    if (workbook.version >= 2) {
-      // V2: one repo per connection — delete each connection's repo
-      const connectorAccounts = await this.db.client.connectorAccount.findMany({
-        where: { workbookId: id },
-        select: { id: true },
-      });
-      for (const ca of connectorAccounts) {
-        try {
-          const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
-          await this.scratchGitService.deleteRepo(repoId);
-        } catch (err) {
-          WSLogger.error({
-            source: 'WorkbookService.delete',
-            message: 'Failed to delete V2 git repo',
-            error: err,
-            workbookId: id,
-            connectorAccountId: ca.id,
-          });
-        }
-      }
-    } else {
-      // V1: single repo per workbook
+    // Delete Git Repos — one repo per connection
+    const connectorAccounts = await this.db.client.connectorAccount.findMany({
+      where: { workbookId: id },
+      select: { id: true },
+    });
+    for (const ca of connectorAccounts) {
       try {
-        await this.scratchGitService.deleteRepo(id);
+        const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
+        await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {
         WSLogger.error({
           source: 'WorkbookService.delete',
           message: 'Failed to delete git repo',
           error: err,
           workbookId: id,
+          connectorAccountId: ca.id,
         });
       }
     }
@@ -160,12 +145,9 @@ export class WorkbookService {
         where: { workbookId, path: folderPath },
         select: { connectorAccountId: true },
       });
-      const repoId = await this.scratchGitService.resolveRepoId(
-        workbookId,
-        dataFolder?.connectorAccountId ?? undefined,
-      );
+      const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId);
       await this.scratchGitService.discardChanges(repoId, path);
-    } else if (workbook.version >= 2) {
+    } else {
       // Discard all: reset every per-connection repo
       const connAccounts = await this.db.client.connectorAccount.findMany({
         where: { workbookId },
@@ -177,8 +159,6 @@ export class WorkbookService {
           return this.scratchGitService.discardChanges(repoId);
         }),
       );
-    } else {
-      await this.scratchGitService.discardChanges(workbookId);
     }
 
     this.workbookEventService.sendWorkbookEvent(workbookId, {
@@ -200,59 +180,33 @@ export class WorkbookService {
   async resetWorkbook(id: WorkbookId, actor: Actor): Promise<void> {
     const workbook = await this.findOneOrThrow(id, actor);
 
-    if (workbook.version >= 2) {
-      // V2: one repo per connection — delete & re-init each connection's repo
-      const connectorAccounts = await this.db.client.connectorAccount.findMany({
-        where: { workbookId: id },
-        select: { id: true },
-      });
-      for (const ca of connectorAccounts) {
-        const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
-        try {
-          await this.scratchGitService.deleteRepo(repoId);
-        } catch (err) {
-          WSLogger.error({
-            source: 'WorkbookService.resetWorkbook',
-            message: 'Failed to delete V2 git repo during reset',
-            error: err,
-            workbookId: id,
-            connectorAccountId: ca.id,
-          });
-        }
-        try {
-          await this.scratchGitService.initRepo(repoId);
-        } catch (err) {
-          WSLogger.error({
-            source: 'WorkbookService.resetWorkbook',
-            message: 'Failed to re-init V2 git repo during reset',
-            error: err,
-            workbookId: id,
-            connectorAccountId: ca.id,
-          });
-          throw err;
-        }
-      }
-    } else {
-      // V1: single repo per workbook
+    // One repo per connection — delete & re-init each connection's repo
+    const connectorAccounts = await this.db.client.connectorAccount.findMany({
+      where: { workbookId: id },
+      select: { id: true },
+    });
+    for (const ca of connectorAccounts) {
+      const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
       try {
-        await this.scratchGitService.deleteRepo(id);
+        await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {
         WSLogger.error({
           source: 'WorkbookService.resetWorkbook',
           message: 'Failed to delete git repo during reset',
           error: err,
           workbookId: id,
+          connectorAccountId: ca.id,
         });
       }
-
       try {
-        await this.scratchGitService.initRepo(id);
+        await this.scratchGitService.initRepo(repoId);
       } catch (err) {
         WSLogger.error({
           source: 'WorkbookService.resetWorkbook',
           message: 'Failed to re-init git repo during reset',
           error: err,
           workbookId: id,
+          connectorAccountId: ca.id,
         });
         throw err;
       }

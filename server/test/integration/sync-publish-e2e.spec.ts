@@ -26,7 +26,7 @@ import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
-import { DIRTY_BRANCH, getRepoId, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, getDefaultRepoPath, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
@@ -741,7 +741,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       resolveRepoId: jest
         .fn()
         .mockImplementation((wkbId: WorkbookId, connAcctId?: string) =>
-          Promise.resolve(connAcctId ? getRepoId(2, wkbId, orgId, connAcctId) : wkbId),
+          Promise.resolve(connAcctId ? getDefaultRepoPath(orgId, wkbId, connAcctId) : wkbId),
         ),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
@@ -952,7 +952,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         workbookId,
         userId,
         encryptedCredentials: {},
-        repoPath: getRepoId(2, workbookId, orgId, connectorAccountId),
+        repoPath: getDefaultRepoPath(orgId, workbookId, connectorAccountId),
       },
     });
 
@@ -1132,7 +1132,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     expect(scratchGitService.resolveRepoId).toHaveBeenCalledWith(workbookId, connectorAccountId);
 
     // Verify the composite repo ID was computed correctly
-    const expectedRepoId = getRepoId(2, workbookId, orgId, connectorAccountId);
+    const expectedRepoId = getDefaultRepoPath(orgId, workbookId, connectorAccountId);
     expect(expectedRepoId).toBe(`${orgId}--${workbookId}--${connectorAccountId}`);
 
     // Run pipeline
@@ -1165,7 +1165,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
 
   it('should use composite V2 repo IDs when checking for diffs without a connectorAccountId', async () => {
     // hasDiffs without connectorAccountId for a V2 workbook calls resolveAllRepoIds,
-    // which uses getRepoId for each connector account — not resolveRepoId.
+    // which uses getDefaultRepoPath for each connector account — not resolveRepoId.
     // Verify getRepoStatus is called with the composite {orgId}--{workbookId}--{connAccountId} ID.
     const hasDiffs = await publishPlanService.hasDiffs(workbookId, undefined);
 
@@ -1179,7 +1179,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     // The repoId passed to getRepoStatus should be the composite V2 ID
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const calledWith = getRepoStatusMock.mock.calls[0][0] as string;
-    const expectedRepoId = getRepoId(2, workbookId, orgId, connectorAccountId);
+    const expectedRepoId = getDefaultRepoPath(orgId, workbookId, connectorAccountId);
     expect(calledWith).toBe(expectedRepoId);
   }, 30_000);
 });

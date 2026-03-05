@@ -25,6 +25,7 @@ import {
   buildCreateUserSQL,
   SupabaseApiClient,
 } from 'src/remote-service/connectors/library/supabase';
+import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor } from 'src/users/types';
 import { DbService } from '../db/db.service';
@@ -67,6 +68,7 @@ export class OAuthService {
     private readonly youTubeProvider: YouTubeOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
+    private readonly scratchGitService: ScratchGitService,
   ) {
     // Register OAuth providers
     this.providers.set('AIRTABLE', this.airtableProvider);
@@ -311,13 +313,7 @@ export class OAuthService {
 
     // Create new account
     const accountId = createConnectorAccountId();
-
-    // For V2 workbooks, compute the composite repo path
-    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
-    let repoPath: string | null = null;
-    if (workbook && workbook.version >= 2) {
-      repoPath = `${actor.organizationId}--${workbookId}--${accountId}`;
-    }
+    const repoPath = getDefaultRepoPath(actor.organizationId, workbookId, accountId);
 
     const newConnectorAccount = await this.db.client.connectorAccount.create({
       data: {
@@ -341,6 +337,19 @@ export class OAuthService {
       authType: AuthType.OAUTH,
       healthStatus: 'OK',
     });
+
+    // Init the connection's dedicated git repo immediately
+    try {
+      await this.scratchGitService.initRepo(repoPath);
+    } catch (err) {
+      WSLogger.error({
+        source: 'OAuthService.createOAuthAccount',
+        message: 'Failed to init git repo for OAuth connection',
+        error: err,
+        workbookId,
+        connectorAccountId: accountId,
+      });
+    }
 
     return newConnectorAccount;
   }

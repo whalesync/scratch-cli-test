@@ -47,7 +47,7 @@ function makeWorkbook(overrides?: Partial<{ version: number; dataFolders: { id: 
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-06-01'),
     snapshotTables: [{ id: 'st1' }],
-    version: overrides?.version ?? 1,
+    version: overrides?.version ?? 2,
     dataFolders: overrides?.dataFolders ?? [{ id: 'df1', name: 'Posts' }],
   };
 }
@@ -104,26 +104,15 @@ describe('CliWorkbookController', () => {
   // getWorkbook
   // ---------------------------------------------------------------------------
   describe('getWorkbook', () => {
-    it('returns V1 workbook with gitUrl and dataFolders, no connectorAccounts', async () => {
-      const workbook = makeWorkbook({ version: 1 });
-      workbookService.findOne.mockResolvedValue(workbook);
-
-      const result = await controller.getWorkbook(makeReqWithUser(), WORKBOOK_ID);
-
-      expect(result.version).toBe(1);
-      expect(result.gitUrl).toBe(`https://scratch.test/cli/v1/workbooks/${WORKBOOK_ID}/git`);
-      expect(result.dataFolders).toEqual([{ id: 'df1', name: 'Posts' }]);
-      expect(result.connectorAccounts).toBeUndefined();
-    });
-
-    it('returns V2 workbook with connectorAccounts, no top-level gitUrl or dataFolders', async () => {
-      const workbook = makeWorkbook({ version: 2 });
+    it('returns workbook with connectorAccounts', async () => {
+      const workbook = makeWorkbook();
       workbookService.findOne.mockResolvedValue(workbook);
       (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([
         {
           id: CONNECTOR_ID,
           displayName: 'My Airtable',
           service: 'airtable',
+          repoPath: `${ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
           dataFolders: [{ id: 'df2', name: 'Table1' }],
         },
       ]);
@@ -131,21 +120,20 @@ describe('CliWorkbookController', () => {
       const result = await controller.getWorkbook(makeReqWithUser(), WORKBOOK_ID);
 
       expect(result.version).toBe(2);
-      expect(result.gitUrl).toBeUndefined();
-      expect(result.dataFolders).toBeUndefined();
       expect(result.connectorAccounts).toEqual([
         {
           id: CONNECTOR_ID,
           displayName: 'My Airtable',
           service: 'airtable',
+          repoPath: `${ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
           gitUrl: `https://scratch.test/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git`,
           dataFolders: [{ id: 'df2', name: 'Table1' }],
         },
       ]);
     });
 
-    it('returns V2 workbook with empty connectorAccounts when none exist', async () => {
-      const workbook = makeWorkbook({ version: 2 });
+    it('returns workbook with empty connectorAccounts when none exist', async () => {
+      const workbook = makeWorkbook();
       workbookService.findOne.mockResolvedValue(workbook);
       (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([]);
 
@@ -201,16 +189,16 @@ describe('CliWorkbookController', () => {
   // listWorkbooks
   // ---------------------------------------------------------------------------
   describe('listWorkbooks', () => {
-    it('returns version field in each workbook', async () => {
-      const v1 = makeWorkbook({ version: 1 });
-      const v2 = makeWorkbook({ version: 2 });
-      workbookService.findAllForUser.mockResolvedValue([v1, v2]);
+    it('returns workbooks list', async () => {
+      const wb1 = makeWorkbook();
+      const wb2 = makeWorkbook();
+      workbookService.findAllForUser.mockResolvedValue([wb1, wb2]);
 
       const result = await controller.listWorkbooks(makeReqWithUser(), {});
 
       expect(result.workbooks).toHaveLength(2);
-      expect(result.workbooks![0].version).toBe(1);
-      expect(result.workbooks![1].version).toBe(2);
+      expect(result.workbooks![0].id).toBe(WORKBOOK_ID);
+      expect(result.workbooks![1].id).toBe(WORKBOOK_ID);
     });
   });
 });

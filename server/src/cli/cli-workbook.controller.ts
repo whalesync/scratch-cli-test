@@ -113,24 +113,20 @@ export class CliWorkbookController {
 
     const baseUrl = `${req.protocol}://${req.get('host')}`;
 
-    // For V2 workbooks, load connector accounts with their data folders
-    let connectorAccounts: CliConnectorAccountDto[] | undefined;
-    if (workbook.version >= 2) {
-      const accounts = await this.db.client.connectorAccount.findMany({
-        where: { workbookId: id },
-        include: { dataFolders: { select: { id: true, name: true } } },
-        orderBy: { createdAt: 'asc' },
-      });
+    const accounts = await this.db.client.connectorAccount.findMany({
+      where: { workbookId: id },
+      include: { dataFolders: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
 
-      connectorAccounts = accounts.map((ca) => ({
-        id: ca.id,
-        displayName: ca.displayName,
-        service: ca.service,
-        repoPath: ca.repoPath ?? undefined,
-        gitUrl: `${baseUrl}/cli/v1/workbooks/${id}/connectors/${ca.id}/git`,
-        dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name })),
-      }));
-    }
+    const connectorAccounts: CliConnectorAccountDto[] = accounts.map((ca) => ({
+      id: ca.id,
+      displayName: ca.displayName,
+      service: ca.service,
+      repoPath: ca.repoPath ?? undefined,
+      gitUrl: `${baseUrl}/cli/v1/workbooks/${id}/connectors/${ca.id}/git`,
+      dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name })),
+    }));
 
     return this.toCliResponse(workbook, baseUrl, connectorAccounts);
   }
@@ -205,42 +201,6 @@ export class CliWorkbookController {
       workbookId,
       connectorAccountId,
       repoId,
-    });
-
-    await this.proxyToGitBackend(targetUrl, workbookId, req, res);
-  }
-
-  /**
-   * Git HTTP proxy endpoint (V1 workbooks).
-   * Proxies git operations to the internal git HTTP backend with authentication.
-   * Supports: git clone, git fetch, git push, etc.
-   */
-  @All(':id/git/*path')
-  async gitProxy(@Req() req: RequestWithUser & Request, @Param('id') id: string, @Res() res: Response): Promise<void> {
-    const actor = userToActor(req.user);
-    const workbookId = id as WorkbookId;
-
-    // Verify access
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    this.posthogService.trackCliGitOperation(actor, workbookId, { method: req.method });
-
-    // Extract the git path (everything after /git/)
-    const gitPath = req.url.replace(`/cli/v1/workbooks/${id}/git`, '');
-
-    // Build the target URL: http://localhost:3101/<workbook-id>.git/<path>
-    const targetUrl = `${this.gitBackendUrl}/${workbookId}.git${gitPath}`;
-
-    WSLogger.info({
-      source: 'CliWorkbookController.gitProxy',
-      message: `Proxying git request`,
-      method: req.method,
-      targetUrl,
-      gitBackendUrl: this.gitBackendUrl,
-      workbookId,
     });
 
     await this.proxyToGitBackend(targetUrl, workbookId, req, res);
@@ -340,25 +300,18 @@ export class CliWorkbookController {
       updatedAt: Date;
       version?: number;
       snapshotTables?: unknown[];
-      dataFolders?: { id: string; name: string }[];
     },
     baseUrl?: string,
     connectorAccounts?: CliConnectorAccountDto[],
   ): CliWorkbookResponseDto {
-    const version = workbook.version ?? 1;
-    const isV2 = version >= 2;
-
     return {
       id: workbook.id,
       name: workbook.name ?? undefined,
       createdAt: workbook.createdAt.toISOString(),
       updatedAt: workbook.updatedAt.toISOString(),
       tableCount: workbook.snapshotTables?.length ?? 0,
-      version,
-      // V1: top-level dataFolders and gitUrl; V2: nested under connectorAccounts
-      dataFolders: !isV2 ? workbook.dataFolders?.map((df) => ({ id: df.id, name: df.name })) : undefined,
-      gitUrl: !isV2 && baseUrl ? `${baseUrl}/cli/v1/workbooks/${workbook.id}/git` : undefined,
-      connectorAccounts: isV2 ? connectorAccounts : undefined,
+      version: workbook.version ?? 2,
+      connectorAccounts,
     };
   }
 }

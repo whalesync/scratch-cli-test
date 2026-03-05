@@ -3,15 +3,13 @@
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text13Medium, Text13Regular } from '@/app/components/base/text';
 import { useWorkbooks } from '@/hooks/use-workbooks';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { usersApi } from '@/lib/api/users';
-import { workbookApi } from '@/lib/api/workbook';
 import { Box, Button, Group, Menu, Modal, Stack, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { Workbook, WorkbookId } from '@spinner/shared-types';
-import { ArrowUpCircleIcon, CheckIcon, ChevronDownIcon, FlaskRoundIcon, PencilIcon, PlusIcon } from 'lucide-react';
+import { CheckIcon, ChevronDownIcon, PencilIcon, PlusIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 // Workspace colors for differentiation
 const WORKSPACE_COLORS = [
@@ -56,8 +54,6 @@ interface ProjectSwitcherProps {
 export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   const router = useRouter();
   const { workbooks, createWorkbook, updateWorkbook } = useWorkbooks();
-  const { user } = useScratchPadUser();
-  const isAdmin = user?.isAdmin ?? false;
   const [menuOpened, setMenuOpened] = useState(false);
 
   // Rename modal state
@@ -70,8 +66,6 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   const [createModalOpened, { open: openCreateModal, close: closeCreateModal }] = useDisclosure(false);
   const [createName, setCreateName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const createVersionRef = useRef<number>(1);
-  const [migratingToV2Id, setMigratingToV2Id] = useState<WorkbookId | null>(null);
 
   const handleSwitchProject = useCallback(
     (workbookId: WorkbookId) => {
@@ -110,44 +104,18 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   }, [workbookToRename, newName, updateWorkbook, closeRenameModal]);
 
   const handleOpenCreate = useCallback(() => {
-    createVersionRef.current = 2; // default
     setCreateName('');
     setMenuOpened(false);
     openCreateModal();
   }, [openCreateModal]);
-
-  const handleOpenCreateV1 = useCallback(() => {
-    createVersionRef.current = 1; // Admin explicitly asks for V1
-    setCreateName('');
-    setMenuOpened(false);
-    openCreateModal();
-  }, [openCreateModal]);
-
-  const handleMigrateToV2 = useCallback(async (e: React.MouseEvent, workbookId: WorkbookId) => {
-    e.stopPropagation();
-    setMigratingToV2Id(workbookId);
-    setMenuOpened(false);
-    try {
-      await workbookApi.migrateToV2(workbookId);
-    } catch (error) {
-      console.error('Failed to migrate workbook to V2:', error);
-    } finally {
-      setMigratingToV2Id(null);
-    }
-  }, []);
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim()) return;
 
     setIsCreating(true);
     try {
-      const version = createVersionRef.current;
-      const newWorkbook = await createWorkbook({
-        name: createName.trim(),
-        ...(version !== undefined ? { version } : {}),
-      });
+      const newWorkbook = await createWorkbook({ name: createName.trim() });
       closeCreateModal();
-      // Navigate to the new workbook
       router.push(`/workbook/${newWorkbook.id}/files`);
     } catch (error) {
       console.error('Failed to create workbook:', error);
@@ -207,25 +175,6 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
                   </Group>
                   <Group gap={4} wrap="nowrap">
                     {isCurrent && <StyledLucideIcon Icon={CheckIcon} size="sm" c="var(--fg-primary)" />}
-                    {isAdmin && (workbook.version ?? 1) < 2 && (
-                      <Tooltip label="Migrate to V2" position="top">
-                        <Box
-                          onClick={(e: React.MouseEvent) => handleMigrateToV2(e, workbook.id as WorkbookId)}
-                          style={{
-                            cursor: migratingToV2Id === workbook.id ? 'default' : 'pointer',
-                            padding: 2,
-                            borderRadius: 4,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: migratingToV2Id === workbook.id ? 0.5 : 1,
-                            color: 'var(--mantine-color-devTool-8)',
-                          }}
-                        >
-                          <ArrowUpCircleIcon size={14} />
-                        </Box>
-                      </Tooltip>
-                    )}
                     <Tooltip label="Rename" position="top">
                       <Box
                         onClick={(e: React.MouseEvent) => handleOpenRename(e, workbook)}
@@ -253,13 +202,6 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
           <Menu.Item onClick={handleOpenCreate} leftSection={<PlusIcon size={14} />}>
             <Text13Regular c="var(--fg-secondary)">New Workspace</Text13Regular>
           </Menu.Item>
-
-          {/* New Workspace V1 (admin only) */}
-          {isAdmin && (
-            <Menu.Item onClick={handleOpenCreateV1} leftSection={<FlaskRoundIcon size={14} />} data-devtool>
-              <Text13Regular c="var(--mantine-color-devTool-8)">New Workspace (V1)</Text13Regular>
-            </Menu.Item>
-          )}
         </Menu.Dropdown>
       </Menu>
 
@@ -290,13 +232,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
       </Modal>
 
       {/* Create Modal */}
-      <Modal
-        opened={createModalOpened}
-        onClose={closeCreateModal}
-        title={createVersionRef.current === 1 ? 'New Workspace (V1)' : 'New Workspace'}
-        size="sm"
-        centered
-      >
+      <Modal opened={createModalOpened} onClose={closeCreateModal} title="New Workspace" size="sm" centered>
         <Stack gap="md">
           <TextInput
             label="Workspace Name"

@@ -20,7 +20,7 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { WSLogger } from 'src/logger';
 import { OAuthService } from 'src/oauth/oauth.service';
-import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor } from 'src/users/types';
 import { DbService } from '../../db/db.service';
@@ -88,14 +88,11 @@ export class ConnectorAccountService {
       credentials as unknown as DecryptedCredentials,
     );
 
-    const accountId = createConnectorAccountId();
-    let repoPath: string | null = null;
-    if (workbook.version >= 2) {
-      if (!actor.organizationId) {
-        throw new Error(`Cannot create V2 repoPath without organizationId`);
-      }
-      repoPath = `${actor.organizationId}--${workbookId}--${accountId}`;
+    if (!actor.organizationId) {
+      throw new Error(`Cannot create repoPath without organizationId`);
     }
+    const accountId = createConnectorAccountId();
+    const repoPath = getDefaultRepoPath(actor.organizationId, workbookId, accountId);
 
     const connectorAccount = await this.db.client.connectorAccount.create({
       data: {
@@ -130,11 +127,9 @@ export class ConnectorAccountService {
       },
     });
 
-    // For V2 workbooks, init the connection's dedicated git repo immediately
-    if (workbook.version >= 2) {
-      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccount.id);
-      await this.scratchGitService.initRepo(repoId);
-    }
+    // Init the connection's dedicated git repo immediately
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccount.id);
+    await this.scratchGitService.initRepo(repoId);
 
     // Re-fetch to include health status set by testConnection()
     return this.db.client.connectorAccount.findUniqueOrThrow({
@@ -274,7 +269,7 @@ export class ConnectorAccountService {
       throw new NotFoundException('ConnectorAccount not found');
     }
 
-    // Fetch all DataFolders for this connection (needed for schedule cleanup and V1 git cleanup)
+    // Fetch all DataFolders for this connection (needed for schedule cleanup)
     const dataFolders = await this.db.client.dataFolder.findMany({
       where: { workbookId, connectorAccountId: id },
       select: { id: true, path: true },
@@ -299,14 +294,10 @@ export class ConnectorAccountService {
       where: { workbookId, connectorAccountId: id },
     });
 
-    // Clean up git data
-    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId }, select: { version: true } });
-    if (workbook && workbook.version >= 2) {
-      // V2: each connection has its own repo — delete it entirely
+    // Clean up git data — delete the connection's dedicated repo
+    if (account.repoPath) {
       try {
-        if (account.repoPath) {
-          await this.scratchGitService.deleteRepo(account.repoPath);
-        }
+        await this.scratchGitService.deleteRepo(account.repoPath);
       } catch (err) {
         WSLogger.error({
           source: 'ConnectorAccountService.remove',
@@ -315,23 +306,6 @@ export class ConnectorAccountService {
           workbookId,
           connectorAccountId: id,
         });
-      }
-    } else if (workbook) {
-      // V1: shared repo — remove each folder's data individually
-      for (const folder of dataFolders) {
-        if (folder.path) {
-          try {
-            await this.scratchGitService.removeDataFolder(workbookId, folder.path);
-          } catch (err) {
-            WSLogger.error({
-              source: 'ConnectorAccountService.remove',
-              message: `Failed to remove git data for folder ${folder.path} during connection removal`,
-              error: err,
-              workbookId,
-              connectorAccountId: id,
-            });
-          }
-        }
       }
     }
 
@@ -370,33 +344,30 @@ export class ConnectorAccountService {
       where: { workbookId, connectorAccountId: id },
     });
 
-    // For V2 workbooks, delete and re-init the connection's dedicated git repo
-    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId }, select: { version: true } });
-    if (workbook && workbook.version >= 2) {
+    // Delete and re-init the connection's dedicated git repo
+    try {
+      const repoId = await this.scratchGitService.resolveRepoId(workbookId, id);
       try {
-        const repoId = await this.scratchGitService.resolveRepoId(workbookId, id);
-        try {
-          await this.scratchGitService.deleteRepo(repoId);
-        } catch (err) {
-          WSLogger.error({
-            source: 'ConnectorAccountService.resetConnection',
-            message: 'Failed to delete git repo during connection reset',
-            error: err,
-            workbookId,
-            connectorAccountId: id,
-          });
-        }
-        await this.scratchGitService.initRepo(repoId);
+        await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {
         WSLogger.error({
           source: 'ConnectorAccountService.resetConnection',
-          message: 'Failed to reset git repo during connection reset',
+          message: 'Failed to delete git repo during connection reset',
           error: err,
           workbookId,
           connectorAccountId: id,
         });
-        throw err;
       }
+      await this.scratchGitService.initRepo(repoId);
+    } catch (err) {
+      WSLogger.error({
+        source: 'ConnectorAccountService.resetConnection',
+        message: 'Failed to reset git repo during connection reset',
+        error: err,
+        workbookId,
+        connectorAccountId: id,
+      });
+      throw err;
     }
 
     await this.auditLogService.logEvent({
