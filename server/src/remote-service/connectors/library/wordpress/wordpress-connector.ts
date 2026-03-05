@@ -203,6 +203,15 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
   }
 
   /**
+   * Upload a media file to WordPress.
+   * Sends the raw file buffer to the /wp/v2/media endpoint.
+   */
+  async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<ConnectorFile> {
+    const result = await this.client.uploadMedia(buffer, filename, mimeType);
+    return result as unknown as ConnectorFile;
+  }
+
+  /**
    * Throws if any request in the batch returned an error status.
    * The batch endpoint always returns HTTP 207 (axios won't throw), so we must
    * check response statuses manually. With "require-all-validate", WordPress validates

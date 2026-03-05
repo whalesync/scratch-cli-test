@@ -6,6 +6,9 @@ export const WORDPRESS_STATUS_COLUMN_ID = 'status';
 // WordPress batch API supports up to 25 requests per batch (default server limit)
 export const WORDPRESS_BATCH_SIZE = 25;
 
+// Timeout for media upload requests (2 minutes)
+export const WORDPRESS_UPLOAD_TIMEOUT_MS = 120_000;
+
 // ACF (Advanced Custom Fields) support
 export const WORDPRESS_REMOTE_CUSTOM_FIELDS_ID = 'acf';
 export const WORDPRESS_ORG_V2_PATH = 'wp/v2/';

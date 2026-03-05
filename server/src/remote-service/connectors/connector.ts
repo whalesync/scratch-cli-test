@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
@@ -60,7 +61,7 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * @param searchTerm The search term to filter tables by.
    * @returns A list of matching table previews and whether more results exist.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   searchTables(searchTerm: string): Promise<{ tables: TablePreview[]; hasMore: boolean }> {
     throw new Error('searchTables is not implemented for this connector');
   }
@@ -80,7 +81,7 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * @param tableSpec The table spec to get the new file template for.
    * @returns The new file template.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   getNewFile(tableSpec: BaseJsonTableSpec): Promise<Record<string, unknown>> {
     return Promise.resolve({});
   }
@@ -175,6 +176,25 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * @throws Error if there is a problem deleting the records.
    */
   abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>;
+
+  /**
+   * Upload a file to the remote service and return the created record.
+   * Not all connectors support file uploads — the default implementation throws.
+   *
+   * @param buffer - The raw file contents.
+   * @param filename - The name of the file (e.g. "photo.jpg").
+   * @param mimeType - The MIME type of the file (e.g. "image/jpeg").
+   * @param metadata - Optional service-specific metadata to include with the upload.
+   * @returns The created record as a ConnectorFile.
+   */
+  uploadFile(
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<ConnectorFile> {
+    throw new Error('uploadFile is not implemented for this connector');
+  }
 
   /**
    * Evaluate the error object in the context of the connector and return some standardised error details that can be return to a user or logged.

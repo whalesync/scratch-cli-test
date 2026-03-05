@@ -3,7 +3,7 @@ import axios, { AxiosResponse, RawAxiosRequestHeaders } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
 import { ConnectorAuthError } from '../../error';
-import { WORDPRESS_ORG_V2_PATH } from './wordpress-constants';
+import { WORDPRESS_ORG_V2_PATH, WORDPRESS_UPLOAD_TIMEOUT_MS } from './wordpress-constants';
 import {
   WordPressBatchRequestItem,
   WordPressBatchResponse,
@@ -11,6 +11,7 @@ import {
   WordPressGetDiscoveryApiResponse,
   WordPressGetTaxonomiesApiResponse,
   WordPressGetTypesApiResponse,
+  WordPressMediaUploadResponse,
   WordPressRecord,
 } from './wordpress-types';
 
@@ -196,6 +197,24 @@ export class WordPressHttpClient {
   async deleteRecord(tableId: string, recordId: string): Promise<void> {
     const url = this.generateUrl(this.endpoint, tableId, recordId, [{ name: 'force', value: 'true' }]);
     await axios.delete(url, { headers: this.authHeaders });
+  }
+
+  /**
+   * Upload a media file to WordPress (POST /wp/v2/media).
+   * Sends the raw file buffer with Content-Type and Content-Disposition headers.
+   */
+  async uploadMedia(buffer: Buffer, filename: string, mimeType: string): Promise<WordPressMediaUploadResponse> {
+    const url = this.generateUrl(this.endpoint, 'media', null, []);
+    const headers: RawAxiosRequestHeaders = {
+      ...this.authHeaders,
+      'Content-Type': mimeType,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    };
+    const response = await axios.post<WordPressMediaUploadResponse>(url, buffer, {
+      headers,
+      timeout: WORDPRESS_UPLOAD_TIMEOUT_MS,
+    });
+    return response.data;
   }
 
   /**

@@ -125,6 +125,16 @@ export interface WordPressBatchResponseItem {
   headers: Record<string, string>;
 }
 
+/**
+ * Response from the WordPress media upload endpoint (POST /wp/v2/media).
+ * Returns the created media record with additional media-specific fields.
+ */
+export type WordPressMediaUploadResponse = WordPressRecord & {
+  source_url?: string;
+  media_type?: string;
+  mime_type?: string;
+};
+
 export enum WordPressDataType {
   STRING = 'wordpress/string',
   EMAIL = 'wordpress/email',
