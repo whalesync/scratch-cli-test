@@ -136,8 +136,11 @@ describe('Repo Read', () => {
       await client.commitFiles(repoId, [file('main-only.md', 'main')], 'add', 'main');
       await client.rebase(repoId);
 
+      // After rebase, merge_base and dirty both have the file with same content
       const diff = await client.getFileDiff(repoId, 'main-only.md');
-      expect(diff).toBeNull(); // dirty == merge_base, so no diff
+      expect(diff).not.toBeNull();
+      expect(diff!.base).toBe('main');
+      expect(diff!.dirty).toBe('main');
     });
 
     it('should return null base when file only on dirty', async () => {

@@ -28,6 +28,7 @@ include:
     - gitlab-ci/stages/01-build-and-test.yml
   scratch-git:
     - scratch-git-2/**/*
+    - scratch-git-tests/**/*
     - gitlab-ci/stages/01-build-and-test.yml
   scratch-git-docker:
     - scratch-git-2/Dockerfile
@@ -285,6 +286,33 @@ build and test scratch-cli:
 # =============================================================================
 # SCRATCH-GIT SUBPROJECT
 # =============================================================================
+
+.build-and-test-scratch-git:
+  stage: build and test
+  image: rust:slim-bookworm
+  interruptible: true
+  script:
+    - apt-get update && apt-get install -y git curl pkg-config libssl-dev
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - apt-get install -y nodejs
+    - cd scratch-git-2 && cargo build && cd ..
+    - cd scratch-git-tests && npm install && npm test
+  cache:
+    key:
+      files:
+        - scratch-git-2/Cargo.lock
+    paths:
+      - scratch-git-2/target/
+    unprotect: true
+
+build and test scratch-git:
+  extends: .build-and-test-scratch-git
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, scratch-git]
+    - !reference [.rules, on_merge_to_master]
+    - !reference [.rules, on_merge_to_prod]
 
 .build-scratch-git-docker-image:
   stage: build and test
