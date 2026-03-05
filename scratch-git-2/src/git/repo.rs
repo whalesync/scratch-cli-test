@@ -17,9 +17,8 @@ impl GitRepo {
     /// Open an existing bare git repository.
     pub fn open(repos_dir: &Path, repo_id: &str) -> Result<Self, AppError> {
         let repo_path = repos_dir.join(format!("{}.git", repo_id));
-        let repo = gix::open(&repo_path).map_err(|e| {
-            AppError::internal(format!("Failed to open repo {}: {}", repo_id, e))
-        })?;
+        let repo = gix::open(&repo_path)
+            .map_err(|e| AppError::internal(format!("Failed to open repo {}: {}", repo_id, e)))?;
         Ok(Self {
             repo,
             _repo_path: repo_path,
@@ -36,9 +35,8 @@ impl GitRepo {
         // Check if HEAD exists (already initialized)
         let head_path = repo_path.join("HEAD");
         if !head_path.exists() {
-            let repo = gix::init_bare(&repo_path).map_err(|e| {
-                AppError::internal(format!("Failed to init bare repo: {}", e))
-            })?;
+            let repo = gix::init_bare(&repo_path)
+                .map_err(|e| AppError::internal(format!("Failed to init bare repo: {}", e)))?;
 
             let git_repo = Self {
                 repo,
@@ -49,8 +47,7 @@ impl GitRepo {
             // Create initial commit if main doesn't exist
             if git_repo.resolve_ref(MAIN_BRANCH).is_err() {
                 let empty_tree = git_repo.write_empty_tree()?;
-                let commit_oid =
-                    git_repo.write_commit(empty_tree, &[], "Initial commit")?;
+                let commit_oid = git_repo.write_commit(empty_tree, &[], "Initial commit")?;
 
                 // Point main and dirty to this commit
                 git_repo.force_ref(MAIN_BRANCH, commit_oid)?;
@@ -67,8 +64,7 @@ impl GitRepo {
 
             if git_repo.resolve_ref(MAIN_BRANCH).is_err() {
                 let empty_tree = git_repo.write_empty_tree()?;
-                let commit_oid =
-                    git_repo.write_commit(empty_tree, &[], "Initial commit")?;
+                let commit_oid = git_repo.write_commit(empty_tree, &[], "Initial commit")?;
 
                 git_repo.force_ref(MAIN_BRANCH, commit_oid)?;
                 git_repo.create_branch(DIRTY_BRANCH, commit_oid)?;
@@ -239,26 +235,34 @@ impl GitRepo {
     }
 
     /// Commit changes to a ref (read current tree, apply changes, write commit, update ref).
+    /// Returns the new commit OID and stats about what files were created/updated/unchanged.
     pub fn commit_changes_to_ref(
         &self,
         ref_name: &str,
         changes: &[FileChange],
         message: &str,
-    ) -> Result<ObjectId, AppError> {
+    ) -> Result<(ObjectId, CommitStats), AppError> {
         let parent_oid = self.resolve_ref(ref_name)?;
         let parent_commit = self
             .repo
             .find_commit(parent_oid)
             .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
-        let current_tree_oid: ObjectId = parent_commit.tree_id().map_err(|e| {
-            AppError::internal(format!("Failed to get tree from commit: {}", e))
-        })?.into();
+        let current_tree_oid: ObjectId = parent_commit
+            .tree_id()
+            .map_err(|e| AppError::internal(format!("Failed to get tree from commit: {}", e)))?
+            .into();
 
-        let new_tree_oid = self.apply_changes_to_tree(current_tree_oid, changes, "")?;
+        let (new_tree_oid, stats) = self.apply_changes_to_tree(current_tree_oid, changes, "")?;
+
+        // Skip creating a commit if the tree is identical (nothing actually changed)
+        if new_tree_oid == current_tree_oid {
+            return Ok((parent_oid, stats));
+        }
+
         let new_commit_oid = self.write_commit(new_tree_oid, &[parent_oid], message)?;
         self.force_ref(ref_name, new_commit_oid)?;
 
-        Ok(new_commit_oid)
+        Ok((new_commit_oid, stats))
     }
 
     // ── File operations ──
@@ -314,11 +318,9 @@ impl GitRepo {
 
                         if i == parts.len() - 1 && is_blob {
                             let blob = self.read_blob(oid)?;
-                            return Ok(Some(
-                                String::from_utf8(blob).map_err(|e| {
-                                    AppError::internal(format!("Blob not UTF-8: {}", e))
-                                })?,
-                            ));
+                            return Ok(Some(String::from_utf8(blob).map_err(|e| {
+                                AppError::internal(format!("Blob not UTF-8: {}", e))
+                            })?));
                         } else if i < parts.len() - 1 && is_tree {
                             current_tree_oid = oid;
                             found = true;
@@ -385,16 +387,15 @@ impl GitRepo {
 
     pub fn list_branches(&self) -> Result<Vec<(String, ObjectId)>, AppError> {
         let mut branches = Vec::new();
-        let refs = self.repo.references().map_err(|e| {
-            AppError::internal(format!("Failed to list refs: {}", e))
-        })?;
-        let branch_refs = refs.prefixed("refs/heads/").map_err(|e| {
-            AppError::internal(format!("Failed to filter branches: {}", e))
-        })?;
+        let refs = self
+            .repo
+            .references()
+            .map_err(|e| AppError::internal(format!("Failed to list refs: {}", e)))?;
+        let branch_refs = refs
+            .prefixed("refs/heads/")
+            .map_err(|e| AppError::internal(format!("Failed to filter branches: {}", e)))?;
         for r in branch_refs {
-            let r = r.map_err(|e| {
-                AppError::internal(format!("Failed to read ref: {}", e))
-            })?;
+            let r = r.map_err(|e| AppError::internal(format!("Failed to read ref: {}", e)))?;
             let name = r
                 .name()
                 .as_bstr()
@@ -402,9 +403,9 @@ impl GitRepo {
                 .strip_prefix("refs/heads/")
                 .unwrap_or("")
                 .to_string();
-            let oid = r.into_fully_peeled_id().map_err(|e| {
-                AppError::internal(format!("Failed to peel ref: {}", e))
-            })?;
+            let oid = r
+                .into_fully_peeled_id()
+                .map_err(|e| AppError::internal(format!("Failed to peel ref: {}", e)))?;
             branches.push((name, oid.detach()));
         }
         Ok(branches)
@@ -412,16 +413,15 @@ impl GitRepo {
 
     pub fn list_tags(&self) -> Result<Vec<(String, ObjectId)>, AppError> {
         let mut tags = Vec::new();
-        let refs = self.repo.references().map_err(|e| {
-            AppError::internal(format!("Failed to list refs: {}", e))
-        })?;
-        let tag_refs = refs.prefixed("refs/tags/").map_err(|e| {
-            AppError::internal(format!("Failed to filter tags: {}", e))
-        })?;
+        let refs = self
+            .repo
+            .references()
+            .map_err(|e| AppError::internal(format!("Failed to list refs: {}", e)))?;
+        let tag_refs = refs
+            .prefixed("refs/tags/")
+            .map_err(|e| AppError::internal(format!("Failed to filter tags: {}", e)))?;
         for r in tag_refs {
-            let r = r.map_err(|e| {
-                AppError::internal(format!("Failed to read ref: {}", e))
-            })?;
+            let r = r.map_err(|e| AppError::internal(format!("Failed to read ref: {}", e)))?;
             let name = r
                 .name()
                 .as_bstr()
@@ -429,9 +429,9 @@ impl GitRepo {
                 .strip_prefix("refs/tags/")
                 .unwrap_or("")
                 .to_string();
-            let oid = r.into_fully_peeled_id().map_err(|e| {
-                AppError::internal(format!("Failed to peel ref: {}", e))
-            })?;
+            let oid = r
+                .into_fully_peeled_id()
+                .map_err(|e| AppError::internal(format!("Failed to peel ref: {}", e)))?;
             tags.push((name, oid.detach()));
         }
         Ok(tags)
@@ -443,9 +443,9 @@ impl GitRepo {
             .repo
             .find_commit(commit_oid)
             .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
-        let tree_id = commit.tree_id().map_err(|e| {
-            AppError::internal(format!("Failed to get tree: {}", e))
-        })?;
+        let tree_id = commit
+            .tree_id()
+            .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?;
         Ok(tree_id.into())
     }
 
@@ -476,7 +476,7 @@ impl GitRepo {
                 let t = obj
                     .try_into_tree()
                     .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
-                
+
                 let part_bytes = part.as_bytes();
                 let mut found = false;
 
@@ -519,20 +519,18 @@ impl GitRepo {
     }
 
     /// Read commit info (for graph/checkpoint listing).
-    pub fn read_commit_info(
-        &self,
-        oid: ObjectId,
-    ) -> Result<CommitInfo, AppError> {
+    pub fn read_commit_info(&self, oid: ObjectId) -> Result<CommitInfo, AppError> {
         let commit = self
             .repo
             .find_commit(oid)
             .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
-        let message = commit.message_raw().map_err(|e| {
-            AppError::internal(format!("Failed to read message: {}", e))
-        })?.to_string();
-        let author_ref = commit.author().map_err(|e| {
-            AppError::internal(format!("Failed to read author: {}", e))
-        })?;
+        let message = commit
+            .message_raw()
+            .map_err(|e| AppError::internal(format!("Failed to read message: {}", e)))?
+            .to_string();
+        let author_ref = commit
+            .author()
+            .map_err(|e| AppError::internal(format!("Failed to read author: {}", e)))?;
         let timestamp = author_ref.time.seconds;
         let author_name = author_ref.name.to_string();
         let author_email = author_ref.email.to_string();

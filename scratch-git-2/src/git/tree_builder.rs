@@ -4,17 +4,17 @@ use gix::ObjectId;
 
 use crate::error::AppError;
 use crate::git::repo::GitRepo;
-use crate::types::{ChangeType, FileChange};
+use crate::types::{ChangeType, CommitStats, FileChange};
 
 impl GitRepo {
-    /// Apply a set of file changes to a tree, returning the new tree OID.
-    /// This is the recursive tree construction algorithm.
+    /// Apply a set of file changes to a tree, returning the new tree OID and stats
+    /// about what actually changed. This is the recursive tree construction algorithm.
     pub fn apply_changes_to_tree(
         &self,
         current_tree_oid: ObjectId,
         changes: &[FileChange],
         prefix: &str,
-    ) -> Result<ObjectId, AppError> {
+    ) -> Result<(ObjectId, CommitStats), AppError> {
         // Partition changes into direct (this level) vs subtree (nested)
         let mut direct_changes: HashMap<String, &FileChange> = HashMap::new();
         let mut subtree_changes: HashMap<String, Vec<&FileChange>> = HashMap::new();
@@ -50,6 +50,7 @@ impl GitRepo {
             .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
 
         let mut new_entries: Vec<(String, gix::objs::tree::EntryKind, ObjectId)> = Vec::new();
+        let mut stats = CommitStats::default();
 
         for entry_ref in tree.iter() {
             let entry = entry_ref
@@ -65,39 +66,42 @@ impl GitRepo {
                     // Skip (delete)
                     continue;
                 }
-                // Modify or add over existing
+                // Modify or add over existing — compare blob OIDs
                 let new_oid = self.write_blob_for_change(direct)?;
+                let full_path = direct.path.clone();
+                let existing_oid: ObjectId = oid.into();
+                if new_oid == existing_oid {
+                    stats.unchanged.push(full_path);
+                } else {
+                    stats.updated.push(full_path);
+                }
                 new_entries.push((name, gix::objs::tree::EntryKind::Blob, new_oid));
             } else if let Some(sub_changes) = subtree_changes.remove(&name) {
                 if mode.is_tree() {
-                    let new_subtree_oid = self.apply_changes_to_tree(
+                    let (new_subtree_oid, sub_stats) = self.apply_changes_to_tree(
                         oid.into(),
-                        &sub_changes
-                            .iter()
-                            .map(|c| (*c).clone())
-                            .collect::<Vec<_>>(),
+                        &sub_changes.iter().map(|c| (*c).clone()).collect::<Vec<_>>(),
                         &if prefix.is_empty() {
                             name.clone()
                         } else {
                             format!("{}/{}", prefix, name)
                         },
                     )?;
-                    new_entries.push((name.clone(), gix::objs::tree::EntryKind::Tree, new_subtree_oid));
+                    stats.created.extend(sub_stats.created);
+                    stats.updated.extend(sub_stats.updated);
+                    stats.unchanged.extend(sub_stats.unchanged);
+                    new_entries.push((
+                        name.clone(),
+                        gix::objs::tree::EntryKind::Tree,
+                        new_subtree_oid,
+                    ));
                 } else {
                     // Entry is not a tree but we have subtree changes - keep as-is
-                    new_entries.push((
-                        name,
-                        entry_kind_from_mode(mode),
-                        oid.into(),
-                    ));
+                    new_entries.push((name, entry_kind_from_mode(mode), oid.into()));
                 }
             } else {
                 // No change, keep entry
-                new_entries.push((
-                    name,
-                    entry_kind_from_mode(mode),
-                    oid.into(),
-                ));
+                new_entries.push((name, entry_kind_from_mode(mode), oid.into()));
             }
         }
 
@@ -105,6 +109,7 @@ impl GitRepo {
         for (name, change) in &direct_changes {
             if change.change_type == ChangeType::Add || change.change_type == ChangeType::Modify {
                 let new_oid = self.write_blob_for_change(change)?;
+                stats.created.push(change.path.clone());
                 new_entries.push((name.clone(), gix::objs::tree::EntryKind::Blob, new_oid));
             }
         }
@@ -112,19 +117,23 @@ impl GitRepo {
         // Add new subtrees (not already in tree)
         for (name, sub_changes) in &subtree_changes {
             let empty_tree = self.write_empty_tree()?;
-            let new_subtree_oid = self.apply_changes_to_tree(
+            let (new_subtree_oid, sub_stats) = self.apply_changes_to_tree(
                 empty_tree,
-                &sub_changes
-                    .iter()
-                    .map(|c| (*c).clone())
-                    .collect::<Vec<_>>(),
+                &sub_changes.iter().map(|c| (*c).clone()).collect::<Vec<_>>(),
                 &if prefix.is_empty() {
                     name.clone()
                 } else {
                     format!("{}/{}", prefix, name)
                 },
             )?;
-            new_entries.push((name.clone(), gix::objs::tree::EntryKind::Tree, new_subtree_oid));
+            stats.created.extend(sub_stats.created);
+            stats.updated.extend(sub_stats.updated);
+            stats.unchanged.extend(sub_stats.unchanged);
+            new_entries.push((
+                name.clone(),
+                gix::objs::tree::EntryKind::Tree,
+                new_subtree_oid,
+            ));
         }
 
         // Sort entries in git canonical order (dirs get trailing `/` for comparison)
@@ -143,7 +152,8 @@ impl GitRepo {
         });
 
         // Write tree object
-        self.write_tree_from_entries(&new_entries)
+        let tree_oid = self.write_tree_from_entries(&new_entries)?;
+        Ok((tree_oid, stats))
     }
 
     fn write_blob_for_change(&self, change: &FileChange) -> Result<ObjectId, AppError> {

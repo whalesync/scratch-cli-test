@@ -24,6 +24,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockScratchGitService: jest.Mocked<ScratchGitService>;
   let mockFileIndexService: jest.Mocked<any>;
   let mockFileReferenceService: jest.Mocked<any>;
+  let mockAssetExtractorService: jest.Mocked<any>;
+  let mockAssetIndexService: jest.Mocked<any>;
 
   beforeEach(() => {
     mockPrisma = {
@@ -71,6 +73,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       upsertBatch: jest.fn().mockResolvedValue(undefined),
     } as any;
     mockFileReferenceService = { updateRefsForFiles: jest.fn().mockResolvedValue(undefined) } as any;
+    mockAssetExtractorService = { extractAssets: jest.fn().mockReturnValue([]) } as any;
+    mockAssetIndexService = { upsertBatch: jest.fn().mockResolvedValue(undefined) } as any;
 
     handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
@@ -80,6 +84,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       mockScratchGitService,
       mockFileIndexService,
       mockFileReferenceService,
+      mockAssetExtractorService,
+      mockAssetIndexService,
     );
   });
 
@@ -494,7 +500,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         });
       });
 
-      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: ['test-folder/test-post.json'],
+        updated: [],
+        unchanged: [],
+      });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
       (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
@@ -514,6 +524,12 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       );
 
       expect(mockScratchGitService.rebaseDirty).toHaveBeenCalledWith('wkb_123');
+
+      // Verify createdPaths was populated from commitResult
+      const checkpointCalls = params.checkpoint.mock.calls;
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+      expect(lastCheckpoint.publicProgress.createdPaths).toContain('test-folder/test-post.json');
+      expect(lastCheckpoint.publicProgress.updatedPaths).toHaveLength(0);
     });
 
     it('should accumulate files across multiple batches for deletion tracking', async () => {
@@ -548,7 +564,18 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         });
       });
 
-      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      // First batch creates a new file, second batch updates an existing one
+      (mockScratchGitService.commitFilesToBranch as jest.Mock)
+        .mockResolvedValueOnce({
+          created: ['test-folder/post-1.json'],
+          updated: [],
+          unchanged: [],
+        })
+        .mockResolvedValueOnce({
+          created: [],
+          updated: ['test-folder/post-2.json'],
+          unchanged: [],
+        });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       // Git has only the files that were downloaded - paths without leading slashes (matching gitFiles after strip)
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
@@ -561,6 +588,12 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
       // Verify that both batches were committed
       expect(mockScratchGitService.commitFilesToBranch).toHaveBeenCalledTimes(2);
+
+      // Verify createdPaths and updatedPaths accumulate across batches
+      const checkpointCalls = params.checkpoint.mock.calls;
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+      expect(lastCheckpoint.publicProgress.createdPaths).toEqual(['test-folder/post-1.json']);
+      expect(lastCheckpoint.publicProgress.updatedPaths).toEqual(['test-folder/post-2.json']);
 
       // Verify deletion tracking correctly accumulates files across batches
       // Since all downloaded files match git files, no deletions should occur
@@ -590,7 +623,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         });
       });
 
-      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: [],
+        updated: [],
+        unchanged: [],
+      });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       // Mock that git has two files, but only one was downloaded
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
@@ -628,7 +665,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         });
       });
 
-      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: [],
+        updated: [],
+        unchanged: [],
+      });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       // Git has a regular file, a dotfile (.schema.json), and a stale file
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
@@ -764,7 +805,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         });
       });
 
-      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: [],
+        updated: [],
+        unchanged: [],
+      });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
       (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
@@ -824,7 +869,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         });
       });
 
-      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: [],
+        updated: [],
+        unchanged: [],
+      });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
       (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);

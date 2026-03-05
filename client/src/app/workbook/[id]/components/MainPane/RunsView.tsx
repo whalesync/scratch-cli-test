@@ -1047,13 +1047,12 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
   const connector = progress.connector as string | undefined;
   const totalFiles = (progress.totalFiles ?? progress.totalRequested) as number | undefined;
   const status = progress.status as string | undefined;
+  const createdPaths = (progress.createdPaths as string[] | undefined) ?? [];
+  const updatedPaths = (progress.updatedPaths as string[] | undefined) ?? [];
+  const deletedPaths = (progress.deletedPaths as string[] | undefined) ?? [];
   if (!folderName && totalFiles === undefined) return null;
 
-  const affectedFiles = collectAffectedFiles([
-    {
-      refreshedPaths: (progress.createdPaths ?? progress.updatedPaths) as string[] | undefined,
-    },
-  ]);
+  const affectedFiles = collectAffectedFiles([{ createdPaths, updatedPaths, deletedPaths }]);
 
   return (
     <>
@@ -1062,7 +1061,10 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
           <Table.Tr>
             <Table.Th>Folder</Table.Th>
             <Table.Th>Source</Table.Th>
-            <Table.Th>Files</Table.Th>
+            <Table.Th>Created</Table.Th>
+            <Table.Th>Updated</Table.Th>
+            {deletedPaths.length > 0 && <Table.Th>Deleted</Table.Th>}
+            <Table.Th>Fetched</Table.Th>
             <Table.Th>Status</Table.Th>
           </Table.Tr>
         </Table.Thead>
@@ -1070,6 +1072,9 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
           <Table.Tr>
             <Table.Td>{folderName || 'Folder'}</Table.Td>
             <Table.Td>{connector ?? '-'}</Table.Td>
+            <Table.Td>{createdPaths.length}</Table.Td>
+            <Table.Td>{updatedPaths.length}</Table.Td>
+            {deletedPaths.length > 0 && <Table.Td>{deletedPaths.length}</Table.Td>}
             <Table.Td>{totalFiles ?? 0}</Table.Td>
             <Table.Td>{status ?? '-'}</Table.Td>
           </Table.Tr>

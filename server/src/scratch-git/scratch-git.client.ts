@@ -9,6 +9,12 @@ import {
 // Trigger reload
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 
+export interface CommitFilesResult {
+  created: string[];
+  updated: string[];
+  unchanged: string[];
+}
+
 @Injectable()
 export class ScratchGitClient {
   private readonly gitApiUrl: string;
@@ -79,11 +85,18 @@ export class ScratchGitClient {
     branch: string,
     files: Array<{ path: string; content: string }>,
     message: string,
-  ): Promise<void> {
-    await this.callGitApi(`/api/repo/write/${this.encodeRepoId(repoId)}/files?branch=${branch}`, 'POST', {
-      files,
-      message,
-    });
+  ): Promise<CommitFilesResult> {
+    const result = await this.callGitApi(
+      `/api/repo/write/${this.encodeRepoId(repoId)}/files?branch=${branch}`,
+      'POST',
+      { files, message },
+    );
+    const data = result as Record<string, unknown>;
+    return {
+      created: (data.created as string[]) ?? [],
+      updated: (data.updated as string[]) ?? [],
+      unchanged: (data.unchanged as string[]) ?? [],
+    };
   }
 
   async deleteFolder(repoId: string, folder: string, message: string, branch?: string): Promise<void> {

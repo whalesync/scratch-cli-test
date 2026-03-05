@@ -323,7 +323,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         // Accumulate for deletion tracking
         gitFiles = gitFiles.concat(batchGitFiles);
 
-        await this.scratchGitService.commitFilesToBranch(
+        const commitResult = await this.scratchGitService.commitFilesToBranch(
           repoId,
           'main',
           batchGitFiles,
@@ -414,13 +414,17 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           });
           // Don't fail the job if indexing fails, but log it.
         }
-      }
 
-      // Track file paths (all pulled records are "created" from the pull perspective)
-      for (const file of builtFiles) {
-        const normalizedPath = file.path.startsWith('/') ? file.path.slice(1) : file.path;
-        if (publicProgress.createdPaths.length < MAX_PROGRESS_PATHS) {
-          publicProgress.createdPaths.push(normalizedPath);
+        // Track file paths using actual commit stats (created vs updated vs unchanged)
+        for (const path of commitResult.created) {
+          if (publicProgress.createdPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.createdPaths.push(path);
+          }
+        }
+        for (const path of commitResult.updated) {
+          if (publicProgress.updatedPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.updatedPaths.push(path);
+          }
         }
       }
 

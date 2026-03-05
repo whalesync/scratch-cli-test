@@ -106,7 +106,7 @@ export class ScratchGitService {
     files: { path: string; content: string }[],
     message: string,
   ) {
-    await this.commitFilesBatch(repoId, branch, files, message);
+    return this.commitFilesBatch(repoId, branch, files, message);
   }
 
   private async commitFilesBatch(
@@ -115,8 +115,8 @@ export class ScratchGitService {
     files: { path: string; content: string }[],
     message: string,
   ) {
-    if (files.length === 0) return;
-    await this.scratchGitClient.commitFiles(repoId, branch, files, message);
+    if (files.length === 0) return { created: [], updated: [], unchanged: [] };
+    return this.scratchGitClient.commitFiles(repoId, branch, files, message);
   }
 
   async listRepoFiles(repoId: string, branch: string, folder: string): Promise<any[]> {

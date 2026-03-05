@@ -115,7 +115,8 @@ impl GitRepo {
 
         // 7. Commit changes on dirty
         if !changes_to_commit.is_empty() {
-            self.commit_changes_to_ref(DIRTY_BRANCH, &changes_to_commit, "Rebase dirty on main")?;
+            self.commit_changes_to_ref(DIRTY_BRANCH, &changes_to_commit, "Rebase dirty on main")?
+                .0;
         }
 
         // 8. Write merge_base tag

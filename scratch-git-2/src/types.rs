@@ -36,6 +36,13 @@ pub enum ChangeType {
     Delete,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CommitStats {
+    pub created: Vec<String>,
+    pub updated: Vec<String>,
+    pub unchanged: Vec<String>,
+}
+
 pub const MAIN_BRANCH: &str = "main";
 pub const DIRTY_BRANCH: &str = "dirty";
 pub const DEFAULT_AUTHOR_NAME: &str = "Scratch";

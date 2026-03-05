@@ -384,7 +384,7 @@ describe('SyncService - syncTableMapping', () => {
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
           writtenFiles.push(...files);
-          return Promise.resolve();
+          return Promise.resolve({ created: [], updated: [], unchanged: [] });
         }),
     } as unknown as ScratchGitService;
 
@@ -1556,7 +1556,7 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
           writtenFilesByCall.push([...files]);
-          return Promise.resolve();
+          return Promise.resolve({ created: [], updated: [], unchanged: [] });
         }),
     } as unknown as ScratchGitService;
 
@@ -2306,7 +2306,7 @@ describe('SyncService - lookup_field transformer', () => {
         .fn()
         .mockImplementation((_workbookId, _branch, files: Array<{ path: string; content: string }>) => {
           writtenFiles.push(...files);
-          return Promise.resolve();
+          return Promise.resolve({ created: [], updated: [], unchanged: [] });
         }),
     } as unknown as ScratchGitService;
 

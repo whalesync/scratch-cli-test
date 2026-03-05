@@ -11,10 +11,7 @@ use crate::git::repo::GitRepo;
 use crate::state::AppState;
 use crate::types::*;
 
-pub async fn init_repo(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn init_repo(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     tracing::info!("[API] Initializing repo: {}", id);
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
@@ -32,10 +29,7 @@ pub async fn init_repo(
     }
 }
 
-pub async fn delete_repo(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn delete_repo(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let state = state.clone();
         let id = id.clone();
@@ -51,7 +45,10 @@ pub async fn delete_repo(
                 if parent == state.repos_dir {
                     break;
                 }
-                if std::fs::read_dir(parent).map(|mut d| d.next().is_none()).unwrap_or(false) {
+                if std::fs::read_dir(parent)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false)
+                {
                     let _ = std::fs::remove_dir(parent);
                     dir = parent.parent();
                 } else {
@@ -69,10 +66,7 @@ pub async fn delete_repo(
     }
 }
 
-pub async fn exists(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn exists(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let repo_path = state.repo_path(&id);
     let exists = repo_path.exists();
     let has_head = exists && repo_path.join("HEAD").exists();
@@ -138,8 +132,7 @@ pub async fn reset(
                             change_type: ChangeType::Delete,
                         });
                     } else {
-                        let main_content =
-                            git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
+                        let main_content = git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
                         if let Some(content) = main_content {
                             revert_changes.push(FileChange {
                                 path: change.path.clone(),
@@ -152,11 +145,13 @@ pub async fn reset(
                 }
 
                 if !revert_changes.is_empty() {
-                    git_repo.commit_changes_to_ref(
-                        DIRTY_BRANCH,
-                        &revert_changes,
-                        &format!("Discard changes to {}", normalized_target),
-                    )?;
+                    git_repo
+                        .commit_changes_to_ref(
+                            DIRTY_BRANCH,
+                            &revert_changes,
+                            &format!("Discard changes to {}", normalized_target),
+                        )?
+                        .0;
                 }
             } else {
                 // Reset dirty to main
@@ -175,10 +170,7 @@ pub async fn reset(
     }
 }
 
-pub async fn count_objects(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn count_objects(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let state = state.clone();
         let id = id.clone();
@@ -188,10 +180,14 @@ pub async fn count_objects(
                 .args(["count-objects", "-v"])
                 .current_dir(&repo_path)
                 .output()
-                .map_err(|e| AppError::internal(format!("Failed to run git count-objects: {}", e)))?;
+                .map_err(|e| {
+                    AppError::internal(format!("Failed to run git count-objects: {}", e))
+                })?;
             let stats = String::from_utf8_lossy(&output.stdout).to_string();
             let gc_in_progress = state.gc_state.get(&id).map(|v| *v);
-            Ok::<_, AppError>(json!({ "stats": stats, "gcInProgress": gc_in_progress, "engine": "gitoxide" }))
+            Ok::<_, AppError>(
+                json!({ "stats": stats, "gcInProgress": gc_in_progress, "engine": "gitoxide" }),
+            )
         }
     })
     .await;
@@ -282,10 +278,7 @@ pub struct CopyBody {
     pub to: String,
 }
 
-pub async fn copy_repo(
-    State(state): State<AppState>,
-    Json(body): Json<CopyBody>,
-) -> Response {
+pub async fn copy_repo(State(state): State<AppState>, Json(body): Json<CopyBody>) -> Response {
     let result = tokio::task::spawn_blocking({
         let state = state.clone();
         move || {
@@ -347,8 +340,8 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     for entry in std::fs::read_dir(src)
         .map_err(|e| AppError::internal(format!("Failed to read dir {:?}: {}", src, e)))?
     {
-        let entry = entry
-            .map_err(|e| AppError::internal(format!("Failed to read entry: {}", e)))?;
+        let entry =
+            entry.map_err(|e| AppError::internal(format!("Failed to read entry: {}", e)))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 

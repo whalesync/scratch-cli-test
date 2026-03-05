@@ -88,7 +88,7 @@ describe('PublishPlanRunService', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockResolvedValue(REPO_ID),
-      commitFilesToBranch: jest.fn().mockResolvedValue(undefined),
+      commitFilesToBranch: jest.fn().mockResolvedValue({ created: [], updated: [], unchanged: [] }),
       deleteFilesFromBranch: jest.fn().mockResolvedValue(undefined),
       rebaseDirty: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ScratchGitService>;

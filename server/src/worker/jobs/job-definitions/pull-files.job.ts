@@ -25,6 +25,7 @@ export type PullFilesPublicProgress = {
   folderName: string;
   connector: string;
   totalRequested: number;
+  createdPaths: string[];
   updatedPaths: string[];
 };
 
@@ -117,6 +118,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       folderName: dataFolder.name,
       connector: dataFolder.connectorService,
       totalRequested: data.filePaths.length,
+      createdPaths: [],
       updatedPaths: [],
     };
 
@@ -238,7 +240,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
           content: f.content,
         }));
 
-        await this.scratchGitService.commitFilesToBranch(
+        const commitResult = await this.scratchGitService.commitFilesToBranch(
           dataFolder.workbookId as WorkbookId,
           'main',
           batchGitFiles,
@@ -324,12 +326,16 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
             error: err,
           });
         }
-      }
 
-      for (const file of builtFiles) {
-        const normalizedPath = file.path.startsWith('/') ? file.path.slice(1) : file.path;
-        if (publicProgress.updatedPaths.length < MAX_PROGRESS_PATHS) {
-          publicProgress.updatedPaths.push(normalizedPath);
+        for (const path of commitResult.created) {
+          if (publicProgress.createdPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.createdPaths.push(path);
+          }
+        }
+        for (const path of commitResult.updated) {
+          if (publicProgress.updatedPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.updatedPaths.push(path);
+          }
         }
       }
 

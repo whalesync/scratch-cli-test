@@ -37,6 +37,9 @@ export type PullLinkedFolderFilesProgress = {
   folderName: string;
   connector: string;
   status: 'pending' | 'active' | 'completed' | 'failed';
+  createdPaths?: string[];
+  updatedPaths?: string[];
+  deletedPaths?: string[];
   hasDirtyDiscoveredDeletes?: boolean;
 };
 
@@ -49,6 +52,7 @@ export function isPullFilesProgress(progress: PullProgress): progress is PullFil
 }
 
 // Type guard for pull linked folder files progress (single folder)
+// Distinguishes from PullFilesPublicProgress (which also has folderId/folderName) by checking for totalFiles
 export function isPullLinkedFolderFilesProgress(progress: PullProgress): progress is PullLinkedFolderFilesProgress {
-  return 'folderId' in progress && 'folderName' in progress;
+  return 'folderId' in progress && 'folderName' in progress && 'totalFiles' in progress;
 }

@@ -33,7 +33,6 @@ pub async fn commit_files(
     Query(query): Query<BranchQuery>,
     Json(body): Json<CommitFilesBody>,
 ) -> Response {
-
     let branch = query.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Update files".to_string());
 
@@ -45,8 +44,6 @@ pub async fn commit_files(
 
         write_locks
             .with_lock(&id, &branch_clone, || {
-
-                
                 let repos_dir = repos_dir.clone();
                 let id = id.clone();
                 let branch = branch_clone.clone();
@@ -68,10 +65,15 @@ pub async fn commit_files(
                             })
                             .collect();
 
-                        git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+                        let (_, stats) =
+                            git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
 
-                        
-                        Ok::<_, AppError>(json!({ "success": true }))
+                        Ok::<_, AppError>(json!({
+                            "success": true,
+                            "created": stats.created,
+                            "updated": stats.updated,
+                            "unchanged": stats.unchanged,
+                        }))
                     })
                     .await
                     .map_err(|e| AppError::internal(e.to_string()))?
@@ -127,7 +129,9 @@ pub async fn delete_files(
                             })
                             .collect();
 
-                        git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+                        git_repo
+                            .commit_changes_to_ref(&branch, &changes, &message)?
+                            .0;
                         Ok::<_, AppError>(json!({ "success": true }))
                     })
                     .await
@@ -168,9 +172,7 @@ pub async fn delete_folder(
         }
     };
     let branch = query.branch.unwrap_or_else(|| DIRTY_BRANCH.to_string());
-    let message = body
-        .message
-        .unwrap_or_else(|| "Delete folder".to_string());
+    let message = body.message.unwrap_or_else(|| "Delete folder".to_string());
 
     let result = {
         let repos_dir = state.repos_dir.clone();
@@ -187,8 +189,7 @@ pub async fn delete_folder(
                 async move {
                     tokio::task::spawn_blocking(move || {
                         let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let target_folder =
-                            folder.strip_prefix('/').unwrap_or(&folder).to_string();
+                        let target_folder = folder.strip_prefix('/').unwrap_or(&folder).to_string();
 
                         let changes = vec![FileChange {
                             path: target_folder,
@@ -197,7 +198,9 @@ pub async fn delete_folder(
                             change_type: ChangeType::Delete,
                         }];
 
-                        git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+                        git_repo
+                            .commit_changes_to_ref(&branch, &changes, &message)?
+                            .0;
                         Ok::<_, AppError>(json!({ "success": true }))
                     })
                     .await
@@ -223,11 +226,7 @@ pub async fn delete_data_folder(
     let folder_path = match body.path {
         Some(p) => p,
         None => {
-            return envelope_error(
-                &state,
-                Some(&id),
-                AppError::bad_request("Path is required"),
-            );
+            return envelope_error(&state, Some(&id), AppError::bad_request("Path is required"));
         }
     };
 
@@ -258,7 +257,9 @@ pub async fn delete_data_folder(
                             oid: None,
                             change_type: ChangeType::Delete,
                         }];
-                        git_repo.commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?;
+                        git_repo
+                            .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
+                            .0;
                         Ok::<_, AppError>(())
                     })
                     .await
@@ -289,7 +290,9 @@ pub async fn delete_data_folder(
                             oid: None,
                             change_type: ChangeType::Delete,
                         }];
-                        git_repo.commit_changes_to_ref(DIRTY_BRANCH, &changes, &message)?;
+                        git_repo
+                            .commit_changes_to_ref(DIRTY_BRANCH, &changes, &message)?
+                            .0;
                         Ok::<_, AppError>(())
                     })
                     .await
@@ -358,7 +361,9 @@ pub async fn publish(
                             oid: None,
                             change_type: ChangeType::Modify,
                         }];
-                        git_repo.commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?;
+                        git_repo
+                            .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
+                            .0;
                         Ok::<_, AppError>(())
                     })
                     .await
@@ -408,8 +413,7 @@ pub async fn discard_changes(
                 async move {
                     tokio::task::spawn_blocking(move || {
                         let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let normalized_target =
-                            path.strip_prefix('/').unwrap_or(&path).to_string();
+                        let normalized_target = path.strip_prefix('/').unwrap_or(&path).to_string();
 
                         let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
                         let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
@@ -441,8 +445,8 @@ pub async fn discard_changes(
                                     change_type: ChangeType::Delete,
                                 });
                             } else {
-                                let main_content = git_repo
-                                    .get_file_content(MAIN_BRANCH, &change.path)?;
+                                let main_content =
+                                    git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
                                 if let Some(content) = main_content {
                                     revert_changes.push(FileChange {
                                         path: change.path.clone(),
@@ -455,11 +459,13 @@ pub async fn discard_changes(
                         }
 
                         if !revert_changes.is_empty() {
-                            git_repo.commit_changes_to_ref(
-                                DIRTY_BRANCH,
-                                &revert_changes,
-                                &format!("Discard changes to {}", normalized_target),
-                            )?;
+                            git_repo
+                                .commit_changes_to_ref(
+                                    DIRTY_BRANCH,
+                                    &revert_changes,
+                                    &format!("Discard changes to {}", normalized_target),
+                                )?
+                                .0;
                         }
 
                         Ok::<_, AppError>(json!({ "success": true }))
@@ -619,21 +625,15 @@ pub async fn rename(
             // Apply to main
             let mut new_main_commit_oid = main_oid;
             if !changes_for_main.is_empty() {
-                new_main_commit_oid = git_repo.commit_changes_to_ref(
-                    MAIN_BRANCH,
-                    &changes_for_main,
-                    &message,
-                )?;
+                (new_main_commit_oid, _) =
+                    git_repo.commit_changes_to_ref(MAIN_BRANCH, &changes_for_main, &message)?;
             }
 
             // Apply to dirty with efficient squashed rebase
             let dirty_commit_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
             let dirty_tree_oid = git_repo.get_commit_tree_oid(dirty_commit_oid)?;
-            let new_dirty_tree_oid = git_repo.apply_changes_to_tree(
-                dirty_tree_oid,
-                &changes_for_dirty,
-                "",
-            )?;
+            let (new_dirty_tree_oid, _) =
+                git_repo.apply_changes_to_tree(dirty_tree_oid, &changes_for_dirty, "")?;
 
             let new_main_tree_oid = git_repo.get_commit_tree_oid(new_main_commit_oid)?;
 

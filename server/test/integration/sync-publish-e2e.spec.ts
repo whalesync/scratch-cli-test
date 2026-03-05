@@ -121,7 +121,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         .fn()
         .mockImplementation((_wkbId: WorkbookId, branch: string, files: { path: string; content: string }[]) => {
           vfs.commitFiles(branch, files);
-          return Promise.resolve();
+          return Promise.resolve({ created: [], updated: [], unchanged: [] });
         }),
       deleteFilesFromBranch: jest.fn().mockImplementation((_wkbId: WorkbookId, branch: string, paths: string[]) => {
         vfs.deleteFiles(branch, paths);
@@ -769,7 +769,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         .fn()
         .mockImplementation((_repoId: string, branch: string, files: { path: string; content: string }[]) => {
           vfs.commitFiles(branch, files);
-          return Promise.resolve();
+          return Promise.resolve({ created: [], updated: [], unchanged: [] });
         }),
       deleteFilesFromBranch: jest.fn().mockImplementation((_repoId: string, branch: string, paths: string[]) => {
         vfs.deleteFiles(branch, paths);

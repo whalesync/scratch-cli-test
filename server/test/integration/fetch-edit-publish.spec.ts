@@ -375,6 +375,7 @@ describe('Fetch → Edit → Publish Integration', () => {
         .fn()
         .mockImplementation(async (_repoId: string, branch: string, files: { path: string; content: string }[]) => {
           vfs.commitFiles(branch, files);
+          return { created: [], updated: [], unchanged: [] };
         }),
       rebaseDirty: jest.fn().mockImplementation(async () => {
         vfs.rebaseDirty();
