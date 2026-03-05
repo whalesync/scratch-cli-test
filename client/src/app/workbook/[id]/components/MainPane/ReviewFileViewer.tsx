@@ -256,6 +256,7 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
             original={originalContent}
             modified={content}
             onModifiedChange={handleContentChange}
+            connectionName={findDataFolderForFile(folders, filePath ?? '')?.connectorDisplayName ?? undefined}
           />
         ) : (
           <CodeMirror

@@ -41,9 +41,16 @@ interface MergeEditorProps {
   modified: string;
   onModifiedChange?: (value: string) => void;
   extensions?: Extension[];
+  connectionName?: string;
 }
 
-export function MergeEditor({ original, modified, onModifiedChange, extensions = [] }: MergeEditorProps) {
+export function MergeEditor({
+  original,
+  modified,
+  onModifiedChange,
+  extensions = [],
+  connectionName,
+}: MergeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MergeView | null>(null);
   const { colorScheme } = useMantineColorScheme();
@@ -128,16 +135,50 @@ export function MergeEditor({ original, modified, onModifiedChange, extensions =
   }, [modified]);
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        height: '100%',
-        overflow: 'hidden',
-        fontSize: '14px',
-        // Force specific styling for the merge container to fit our layout
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    />
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {connectionName && (
+        <div
+          style={{
+            display: 'flex',
+            borderBottom: '1px solid var(--fg-divider)',
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 500,
+              color: 'var(--fg-muted)',
+              borderRight: '1px solid var(--fg-divider)',
+            }}
+          >
+            Last {connectionName} pull
+          </div>
+          <div
+            style={{
+              flex: 1,
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 500,
+              color: 'var(--fg-muted)',
+            }}
+          >
+            Ready to publish
+          </div>
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        style={{
+          flex: 1,
+          overflow: 'hidden',
+          fontSize: '14px',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      />
+    </div>
   );
 }
