@@ -6,15 +6,9 @@ export type AssetContext = 'FIELD_VALUE' | 'CONTENT_BLOCK' | 'RECORD_PROPERTY' |
 /** High-level media type classification. */
 export type MediaType = 'image' | 'video' | 'audio' | 'document' | 'file' | 'external_video' | 'model_3d';
 
-/** A single asset entry ready to be upserted into the Asset table. */
-export interface AssetIndexEntry {
-  workbookId: string;
-  service: Service;
+/** Asset metadata returned by a connector after uploading a file. */
+export interface ConnectorAssetResult {
   remoteAssetId: string;
-  recordFilePath: string;
-  recordRemoteId?: string;
-  fieldPath?: string;
-  assetContext: AssetContext;
   url?: string;
   filename?: string;
   mimeType?: string;
@@ -24,6 +18,16 @@ export interface AssetIndexEntry {
   altText?: string;
   mediaType?: MediaType;
   urlExpiresAt?: Date;
+}
+
+/** A single asset entry ready to be upserted into the Asset table. */
+export interface AssetIndexEntry extends ConnectorAssetResult {
+  workbookId: string;
+  service: Service;
+  recordFilePath: string;
+  recordRemoteId?: string;
+  fieldPath?: string;
+  assetContext: AssetContext;
 }
 
 /** Input for the asset extractor. */

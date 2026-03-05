@@ -5,9 +5,10 @@ Instructions for Claude Code when working in this repository. Subdirectory CLAUD
 ## Critical Rules
 
 - **Always use `yarn`**, never `npm`. This applies to installs, running scripts, and adding dependencies.
-- **Always run `nvm use`** before any Node-dependent command. Run it in the directory you're working in (e.g. `server/`, `client/`). You do NOT need to source `~/.nvm/nvm.sh`.
-- **Prefer running commands from the repo root** using Turborepo (see [Development Commands](#development-commands)).
-- **Always run `yarn build`, `yarn lint`, and `yarn format` from the repo root** after completing a series of code changes to verify nothing is broken.
+- **Run `nvm use` only if you hit a Node.js version error.** Do NOT prefix every command with `nvm use`.
+- **Always run commands from the repo root** using Turborepo (see [Development Commands](#development-commands)).
+- **Always run `yarn build` and `yarn lint` from the repo root** after completing a series of code changes to verify nothing is broken. Do NOT run `yarn format` — formatting is handled automatically by a pre-commit hook.
+- **Do not ignore pre-existing test or lint errors.** If `yarn test` or `yarn lint` fails on code you did not change, stop and ask the user how to proceed rather than silently ignoring the failures.
 - Look for **Skills** to help with specific tasks in the `.claude/skills` folder
 
 ## Project Overview
@@ -63,25 +64,16 @@ cd server && yarn run migrate
 
 ### Root-Level Commands (Turborepo)
 
+Always run these from the repo root — do not `cd` into subdirectories to run build, test, or lint.
+
 ```bash
 yarn dev              # Start all dev servers (client, server, shared-types watch)
 yarn build            # Build all packages with caching and dependency ordering
 yarn migrate          # Run database migrations
 yarn lint             # Lint all packages
-yarn format           # Format all packages
 yarn test             # Run tests across all packages
 yarn test:integration # Run integration tests across all packages
 ```
-
-### Per-Package Commands
-
-Run these from within the package directory:
-
-**Client** (`/client`):
-`yarn run dev` | `yarn run build` | `yarn run lint` | `yarn run lint-strict`
-
-**Server** (`/server`):
-`yarn run start:dev` | `yarn run build` | `yarn run lint` | `yarn run lint-fix` | `yarn run test` | `yarn run test:watch` | `yarn run migrate`
 
 ## Code Conventions
 

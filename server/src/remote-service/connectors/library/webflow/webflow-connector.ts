@@ -1,6 +1,7 @@
 import { TObject, TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
+import { ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -492,6 +493,51 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     }
 
     return result;
+  }
+
+  /**
+   * Upload a file to Webflow as a site asset.
+   *
+   * The `metadata` object must include `siteId` — the Webflow site to upload to.
+   * Optionally, `parentFolder` can specify an asset folder ID.
+   */
+  async uploadFile(
+    buffer: Buffer,
+    filename: string,
+    _mimeType: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<ConnectorAssetResult> {
+    const siteId = metadata?.siteId as string | undefined;
+    if (!siteId) {
+      throw new Error('metadata.siteId is required to upload a Webflow asset');
+    }
+
+    const parentFolder = metadata?.parentFolder as string | undefined;
+
+    // createAndUpload handles MD5 hashing, metadata creation, and S3 upload
+    const uploadResult = await this.withRetry(() =>
+      this.client.assets.utilities.createAndUpload(siteId, {
+        file: new Uint8Array(buffer).buffer,
+        fileName: filename,
+        ...(parentFolder && { parentFolder }),
+      }),
+    );
+
+    if (!uploadResult.id) {
+      throw new Error('Webflow asset upload succeeded but no asset ID was returned');
+    }
+
+    // Re-fetch the full asset record to get all metadata
+    const asset = await this.withRetry(() => this.client.assets.get(uploadResult.id!));
+
+    return {
+      remoteAssetId: asset.id!,
+      url: asset.hostedUrl ?? undefined,
+      filename: asset.originalFileName ?? undefined,
+      mimeType: asset.contentType ?? undefined,
+      size: asset.size ?? undefined,
+      altText: asset.altText ?? undefined,
+    };
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

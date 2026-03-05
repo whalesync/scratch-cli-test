@@ -1,6 +1,7 @@
 import { TObject } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
 import { Connector } from '../../connector';
 import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
@@ -206,9 +207,14 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
    * Upload a media file to WordPress.
    * Sends the raw file buffer to the /wp/v2/media endpoint.
    */
-  async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<ConnectorFile> {
+  async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<ConnectorAssetResult> {
     const result = await this.client.uploadMedia(buffer, filename, mimeType);
-    return result as unknown as ConnectorFile;
+    return {
+      remoteAssetId: String(result.id),
+      url: result.source_url,
+      filename,
+      mimeType: result.mime_type,
+    };
   }
 
   /**
