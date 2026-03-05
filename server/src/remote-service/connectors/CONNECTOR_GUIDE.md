@@ -78,7 +78,7 @@ export abstract class Connector<
 | `pullRecordFiles(tableSpec, callback, progress)`  | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress): Promise<void>` | Stream all records via batched callbacks                                                    |
 | `getBatchSize(operation)`                         | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                   | Max batch size per CRUD operation (must be > 0)                                             |
 | `createRecords(tableSpec, files)`                 | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                       | Create records, return files with remote IDs assigned                                       |
-| `updateRecords(tableSpec, files, changedFields?)` | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> \| undefined)[]): Promise<void>`                                                        | Update existing records (see [Partial Field Updates](#partial-field-updates-changedfields)) |
+| `updateRecords(tableSpec, files, changedKeys?)` | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] \| undefined)[]): Promise<void>`                                                        | Update existing records (see [Partial Field Updates](#partial-field-updates-changedkeys)) |
 | `deleteRecords(tableSpec, files)`                 | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                  | Delete records                                                                              |
 | `extractConnectorErrorDetails(error)`             | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                 | Translate service errors to user-friendly messages                                          |
 
@@ -292,7 +292,7 @@ Implement batch CRUD operations. Key patterns:
 
 > **Do NOT silently strip read-only fields.** Some existing connectors (Airtable, Notion, Shopify) filter out read-only fields before sending to the API. This is **incorrect behavior** that should be removed — if a user edits a read-only field, the API should return an error so the user understands what happened. Silently dropping edits and reporting success is confusing. New connectors should send the user's data as-is and let the API reject invalid writes.
 
-> **Field-level diffs are now available.** `updateRecords` receives an optional `changedFields` parameter — a parallel array where each entry contains only the fields that changed. Connectors can opt in to using this for partial updates. See [Partial Field Updates](#partial-field-updates-changedfields) in Section 7.
+> **Field-level diffs are now available.** `updateRecords` receives an optional `changedKeys` parameter — a parallel array where each entry contains only the top-level key names that changed. Connectors can use this to build partial payloads from the corresponding file. See [Partial Field Updates](#partial-field-updates-changedkeys) in Section 7.
 
 **Return files with assigned remote IDs from `createRecords()`:**
 
@@ -514,18 +514,18 @@ case Service.MY_SERVICE: {
 | WordPress  | `tableId` (e.g., `'posts'`)          | `[tableId]`              |
 | PostgreSQL | `sanitizeForTableWsId(tableName)`    | `['public', tableName]`  |
 
-### Partial Field Updates (`changedFields`)
+### Partial Field Updates (`changedKeys`)
 
-`updateRecords` receives an optional third parameter: `changedFields?: (Record<string, unknown> | undefined)[]`. This is a parallel array where `changedFields[i]` contains only the fields that changed for `files[i]`.
+`updateRecords` receives an optional third parameter: `changedKeys?: (string[] | undefined)[]`. This is a parallel array where `changedKeys[i]` contains the top-level key names that changed for `files[i]`.
 
 **How it works:**
 
-- When `changedFields` is provided, connectors should prefer sending only the changed fields to the remote API
-- When `changedFields` is `undefined` (legacy plans, non-V2 publish paths), connectors fall back to sending full file content
+- When `changedKeys` is provided, connectors can build a partial payload by picking only the listed keys from `files[i]`
+- When `changedKeys` is `undefined` (legacy plans, non-V2 publish paths), connectors fall back to sending full file content
 - Each connector decides how to extract changed fields based on its data structure (e.g., Airtable uses `fields`, Webflow uses `fieldData`, Notion uses `properties`)
-- `files` always contains the full record content for reference and git commits
+- `files` always contains the full resolved record content — the source of truth for both data values and git commits
 
-**Removed keys are not tracked:** Keys present in the main branch but absent in the dirty branch are intentionally not included in `changedFields`. Users should set fields to `null` or `""` to clear them, not delete JSON keys. Key removal typically indicates schema changes or reference cleaning.
+**Removed keys are not tracked:** Keys present in the main branch but absent in the dirty branch are intentionally not included in `changedKeys`. Users should set fields to `null` or `""` to clear them, not delete JSON keys. Key removal typically indicates schema changes or reference cleaning.
 
 **Example — opting in a connector:**
 
@@ -533,10 +533,12 @@ case Service.MY_SERVICE: {
 async updateRecords(
   tableSpec: BaseJsonTableSpec,
   files: ConnectorFile[],
-  changedFields?: (Record<string, unknown> | undefined)[],
+  changedKeys?: (string[] | undefined)[],
 ): Promise<void> {
   for (let i = 0; i < files.length; i++) {
-    const payload = changedFields?.[i] ?? files[i]; // prefer partial if available
+    const payload = changedKeys?.[i]
+      ? Object.fromEntries(changedKeys[i].map((k) => [k, files[i][k]]))
+      : files[i];
     await this.client.update(files[i].id, payload);
   }
 }
@@ -544,7 +546,7 @@ async updateRecords(
 
 ### Read-Only Fields on Publish
 
-> **Legacy behavior (do not replicate):** Several existing connectors silently strip read-only fields before sending data to the API. This masks user errors and should be removed. With `changedFields` now available on `updateRecords`, connectors can send only the fields the user actually changed, avoiding API rejections from unchanged read-only fields without silently masking real edits.
+> **Legacy behavior (do not replicate):** Several existing connectors silently strip read-only fields before sending data to the API. This masks user errors and should be removed. With `changedKeys` now available on `updateRecords`, connectors can send only the fields the user actually changed, avoiding API rejections from unchanged read-only fields without silently masking real edits.
 
 ### File Organization
 

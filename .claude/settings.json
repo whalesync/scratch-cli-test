@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "agent",
-            "prompt": "Run `yarn format` from the repo root to format all code.",
+            "prompt": "Run `nvm use && yarn format` from the repo root to format all code.",
             "statusMessage": "Running yarn format..."
           }
         ]

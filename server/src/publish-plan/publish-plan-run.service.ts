@@ -529,11 +529,12 @@ export class PublishPlanRunService {
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
 
     const contents: ParsedContent[] = [];
-    const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
+    const changedKeysArray: (string[] | undefined)[] = [];
     const entriesWithOps: { entry: PublishOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
-    for (const entry of entries) {
+    for (let entryIdx = 0; entryIdx < entries.length; entryIdx++) {
+      const entry = entries[entryIdx];
       if (!entry.content) continue;
       let resolvedContent = resolvedContents[opIndex++] as ParsedContent;
 
@@ -553,21 +554,21 @@ export class PublishPlanRunService {
       } as ParsedContent;
 
       // Skip no-op edits where changedFields is an empty object
-      const cf = entry.changedFields;
-      if (cf && Object.keys(cf).length === 0) {
+      const changedKeys = entry.changedFields ? Object.keys(entry.changedFields) : undefined;
+      if (changedKeys && changedKeys.length === 0) {
         continue;
       }
 
       contents.push(resolvedContent);
-      changedFieldsArray.push(cf ?? undefined);
+      changedKeysArray.push(changedKeys);
       entriesWithOps.push({ entry, resolvedContent: resolvedContent });
     }
 
     if (contents.length === 0) return;
 
-    // Bulk update — pass changedFields to the connector if any entry has them
-    const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
-    await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
+    // Bulk update — pass changedKeys to the connector if any entry has them
+    const hasChangedKeys = changedKeysArray.some((ck) => ck !== undefined);
+    await connector.updateRecords(tableSpec, contents, hasChangedKeys ? changedKeysArray : undefined);
 
     // Update Refs & Git
     // We can do this in parallel or sequentially. Sequential for safety.

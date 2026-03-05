@@ -202,15 +202,14 @@ describe('PublishPlanRunService', () => {
     );
   }
 
-  describe('dispatchUpdateBatch with changedFields', () => {
-    it('passes changedFields to connector.updateRecords', async () => {
-      const changed = { title: 'New' };
+  describe('dispatchUpdateBatch with changedKeys', () => {
+    it('passes changedKeys to connector.updateRecords', async () => {
       setupEditPhaseEntries([
         {
           id: 'op_1',
           filePath: 'articles/a1.json',
           content: { id: 'rec_1', title: 'New', body: 'Same' },
-          changedFields: changed,
+          changedFields: { title: 'New' },
           remoteRecordId: 'rec_1',
         },
       ]);
@@ -219,37 +218,35 @@ describe('PublishPlanRunService', () => {
 
       expect(connector.updateRecords).toHaveBeenCalledTimes(1);
       const updateMock = jest.mocked(connector.updateRecords);
-      const [, , cfArg] = updateMock.mock.calls[0];
-      expect(cfArg).toEqual([changed]);
+      const [, , ckArg] = updateMock.mock.calls[0];
+      expect(ckArg).toEqual([['title']]);
     });
 
-    it('aligns changedFields parallel array with files', async () => {
-      const cf1 = { title: 'New1' };
-      const cf2 = { body: 'New2' };
+    it('aligns changedKeys parallel array with files', async () => {
       setupEditPhaseEntries([
         {
           id: 'op_1',
           filePath: 'articles/a1.json',
           content: { id: 'rec_1', title: 'New1', body: 'Same' },
-          changedFields: cf1,
+          changedFields: { title: 'New1' },
           remoteRecordId: 'rec_1',
         },
         {
           id: 'op_2',
           filePath: 'articles/a2.json',
           content: { id: 'rec_2', title: 'Same', body: 'New2' },
-          changedFields: cf2,
+          changedFields: { body: 'New2' },
           remoteRecordId: 'rec_2',
         },
       ]);
 
       await service.runPipeline(PLAN_ID);
 
-      const [, files, cfArr] = connector.updateRecords.mock.calls[0];
+      const [, files, ckArr] = connector.updateRecords.mock.calls[0];
       expect(files).toHaveLength(2);
-      expect(cfArr).toHaveLength(2);
-      expect(cfArr![0]).toEqual(cf1);
-      expect(cfArr![1]).toEqual(cf2);
+      expect(ckArr).toHaveLength(2);
+      expect(ckArr![0]).toEqual(['title']);
+      expect(ckArr![1]).toEqual(['body']);
     });
 
     it('skips no-op edits where changedFields is empty object', async () => {
@@ -270,7 +267,6 @@ describe('PublishPlanRunService', () => {
     });
 
     it('sends only changed entries in mixed batch (some no-op, some changed)', async () => {
-      const changed = { title: 'New' };
       setupEditPhaseEntries([
         {
           id: 'op_1',
@@ -283,7 +279,7 @@ describe('PublishPlanRunService', () => {
           id: 'op_2',
           filePath: 'articles/a2.json',
           content: { id: 'rec_2', title: 'New' },
-          changedFields: changed,
+          changedFields: { title: 'New' },
           remoteRecordId: 'rec_2',
         },
       ]);
@@ -297,7 +293,7 @@ describe('PublishPlanRunService', () => {
       expect(files[0]).toMatchObject({ id: 'rec_2' });
     });
 
-    it('passes undefined changedFields for legacy plans (null changedFields)', async () => {
+    it('passes undefined changedKeys for legacy plans (null changedFields)', async () => {
       setupEditPhaseEntries([
         {
           id: 'op_1',
@@ -312,12 +308,12 @@ describe('PublishPlanRunService', () => {
 
       expect(connector.updateRecords).toHaveBeenCalledTimes(1);
       const updateMock = jest.mocked(connector.updateRecords);
-      const [, , cfArg] = updateMock.mock.calls[0];
+      const [, , ckArg] = updateMock.mock.calls[0];
       // When no entry has changedFields, pass undefined
-      expect(cfArg).toBeUndefined();
+      expect(ckArg).toBeUndefined();
     });
 
-    it('commits full content to git even with partial changedFields', async () => {
+    it('commits full content to git even with partial changedKeys', async () => {
       const fullContent = { id: 'rec_1', title: 'New', body: 'Same', slug: 'test' };
       setupEditPhaseEntries([
         {
@@ -331,7 +327,7 @@ describe('PublishPlanRunService', () => {
 
       await service.runPipeline(PLAN_ID);
 
-      // Git commit should use full content, not changedFields
+      // Git commit should use full content, not changedKeys
       const commitCalls = scratchGitService.commitFilesToBranch.mock.calls;
       expect(commitCalls.length).toBeGreaterThan(0);
       const mainCommit = commitCalls.find(([, branch]) => branch === 'main');

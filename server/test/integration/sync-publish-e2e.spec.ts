@@ -199,19 +199,32 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
           })),
         );
       }),
-      updateRecords: jest.fn().mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
-        const idField = tableSpec.idColumnRemoteId;
-        for (const file of files) {
-          const idValue = file[idField];
-          const numericValue = Number(idValue);
-          if (!Number.isFinite(numericValue) || numericValue <= 0 || !Number.isInteger(numericValue)) {
-            throw new Error(
-              `updateRecords: ID column "${idField}" should be a positive integer (number or numeric string), but got: ${JSON.stringify(idValue)}`,
-            );
-          }
-        }
-        return Promise.resolve(undefined);
-      }),
+      updateRecords: jest
+        .fn()
+        .mockImplementation(
+          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] | undefined)[]) => {
+            const idField = tableSpec.idColumnRemoteId;
+            for (const file of files) {
+              const idValue = file[idField];
+              const numericValue = Number(idValue);
+              if (!Number.isFinite(numericValue) || numericValue <= 0 || !Number.isInteger(numericValue)) {
+                throw new Error(
+                  `updateRecords: ID column "${idField}" should be a positive integer (number or numeric string), but got: ${JSON.stringify(idValue)}`,
+                );
+              }
+            }
+            // Validate changedKeys contains only string arrays, not data objects
+            if (changedKeys) {
+              for (const ck of changedKeys) {
+                if (!ck) continue;
+                if (!Array.isArray(ck) || ck.some((k) => typeof k !== 'string')) {
+                  throw new Error(`updateRecords: changedKeys should be string arrays, but got: ${JSON.stringify(ck)}`);
+                }
+              }
+            }
+            return Promise.resolve(undefined);
+          },
+        ),
       deleteRecords: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -582,9 +595,14 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // Create entries = created dest tags + created dest posts
     expect(createEntries.length).toBe(CREATE_COUNT * 2);
 
-    // Backfill entries should exist for posts that had pseudo-refs stripped
-    // (all posts reference tags, so all created + updated posts should have backfill)
+    // Backfill entries should exist for every post that had pseudo-refs stripped.
+    // Not every post references a created tag — only those whose tag-index arithmetic
+    // picks up a tag-create-* entry will have @/ refs and thus need backfill.
     expect(backfillEntries.length).toBeGreaterThan(0);
+    // Every backfill entry should be a post (tags don't have FK fields)
+    for (const entry of backfillEntries) {
+      expect(entry.filePath).toMatch(/^dest-posts\//);
+    }
 
     // =====================================================================
     // Phase F: Run Publish Pipeline
@@ -829,19 +847,32 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
           })),
         );
       }),
-      updateRecords: jest.fn().mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
-        const idField = tableSpec.idColumnRemoteId;
-        for (const file of files) {
-          const idValue = file[idField];
-          const numericValue = Number(idValue);
-          if (!Number.isFinite(numericValue) || numericValue <= 0 || !Number.isInteger(numericValue)) {
-            throw new Error(
-              `updateRecords: ID column "${idField}" should be a positive integer (number or numeric string), but got: ${JSON.stringify(idValue)}`,
-            );
-          }
-        }
-        return Promise.resolve(undefined);
-      }),
+      updateRecords: jest
+        .fn()
+        .mockImplementation(
+          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] | undefined)[]) => {
+            const idField = tableSpec.idColumnRemoteId;
+            for (const file of files) {
+              const idValue = file[idField];
+              const numericValue = Number(idValue);
+              if (!Number.isFinite(numericValue) || numericValue <= 0 || !Number.isInteger(numericValue)) {
+                throw new Error(
+                  `updateRecords: ID column "${idField}" should be a positive integer (number or numeric string), but got: ${JSON.stringify(idValue)}`,
+                );
+              }
+            }
+            // Validate changedKeys contains only string arrays, not data objects
+            if (changedKeys) {
+              for (const ck of changedKeys) {
+                if (!ck) continue;
+                if (!Array.isArray(ck) || ck.some((k) => typeof k !== 'string')) {
+                  throw new Error(`updateRecords: changedKeys should be string arrays, but got: ${JSON.stringify(ck)}`);
+                }
+              }
+            }
+            return Promise.resolve(undefined);
+          },
+        ),
       deleteRecords: jest.fn().mockResolvedValue(undefined),
     };
 

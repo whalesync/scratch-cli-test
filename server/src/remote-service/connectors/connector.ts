@@ -157,15 +157,15 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * Attempts to push updates to the data source.
    * @param tableSpec - The table spec to update records for.
    * @param files - The files to update (full content).
-   * @param changedFields - Optional parallel array where changedFields[i] contains only the fields
-   *   that changed for files[i]. When provided, connectors should prefer sending only the changed
-   *   fields to the API. When undefined, connectors send the full file content (backward compatible).
+   * @param changedKeys - Optional parallel array where changedKeys[i] contains the top-level key
+   *   names that changed for files[i]. Connectors can use this to build a partial payload from
+   *   the corresponding file. When undefined, connectors send the full file content (backward compatible).
    * @throws Error if there is a problem updating the records.
    */
   abstract updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
-    changedFields?: (Record<string, unknown> | undefined)[],
+    changedKeys?: (string[] | undefined)[],
   ): Promise<void>;
 
   /**
