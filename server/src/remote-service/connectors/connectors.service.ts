@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AuthType, ConnectorAccount } from '@prisma/client';
 import { Service } from '@spinner/shared-types';
+import { JsonSafeObject } from 'src/utils/objects';
 import { OAuthService } from '../../oauth/oauth.service';
 import { RateLimiter } from '../../rate-limiter/rate-limiter';
 import { RateLimiterFactory } from '../../rate-limiter/rate-limiter-factory.service';
@@ -51,7 +52,7 @@ export class ConnectorsService {
     connectorAccount: ConnectorAccount | null;
     decryptedCredentials: DecryptedCredentials | null;
     userId?: string;
-  }): Promise<Connector<Service, any>> {
+  }): Promise<Connector<Service, JsonSafeObject>> {
     const { service, connectorAccount, decryptedCredentials } = params;
 
     switch (service) {

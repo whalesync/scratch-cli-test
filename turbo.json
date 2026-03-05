@@ -19,11 +19,12 @@
       "cache": false
     },
     "lint": {
+      "inputs": ["src/**"],
       "dependsOn": ["^build"]
     },
     "format": {
-      "dependsOn": [],
-      "cache": false
+      "inputs": ["src/**"],
+      "dependsOn": []
     },
     "test": {
       "dependsOn": ["^build"],

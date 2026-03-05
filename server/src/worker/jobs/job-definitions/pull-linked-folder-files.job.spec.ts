@@ -70,6 +70,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
     mockFileIndexService = {
       getFilenamesByRecordIds: jest.fn().mockResolvedValue(new Map()),
+
       upsertBatch: jest.fn().mockResolvedValue(undefined),
     } as any;
     mockFileReferenceService = { updateRefsForFiles: jest.fn().mockResolvedValue(undefined) } as any;
@@ -444,6 +445,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     const createMockConnector = (tableSpecOverrides?: Partial<BaseJsonTableSpec>) => ({
       fetchJsonTableSpec: jest.fn().mockResolvedValue({ ...defaultTableSpec, ...tableSpecOverrides }),
       pullRecordFiles: jest.fn(),
+      extractAssets: jest.fn(),
       extractConnectorErrorDetails: jest.fn().mockReturnValue({
         userFriendlyMessage: 'An error occurred',
         description: 'Test error',
@@ -487,7 +489,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Simulate connector pulling files
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [
             {
@@ -543,7 +545,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Simulate two batches of files by calling callback twice within pullRecordFiles
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [
             {
@@ -611,7 +613,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Simulate pulling only one file
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [
             {
@@ -658,7 +660,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [{ id: 'rec1', slug: 'post-1' }],
           connectorProgress: {},
@@ -735,7 +737,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [],
           connectorProgress: {},
@@ -793,7 +795,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [
             {
@@ -857,7 +859,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({
           files: [
             {
@@ -898,7 +900,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
         await callback({ files: [], connectorProgress: {} });
       });
 

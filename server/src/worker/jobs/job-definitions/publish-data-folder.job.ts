@@ -290,7 +290,6 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
         const publishResult = await this.dataFolderPublishingService.publishAll(
           repoId,
           folderPath,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           connector,
           tableSpec,
           async (phase: 'creates' | 'updates' | 'deletes', count: number) => {
