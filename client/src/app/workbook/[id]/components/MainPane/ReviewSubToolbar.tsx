@@ -9,7 +9,7 @@ import { workbookApi } from '@/lib/api/workbook';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { useWorkbookUIStore, WorkbookModals } from '@/stores/workbook-ui-store';
 import { RouteUrls } from '@/utils/route-urls';
-import { Box, Group, Menu, SegmentedControl } from '@mantine/core';
+import { Box, Group, Menu, SegmentedControl, Switch } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
 import { ChevronDownIcon, CloudUploadIcon, RotateCcwIcon, SaveIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -30,6 +30,8 @@ export function ReviewSubToolbar({ workbookId }: ReviewSubToolbarProps) {
 
   const viewMode = useReviewToolbarStore((state) => state.viewMode);
   const setViewMode = useReviewToolbarStore((state) => state.setViewMode);
+  const showReferences = useReviewToolbarStore((state) => state.showReferences);
+  const setShowReferences = useReviewToolbarStore((state) => state.setShowReferences);
   const summary = useReviewToolbarStore((state) => state.summary);
   const fileActions = useReviewToolbarStore((state) => state.fileActions);
 
@@ -87,15 +89,24 @@ export function ReviewSubToolbar({ workbookId }: ReviewSubToolbarProps) {
       {/* Left: View mode toggle (file view) or summary text (folder view) */}
       <Group gap="xs">
         {hasFileActions ? (
-          <SegmentedControl
-            size="xs"
-            value={viewMode}
-            onChange={(value) => setViewMode(value as 'split' | 'unified')}
-            data={[
-              { value: 'split', label: 'Side-by-side' },
-              { value: 'unified', label: 'Inline' },
-            ]}
-          />
+          <>
+            <SegmentedControl
+              size="xs"
+              value={viewMode}
+              onChange={(value) => setViewMode(value as 'split' | 'unified')}
+              data={[
+                { value: 'split', label: 'Side-by-side' },
+                { value: 'unified', label: 'Inline' },
+              ]}
+            />
+            <Switch
+              size="xs"
+              label="Show references"
+              checked={showReferences}
+              onChange={(event) => setShowReferences(event.currentTarget.checked)}
+              styles={{ label: { fontSize: '12px', color: 'var(--fg-muted)', paddingLeft: 6 } }}
+            />
+          </>
         ) : (
           summary && <Text12Regular c="var(--fg-muted)">{summary}</Text12Regular>
         )}

@@ -59,6 +59,35 @@ export class FilesController {
   }
 
   /**
+   * Resolve foreign key values in a file to their referenced file paths.
+   * GET /workbooks/:workbookId/files/resolve-references?path=/folder/file.json&branch=main
+   */
+  @Get('resolve-references')
+  async resolveReferences(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('path') path: string,
+    @Query('branch') branch: string = DIRTY_BRANCH,
+    @Req() req: RequestWithUser,
+  ): Promise<{ references: Record<string, Record<string, string>> }> {
+    await this.filesService.verifyWorkbookAccess(workbookId, userToActor(req.user));
+
+    try {
+      const references = await this.filesService.resolveReferences(workbookId, path, branch);
+      return { references };
+    } catch (e) {
+      WSLogger.error({
+        source: 'FilesController.resolveReferences',
+        message: 'Failed to resolve references',
+        path,
+        branch,
+        workbookId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { references: {} };
+    }
+  }
+
+  /**
    * Get a single file by its path.
    * GET /workbooks/:workbookId/files/by-path?path=/folder/file.md
    */

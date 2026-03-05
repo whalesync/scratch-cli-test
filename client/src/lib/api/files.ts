@@ -101,6 +101,27 @@ export const filesApi = {
   },
 
   /**
+   * Resolve foreign key values in a file to their referenced file paths.
+   * GET /workbooks/:workbookId/files/resolve-references?path=...&branch=main|dirty
+   */
+  resolveReferences: async (
+    workbookId: WorkbookId,
+    path: string,
+    branch: 'main' | 'dirty',
+  ): Promise<{ references: Record<string, Record<string, string>> }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<{ references: Record<string, Record<string, string>> }>(
+        `/workbooks/${workbookId}/files/resolve-references`,
+        { params: { path, branch } },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to resolve references');
+    }
+  },
+
+  /**
    * Download all files in a data folder as a ZIP archive.
    * GET /workbooks/:workbookId/files/download?folderId=...
    */

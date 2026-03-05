@@ -7,6 +7,10 @@ interface ReviewToolbarState {
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
 
+  // Whether to show resolved FK reference names next to foreign key values
+  showReferences: boolean;
+  setShowReferences: (show: boolean) => void;
+
   // Summary text shown on the left side of the toolbar (e.g. "Base1 - testdata.Weather - 140 files")
   summary: string | null;
   setSummary: (summary: string | null) => void;
@@ -38,6 +42,9 @@ const defaultFileActions: ReviewToolbarState['fileActions'] = {
 export const useReviewToolbarStore = create<ReviewToolbarState>((set) => ({
   viewMode: 'split',
   setViewMode: (mode) => set({ viewMode: mode }),
+
+  showReferences: true,
+  setShowReferences: (show) => set({ showReferences: show }),
 
   summary: null,
   setSummary: (summary) => set({ summary }),

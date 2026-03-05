@@ -4,7 +4,9 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useFileByPath } from '@/hooks/use-file-path';
+import { filesApi } from '@/lib/api/files';
 import { jobApi } from '@/lib/api/job';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
@@ -16,6 +18,8 @@ import type { WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
+import { fkReferenceExtension, ResolvedReferences } from '../shared/fk-reference-extension';
 import { MergeEditor } from '../shared/MergeEditor';
 
 interface ReviewFileViewerProps {
@@ -60,8 +64,19 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
 
   // View mode from shared toolbar store
   const viewMode = useReviewToolbarStore((state) => state.viewMode);
+  const showReferences = useReviewToolbarStore((state) => state.showReferences);
   const setFileActions = useReviewToolbarStore((state) => state.setFileActions);
   const clearFileActions = useReviewToolbarStore((state) => state.clearFileActions);
+
+  // Fetch resolved FK references for both branches
+  const { data: mainRefs } = useSWR(
+    showReferences && filePath ? SWR_KEYS.files.resolveReferences(workbookId, filePath, 'main') : null,
+    () => filesApi.resolveReferences(workbookId, filePath!, 'main').then((r) => r.references),
+  );
+  const { data: dirtyRefs } = useSWR(
+    showReferences && filePath ? SWR_KEYS.files.resolveReferences(workbookId, filePath, 'dirty') : null,
+    () => filesApi.resolveReferences(workbookId, filePath!, 'dirty').then((r) => r.references),
+  );
 
   // Confirm dialog
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
@@ -194,8 +209,22 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
     return () => clearFileActions();
   }, [clearFileActions]);
 
+  const emptyRefs: ResolvedReferences = useMemo(() => ({}), []);
+  const activeMainRefs = showReferences ? (mainRefs ?? emptyRefs) : emptyRefs;
+  const activeDirtyRefs = showReferences ? (dirtyRefs ?? emptyRefs) : emptyRefs;
+
   const extensions = useMemo(() => {
     if (viewMode === 'unified') {
+      // For unified view, merge both ref maps
+      const refExt = showReferences
+        ? (() => {
+            const merged: ResolvedReferences = { ...activeMainRefs };
+            for (const [field, refs] of Object.entries(activeDirtyRefs)) {
+              merged[field] = { ...merged[field], ...refs };
+            }
+            return fkReferenceExtension(merged);
+          })()
+        : [];
       return [
         json(),
         unifiedMergeView({
@@ -203,10 +232,17 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
           mergeControls: false,
           highlightChanges: true,
         }),
+        refExt,
       ];
     }
-    return [json()];
-  }, [viewMode, originalContent]);
+    return showReferences ? [json(), fkReferenceExtension(activeDirtyRefs)] : [json()];
+  }, [viewMode, originalContent, showReferences, activeMainRefs, activeDirtyRefs]);
+
+  // Extensions for the original (left) side of split view
+  const originalExtensions = useMemo(() => {
+    if (!showReferences) return undefined;
+    return [fkReferenceExtension(activeMainRefs)];
+  }, [showReferences, activeMainRefs]);
 
   // Force re-mount when switching modes
   const editorKey = useMemo(() => {
@@ -257,6 +293,8 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
             modified={content}
             onModifiedChange={handleContentChange}
             connectionName={findDataFolderForFile(folders, filePath ?? '')?.connectorDisplayName ?? undefined}
+            originalExtensions={originalExtensions}
+            modifiedExtensions={showReferences ? [fkReferenceExtension(activeDirtyRefs)] : undefined}
           />
         ) : (
           <CodeMirror

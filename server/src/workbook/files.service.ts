@@ -9,6 +9,9 @@ import {
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { DbService } from '../db/db.service';
+import { FileIndexService } from '../publish-plan/file-index.service';
+import { RefCleanerService } from '../publish-plan/ref-cleaner.service';
+import { SchemaHelperService } from '../publish-plan/schema-helper.service';
 import { DIRTY_BRANCH, MAIN_BRANCH, RepoFileRef, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { Actor } from '../users/types';
 import { extractFilenameFromPath } from './util';
@@ -21,6 +24,9 @@ export class FilesService {
     private readonly scratchGitService: ScratchGitService,
     private readonly posthogService: PostHogService,
     private readonly workbookEventService: WorkbookEventService,
+    private readonly schemaHelperService: SchemaHelperService,
+    private readonly refCleanerService: RefCleanerService,
+    private readonly fileIndexService: FileIndexService,
   ) {}
 
   /**
@@ -238,6 +244,146 @@ export class FilesService {
       await this.scratchGitService.commitFile(repoId, path, updateFileDto.content, `Update ${path}`);
       this.posthogService.trackRecordEdited(actor, workbook, path);
     }
+  }
+
+  /**
+   * Resolve foreign key values in a file to their referenced file paths.
+   * Reads the file from the specified branch, identifies FK fields via the folder's schema,
+   * and resolves each FK value (remote ID) to the full file path of the referenced record.
+   */
+  async resolveReferences(
+    workbookId: WorkbookId,
+    path: string,
+    branch: string,
+  ): Promise<Record<string, Record<string, string>>> {
+    // 1. Resolve repo and read file content from the specified branch
+    const folderPath = path.substring(0, path.lastIndexOf('/')) || '/';
+    const normalizedFolderPath = folderPath.startsWith('/') ? folderPath : `/${folderPath}`;
+
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { workbookId, path: normalizedFolderPath },
+      select: { connectorAccountId: true, path: true },
+    });
+
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+
+    const fileResponse = await this.scratchGitService.getRepoFile(repoId, branch, path);
+    if (!fileResponse) {
+      return {};
+    }
+
+    let content: Record<string, unknown>;
+    try {
+      content = JSON.parse(fileResponse.content) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+
+    // 2. Read schema and extract FK field paths
+    const spec = await this.schemaHelperService.getTableSpec(workbookId, normalizedFolderPath);
+    if (!spec?.schema) {
+      return {};
+    }
+
+    const fkPaths = this.refCleanerService.extractForeignKeyPaths(spec.schema);
+    if (fkPaths.length === 0) {
+      return {};
+    }
+
+    // 3. For each FK field, collect remote IDs and resolve to file paths
+    const result: Record<string, Record<string, string>> = {};
+
+    for (const fk of fkPaths) {
+      // Find the target DataFolder by matching linkedTableId against tableId array
+      const targetFolder = await this.db.client.dataFolder.findFirst({
+        where: {
+          workbookId,
+          tableId: { has: fk.targetRemoteTableId },
+        },
+        select: { path: true },
+      });
+
+      if (!targetFolder?.path) {
+        continue;
+      }
+
+      // Extract FK values from the file content
+      const nodes = this.getNodesByPath(content, fk.path);
+      const remoteIds: string[] = [];
+      for (const node of nodes) {
+        if (Array.isArray(node)) {
+          for (const item of node) {
+            if (typeof item === 'string' && !item.startsWith('@/')) {
+              remoteIds.push(item);
+            }
+          }
+        } else if (typeof node === 'string' && !node.startsWith('@/')) {
+          remoteIds.push(node);
+        }
+      }
+
+      if (remoteIds.length === 0) {
+        continue;
+      }
+
+      // FileIndex uses folderPath without leading slash
+      const targetFolderPathForIndex = targetFolder.path.replace(/^\//, '');
+
+      const filenameMap = await this.fileIndexService.getFilenamesByRecordIds(
+        workbookId,
+        targetFolderPathForIndex,
+        remoteIds,
+      );
+
+      // Build the field key from the FK path (e.g., ["fieldData", "sectors"] -> "sectors")
+      const fieldKey = fk.path.filter((p) => p !== '[]').join('.');
+      const resolved: Record<string, string> = {};
+
+      for (const remoteId of remoteIds) {
+        const filename = filenameMap.get(remoteId);
+        if (filename) {
+          resolved[remoteId] = `${targetFolder.path}/${filename}`;
+        }
+      }
+
+      if (Object.keys(resolved).length > 0) {
+        result[fieldKey] = resolved;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get values at a given path in a content object.
+   * Handles '[]' segments by iterating arrays.
+   */
+  private getNodesByPath(root: unknown, path: string[]): unknown[] {
+    if (!root) return [];
+    if (path.length === 0) return [root];
+
+    let current: unknown[] = [root];
+
+    for (const segment of path) {
+      const next: unknown[] = [];
+      for (const node of current) {
+        if (!node || typeof node !== 'object') continue;
+
+        if (segment === '[]') {
+          if (Array.isArray(node)) {
+            next.push(...(node as unknown[]));
+          }
+        } else {
+          const value = (node as Record<string, unknown>)[segment];
+          if (value !== undefined) {
+            next.push(value);
+          }
+        }
+      }
+      current = next;
+    }
+
+    return current;
   }
 
   async renameFileGit(workbookId: WorkbookId, oldPath: string, newPath: string, actor: Actor): Promise<void> {

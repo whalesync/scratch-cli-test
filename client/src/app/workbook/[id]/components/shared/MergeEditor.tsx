@@ -1,6 +1,6 @@
 import { markdown } from '@codemirror/lang-markdown';
 import { MergeView } from '@codemirror/merge';
-import { Extension } from '@codemirror/state';
+import { Compartment, Extension } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { useMantineColorScheme } from '@mantine/core';
 import { useEffect, useRef } from 'react';
@@ -42,6 +42,8 @@ interface MergeEditorProps {
   onModifiedChange?: (value: string) => void;
   extensions?: Extension[];
   connectionName?: string;
+  originalExtensions?: Extension[];
+  modifiedExtensions?: Extension[];
 }
 
 export function MergeEditor({
@@ -50,9 +52,13 @@ export function MergeEditor({
   onModifiedChange,
   extensions = [],
   connectionName,
+  originalExtensions = [],
+  modifiedExtensions = [],
 }: MergeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MergeView | null>(null);
+  const originalCompartmentRef = useRef(new Compartment());
+  const modifiedCompartmentRef = useRef(new Compartment());
   const { colorScheme } = useMantineColorScheme();
 
   // Initialize MergeView
@@ -60,13 +66,8 @@ export function MergeEditor({
     if (!containerRef.current) return;
 
     const themeExtension = colorScheme === 'dark' ? darkTheme : [];
-
-    console.log('[MergeEditor] Initializing MergeView', {
-      originalLength: original?.length,
-      modifiedLength: modified?.length,
-      containerHeight: containerRef.current.clientHeight,
-      collapseOption: { margin: 3, minSize: 4 },
-    });
+    const origCompartment = originalCompartmentRef.current;
+    const modCompartment = modifiedCompartmentRef.current;
 
     const view = new MergeView({
       a: {
@@ -78,6 +79,7 @@ export function MergeEditor({
           lineNumbers(),
           themeExtension,
           ...extensions,
+          origCompartment.of(originalExtensions),
         ],
       },
       b: {
@@ -93,6 +95,7 @@ export function MergeEditor({
             }
           }),
           ...extensions,
+          modCompartment.of(modifiedExtensions),
         ],
       },
       parent: containerRef.current,
@@ -106,6 +109,20 @@ export function MergeEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorScheme]); // Recreate when color scheme changes
+
+  // Dynamically reconfigure original-side extensions (e.g. FK references)
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.a.dispatch({ effects: originalCompartmentRef.current.reconfigure(originalExtensions) });
+  }, [originalExtensions]);
+
+  // Dynamically reconfigure modified-side extensions (e.g. FK references)
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.b.dispatch({ effects: modifiedCompartmentRef.current.reconfigure(modifiedExtensions) });
+  }, [modifiedExtensions]);
 
   // Sync original content
   useEffect(() => {

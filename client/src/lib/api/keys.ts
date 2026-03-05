@@ -39,6 +39,8 @@ export const SWR_KEYS = {
     // Matches all file keys for a workbook
     allKeyMatcher: (workbookId: WorkbookId) => (key: Arguments) =>
       Array.isArray(key) && key[0] === 'files' && key[2] === workbookId,
+    resolveReferences: (workbookId: WorkbookId, path: string, branch: string) =>
+      ['files', 'resolve-references', workbookId, path, branch] as const,
   },
   jobs: {
     activeByWorkbook: (workbookId: WorkbookId) => ['jobs', 'active-by-workbook', workbookId] as const,
