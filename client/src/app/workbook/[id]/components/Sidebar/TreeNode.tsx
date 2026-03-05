@@ -1011,7 +1011,10 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             <Box py={4} px="sm" style={{ marginLeft: INDENT_PX }}>
               <Group gap={6} wrap="nowrap">
                 <Box style={{ width: 6, flexShrink: 0 }} />
-                <Link href={`/workbook/${workbookId}/files/${encodedFolderPath}`} style={{ textDecoration: 'none' }}>
+                <Link
+                  href={`/workbook/${workbookId}/${mode === 'review' ? 'review' : 'files'}/${encodedFolderPath}`}
+                  style={{ textDecoration: 'none' }}
+                >
                   <Text12Regular c="var(--mantine-color-blue-6)" style={{ cursor: 'pointer' }}>
                     {hiddenCount} more...
                   </Text12Regular>
