@@ -103,6 +103,7 @@ export class CliConnectionController {
     authType: string;
     healthStatus: string | null;
     healthStatusMessage: string | null;
+    repoPath: string | null;
     createdAt: Date;
     updatedAt: Date;
   }) {
@@ -113,6 +114,7 @@ export class CliConnectionController {
       authType: account.authType,
       healthStatus: account.healthStatus,
       healthStatusMessage: account.healthStatusMessage,
+      repoPath: account.repoPath ?? undefined,
       createdAt: account.createdAt.toISOString(),
       updatedAt: account.updatedAt.toISOString(),
     };

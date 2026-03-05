@@ -10,6 +10,7 @@ type Connection struct {
 	Service             string  `json:"service"`
 	DisplayName         string  `json:"displayName"`
 	AuthType            string  `json:"authType"`
+	RepoPath            string  `json:"repoPath,omitempty"`
 	HealthStatus        *string `json:"healthStatus"`
 	HealthStatusMessage *string `json:"healthStatusMessage"`
 	CreatedAt           string  `json:"createdAt"`

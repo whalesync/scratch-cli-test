@@ -16,6 +16,7 @@ type ConnectorAccount struct {
 	ID          string       `json:"id"`
 	DisplayName string       `json:"displayName"`
 	Service     string       `json:"service"`
+	RepoPath    string       `json:"repoPath,omitempty"`
 	GitUrl      string       `json:"gitUrl"`
 	DataFolders []DataFolder `json:"dataFolders"`
 }

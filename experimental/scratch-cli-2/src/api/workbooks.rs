@@ -15,6 +15,8 @@ pub struct ConnectorAccount {
     #[serde(rename = "displayName")]
     pub display_name: String,
     pub service: String,
+    #[serde(rename = "repoPath", default, skip_serializing_if = "Option::is_none")]
+    pub repo_path: Option<String>,
     #[serde(rename = "gitUrl", default)]
     pub git_url: String,
     #[serde(rename = "dataFolders", default)]

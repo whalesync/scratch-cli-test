@@ -13,6 +13,8 @@ pub struct Connection {
     pub display_name: String,
     #[serde(rename = "authType", default)]
     pub auth_type: String,
+    #[serde(rename = "repoPath", default, skip_serializing_if = "Option::is_none")]
+    pub repo_path: Option<String>,
     #[serde(rename = "healthStatus")]
     pub health_status: Option<String>,
     #[serde(rename = "healthStatusMessage")]

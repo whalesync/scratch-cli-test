@@ -333,9 +333,13 @@ fn init_v2_workbook(
         clone_repo(&ca.git_url, &conn_dir, api_token)?;
 
         // Write connector marker
+        let repo_path_line = match &ca.repo_path {
+            Some(rp) => format!("  repoPath: \"{}\"\n", rp),
+            None => String::new(),
+        };
         let marker = format!(
-            "version: \"2\"\nworkbook:\n  id: \"{}\"\n  name: \"{}\"\nconnector:\n  id: \"{}\"\n  displayName: \"{}\"\n  service: \"{}\"\n",
-            workbook.id, workbook.name, ca.id, ca.display_name, ca.service
+            "version: \"2\"\nworkbook:\n  id: \"{}\"\n  name: \"{}\"\nconnector:\n  id: \"{}\"\n  displayName: \"{}\"\n  service: \"{}\"\n{}",
+            workbook.id, workbook.name, ca.id, ca.display_name, ca.service, repo_path_line
         );
         std::fs::write(conn_dir.join(".scratchmd"), marker)
             .context("failed to write connector marker")?;

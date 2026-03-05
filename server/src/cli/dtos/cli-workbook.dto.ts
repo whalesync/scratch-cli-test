@@ -43,6 +43,7 @@ export class CliConnectorAccountDto {
   readonly id?: string;
   readonly displayName?: string;
   readonly service?: string;
+  readonly repoPath?: string;
   readonly gitUrl?: string;
   readonly dataFolders?: CliDataFolderDto[];
 }

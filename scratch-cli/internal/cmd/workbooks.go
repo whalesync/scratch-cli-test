@@ -372,6 +372,7 @@ type ConnectorConfig struct {
 	ID          string `yaml:"id"`
 	DisplayName string `yaml:"displayName"`
 	Service     string `yaml:"service"`
+	RepoPath    string `yaml:"repoPath,omitempty"`
 }
 
 // InitResult represents the result of a workbooks init operation (for JSON output)
@@ -620,6 +621,7 @@ func initV2Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 				ID:          ca.ID,
 				DisplayName: ca.DisplayName,
 				Service:     ca.Service,
+				RepoPath:    ca.RepoPath,
 			},
 		}
 		connMarkerData, err := yaml.Marshal(&connMarker)

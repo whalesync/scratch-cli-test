@@ -126,6 +126,7 @@ export class CliWorkbookController {
         id: ca.id,
         displayName: ca.displayName,
         service: ca.service,
+        repoPath: ca.repoPath ?? undefined,
         gitUrl: `${baseUrl}/cli/v1/workbooks/${id}/connectors/${ca.id}/git`,
         dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name })),
       }));
