@@ -47,3 +47,9 @@ repos/
 
 # Test report artifacts
 junit.xml
+
+# Cargo workspace build directory
+/target
+
+# Napi-RS native addons
+*.node
