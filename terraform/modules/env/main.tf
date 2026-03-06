@@ -390,3 +390,11 @@ resource "google_secret_manager_secret_version" "DB_PASS" {
   # NOTE: This must be incremented to write a new version of the secret
   secret_data_wo_version = 1
 }
+
+resource "google_secret_manager_secret_version" "READONLY_DB_PASSWORD" {
+  secret         = google_secret_manager_secret.required["READONLY_DB_PASSWORD"].id
+  secret_data_wo = module.db_primary.readonly_password
+
+  # NOTE: This must be incremented to write a new version of the secret
+  secret_data_wo_version = 1
+}

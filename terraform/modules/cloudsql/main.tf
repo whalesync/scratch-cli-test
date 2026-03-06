@@ -118,3 +118,18 @@ resource "random_id" "db_name_suffix" {
   byte_length = 4
 }
 
+## ---------------------------------------------------------------------------------------------------------------------
+## Read-Only User
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "random_password" "readonly_password" {
+  length  = 24
+  special = false
+}
+
+resource "google_sql_user" "readonly" {
+  name     = "readonly"
+  instance = google_sql_database_instance.primary.name
+  password = random_password.readonly_password.result
+}
+

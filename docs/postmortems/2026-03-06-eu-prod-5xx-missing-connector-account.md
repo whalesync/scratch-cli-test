@@ -59,7 +59,7 @@ TBD — Requires either:
 - [ ] Change `resolveRepoId` to throw an `HttpException` (e.g., 400 or 404) instead of a generic `Error` so missing data doesn't surface as 500
 - [ ] Investigate how this workbook ended up with null `connectorAccountId` on its DataFolders — is this a migration gap, a race condition during workbook setup, or manual data manipulation?
 - [ ] Consider adding a database constraint or validation to prevent DataFolders from being created without `connectorAccountId` on V2 workbooks
-- [ ] Create a `read_only_user` on production databases so we can safely run diagnostic queries during incidents
+- [x] Create a `read_only_user` on production databases so we can safely run diagnostic queries during incidents
 
 ## Lessons Learned
 

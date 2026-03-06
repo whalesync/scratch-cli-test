@@ -21,3 +21,9 @@ output "instance_id" {
   value       = google_sql_database_instance.primary.id
   description = "The id of the instance"
 }
+
+output "readonly_password" {
+  value       = random_password.readonly_password.result
+  sensitive   = true
+  description = "The password for the read-only database user"
+}
