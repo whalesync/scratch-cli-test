@@ -229,6 +229,8 @@ resource "google_cloud_run_v2_service" "api_service" {
           "POSTHOG_API_KEY",
           "POSTHOG_FEATURE_FLAG_API_KEY",
           "REDIS_PASSWORD",
+          "SHOPIFY_CLIENT_ID",
+          "SHOPIFY_CLIENT_SECRET",
           "SLACK_NOTIFICATION_WEBHOOK_URL",
           "STRIPE_API_KEY",
           "STRIPE_WEBHOOK_SECRET",

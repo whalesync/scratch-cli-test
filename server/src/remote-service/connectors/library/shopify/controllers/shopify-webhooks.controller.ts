@@ -12,7 +12,7 @@ import type { Request } from 'express';
 import { WSLogger } from 'src/logger';
 import { ShopifyWebhooksService } from './shopify-webhooks.service';
 
-@Controller('shopify/webhooks')
+@Controller('connectors/shopify/webhooks')
 @UseInterceptors(ClassSerializerInterceptor)
 export class ShopifyWebhooksController {
   constructor(private readonly shopifyWebhooksService: ShopifyWebhooksService) {}

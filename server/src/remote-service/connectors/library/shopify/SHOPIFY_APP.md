@@ -26,7 +26,7 @@ Shopify requires three mandatory compliance webhook endpoints for app store subm
 - `customers/redact` — Shopify asks us to delete customer data
 - `shop/redact` — Shopify asks us to delete all shop data (48h after uninstall)
 
-All three are handled by a single endpoint: `POST /shopify/webhooks`, which dispatches based on the `X-Shopify-Topic` header.
+All three are handled by a single endpoint: `POST /connectors/shopify/webhooks`, which dispatches based on the `X-Shopify-Topic` header.
 
 ### Setup Steps
 
@@ -52,7 +52,7 @@ npm init -y
 
    [[webhooks.subscriptions]]
    compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
-   uri = "https://api.scratch.so/shopify/webhooks"
+   uri = "https://api.scratch.so/connectors/shopify/webhooks"
    ```
 
 3. **Deploy the config**:
