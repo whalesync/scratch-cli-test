@@ -309,8 +309,8 @@ module "scratch_git_gce" {
   docker_image            = "${local.artifact_registry_url}/spinner-scratch-git:latest"
   network_name            = local.vpc_network_name
   vpc_cidr_ranges         = [for s in local.custom_subnetworks : s.ip_cidr_range]
-  boot_disk_size_gb      = var.scratch_git_boot_disk_size_gb
-  disk_size_gb           = var.scratch_git_disk_size_gb
+  boot_disk_size_gb       = var.scratch_git_boot_disk_size_gb
+  disk_size_gb            = var.scratch_git_disk_size_gb
   snapshot_hours_in_cycle = var.scratch_git_snapshot_hours_in_cycle
 
   depends_on = [module.vpc, module.iam-sa]
@@ -398,3 +398,43 @@ resource "google_secret_manager_secret_version" "READONLY_DB_PASSWORD" {
   # NOTE: This must be incremented to write a new version of the secret
   secret_data_wo_version = 1
 }
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Asset Rehosting Bucket
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "google_storage_bucket" "assets" {
+  name          = "${var.gcp_project_id}-assets"
+  location      = var.gcp_region
+  force_destroy = false
+
+  uniform_bucket_level_access = true
+  cors {
+    method = ["GET"]
+    origin = [var.client_domain]
+  }
+  labels = {
+    "vanta-contains-user-data" = "true"
+  }
+}
+
+resource "google_storage_bucket_iam_member" "assets_cloudrun" {
+  bucket = google_storage_bucket.assets.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${module.iam-sa.service_accounts["cloudrun-service-account"].email}"
+}
+
+# Makes objects in the assets bucket publicly readable, but not listable
+resource "google_storage_bucket_iam_member" "assets_public_read" {
+  bucket = google_storage_bucket.assets.name
+  role   = "projects/${var.gcp_project_id}/roles/${google_project_iam_custom_role.assets_object_reader.role_id}"
+  member = "allUsers"
+}
+
+resource "google_project_iam_custom_role" "assets_object_reader" {
+  role_id     = "assetsObjectReader"
+  title       = "Assets Object Reader"
+  description = "Allows reading individual objects but not listing bucket contents"
+  permissions = ["storage.objects.get"]
+}
+
