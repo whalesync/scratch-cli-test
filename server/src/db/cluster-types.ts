@@ -28,6 +28,15 @@ export namespace WorkbookCluster {
   });
 }
 
+export namespace WorkspacePermissionCluster {
+  export type WorkspacePermission = Prisma.WorkspacePermissionGetPayload<typeof _validator>;
+  export type User = WorkspacePermission['user'];
+
+  export const _validator = Prisma.validator<Prisma.WorkspacePermissionDefaultArgs>()({
+    include: { user: true },
+  });
+}
+
 export namespace DataFolderCluster {
   export type DataFolder = Prisma.DataFolderGetPayload<typeof _validator>;
 

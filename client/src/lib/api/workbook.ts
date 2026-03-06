@@ -1,5 +1,6 @@
 import {} from '@/types/server-entities/workbook';
 import {
+  AddWorkspacePermissionDto,
   AdminWorkbookDto,
   CreateWorkbookDto,
   DataFolderGroup,
@@ -15,8 +16,11 @@ import {
   TestTransformerResponse,
   TransformerConfig,
   UpdateWorkbookDto,
+  UpdateWorkspacePermissionDto,
   Workbook,
   WorkbookId,
+  WorkspacePermission,
+  WorkspacePermissionId,
 } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
@@ -559,6 +563,49 @@ export const workbookApi = {
     } catch (error) {
       handleAxiosError(error, 'Failed to migrate workspace to v2');
       throw error;
+    }
+  },
+
+  listPermissions: async (workbookId: WorkbookId): Promise<WorkspacePermission[]> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<WorkspacePermission[]>(`/workbook/${workbookId}/permissions`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to list workspace permissions');
+    }
+  },
+
+  addPermission: async (workbookId: WorkbookId, dto: AddWorkspacePermissionDto): Promise<WorkspacePermission> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<WorkspacePermission>(`/workbook/${workbookId}/permissions/add`, dto);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to add workspace permission');
+    }
+  },
+
+  removePermission: async (workbookId: WorkbookId, permissionId: WorkspacePermissionId): Promise<void> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.delete(`/workbook/${workbookId}/permission/${permissionId}`);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to remove workspace permission');
+    }
+  },
+
+  updatePermission: async (
+    workbookId: WorkbookId,
+    permissionId: WorkspacePermissionId,
+    dto: UpdateWorkspacePermissionDto,
+  ): Promise<WorkspacePermission> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.patch<WorkspacePermission>(`/workbook/${workbookId}/permission/${permissionId}`, dto);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to update workspace permission');
     }
   },
 

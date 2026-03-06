@@ -1,5 +1,5 @@
 import { Subscription, TokenType, UserRole } from '@prisma/client';
-import { BillableActions, SubscriptionInfo } from '@spinner/shared-types';
+import { BillableActions, SubscriptionInfo, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import { UserFlagValues } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
@@ -7,6 +7,7 @@ import { SubscriptionPlanFeaturesEntity } from 'src/payment/entities/subscriptio
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { getFreePlan, getPlan, getPlanTypeFromString } from 'src/payment/plans';
 import { BUILD_VERSION } from 'src/version';
+import { WorkspacePermission, WorkspacePermissionRole } from '../types';
 import { Organization } from './organization.entity';
 
 export type { SubscriptionInfo } from '@spinner/shared-types';
@@ -40,6 +41,8 @@ export class User {
 
   serverBuildVersion: string;
 
+  workspacePermissions?: WorkspacePermission[];
+
   constructor(user: UserCluster.User, experiments?: UserFlagValues, billableActions?: BillableActions) {
     this.id = user.id;
     this.createdAt = user.createdAt;
@@ -65,6 +68,12 @@ export class User {
     this.organization = user.organization ? new Organization(user.organization) : undefined;
     this.settings = user.settings as Record<string, string | number | boolean>;
     this.serverBuildVersion = BUILD_VERSION;
+
+    this.workspacePermissions = user.workspacePermissions?.map((wp) => ({
+      id: wp.id as WorkspacePermissionId,
+      workbookId: wp.workbookId as WorkbookId,
+      role: wp.role as WorkspacePermissionRole,
+    }));
   }
 }
 

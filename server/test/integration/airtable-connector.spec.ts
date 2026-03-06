@@ -1,5 +1,5 @@
-import http from 'http';
 import axios from 'axios';
+import http from 'http';
 import { createApp } from '../../../test-api-fakes/airtable/src/index';
 import { store } from '../../../test-api-fakes/airtable/src/store';
 
@@ -64,9 +64,14 @@ async function collectPulledFiles(
   options: Record<string, unknown> = {},
 ): Promise<ConnectorFile[]> {
   const allFiles: ConnectorFile[] = [];
-  await connector.pullRecordFiles(tableSpec, async ({ files }) => {
-    allFiles.push(...files);
-  }, {}, options);
+  await connector.pullRecordFiles(
+    tableSpec,
+    async ({ files }) => {
+      allFiles.push(...files);
+    },
+    {},
+    options,
+  );
   return allFiles;
 }
 
@@ -231,9 +236,14 @@ describe('AirtableConnector with fake API', () => {
 
       // Collect files across all pages
       const batches: ConnectorFile[][] = [];
-      await connector.pullRecordFiles(spec, async ({ files }) => {
-        batches.push(files);
-      }, {}, {});
+      await connector.pullRecordFiles(
+        spec,
+        async ({ files }) => {
+          batches.push(files);
+        },
+        {},
+        {},
+      );
 
       // Should have been called in multiple batches
       expect(batches.length).toBeGreaterThan(1);
@@ -351,9 +361,7 @@ describe('AirtableConnector with fake API', () => {
       const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
 
       // Should not throw
-      await expect(
-        connector.deleteRecords(spec, [{ id: 'recNONEXISTENT' } as ConnectorFile]),
-      ).resolves.toBeUndefined();
+      await expect(connector.deleteRecords(spec, [{ id: 'recNONEXISTENT' } as ConnectorFile])).resolves.toBeUndefined();
     });
   });
 

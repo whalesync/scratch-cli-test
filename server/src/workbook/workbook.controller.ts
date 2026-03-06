@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ClassSerializerInterceptor,
   Controller,
@@ -13,18 +14,33 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { DataFolderGroup, PullAssetsResponseDto, PullFilesResponseDto, WorkbookId } from '@spinner/shared-types';
-import { CreateWorkbookDto, PullAssetsDto, PullFilesDto, UpdateWorkbookDto } from '@spinner/shared-types';
+import type {
+  DataFolderGroup,
+  PullAssetsResponseDto,
+  PullFilesResponseDto,
+  WorkbookId,
+  WorkspacePermissionId,
+} from '@spinner/shared-types';
+import {
+  AddWorkspacePermissionDto,
+  CreateWorkbookDto,
+  PullAssetsDto,
+  PullFilesDto,
+  UpdateWorkbookDto,
+  UpdateWorkspacePermissionDto,
+} from '@spinner/shared-types';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
-import { userToActor } from '../users/types';
+import { WorkspacePermissionRole, userToActor } from '../users/types';
 import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
-import { Workbook } from './entities';
+import { Workbook, WorkspacePermissionEntity } from './entities';
 
 import { WorkbookCluster } from 'src/db/cluster-types';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { WorkbookService } from './workbook.service';
+import { WorkspacePermissionsService } from './workspace-permissions.service';
 
 @Controller('workbook')
 @UseGuards(ScratchAuthGuard)
@@ -34,6 +50,7 @@ export class WorkbookController {
     private readonly service: WorkbookService,
     private readonly dataFolderService: DataFolderService,
     private readonly usersService: UsersService,
+    private readonly workspacePermissionsService: WorkspacePermissionsService,
   ) {}
 
   @Post()
@@ -76,7 +93,10 @@ export class WorkbookController {
 
   @Get(':id')
   async findOne(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<Workbook | null> {
-    const workbook = await this.service.findOne(id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
+
+    const workbook = await this.service.findOne(id, actor);
     if (!workbook) {
       return null;
     }
@@ -90,8 +110,10 @@ export class WorkbookController {
     @Body() updateWorkbookDto: UpdateWorkbookDto,
     @Req() req: RequestWithUser,
   ): Promise<Workbook> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
     const dto = updateWorkbookDto;
-    return new Workbook(await this.service.update(id, dto, userToActor(req.user)));
+    return new Workbook(await this.service.update(id, dto, actor));
   }
 
   @Post(':id/pull-files')
@@ -100,8 +122,10 @@ export class WorkbookController {
     @Body() pullDto: PullFilesDto,
     @Req() req: RequestWithUser,
   ): Promise<PullFilesResponseDto> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
     const dto = pullDto;
-    return this.service.pullFiles(id, userToActor(req.user), dto.dataFolderIds, createRunContext('web'));
+    return this.service.pullFiles(id, actor, dto.dataFolderIds, createRunContext('web'));
   }
 
   @Post(':id/pull-assets')
@@ -116,7 +140,9 @@ export class WorkbookController {
   @Delete(':id')
   @HttpCode(204)
   async remove(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<void> {
-    await this.service.delete(id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
+    await this.service.delete(id, actor);
   }
 
   @Post(':id/discard-changes')
@@ -126,18 +152,84 @@ export class WorkbookController {
     @Body() body: { path?: string },
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    await this.service.discardChanges(id, userToActor(req.user), body.path);
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
+    await this.service.discardChanges(id, actor, body.path);
   }
 
   @Post(':id/reset')
   @HttpCode(204)
   async reset(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<void> {
-    await this.service.resetWorkbook(id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
+    await this.service.resetWorkbook(id, actor);
   }
 
   /* Start new Data Folder functions */
   @Get(':id/data-folders/list')
   async listDataFolders(@Param('id') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<DataFolderGroup[]> {
-    return await this.dataFolderService.listGroupedByConnectorBases(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.dataFolderService.listGroupedByConnectorBases(workbookId, actor);
+  }
+
+  /* Workspace Permission endpoints */
+  @Get(':id/permissions')
+  async listPermissions(
+    @Param('id') workbookId: WorkbookId,
+    @Req() req: RequestWithUser,
+  ): Promise<WorkspacePermissionEntity[]> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const permissions = await this.workspacePermissionsService.listByWorkbook(workbookId);
+    return permissions.map((p) => new WorkspacePermissionEntity(p));
+  }
+
+  @Post(':id/permissions/add')
+  async addPermission(
+    @Param('id') workbookId: WorkbookId,
+    @Body() dto: AddWorkspacePermissionDto,
+    @Req() req: RequestWithUser,
+  ): Promise<WorkspacePermissionEntity> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const role = (dto.role ?? 'editor') as WorkspacePermissionRole;
+
+    let permission;
+    if (dto.userId) {
+      permission = await this.workspacePermissionsService.createByUserId(workbookId, dto.userId, role);
+    } else if (dto.email) {
+      permission = await this.workspacePermissionsService.createByEmail(workbookId, dto.email, role);
+    } else {
+      throw new BadRequestException('Either userId or email must be provided');
+    }
+
+    return new WorkspacePermissionEntity(permission);
+  }
+
+  @Delete(':id/permission/:permissionId')
+  @HttpCode(204)
+  async removePermission(
+    @Param('id') workbookId: WorkbookId,
+    @Param('permissionId') permissionId: WorkspacePermissionId,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    await this.workspacePermissionsService.delete(permissionId);
+  }
+
+  @Patch(':id/permission/:permissionId')
+  async updatePermission(
+    @Param('id') workbookId: WorkbookId,
+    @Param('permissionId') permissionId: WorkspacePermissionId,
+    @Body() dto: UpdateWorkspacePermissionDto,
+    @Req() req: RequestWithUser,
+  ): Promise<WorkspacePermissionEntity> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const role = dto.role as WorkspacePermissionRole;
+    const permission = await this.workspacePermissionsService.update(permissionId, role);
+    return new WorkspacePermissionEntity(permission);
   }
 }

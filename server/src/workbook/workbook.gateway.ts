@@ -16,6 +16,7 @@ import type { SocketWithUser } from 'src/auth/types';
 import { WebSocketAuthGuard } from 'src/auth/websocket-auth-guard';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookEventService } from './workbook-event.service';
 import { WorkbookService } from './workbook.service';
@@ -106,7 +107,10 @@ export class WorkbookDataGateway implements OnGatewayInit, OnGatewayConnection, 
     }
 
     const workbookId = data.workbookId;
-    const workbook = await this.workbookService.findOne(workbookId, userToActor(client.user));
+
+    const actor = userToActor(client.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const workbook = await this.workbookService.findOne(workbookId, actor);
     if (!workbook) {
       WSLogger.error({
         message: 'Workbook not found',

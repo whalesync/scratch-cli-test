@@ -1,5 +1,5 @@
 import { UserRole } from '@prisma/client';
-import { ScratchPlanType, SubscriptionId, WorkbookId } from '@spinner/shared-types';
+import { ScratchPlanType, SubscriptionId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
 import { getLastestExpiringSubscription, isSubscriptionExpired } from 'src/payment/helpers';
@@ -17,6 +17,7 @@ export interface SubscriptionStatus {
 export type WorkspacePermissionRole = 'editor' | 'viewer';
 
 export interface WorkspacePermission {
+  id: WorkspacePermissionId;
   workbookId: WorkbookId;
   role: WorkspacePermissionRole;
 }
@@ -97,6 +98,7 @@ export function userToActor(user: UserCluster.User): Actor {
   let workspacePermissions: WorkspacePermission[] | undefined;
   if (user.workspacePermissions) {
     workspacePermissions = user.workspacePermissions.map((wp) => ({
+      id: wp.id as WorkspacePermissionId,
       workbookId: wp.workbookId as WorkbookId,
       role: wp.role as WorkspacePermissionRole,
     }));

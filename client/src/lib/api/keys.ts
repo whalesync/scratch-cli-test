@@ -23,6 +23,7 @@ export const SWR_KEYS = {
     list: (sortBy?: string, sortOrder?: string) => ['workbook', 'list', sortBy ?? 'all', sortOrder ?? 'all'],
     listKeyMatcher: () => (key: Arguments) => Array.isArray(key) && key[0] === 'workbook' && key[1] === 'list',
     detail: (id: WorkbookId) => ['workbook', 'detail', id],
+    permissions: (id: WorkbookId) => ['workbook', 'permissions', id] as const,
   },
   users: {
     activeUser: () => ['users', 'activeUser'],

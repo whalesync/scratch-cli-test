@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { WorkspacePermission } from '@prisma/client';
 import { createWorkspacePermissionId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
+import { WorkspacePermissionCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WorkspacePermissionRole } from 'src/users/types';
 
@@ -12,7 +12,7 @@ export class WorkspacePermissionsService {
     workbookId: WorkbookId,
     userId: string,
     role: WorkspacePermissionRole,
-  ): Promise<WorkspacePermission> {
+  ): Promise<WorkspacePermissionCluster.WorkspacePermission> {
     return this.db.client.workspacePermission.create({
       data: {
         id: createWorkspacePermissionId(),
@@ -20,6 +20,7 @@ export class WorkspacePermissionsService {
         userId,
         role,
       },
+      include: WorkspacePermissionCluster._validator.include,
     });
   }
 
@@ -27,7 +28,7 @@ export class WorkspacePermissionsService {
     workbookId: WorkbookId,
     email: string,
     role: WorkspacePermissionRole,
-  ): Promise<WorkspacePermission> {
+  ): Promise<WorkspacePermissionCluster.WorkspacePermission> {
     const user = await this.db.client.user.findFirst({
       where: { email },
     });
@@ -39,15 +40,17 @@ export class WorkspacePermissionsService {
     return this.createByUserId(workbookId, user.id, role);
   }
 
-  async listByUser(userId: string): Promise<WorkspacePermission[]> {
+  async listByUser(userId: string): Promise<WorkspacePermissionCluster.WorkspacePermission[]> {
     return this.db.client.workspacePermission.findMany({
       where: { userId },
+      include: WorkspacePermissionCluster._validator.include,
     });
   }
 
-  async listByWorkbook(workbookId: WorkbookId): Promise<WorkspacePermission[]> {
+  async listByWorkbook(workbookId: WorkbookId): Promise<WorkspacePermissionCluster.WorkspacePermission[]> {
     return this.db.client.workspacePermission.findMany({
       where: { workbookId },
+      include: WorkspacePermissionCluster._validator.include,
     });
   }
 
@@ -60,10 +63,11 @@ export class WorkspacePermissionsService {
   async update(
     workspacePermissionId: WorkspacePermissionId,
     newRole: WorkspacePermissionRole,
-  ): Promise<WorkspacePermission> {
+  ): Promise<WorkspacePermissionCluster.WorkspacePermission> {
     return this.db.client.workspacePermission.update({
       where: { id: workspacePermissionId },
       data: { role: newRole },
+      include: WorkspacePermissionCluster._validator.include,
     });
   }
 

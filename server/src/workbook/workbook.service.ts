@@ -280,7 +280,11 @@ export class WorkbookService {
   ): Promise<WorkbookCluster.Workbook[]> {
     return this.db.client.workbook.findMany({
       where: {
-        userId: actor.userId,
+        workspacePermissions: {
+          some: {
+            userId: actor.userId,
+          },
+        },
       },
       orderBy: {
         [sortBy]: sortOrder,
@@ -289,9 +293,10 @@ export class WorkbookService {
     });
   }
 
-  findOne(id: WorkbookId, actor: Actor): Promise<WorkbookCluster.Workbook | null> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async findOne(id: WorkbookId, _actor: Actor): Promise<WorkbookCluster.Workbook | null> {
     return this.db.client.workbook.findFirst({
-      where: { id, organizationId: actor.organizationId },
+      where: { id },
       include: WorkbookCluster._validator.include,
     });
   }
