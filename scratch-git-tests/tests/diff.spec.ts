@@ -91,11 +91,10 @@ describe('Repo Diff', () => {
     });
 
     it('should compare tree OIDs — same tree different commits returns false', async () => {
-      // Commit to main and rebase so merge_base is updated, then dirty has same content
+      // Commit same content to both branches independently
       await client.commitFiles(repoId, [file('same.md', 'content')], 'add to main', 'main');
-      await client.rebase(repoId);
+      await client.commitFiles(repoId, [file('same.md', 'content')], 'add to dirty', 'dirty');
 
-      // After rebase, dirty has same tree as merge_base
       const result = await client.hasDirtyFiles(repoId);
       expect(result.dirty).toBe(false);
     });

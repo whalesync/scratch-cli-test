@@ -25,7 +25,7 @@ describe('Concurrency', () => {
     );
 
     const results = await Promise.all(writes);
-    results.forEach((r) => expect(r).toMatchObject({ success: true }));
+    results.forEach((r) => expect(r).toEqual({ success: true }));
 
     // All files should be present
     const files = await client.listFiles(repoId, 'main');
@@ -41,8 +41,8 @@ describe('Concurrency', () => {
       client.commitFiles(repoId, [file('dirty-file.md', 'dirty')], 'dirty write', 'dirty'),
     ]);
 
-    expect(mainResult).toMatchObject({ success: true });
-    expect(dirtyResult).toMatchObject({ success: true });
+    expect(mainResult).toEqual({ success: true });
+    expect(dirtyResult).toEqual({ success: true });
 
     const mainFile = await client.getFile(repoId, 'main-file.md', 'main');
     const dirtyFile = await client.getFile(repoId, 'dirty-file.md', 'dirty');
@@ -60,7 +60,7 @@ describe('Concurrency', () => {
       client.getFile(repoId, 'stable.md', 'main'),
     ]);
 
-    expect(writeResult).toMatchObject({ success: true });
+    expect(writeResult).toEqual({ success: true });
     expect(readResult.content).toBe('stable');
   });
 
