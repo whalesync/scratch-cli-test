@@ -39,6 +39,55 @@ type WorkbookWebSocketStore = State & Actions;
 
 const MESSAGE_LOG_MAX_LENGTH = 30;
 
+/**
+ * Suppresses WebSocket-triggered folder revalidation during batch operations
+ * (e.g. ChooseTablesModal creating/deleting multiple folders).
+ *
+ * While suppressed, incoming folder-created/folder-deleted events don't trigger
+ * SWR revalidation. When unsuppressed, a single revalidation fires. A short grace
+ * period absorbs late-arriving websocket events after unsuppress.
+ */
+let folderMutationSuppressed = false;
+let suppressionTimeout: ReturnType<typeof setTimeout> | null = null;
+const SUPPRESSION_SAFETY_TIMEOUT_MS = 30_000;
+const SUPPRESSION_GRACE_PERIOD_MS = 2_000;
+
+export function suppressFolderMutations() {
+  folderMutationSuppressed = true;
+
+  // Safety timeout: auto-unsuppress if caller never calls unsuppress (e.g. navigation away)
+  if (suppressionTimeout) clearTimeout(suppressionTimeout);
+  suppressionTimeout = setTimeout(() => {
+    if (folderMutationSuppressed) {
+      console.debug('Folder mutation suppression safety timeout fired');
+      folderMutationSuppressed = false;
+    }
+  }, SUPPRESSION_SAFETY_TIMEOUT_MS);
+}
+
+export function unsuppressFolderMutations(workbookId: WorkbookId) {
+  if (suppressionTimeout) {
+    clearTimeout(suppressionTimeout);
+    suppressionTimeout = null;
+  }
+
+  // Keep suppression active briefly to absorb late-arriving websocket events,
+  // then do a single revalidation after the grace period.
+  setTimeout(() => {
+    folderMutationSuppressed = false;
+    mutate(SWR_KEYS.dataFolders.list(workbookId), undefined, { revalidate: true });
+    mutate(SWR_KEYS.workbook.detail(workbookId), undefined, { revalidate: true });
+  }, SUPPRESSION_GRACE_PERIOD_MS);
+}
+
+export function resetFolderMutationSuppression() {
+  folderMutationSuppressed = false;
+  if (suppressionTimeout) {
+    clearTimeout(suppressionTimeout);
+    suppressionTimeout = null;
+  }
+}
+
 const log = (message: string, data?: unknown) => {
   if (data) {
     console.debug('Workbook Websocket Event:', message, data);
@@ -110,13 +159,13 @@ export const useWorkbookWebSocketStore = create<WorkbookWebSocketStore>((set, ge
     }
 
     if (event.type === 'folder-created' || event.type === 'folder-deleted') {
+      if (folderMutationSuppressed) {
+        get()._addToMessageLog('Folder mutation suppressed (batch in progress)');
+        return;
+      }
       get()._addToMessageLog('Mutate folder list and workbook detail SWR keys');
-      mutate(SWR_KEYS.dataFolders.list(workbookId), undefined, {
-        revalidate: true,
-      });
-      mutate(SWR_KEYS.workbook.detail(workbookId), undefined, {
-        revalidate: true,
-      });
+      mutate(SWR_KEYS.dataFolders.list(workbookId), undefined, { revalidate: true });
+      mutate(SWR_KEYS.workbook.detail(workbookId), undefined, { revalidate: true });
       return;
     }
 
@@ -162,6 +211,7 @@ export const useWorkbookWebSocketStore = create<WorkbookWebSocketStore>((set, ge
     if (state.socket && state.currentWorkbookId !== workbookId) {
       console.debug('Disconnecting from previous workbook:', state.currentWorkbookId);
       state.socket.disconnect();
+      resetFolderMutationSuppression();
     }
 
     console.debug('Creating Socket.IO connection for workbook:', workbookId);

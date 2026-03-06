@@ -10,6 +10,7 @@ import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
+import { suppressFolderMutations, unsuppressFolderMutations } from '@/stores/workbook-websocket-store';
 import { TableList, TablePreview, TableSchemaPreview, TableSearchResult } from '@/types/server-entities/table-list';
 import {
   Alert,
@@ -152,7 +153,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     },
   );
 
-  const { dataFolderGroups, refresh: refreshDataFolders } = useDataFolders();
+  const { dataFolderGroups } = useDataFolders();
   const { addLinkedDataFolder, pullFolders } = useWorkbook(workbookId);
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -553,6 +554,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     }
 
     setIsSaving(true);
+    suppressFolderMutations();
     try {
       // Add new tables (with optional filter, field overrides, and connector options)
       // Create all folders first with triggerPull=false, then trigger a single pull job for all
@@ -604,13 +606,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         await dataFolderApi.delete(folder.id);
       }
 
-      await refreshDataFolders();
-
       setShowConfirmation(false);
       onClose();
     } catch (error) {
       console.error('Failed to update tables:', error);
     } finally {
+      unsuppressFolderMutations(workbookId);
       setIsSaving(false);
     }
   };
@@ -1155,7 +1156,15 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title={modalTitle} size="lg" centered>
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={modalTitle}
+      size="lg"
+      centered
+      closeOnEscape={!isSaving}
+      closeOnClickOutside={!isSaving}
+    >
       {renderContent()}
     </Modal>
   );

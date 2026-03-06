@@ -100,10 +100,9 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
         triggerPull,
       };
       const dataFolder = await dataFolderApi.create(dto);
-      await mutate();
       return dataFolder;
     },
-    [id, mutate],
+    [id],
   );
 
   const discardAllChanges = useCallback(async (): Promise<void> => {
@@ -133,7 +132,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
 
   const pullFolders = useCallback(
     async (folderIds?: DataFolderId[]): Promise<void> => {
-      if (!id || !data) {
+      if (!id) {
         return;
       }
       trackPullFiles(id);
@@ -150,14 +149,9 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
           cause: error as Error,
         });
       }
-      await mutate();
       await useActiveJobsStore.getState().refreshJobs();
-      await globalMutate(SWR_KEYS.dataFolders.list(id));
-      data.dataFolders?.forEach((folder) => {
-        globalMutate(SWR_KEYS.dataFolders.detail(folder.id));
-      });
     },
-    [globalMutate, id, mutate, data, setWorkbookError],
+    [id, setWorkbookError],
   );
 
   return {
