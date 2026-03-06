@@ -24,37 +24,31 @@ Some endpoints require **admin role** (`hasAdminToolsPermission`).
 GET    /users/current                             # Get current user profile
 PATCH  /users/current/settings                    # Update user settings
 POST   /users/current/api-token                   # Generate API token
-POST   /users/current/onboarding/collapse         # Collapse onboarding step
-```
-
-### Workbook Internal Operations
-
-```
-POST   /workbook/:id/tables/:tableId/clear-active-record-filter  # Clear active record filter
-POST   /workbook/:id/tables/:tableId/records/events/test         # Send test record event (admin)
-PATCH  /workbook/:id/folders/:folderId                           # Move folder to new parent
+PATCH  /users/current/last-workbook               # Update last accessed workbook
 ```
 
 ### Admin Tools
 
 ```
-GET    /dev-tools/users/search                    # Search users (admin)
-GET    /dev-tools/users/:id/details               # Get user details (admin)
-PATCH  /dev-tools/users/:id/settings              # Update user settings (admin)
-POST   /dev-tools/users/:id/onboarding/reset      # Reset onboarding (admin)
-POST   /dev-tools/subscription/plan/update        # Update subscription (admin, non-prod)
-POST   /dev-tools/subscription/plan/expire        # Expire subscription (admin, non-prod)
-POST   /dev-tools/subscription/plan/cancel        # Cancel subscription (admin, non-prod)
-POST   /dev-tools/jobs/sync-data-folders          # Trigger sync job (admin)
+POST   /dev-tools/users/change-organization        # Change user organization (admin)
+GET    /dev-tools/users/search                     # Search users (admin)
+GET    /dev-tools/users/:id/details                # Get user details (admin)
+PATCH  /dev-tools/users/:id/settings               # Update user settings (admin)
+POST   /dev-tools/subscription/plan/update         # Update subscription (admin, non-prod)
+POST   /dev-tools/subscription/plan/expire         # Expire subscription (admin, non-prod)
+POST   /dev-tools/subscription/plan/cancel         # Cancel subscription (admin, non-prod)
+GET    /dev-tools/connections/:id                  # Get connection details (admin)
+GET    /dev-tools/jobs                             # List jobs (admin)
+GET    /dev-tools/workbooks                        # List all workbooks (admin)
+POST   /dev-tools/jobs/sync-data-folders           # Trigger sync job (admin)
+POST   /dev-tools/connections/:id/move-repo        # Move connection repo (admin)
 ```
 
 ### Worker Test Endpoints
 
 ```
-POST   /workers/jobs/add-two-numbers              # Test job: add two numbers
-POST   /workers/jobs/add-three-numbers            # Test job: add three numbers
-GET    /workers/jobs/:jobId                       # Get test job status
-GET    /workers/queue/stats                       # Get queue statistics
+GET    /workers/jobs/:jobId                        # Get test job status
+GET    /workers/queue/stats                        # Get queue statistics
 ```
 
 ### Payments
@@ -74,7 +68,7 @@ POST   /oauth/:service/callback                   # Handle OAuth callback
 POST   /oauth/refresh                             # Refresh OAuth tokens
 ```
 
-### Git Operations
+### Git Operations (scratch-git)
 
 ```
 GET    /scratch-git/:id/list                      # List repo files
@@ -84,19 +78,15 @@ GET    /scratch-git/:id/git-has-dirty             # Check if dirty files exist (
 GET    /scratch-git/:id/git-status-count          # Get dirty file count
 GET    /scratch-git/:id/git-diff                  # Get file diff
 GET    /scratch-git/:id/graph                     # Get commit graph
+POST   /scratch-git/:id/rebase                    # Rebase repository
+GET    /scratch-git/:id/object-counts             # Get git object counts
+POST   /scratch-git/:id/gc                        # Run git garbage collection
 POST   /scratch-git/:id/checkpoint                # Create checkpoint
 GET    /scratch-git/:id/checkpoints               # List checkpoints
 POST   /scratch-git/:id/checkpoint/revert         # Revert to checkpoint
 DELETE /scratch-git/:id/checkpoint/:name          # Delete checkpoint
-```
-
-### Custom Actions
-
-```
-POST   /custom-actions/webflow/publish-items      # Publish items to Webflow
-POST   /custom-actions/webflow/publish-site       # Publish Webflow site
-POST   /custom-actions/webflow/validate-files     # Validate Webflow files
-POST   /custom-actions/wix/publish-draft-posts    # Publish Wix draft posts
+DELETE /scratch-git/:id/data-folder/files         # Delete data folder files from repo
+POST   /scratch-git/:id/migrate-to-v2             # Migrate repo to v2 format
 ```
 
 ### Code Migrations
@@ -112,11 +102,16 @@ POST   /code-migrations/run                       # Run migration (admin)
 POST   /bugs/report                               # Submit bug report
 ```
 
-### Real-time Events (SSE)
+### Syncs Internal
 
 ```
-GET    /workbook/:id/events                       # Subscribe to workbook events
-GET    /workbook/:id/tables/:tableId/records/events # Subscribe to record events
+GET    /workbooks/:workbookId/syncs/ai-context    # Get AI context for syncs
+```
+
+### Shopify Webhooks
+
+```
+POST   /shopify/webhooks                          # Handle Shopify webhook events
 ```
 
 ### WebSocket
@@ -128,61 +123,6 @@ WS     /workbook-events                           # Real-time snapshot updates
 ---
 
 ## Endpoint Details
-
-## Workbook Internal Operations
-
-### Clear Active Record Filter
-
-```
-POST /workbook/:id/tables/:tableId/clear-active-record-filter
-```
-
-Clears the active record filter for a snapshot table.
-
-**Response:** `204 No Content`
-
-### Send Test Record Event (Admin)
-
-```
-POST /workbook/:id/tables/:tableId/records/events/test
-```
-
-Sends a test record event through the SSE event stream. **Requires admin role.**
-
-**Response:**
-
-```
-"event sent at 2025-01-19T00:00:00.000Z"
-```
-
-**Errors:**
-
-- `401`: Only admins can send test record events
-- `404`: Workbook or table not found
-
-### Move Folder
-
-```
-PATCH /workbook/:id/folders/:folderId
-```
-
-Moves a folder to a new parent folder within the workbook.
-
-**Request Body:**
-
-```json
-{
-  "parentFolderId": "folder_parent"
-}
-```
-
-| Field            | Type   | Required | Description                          |
-| ---------------- | ------ | -------- | ------------------------------------ |
-| `parentFolderId` | string | No       | New parent folder ID (null for root) |
-
-**Response:** `204 No Content`
-
----
 
 ## Users
 
@@ -288,30 +228,21 @@ The generated token can be used for programmatic API access via the `Authorizati
 - Only one USER token is allowed per user; generating a new token invalidates the previous one
 - The token is also returned in the `apiToken` field of `GET /users/current` after generation
 
-### Collapse Onboarding Step
+### Update Last Accessed Workbook
 
 ```
-POST /users/current/onboarding/collapse
+PATCH /users/current/last-workbook
 ```
 
-Marks an onboarding step as collapsed or expanded.
+Updates the last workbook the user accessed. Used to restore the user's session on next login.
 
 **Request Body:**
 
 ```json
 {
-  "flow": "gettingStartedV1",
-  "stepKey": "dataSourceConnected",
-  "collapsed": true
+  "workbookId": "wkb_123"
 }
 ```
-
-| Step Key              | Description                  |
-| --------------------- | ---------------------------- |
-| `dataSourceConnected` | User connected a data source |
-| `contentEditedWithAi` | User edited content with AI  |
-| `suggestionsAccepted` | User accepted AI suggestions |
-| `dataPublished`       | User published data          |
 
 **Response:** `204 No Content`
 
@@ -320,6 +251,25 @@ Marks an onboarding step as collapsed or expanded.
 ## Admin Tools
 
 All admin endpoints require the `hasAdminToolsPermission` check (ADMIN role).
+
+### Change User Organization
+
+```
+POST /dev-tools/users/change-organization
+```
+
+Changes the organization a user belongs to.
+
+**Request Body:**
+
+```json
+{
+  "userId": "user_abc",
+  "organizationId": "org_xyz"
+}
+```
+
+**Response:** `204 No Content`
 
 ### Search Users
 
@@ -411,16 +361,6 @@ Updates settings for a specific user.
 
 **Response:** `204 No Content`
 
-### Reset User Onboarding
-
-```
-POST /dev-tools/users/:id/onboarding/reset
-```
-
-Resets a user's onboarding to the default state.
-
-**Response:** `204 No Content`
-
 ### Update Subscription (Dev Only)
 
 ```
@@ -466,6 +406,36 @@ Cancels a subscription with a 14-day grace period. **Non-production environments
 
 **Response:** `204 No Content`
 
+### Get Connection Details
+
+```
+GET /dev-tools/connections/:id
+```
+
+Returns details for a specific connection, including credentials and configuration.
+
+**Response:** Connection object with service-specific details.
+
+### List Jobs
+
+```
+GET /dev-tools/jobs
+```
+
+Lists recent jobs across all queues.
+
+**Response:** Array of job objects with status, timestamps, and metadata.
+
+### List All Workbooks
+
+```
+GET /dev-tools/workbooks
+```
+
+Lists all workbooks across all users.
+
+**Response:** Array of workbook objects.
+
 ### Trigger Sync Job
 
 ```
@@ -492,6 +462,16 @@ Manually triggers a sync job for testing.
   "message": "Sync job started"
 }
 ```
+
+### Move Connection Repo
+
+```
+POST /dev-tools/connections/:id/move-repo
+```
+
+Moves a connection's git repository to a new location.
+
+**Response:** `204 No Content`
 
 ---
 
@@ -881,6 +861,44 @@ Returns the commit history graph.
 }
 ```
 
+### Rebase Repository
+
+```
+POST /scratch-git/:id/rebase
+```
+
+Rebases the repository, replaying working directory changes on top of the latest committed state.
+
+**Response:** `204 No Content`
+
+### Get Object Counts
+
+```
+GET /scratch-git/:id/object-counts
+```
+
+Returns counts of git objects (blobs, trees, commits) in the repository. Useful for diagnostics and monitoring repo growth.
+
+**Response:**
+
+```json
+{
+  "blobs": 1500,
+  "trees": 300,
+  "commits": 120
+}
+```
+
+### Run Garbage Collection
+
+```
+POST /scratch-git/:id/gc
+```
+
+Runs git garbage collection on the repository to reclaim disk space and optimize storage.
+
+**Response:** `204 No Content`
+
 ### Create Checkpoint
 
 ```
@@ -952,112 +970,25 @@ Deletes a checkpoint.
 
 **Response:** `204 No Content`
 
----
-
-## Custom Actions
-
-### Webflow: Publish Items
+### Delete Data Folder Files
 
 ```
-POST /custom-actions/webflow/publish-items
+DELETE /scratch-git/:id/data-folder/files
 ```
 
-Publishes specific items to Webflow.
+Deletes all files for a data folder from the git repository. Used when removing a sync or data folder.
 
-**Request Body:**
+**Response:** `204 No Content`
 
-```json
-{
-  "snapshotTableId": "snap_xyz",
-  "recordIds": ["rec_123", "rec_456"]
-}
-```
-
-**Response:** Service-specific response.
-
-### Webflow: Publish Site
+### Migrate to V2
 
 ```
-POST /custom-actions/webflow/publish-site
+POST /scratch-git/:id/migrate-to-v2
 ```
 
-Publishes the entire Webflow site.
+Migrates a repository from the legacy format to the v2 repository structure.
 
-**Request Body:**
-
-```json
-{
-  "snapshotTableId": "snap_xyz"
-}
-```
-
-**Response:** Service-specific response.
-
-### Webflow: Validate Files
-
-```
-POST /custom-actions/webflow/validate-files
-```
-
-Validates files before publishing to Webflow.
-
-**Request Body:**
-
-```json
-{
-  "snapshotTableId": "snap_xyz",
-  "recordIds": ["rec_123", "rec_456"],
-  "files": [
-    {
-      "id": "file_abc",
-      "content": "{ \"fieldData\": { \"name\": \"Test\" } }"
-    }
-  ]
-}
-```
-
-**Response:**
-
-```json
-{
-  "results": [
-    {
-      "id": "rec_123",
-      "valid": true,
-      "errors": []
-    },
-    {
-      "id": "rec_456",
-      "valid": false,
-      "errors": ["Missing required field: slug"]
-    }
-  ],
-  "summary": {
-    "total": 2,
-    "publishable": 1,
-    "invalid": 1
-  }
-}
-```
-
-### Wix: Publish Draft Posts
-
-```
-POST /custom-actions/wix/publish-draft-posts
-```
-
-Publishes draft blog posts to Wix.
-
-**Request Body:**
-
-```json
-{
-  "snapshotTableId": "snap_xyz",
-  "recordIds": ["rec_123", "rec_456"]
-}
-```
-
-**Response:** Service-specific response.
+**Response:** `204 No Content`
 
 ---
 
@@ -1176,55 +1107,78 @@ Submits a bug report. **Requires feature flag `ENABLE_CREATE_BUG_REPORT`.**
 
 ---
 
-## Real-time Events (SSE)
+## Syncs Internal
 
-Server-Sent Events for real-time updates.
-
-### Workbook Events
+### Get AI Context for Syncs
 
 ```
-GET /workbook/:id/events
+GET /workbooks/:workbookId/syncs/ai-context
 ```
 
-Subscribe to all events for a workbook.
+Returns contextual information about a workbook's syncs for use by AI features. Provides sync configuration, field mappings, and related metadata.
 
-**Event Types:**
+**Response:** Sync context object with configuration and field mapping details.
 
-```
-event: snapshot-event
-data: {"type":"table-updated","tableId":"snap_xyz","changes":{...}}
+---
 
-event: snapshot-event
-data: {"type":"folder-created","folderId":"folder_abc"}
-```
+## Shopify Webhooks
 
-### Record Events
+### Handle Shopify Webhook
 
 ```
-GET /workbook/:id/tables/:tableId/records/events
+POST /shopify/webhooks
 ```
 
-Subscribe to record-level changes for a specific table.
+Receives and processes webhook events from Shopify. Handles events such as product updates, order changes, and app uninstalls.
 
-**Event Types:**
+**Headers:** Shopify HMAC signature for verification.
+
+**Response:** `200 OK`
+
+---
+
+## Worker Test Endpoints
+
+Test endpoints for validating the worker/job system. These are used for development and debugging.
+
+### Get Test Job Status
 
 ```
-event: record-changes
-data: {"tableId":"snap_xyz","numRecords":5,"changeType":"suggested","source":"agent"}
+GET /workers/jobs/:jobId
 ```
 
-| Change Type | Description              |
-| ----------- | ------------------------ |
-| `suggested` | AI suggested changes     |
-| `accepted`  | User accepted changes    |
-| `rejected`  | User rejected changes    |
-| `manual`    | User made manual changes |
+Returns the status and result of a test job.
 
-| Source  | Description           |
-| ------- | --------------------- |
-| `agent` | AI agent made changes |
-| `user`  | User made changes     |
-| `sync`  | Sync operation        |
+**Response:**
+
+```json
+{
+  "id": "123",
+  "state": "completed",
+  "result": 8,
+  "progress": 100
+}
+```
+
+### Get Queue Statistics
+
+```
+GET /workers/queue/stats
+```
+
+Returns statistics for the worker queue.
+
+**Response:**
+
+```json
+{
+  "waiting": 0,
+  "active": 1,
+  "completed": 150,
+  "failed": 2,
+  "delayed": 0
+}
+```
 
 ---
 
@@ -1337,103 +1291,5 @@ Endpoints behind feature flags return:
 {
   "error": "Feature not enabled",
   "statusCode": 403
-}
-```
-
----
-
-## Worker Test Endpoints
-
-Test endpoints for validating the worker/job system. These are used for development and debugging.
-
-### Add Two Numbers
-
-```
-POST /workers/jobs/add-two-numbers
-```
-
-Creates a test job that adds two numbers.
-
-**Request Body:**
-
-```json
-{
-  "a": 5,
-  "b": 3
-}
-```
-
-**Response:**
-
-```json
-{
-  "jobId": "123",
-  "message": "Job created"
-}
-```
-
-### Add Three Numbers
-
-```
-POST /workers/jobs/add-three-numbers
-```
-
-Creates a test job that adds three numbers.
-
-**Request Body:**
-
-```json
-{
-  "a": 5,
-  "b": 3,
-  "c": 2
-}
-```
-
-**Response:**
-
-```json
-{
-  "jobId": "456",
-  "message": "Job created"
-}
-```
-
-### Get Test Job Status
-
-```
-GET /workers/jobs/:jobId
-```
-
-Returns the status and result of a test job.
-
-**Response:**
-
-```json
-{
-  "id": "123",
-  "state": "completed",
-  "result": 8,
-  "progress": 100
-}
-```
-
-### Get Queue Statistics
-
-```
-GET /workers/queue/stats
-```
-
-Returns statistics for the worker queue.
-
-**Response:**
-
-```json
-{
-  "waiting": 0,
-  "active": 1,
-  "completed": 150,
-  "failed": 2,
-  "delayed": 0
 }
 ```

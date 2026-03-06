@@ -23,9 +23,8 @@ To obtain an API token, use the CLI authentication flow (see [CLI Authentication
 ```
 GET    /                                          # Root info
 GET    /health                                    # Health check
-GET    /connection-test                           # Test Redis and scratch-git connections
+GET    /service-check                             # Test Redis and scratch-git connections
 GET    /egress-ip                                 # Get server egress IP address
-GET    /cli/v1/health                             # CLI health check
 ```
 
 ### CLI Authentication
@@ -45,99 +44,152 @@ GET    /workbook/:id                              # Get workbook
 PATCH  /workbook/:id                              # Update workbook
 DELETE /workbook/:id                              # Delete workbook
 POST   /workbook/:id/pull-files                   # Trigger file pull from external sources
-GET    /workbook/:id/data-folders/publish-status  # Get publish status for data folders
+POST   /workbook/:id/discard-changes              # Discard uncommitted changes
+POST   /workbook/:id/reset                        # Reset workbook
+GET    /workbook/:id/data-folders/list            # List data folders in workbook
 ```
 
 ### Files
 
 ```
-GET    /workbooks/:workbookId/files/list                # List all files
-GET    /workbooks/:workbookId/files/list/details        # List files with content
-GET    /workbooks/:workbookId/files/list/by-folder      # List files by folder ID
-GET    /workbooks/:workbookId/files/list/by-path        # List files by path
-GET    /workbooks/:workbookId/files/find                # Find files by pattern
-GET    /workbooks/:workbookId/files/grep                # Search file contents
-GET    /workbooks/:workbookId/files/by-path             # Get file by path
-GET    /workbooks/:workbookId/files/:fileId             # Get file by ID
-POST   /workbooks/:workbookId/files                     # Create file
-PUT    /workbooks/:workbookId/files/write-by-path       # Write file by path
-PATCH  /workbooks/:workbookId/files/by-path             # Update file by path
-PATCH  /workbooks/:workbookId/files/:fileId             # Update file by ID
-DELETE /workbooks/:workbookId/files/by-path             # Delete file by path
-DELETE /workbooks/:workbookId/files/:fileId             # Delete file by ID
-POST   /workbooks/:workbookId/files/:fileId/copy        # Copy file
-POST   /workbooks/:workbookId/files/publish             # Publish file
-GET    /workbook/public/:id/files/download              # Download file (public, no auth)
-GET    /workbook/public/:id/folders/download            # Download folder as zip (public, no auth)
+GET    /workbooks/:workbookId/files/list/by-folder       # List files by folder ID
+GET    /workbooks/:workbookId/files/resolve-references   # Resolve file references
+GET    /workbooks/:workbookId/files/by-path              # Get file by path
+PATCH  /workbooks/:workbookId/files/by-path              # Update file by path
+DELETE /workbooks/:workbookId/files/by-path              # Delete file by path
+POST   /workbooks/:workbookId/files                      # Create file
+POST   /workbooks/:workbookId/files/publish              # Publish file
+GET    /workbooks/:workbookId/files/download             # Download file
 ```
 
 ### Folders
 
 ```
-GET    /workbook/:id/data-folders/list                  # List folders in workbook
-POST   /workbooks/:workbookId/folders                   # Create folder
-PATCH  /workbooks/:workbookId/folders/:folderId         # Update folder
-DELETE /workbooks/:workbookId/folders/:folderId         # Delete folder
 POST   /data-folder/create                              # Create data folder
-POST   /data-folder/publish                             # Publish multiple data folders
 GET    /data-folder/:id                                 # Get data folder
 DELETE /data-folder/:id                                 # Delete data folder
+PATCH  /data-folder/:id                                 # Update data folder
 PATCH  /data-folder/:id/rename                          # Rename data folder
 PATCH  /data-folder/:id/move                            # Move data folder
 POST   /data-folder/:id/files                           # Create file in folder
 POST   /data-folder/:id/publish                         # Publish single data folder
+POST   /data-folder/:id/pull-files                      # Pull files for data folder
+GET    /data-folder/:id/schema                          # Get data folder schema
+POST   /data-folder/:id/refresh-schema                  # Refresh data folder schema
 GET    /data-folder/:id/schema-paths                    # Get schema paths for data folder
 ```
 
 ### Connections
 
 ```
-GET    /connector-accounts                              # List connections
-POST   /connector-accounts                              # Create connection
-GET    /connector-accounts/:id                          # Get connection
-PATCH  /connector-accounts/:id                          # Update connection
-DELETE /connector-accounts/:id                          # Delete connection
-GET    /connector-accounts/:id/tables                    # List tables for connection
-POST   /connector-accounts/:id/test                     # Test connection
+POST   /workbooks/:workbookId/connections                                    # Create connection
+GET    /workbooks/:workbookId/connections                                    # List connections
+GET    /workbooks/:workbookId/connections/:id                                # Get connection
+PATCH  /workbooks/:workbookId/connections/:id                                # Update connection
+DELETE /workbooks/:workbookId/connections/:id                                # Delete connection
+POST   /workbooks/:workbookId/connections/:id/test                           # Test connection
+POST   /workbooks/:workbookId/connections/:id/reset                          # Reset connection
+GET    /workbooks/:workbookId/connections/:connectorAccountId/tables         # List tables
+GET    /workbooks/:workbookId/connections/:connectorAccountId/tables/search  # Search tables
+GET    /workbooks/:workbookId/connections/:connectorAccountId/tables/schema  # Get table schema
 ```
 
 ### Syncs
 
 ```
-GET    /workbooks/:workbookId/syncs                     # List syncs
-GET    /workbooks/:workbookId/syncs/:syncId             # Get sync
 POST   /workbooks/:workbookId/syncs                     # Create sync
 PATCH  /workbooks/:workbookId/syncs/:syncId             # Update sync
+GET    /workbooks/:workbookId/syncs                     # List syncs
+GET    /workbooks/:workbookId/syncs/:syncId             # Get sync
 DELETE /workbooks/:workbookId/syncs/:syncId             # Delete sync
 POST   /workbooks/:workbookId/syncs/:syncId/run         # Run sync
+POST   /workbooks/:workbookId/syncs/import-preview      # Preview sync import
+POST   /workbooks/:workbookId/syncs/preview-record      # Preview single record sync
 POST   /workbooks/:workbookId/syncs/validate-mapping    # Validate sync mapping
+POST   /sync/transformers/test                          # Test transformer
+```
+
+### Schedules
+
+```
+POST   /workbooks/:workbookId/schedules                 # Create schedule
+GET    /workbooks/:workbookId/schedules                 # List schedules
+GET    /workbooks/:workbookId/schedules/by-entity       # Get schedules by entity
+GET    /workbooks/:workbookId/schedules/:scheduleId     # Get schedule
+PATCH  /workbooks/:workbookId/schedules/:scheduleId     # Update schedule
+DELETE /workbooks/:workbookId/schedules/:scheduleId     # Delete schedule
+```
+
+### Publish Pipeline
+
+```
+POST   /workbook/:workbookId/publish-v2/plan-job                # Create publish plan job
+POST   /workbook/:workbookId/publish-v2/run-job                 # Run publish job
+GET    /workbook/:workbookId/publish-v2                         # List publish pipelines
+GET    /workbook/:workbookId/publish-v2/by-job/:jobId           # Get pipeline by job ID
+GET    /workbook/:workbookId/publish-v2/:pipelineId/operations  # Get pipeline operations
+GET    /workbook/:workbookId/publish-v2/index/files             # Get publish index files
+GET    /workbook/:workbookId/publish-v2/index/refs              # Get publish index refs
+GET    /workbook/:workbookId/publish-v2/index/assets            # Get publish index assets
+DELETE /workbook/:workbookId/publish-v2/:pipelineId             # Delete pipeline
 ```
 
 ### Jobs
 
 ```
 GET    /jobs                                            # List jobs
+GET    /jobs/workbook/:workbookId/active                # Get active jobs for workbook
 GET    /jobs/:jobId/progress                            # Get job progress
 GET    /jobs/:jobId/raw                                 # Get raw job data
 POST   /jobs/:jobId/cancel                              # Cancel job
+GET    /jobs/run/:runId                                 # Get job by run ID
 POST   /jobs/bulk-status                                # Get status of multiple jobs
 ```
 
 ### CLI Operations
 
+CLI Workbooks:
+
 ```
-GET    /cli/v1/workbooks                                # List workbooks (CLI)
-POST   /cli/v1/workbooks                                # Create workbook (CLI)
-GET    /cli/v1/workbooks/:id                            # Get workbook (CLI)
-DELETE /cli/v1/workbooks/:id                            # Delete workbook (CLI)
-GET    /cli/v1/workbooks/:workbookId/folders            # List folders (CLI)
-GET    /cli/v1/folders/:folderId/files                  # Get folder files (CLI)
-PUT    /cli/v1/folders/:folderId/files                  # Upload files (CLI)
-GET    /cli/v1/test-connection                          # Test connection (CLI)
-GET    /cli/v1/list-tables                              # List tables (CLI)
-POST   /cli/v1/download                                 # Download from connector (CLI)
-POST   /cli/v1/workbooks/:workbookId/pull               # Trigger pull (CLI)
-GET    /cli/v1/jobs/:jobId/status                       # Get job status (CLI)
+GET    /cli/v1/workbooks                                              # List workbooks (CLI)
+POST   /cli/v1/workbooks                                              # Create workbook (CLI)
+GET    /cli/v1/workbooks/:id                                          # Get workbook (CLI)
+DELETE /cli/v1/workbooks/:id                                          # Delete workbook (CLI)
+ALL    /cli/v1/workbooks/:id/connectors/:connectorAccountId/git/*path # Git proxy (CLI)
+```
+
+CLI Connections:
+
+```
+GET    /cli/v1/workbooks/:workbookId/connections                              # List connections (CLI)
+POST   /cli/v1/workbooks/:workbookId/connections                              # Create connection (CLI)
+GET    /cli/v1/workbooks/:workbookId/connections/:id                          # Get connection (CLI)
+GET    /cli/v1/workbooks/:workbookId/connections/:connectorAccountId/tables   # List tables (CLI)
+DELETE /cli/v1/workbooks/:workbookId/connections/:id                          # Delete connection (CLI)
+```
+
+CLI Linked Folders:
+
+```
+GET    /cli/v1/jobs/:jobId/progress                                          # Get job progress (CLI)
+GET    /cli/v1/workbooks/:workbookId/linked                                  # List linked folders
+POST   /cli/v1/workbooks/:workbookId/linked                                  # Create linked folder
+DELETE /cli/v1/workbooks/:workbookId/linked/:folderId                        # Delete linked folder
+GET    /cli/v1/workbooks/:workbookId/linked/:folderId                        # Get linked folder
+POST   /cli/v1/workbooks/:workbookId/linked/:folderId/pull                   # Pull linked folder
+POST   /cli/v1/workbooks/:workbookId/linked/:folderId/pull-files             # Pull files for linked folder
+POST   /cli/v1/workbooks/:workbookId/linked/:folderId/publish                # Publish linked folder
+```
+
+CLI Syncs:
+
+```
+GET    /cli/v1/workbooks/:workbookId/syncs                                   # List syncs (CLI)
+POST   /cli/v1/workbooks/:workbookId/syncs                                   # Create sync (CLI)
+GET    /cli/v1/workbooks/:workbookId/syncs/:syncId                           # Get sync (CLI)
+PATCH  /cli/v1/workbooks/:workbookId/syncs/:syncId                           # Update sync (CLI)
+DELETE /cli/v1/workbooks/:workbookId/syncs/:syncId                           # Delete sync (CLI)
+POST   /cli/v1/workbooks/:workbookId/syncs/:syncId/run                       # Run sync (CLI)
 ```
 
 ---
@@ -294,10 +346,10 @@ Returns server health status.
 }
 ```
 
-### Connection Test
+### Service Check
 
 ```
-GET /connection-test
+GET /service-check
 ```
 
 Tests connections to Redis and scratch-git services. Useful for infrastructure monitoring.
@@ -509,23 +561,47 @@ Triggers a pull operation to sync files from external sources.
 }
 ```
 
-### Get Data Folders Publish Status
+### Discard Changes
 
 ```
-GET /workbook/:id/data-folders/publish-status
+POST /workbook/:id/discard-changes
 ```
 
-Returns the publish status for all data folders in a workbook.
+Discards uncommitted changes in the workbook, reverting files to their last committed state.
+
+### Reset Workbook
+
+```
+POST /workbook/:id/reset
+```
+
+Resets the workbook, clearing its state.
+
+### List Data Folders
+
+```
+GET /workbook/:id/data-folders/list
+```
+
+Lists all folders in a workbook, grouped by connection.
 
 **Response:**
 
 ```json
 [
   {
-    "dataFolderId": "dfolder_abc",
-    "name": "Blog Posts",
-    "hasUnpublishedChanges": true,
-    "lastPublishedAt": "2025-01-19T12:00:00.000Z"
+    "connectorAccountId": "conn_123",
+    "connectorService": "airtable",
+    "connectorDisplayName": "My Airtable",
+    "folders": [
+      {
+        "id": "dfolder_abc",
+        "name": "Blog Posts",
+        "path": "/airtable/blog-posts",
+        "tableId": ["tbl_xyz"],
+        "lastSyncTime": "2025-01-19T12:00:00.000Z"
+      }
+    ]
   }
 ]
 ```
@@ -536,45 +612,13 @@ Returns the publish status for all data folders in a workbook.
 
 Files are version-controlled content stored in git.
 
-### List Files
+### List Files by Folder
 
 ```
-GET /workbooks/:workbookId/files/list
+GET /workbooks/:workbookId/files/list/by-folder
 ```
 
-Returns all files and folders in the workbook.
-
-**Response:**
-
-```json
-{
-  "items": [
-    {
-      "type": "file",
-      "id": "file_abc",
-      "name": "document.md",
-      "parentFolderId": "folder_123",
-      "path": "/docs/document.md",
-      "dirty": false
-    },
-    {
-      "type": "folder",
-      "id": "folder_123",
-      "name": "docs",
-      "parentFolderId": null,
-      "path": "/docs"
-    }
-  ]
-}
-```
-
-### List Files with Content
-
-```
-GET /workbooks/:workbookId/files/list/details
-```
-
-Returns files with their full content.
+Returns files in a specific folder.
 
 **Query Parameters:**
 
@@ -582,103 +626,13 @@ Returns files with their full content.
 | ---------- | ------ | ------------------- |
 | `folderId` | string | Filter by folder ID |
 
-**Response:**
-
-```json
-{
-  "files": [
-    {
-      "ref": {
-        "type": "file",
-        "id": "file_abc",
-        "name": "document.md",
-        "path": "/docs/document.md"
-      },
-      "content": "# Hello World\n\nThis is my document.",
-      "createdAt": "2025-01-19T00:00:00.000Z",
-      "updatedAt": "2025-01-19T00:00:00.000Z"
-    }
-  ]
-}
-```
-
-### List Files by Path
+### Resolve File References
 
 ```
-GET /workbooks/:workbookId/files/list/by-path
+GET /workbooks/:workbookId/files/resolve-references
 ```
 
-Lists files at a specific path.
-
-**Query Parameters:**
-
-| Parameter | Type   | Default | Description            |
-| --------- | ------ | ------- | ---------------------- |
-| `path`    | string | `/`     | Directory path to list |
-
-### Find Files
-
-```
-GET /workbooks/:workbookId/files/find
-```
-
-Finds files matching a glob pattern.
-
-**Query Parameters:**
-
-| Parameter   | Type    | Required | Description                              |
-| ----------- | ------- | -------- | ---------------------------------------- |
-| `pattern`   | string  | Yes      | Glob pattern (e.g., `*.md`, `**/*.json`) |
-| `path`      | string  | No       | Base path to search from                 |
-| `recursive` | boolean | No       | Search recursively                       |
-
-**Response:**
-
-```json
-{
-  "items": [
-    {
-      "type": "file",
-      "id": "file_abc",
-      "name": "readme.md",
-      "path": "/docs/readme.md"
-    }
-  ]
-}
-```
-
-### Search File Contents
-
-```
-GET /workbooks/:workbookId/files/grep
-```
-
-Searches file contents for a pattern.
-
-**Query Parameters:**
-
-| Parameter | Type   | Required | Description              |
-| --------- | ------ | -------- | ------------------------ |
-| `pattern` | string | Yes      | Search pattern (regex)   |
-| `path`    | string | No       | Base path to search from |
-
-**Response:**
-
-```json
-{
-  "matches": [
-    {
-      "file": {
-        "id": "file_abc",
-        "name": "document.md",
-        "path": "/docs/document.md"
-      },
-      "matchCount": 3,
-      "excerpts": [{ "line": 5, "text": "This line contains the pattern" }]
-    }
-  ]
-}
-```
+Resolves file references within the workbook. Used to look up files that are referenced by other files.
 
 ### Get File by Path
 
@@ -711,16 +665,6 @@ Returns a single file by its path.
   }
 }
 ```
-
-### Get File by ID
-
-```
-GET /workbooks/:workbookId/files/:fileId
-```
-
-Returns a single file by its ID.
-
-**Response:** Same as "Get File by Path"
 
 ### Create File
 
@@ -761,29 +705,9 @@ Creates a new file.
 }
 ```
 
-### Write File by Path
+### Update File by Path
 
 ```
-PUT /workbooks/:workbookId/files/write-by-path
-```
-
-Creates or updates a file at the specified path.
-
-**Request Body:**
-
-```json
-{
-  "path": "/docs/document.md",
-  "content": "# Updated Content"
-}
-```
-
-**Response:** Returns file reference.
-
-### Update File
-
-```
-PATCH /workbooks/:workbookId/files/:fileId
 PATCH /workbooks/:workbookId/files/by-path?path=...
 ```
 
@@ -803,34 +727,15 @@ All fields are optional.
 
 **Response:** `204 No Content`
 
-### Delete File
+### Delete File by Path
 
 ```
-DELETE /workbooks/:workbookId/files/:fileId
 DELETE /workbooks/:workbookId/files/by-path?path=...
 ```
 
 Deletes a file.
 
 **Response:** `204 No Content`
-
-### Copy File
-
-```
-POST /workbooks/:workbookId/files/:fileId/copy
-```
-
-Copies a file to a target folder.
-
-**Request Body:**
-
-```json
-{
-  "targetFolderId": "folder_456"
-}
-```
-
-**Response:** Returns new file reference.
 
 ### Publish File
 
@@ -850,99 +755,17 @@ Commits a file to the main branch (creates a snapshot).
 
 **Response:** `204 No Content`
 
-### Download File (Public)
+### Download File
 
 ```
-GET /workbook/public/:id/files/download
+GET /workbooks/:workbookId/files/download
 ```
 
-Downloads a file as markdown. **No authentication required** - security relies on workbook IDs being unguessable.
-
-**Query Parameters:**
-
-| Parameter | Type   | Required | Description |
-| --------- | ------ | -------- | ----------- |
-| `fileId`  | string | Yes      | File ID     |
-
-**Response:** Raw markdown file with `Content-Type: text/markdown` and `Content-Disposition: attachment` headers.
-
-### Download Folder (Public)
-
-```
-GET /workbook/public/:id/folders/download
-```
-
-Downloads a folder as a ZIP archive. **No authentication required** - security relies on workbook IDs being unguessable.
-
-**Query Parameters:**
-
-| Parameter  | Type   | Required | Description |
-| ---------- | ------ | -------- | ----------- |
-| `folderId` | string | Yes      | Folder ID   |
-
-**Response:** ZIP file stream with `Content-Type: application/zip` and `Content-Disposition: attachment` headers.
+Downloads a file from the workbook.
 
 ---
 
 ## Folders
-
-### List Folders
-
-```
-GET /workbook/:id/data-folders/list
-```
-
-Lists all folders in a workbook, grouped by connection.
-
-**Response:**
-
-```json
-[
-  {
-    "connectorAccountId": "conn_123",
-    "connectorService": "airtable",
-    "connectorDisplayName": "My Airtable",
-    "folders": [
-      {
-        "id": "dfolder_abc",
-        "name": "Blog Posts",
-        "path": "/airtable/blog-posts",
-        "tableId": ["tbl_xyz"],
-        "lastSyncTime": "2025-01-19T12:00:00.000Z"
-      }
-    ]
-  }
-]
-```
-
-### Create Folder
-
-```
-POST /workbooks/:workbookId/folders
-```
-
-Creates a new folder in the workbook.
-
-**Request Body:**
-
-```json
-{
-  "name": "New Folder",
-  "parentFolderId": null
-}
-```
-
-**Response:**
-
-```json
-{
-  "folder": {
-    "id": "folder_xyz",
-    "name": "New Folder",
-    "parentId": null
-  }
-}
-```
 
 ### Create Data Folder
 
@@ -979,42 +802,6 @@ Creates a folder connected to an external data source.
 }
 ```
 
-### Publish Multiple Data Folders
-
-```
-POST /data-folder/publish
-```
-
-Publishes multiple data folders in a single job.
-
-**Request Body:**
-
-```json
-{
-  "workbookId": "wkb_abc123",
-  "dataFolderIds": ["dfolder_abc", "dfolder_xyz"]
-}
-```
-
-| Field           | Type     | Required | Description                         |
-| --------------- | -------- | -------- | ----------------------------------- |
-| `workbookId`    | string   | Yes      | Workbook ID                         |
-| `dataFolderIds` | string[] | Yes      | Array of data folder IDs to publish |
-
-**Response:**
-
-```json
-{
-  "jobId": "job_xyz"
-}
-```
-
-**Errors:**
-
-- `400`: At least one data folder ID is required
-- `400`: Data folder is locked by another operation
-- `404`: Workbook or data folder not found
-
 ### Get Data Folder
 
 ```
@@ -1041,34 +828,23 @@ Returns folder details.
 }
 ```
 
-### Update Folder
+### Delete Data Folder
 
 ```
-PATCH /workbooks/:workbookId/folders/:folderId
+DELETE /data-folder/:id
 ```
 
-Updates folder name or moves it to a new parent.
+Deletes a data folder and its contents.
 
-**Request Body:**
+**Response:** `204 No Content`
 
-```json
-{
-  "name": "Renamed Folder",
-  "parentFolderId": "folder_parent"
-}
+### Update Data Folder
+
+```
+PATCH /data-folder/:id
 ```
 
-**Response:**
-
-```json
-{
-  "folder": {
-    "id": "folder_xyz",
-    "name": "Renamed Folder",
-    "parentId": "folder_parent"
-  }
-}
-```
+Updates data folder properties.
 
 ### Rename Data Folder
 
@@ -1105,17 +881,6 @@ Moves a data folder to a new parent.
 ```
 
 **Response:** Returns updated data folder.
-
-### Delete Folder
-
-```
-DELETE /workbooks/:workbookId/folders/:folderId
-DELETE /data-folder/:id
-```
-
-Deletes a folder and its contents.
-
-**Response:** `204 No Content`
 
 ### Create File in Data Folder
 
@@ -1161,6 +926,30 @@ Publishes all changes in a data folder to the external service.
 }
 ```
 
+### Pull Files for Data Folder
+
+```
+POST /data-folder/:id/pull-files
+```
+
+Pulls files from the external source for this data folder.
+
+### Get Data Folder Schema
+
+```
+GET /data-folder/:id/schema
+```
+
+Returns the schema for a data folder, describing the structure and fields of its records.
+
+### Refresh Data Folder Schema
+
+```
+POST /data-folder/:id/refresh-schema
+```
+
+Refreshes the schema for a data folder by re-fetching it from the external service.
+
 ### Get Schema Paths
 
 ```
@@ -1197,10 +986,10 @@ Connections store credentials for external services.
 ### List Connections
 
 ```
-GET /connector-accounts
+GET /workbooks/:workbookId/connections
 ```
 
-Returns all connections for the authenticated user.
+Returns all connections for the workbook.
 
 **Response:**
 
@@ -1222,7 +1011,7 @@ Returns all connections for the authenticated user.
 ### Create Connection
 
 ```
-POST /connector-accounts
+POST /workbooks/:workbookId/connections
 ```
 
 Creates a new connection.
@@ -1263,7 +1052,7 @@ Creates a new connection.
 ### Get Connection
 
 ```
-GET /connector-accounts/:id
+GET /workbooks/:workbookId/connections/:id
 ```
 
 Returns connection details.
@@ -1271,7 +1060,7 @@ Returns connection details.
 ### Update Connection
 
 ```
-PATCH /connector-accounts/:id
+PATCH /workbooks/:workbookId/connections/:id
 ```
 
 Updates connection properties.
@@ -1290,17 +1079,50 @@ Updates connection properties.
 ### Delete Connection
 
 ```
-DELETE /connector-accounts/:id
+DELETE /workbooks/:workbookId/connections/:id
 ```
 
 Deletes a connection.
 
 **Response:** `204 No Content`
 
+### Test Connection
+
+```
+POST /workbooks/:workbookId/connections/:id/test
+```
+
+Tests if a connection's credentials are valid.
+
+**Response (healthy):**
+
+```json
+{
+  "health": "ok"
+}
+```
+
+**Response (error):**
+
+```json
+{
+  "health": "error",
+  "error": "Invalid API key"
+}
+```
+
+### Reset Connection
+
+```
+POST /workbooks/:workbookId/connections/:id/reset
+```
+
+Resets the connection state.
+
 ### List Tables for Connection
 
 ```
-GET /connector-accounts/:connectorAccountId/tables
+GET /workbooks/:workbookId/connections/:connectorAccountId/tables
 ```
 
 Lists tables available from a specific connection.
@@ -1322,30 +1144,21 @@ Lists tables available from a specific connection.
 }
 ```
 
-### Test Connection
+### Search Tables
 
 ```
-POST /connector-accounts/:id/test
+GET /workbooks/:workbookId/connections/:connectorAccountId/tables/search
 ```
 
-Tests if a connection's credentials are valid.
+Searches for tables matching a query within the connection.
 
-**Response (healthy):**
+### Get Table Schema
 
-```json
-{
-  "health": "ok"
-}
+```
+GET /workbooks/:workbookId/connections/:connectorAccountId/tables/schema
 ```
 
-**Response (error):**
-
-```json
-{
-  "health": "error",
-  "error": "Invalid API key"
-}
-```
+Returns the schema for a specific table in the connection.
 
 ---
 
@@ -1534,6 +1347,22 @@ Manually triggers a sync run.
 }
 ```
 
+### Import Preview
+
+```
+POST /workbooks/:workbookId/syncs/import-preview
+```
+
+Previews the result of importing data via a sync, without actually performing the import.
+
+### Preview Record
+
+```
+POST /workbooks/:workbookId/syncs/preview-record
+```
+
+Previews the sync result for a single record, useful for testing mappings and transformers.
+
 ### Validate Mapping
 
 ```
@@ -1568,6 +1397,146 @@ Validates column mappings between a source and destination folder before creatin
   "valid": true
 }
 ```
+
+### Test Transformer
+
+```
+POST /sync/transformers/test
+```
+
+Tests a transformer configuration against sample data without running a full sync.
+
+---
+
+## Schedules
+
+Schedules automate recurring operations like syncs and publishes.
+
+### Create Schedule
+
+```
+POST /workbooks/:workbookId/schedules
+```
+
+Creates a new schedule for automated operations.
+
+### List Schedules
+
+```
+GET /workbooks/:workbookId/schedules
+```
+
+Returns all schedules for a workbook.
+
+### Get Schedules by Entity
+
+```
+GET /workbooks/:workbookId/schedules/by-entity
+```
+
+Returns schedules filtered by the entity they operate on (e.g., a specific sync or data folder).
+
+### Get Schedule
+
+```
+GET /workbooks/:workbookId/schedules/:scheduleId
+```
+
+Returns a single schedule by ID.
+
+### Update Schedule
+
+```
+PATCH /workbooks/:workbookId/schedules/:scheduleId
+```
+
+Updates an existing schedule.
+
+### Delete Schedule
+
+```
+DELETE /workbooks/:workbookId/schedules/:scheduleId
+```
+
+Deletes a schedule.
+
+---
+
+## Publish Pipeline
+
+The publish pipeline manages the process of publishing changes from workbook files to external services.
+
+### Create Publish Plan Job
+
+```
+POST /workbook/:workbookId/publish-v2/plan-job
+```
+
+Creates a plan job that computes what changes need to be published.
+
+### Run Publish Job
+
+```
+POST /workbook/:workbookId/publish-v2/run-job
+```
+
+Executes a publish job based on a previously created plan.
+
+### List Publish Pipelines
+
+```
+GET /workbook/:workbookId/publish-v2
+```
+
+Returns all publish pipelines for a workbook.
+
+### Get Pipeline by Job ID
+
+```
+GET /workbook/:workbookId/publish-v2/by-job/:jobId
+```
+
+Returns a publish pipeline associated with a specific job.
+
+### Get Pipeline Operations
+
+```
+GET /workbook/:workbookId/publish-v2/:pipelineId/operations
+```
+
+Returns the individual operations within a publish pipeline.
+
+### Get Publish Index Files
+
+```
+GET /workbook/:workbookId/publish-v2/index/files
+```
+
+Returns the publish index of files, showing what has been published.
+
+### Get Publish Index Refs
+
+```
+GET /workbook/:workbookId/publish-v2/index/refs
+```
+
+Returns the publish index of git refs.
+
+### Get Publish Index Assets
+
+```
+GET /workbook/:workbookId/publish-v2/index/assets
+```
+
+Returns the publish index of assets.
+
+### Delete Pipeline
+
+```
+DELETE /workbook/:workbookId/publish-v2/:pipelineId
+```
+
+Deletes a publish pipeline.
 
 ---
 
@@ -1617,6 +1586,14 @@ Returns jobs for the authenticated user.
 | `completed` | Job finished successfully |
 | `failed`    | Job failed                |
 | `canceled`  | Job was cancelled         |
+
+### Get Active Jobs for Workbook
+
+```
+GET /jobs/workbook/:workbookId/active
+```
+
+Returns all currently active (running or pending) jobs for a specific workbook.
 
 ### Get Job Progress
 
@@ -1681,6 +1658,14 @@ Cancels a running job.
   "message": "Job cancelled"
 }
 ```
+
+### Get Job by Run ID
+
+```
+GET /jobs/run/:runId
+```
+
+Returns a job by its run ID. Run IDs are alternative identifiers used by some job types.
 
 ### Get Bulk Job Status
 
@@ -1830,215 +1815,165 @@ Deletes a workbook.
 
 - `404`: Workbook not found
 
-### List Folders (CLI)
+### Git Proxy (CLI)
 
 ```
-GET /cli/v1/workbooks/:workbookId/folders
+ALL /cli/v1/workbooks/:id/connectors/:connectorAccountId/git/*path
 ```
 
-Returns data folders in a workbook.
+Proxies Git HTTP requests to the scratch-git service for a specific workbook and connection. Used by the CLI for git clone/pull/push operations.
 
-**Response:**
-
-```json
-[
-  {
-    "id": "dfolder_abc",
-    "name": "Blog Posts",
-    "connector": "airtable",
-    "path": "/airtable/blog-posts"
-  }
-]
-```
-
-### Get Folder Files (CLI)
+### List Connections (CLI)
 
 ```
-GET /cli/v1/folders/:folderId/files
+GET /cli/v1/workbooks/:workbookId/connections
 ```
 
-Returns files in a folder with content and hashes.
+Returns connections for a workbook.
 
-**Response:**
-
-```json
-{
-  "success": true,
-  "folder": {
-    "id": "dfolder_abc",
-    "name": "Blog Posts"
-  },
-  "files": [
-    {
-      "name": "post-1.md",
-      "content": "# Hello World",
-      "hash": "abc123..."
-    }
-  ]
-}
-```
-
-### Upload Files (CLI)
+### Create Connection (CLI)
 
 ```
-PUT /cli/v1/folders/:folderId/files
+POST /cli/v1/workbooks/:workbookId/connections
 ```
 
-Uploads files to a folder. Uses multipart form data.
+Creates a new connection in the context of a workbook.
 
-**Request:** Multipart form with:
-
-- `files`: Array of files
-- `metadata`: JSON with file metadata
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "syncHash": "xyz789..."
-}
-```
-
-### Test Connection (CLI)
+### Get Connection (CLI)
 
 ```
-GET /cli/v1/test-connection
+GET /cli/v1/workbooks/:workbookId/connections/:id
 ```
 
-Tests connector credentials passed via headers.
-
-**Headers:**
-
-| Header                | Description                     |
-| --------------------- | ------------------------------- |
-| `X-Scratch-Connector` | JSON with connector credentials |
-
-**Response:**
-
-```json
-{
-  "error": null
-}
-```
+Returns a single connection by ID.
 
 ### List Tables (CLI)
 
 ```
-GET /cli/v1/list-tables
+GET /cli/v1/workbooks/:workbookId/connections/:connectorAccountId/tables
 ```
 
-Lists available tables from a connector.
+Lists tables available from a connection.
 
-**Headers:** Same as test-connection.
-
-**Response:**
-
-```json
-{
-  "tables": [
-    {
-      "id": "tbl_abc",
-      "name": "Blog Posts"
-    }
-  ]
-}
-```
-
-### Download from Connector (CLI)
+### Delete Connection (CLI)
 
 ```
-POST /cli/v1/download
+DELETE /cli/v1/workbooks/:workbookId/connections/:id
 ```
 
-Downloads data from a connector.
+Deletes a connection.
 
-**Request Body:**
-
-```json
-{
-  "tableId": ["tbl_abc"],
-  "filenameFieldId": "title",
-  "contentFieldId": "body",
-  "offset": 0,
-  "limit": 100
-}
-```
-
-| Field             | Type     | Required | Description              |
-| ----------------- | -------- | -------- | ------------------------ |
-| `tableId`         | string[] | Yes      | Table IDs to download    |
-| `filenameFieldId` | string   | No       | Field to use as filename |
-| `contentFieldId`  | string   | No       | Field to use as content  |
-| `offset`          | number   | No       | Starting record          |
-| `limit`           | number   | No       | Max records (1-1000)     |
-
-**Response:**
-
-```json
-{
-  "files": [
-    {
-      "id": "rec_123",
-      "slug": "hello-world",
-      "content": "# Hello World\n\nContent here."
-    }
-  ]
-}
-```
-
-### Trigger Pull (CLI)
+### Get Job Progress (CLI)
 
 ```
-POST /cli/v1/workbooks/:workbookId/pull
+GET /cli/v1/jobs/:jobId/progress
 ```
 
-Triggers a pull operation to sync from external sources.
+Returns job progress with CLI-friendly formatting.
 
-**Request Body:**
-
-```json
-{
-  "dataFolderId": "dfolder_abc"
-}
-```
-
-**Response:**
-
-```json
-{
-  "jobId": "job_xyz"
-}
-```
-
-### Get Job Status (CLI)
+### List Linked Folders
 
 ```
-GET /cli/v1/jobs/:jobId/status
+GET /cli/v1/workbooks/:workbookId/linked
 ```
 
-Returns job status with CLI-friendly progress.
+Returns linked folders in a workbook. Linked folders are data folders that are synced with the local filesystem via the CLI.
 
-**Response:**
+### Create Linked Folder
 
-```json
-{
-  "jobId": "job_xyz",
-  "state": "active",
-  "progress": {
-    "totalFiles": 100,
-    "folders": [
-      {
-        "id": "dfolder_abc",
-        "name": "Blog Posts",
-        "connector": "airtable",
-        "files": 50,
-        "status": "in_progress"
-      }
-    ]
-  }
-}
 ```
+POST /cli/v1/workbooks/:workbookId/linked
+```
+
+Creates a new linked folder in the workbook.
+
+### Delete Linked Folder
+
+```
+DELETE /cli/v1/workbooks/:workbookId/linked/:folderId
+```
+
+Deletes a linked folder.
+
+### Get Linked Folder
+
+```
+GET /cli/v1/workbooks/:workbookId/linked/:folderId
+```
+
+Returns a single linked folder by ID.
+
+### Pull Linked Folder
+
+```
+POST /cli/v1/workbooks/:workbookId/linked/:folderId/pull
+```
+
+Pulls data from the external source into the linked folder.
+
+### Pull Files for Linked Folder
+
+```
+POST /cli/v1/workbooks/:workbookId/linked/:folderId/pull-files
+```
+
+Pulls files from the external source for the linked folder.
+
+### Publish Linked Folder
+
+```
+POST /cli/v1/workbooks/:workbookId/linked/:folderId/publish
+```
+
+Publishes changes from the linked folder to the external service.
+
+### List Syncs (CLI)
+
+```
+GET /cli/v1/workbooks/:workbookId/syncs
+```
+
+Returns all syncs for a workbook.
+
+### Create Sync (CLI)
+
+```
+POST /cli/v1/workbooks/:workbookId/syncs
+```
+
+Creates a new sync.
+
+### Get Sync (CLI)
+
+```
+GET /cli/v1/workbooks/:workbookId/syncs/:syncId
+```
+
+Returns a single sync by ID.
+
+### Update Sync (CLI)
+
+```
+PATCH /cli/v1/workbooks/:workbookId/syncs/:syncId
+```
+
+Updates an existing sync configuration.
+
+### Delete Sync (CLI)
+
+```
+DELETE /cli/v1/workbooks/:workbookId/syncs/:syncId
+```
+
+Deletes a sync.
+
+### Run Sync (CLI)
+
+```
+POST /cli/v1/workbooks/:workbookId/syncs/:syncId/run
+```
+
+Manually triggers a sync run.
 
 ---
 
@@ -2089,167 +2024,3 @@ All errors follow a consistent format:
 - `"Invalid API key"` (401)
 - `"Airtable error: ..."` (502)
 - `"Webflow error: ..."` (502)
-
----
-
-## Deprecated Endpoints
-
-The following endpoints are deprecated and may be removed in a future version.
-
-### Workbook Tables (Deprecated)
-
-```
-POST   /workbook/:id/add-table                            # Add table to workbook
-PATCH  /workbook/:id/tables/:tableId/hide                 # Hide/show table
-DELETE /workbook/:id/tables/:tableId                      # Remove table from workbook
-```
-
-### Column Settings (Deprecated)
-
-```
-PATCH  /workbook/:id/tables/:tableId/column-settings      # Update column settings
-PATCH  /workbook/:id/tables/:tableId/title-column         # Set title column
-PATCH  /workbook/:id/tables/:tableId/content-column       # Set content column
-POST   /workbook/:id/tables/:tableId/hide-column          # Hide column
-POST   /workbook/:id/tables/:tableId/unhide-column        # Unhide column
-POST   /workbook/:id/tables/:tableId/clear-hidden-columns # Clear all hidden columns
-```
-
----
-
-## Deprecated Endpoint Details
-
-### Add Table to Workbook (Deprecated)
-
-```
-POST /workbook/:id/add-table
-```
-
-Adds a table from a connection to the workbook.
-
-**Request Body:**
-
-```json
-{
-  "service": "airtable",
-  "tableId": "tbl_abc123",
-  "connectorAccountId": "conn_123"
-}
-```
-
-**Response:**
-
-```json
-{
-  "id": "snap_xyz",
-  "connectorService": "airtable",
-  "tableSpec": {...},
-  "columnSettings": {},
-  "hidden": false
-}
-```
-
-### Hide/Show Table (Deprecated)
-
-```
-PATCH /workbook/:id/tables/:tableId/hide
-```
-
-Toggles table visibility in the UI.
-
-**Request Body:**
-
-```json
-{
-  "hidden": true
-}
-```
-
-**Response:** Returns updated workbook.
-
-### Remove Table (Deprecated)
-
-```
-DELETE /workbook/:id/tables/:tableId
-```
-
-Removes a table from the workbook.
-
-**Response:** Returns updated workbook.
-
-### Update Column Settings (Deprecated)
-
-```
-PATCH /workbook/:id/tables/:tableId/column-settings
-```
-
-Updates visibility and display settings for columns.
-
-**Request Body:**
-
-```json
-{
-  "columnSettings": {
-    "col_name": { "hidden": false, "width": 200 },
-    "col_email": { "hidden": true }
-  }
-}
-```
-
-**Response:** `204 No Content`
-
-### Set Title Column (Deprecated)
-
-```
-PATCH /workbook/:id/tables/:tableId/title-column
-```
-
-Sets which column is used as the record title.
-
-**Request Body:**
-
-```json
-{
-  "columnId": "col_name"
-}
-```
-
-**Response:** `204 No Content`
-
-### Set Content Column (Deprecated)
-
-```
-PATCH /workbook/:id/tables/:tableId/content-column
-```
-
-Sets which column contains the main content.
-
-**Request Body:**
-
-```json
-{
-  "columnId": "col_body"
-}
-```
-
-**Response:** `204 No Content`
-
-### Hide/Unhide Columns (Deprecated)
-
-```
-POST /workbook/:id/tables/:tableId/hide-column
-POST /workbook/:id/tables/:tableId/unhide-column
-POST /workbook/:id/tables/:tableId/clear-hidden-columns
-```
-
-Manage column visibility.
-
-**Request Body (hide/unhide):**
-
-```json
-{
-  "columnId": "col_xyz"
-}
-```
-
-**Response:** `204 No Content`
