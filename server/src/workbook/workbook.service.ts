@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   ConnectorPullOptions,
   createWorkbookId,
+  createWorkspacePermissionId,
   DataFolderId,
   PullFilesResponseDto,
   UpdateWorkbookDto,
@@ -50,6 +51,13 @@ export class WorkbookService {
         organizationId: actor.organizationId,
         name: name ?? `New workbook`,
         version: 2,
+        workspacePermissions: {
+          create: {
+            id: createWorkspacePermissionId(),
+            userId: actor.userId,
+            role: 'editor',
+          },
+        },
       },
       include: WorkbookCluster._validator.include,
     });

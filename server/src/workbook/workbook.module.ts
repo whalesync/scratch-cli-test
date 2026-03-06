@@ -22,6 +22,7 @@ import { WorkbookService } from './workbook.service';
 import { DataFolderPublishingService } from './data-folder-publishing.service';
 import { DataFolderController } from './data-folder.controller';
 import { DataFolderService } from './data-folder.service';
+import { WorkspacePermissionsService } from './workspace-permissions.service';
 
 @Module({
   imports: [
@@ -41,6 +42,13 @@ import { DataFolderService } from './data-folder.service';
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
   providers: [WorkbookService, WorkbookDataGateway, FilesService, DataFolderService, DataFolderPublishingService],
-  exports: [WorkbookService, WorkbookEventModule, FilesService, DataFolderService, DataFolderPublishingService],
+  exports: [
+    WorkbookService,
+    WorkbookEventModule,
+    FilesService,
+    DataFolderService,
+    DataFolderPublishingService,
+    WorkspacePermissionsService,
+  ],
 })
 export class WorkbookModule {}

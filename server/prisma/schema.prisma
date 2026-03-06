@@ -109,6 +109,7 @@ model User {
   workbooks               Workbook[]
   publishPlans            PublishPlan[]
   schedules               Schedule[]
+  workspacePermissions    WorkspacePermission[]
 }
 
 model ApiToken {
@@ -196,13 +197,14 @@ model Workbook {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  dataFolders        DataFolder[]
-  connectorAccounts  ConnectorAccount[]
-  usersWithAsDefault User[]             @relation("UserLastWorkbook")
-  publishPlans       PublishPlan[]
-  schedules          Schedule[]
-  syncs              Sync[]
-  assets             Asset[]
+  dataFolders          DataFolder[]
+  connectorAccounts    ConnectorAccount[]
+  usersWithAsDefault   User[]                @relation("UserLastWorkbook")
+  publishPlans         PublishPlan[]
+  schedules            Schedule[]
+  syncs                Sync[]
+  assets               Asset[]
+  workspacePermissions WorkspacePermission[]
 
   @@index([userId])
   @@index([organizationId])
@@ -211,6 +213,21 @@ model Workbook {
 ///
 /// End "keep in sync" section
 ///
+
+model WorkspacePermission {
+  id         String   @id // type: WorkspacePermissionId
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  workbookId String
+  role       String   @default("editor")
+
+  @@unique([userId, workbookId])
+  @@index([userId])
+  @@index([workbookId])
+}
 
 model AiAgentTokenUsageEvent {
   id             String   @id // type: AiAgentTokenUsageEventId
@@ -527,7 +544,7 @@ model PublishPlanOperation {
   filePath String // The logical path of the file
 
   phase   String // "create", "edit", "delete", "backfill"
-  content Json? @db.Json // The content of the file that we will push at this phase
+  content Json?  @db.Json // The content of the file that we will push at this phase
 
   changedFields Json? @db.Json // Only the fields that changed (edit/backfill phases only)
 

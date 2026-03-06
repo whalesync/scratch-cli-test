@@ -3,15 +3,17 @@ import { Prisma } from '@prisma/client';
 
 export namespace UserCluster {
   export type User = Prisma.UserGetPayload<typeof _validator>;
+  export type WorkspacePermission = User['workspacePermissions'][number];
 
   export const _validator = Prisma.validator<Prisma.UserDefaultArgs>()({
-    include: { apiTokens: true, organization: { include: { subscriptions: true } } },
+    include: { apiTokens: true, organization: { include: { subscriptions: true } }, workspacePermissions: true },
   });
 }
 
 export namespace WorkbookCluster {
   export type Workbook = Prisma.WorkbookGetPayload<typeof _validator>;
   export type DataFolder = Workbook['dataFolders'][number];
+  export type WorkspacePermission = Workbook['workspacePermissions'][number];
 
   export const _validator = Prisma.validator<Prisma.WorkbookDefaultArgs>()({
     include: {
@@ -21,6 +23,7 @@ export namespace WorkbookCluster {
           createdAt: 'asc',
         },
       },
+      workspacePermissions: true,
     },
   });
 }

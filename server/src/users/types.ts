@@ -1,5 +1,5 @@
 import { UserRole } from '@prisma/client';
-import { ScratchPlanType, SubscriptionId } from '@spinner/shared-types';
+import { ScratchPlanType, SubscriptionId, WorkbookId } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import { WSLogger } from 'src/logger';
 import { getLastestExpiringSubscription, isSubscriptionExpired } from 'src/payment/helpers';
@@ -12,6 +12,13 @@ export interface SubscriptionStatus {
   status: 'active' | 'expired' | 'payment_failed';
   planType: ScratchPlanType;
   subscriptionId?: SubscriptionId;
+}
+
+export type WorkspacePermissionRole = 'editor' | 'viewer';
+
+export interface WorkspacePermission {
+  workbookId: WorkbookId;
+  role: WorkspacePermissionRole;
 }
 
 export type AuthSource = 'user' | 'agent' | 'cli';
@@ -27,6 +34,18 @@ export interface Actor {
   subscriptionStatus?: SubscriptionStatus;
   authSource?: AuthSource;
   isAdmin?: boolean;
+  workspacePermissions?: WorkspacePermission[];
+}
+
+// The system actor is used for actions that are not performed by a user, such as system jobs or cron jobs
+export const SYSTEM_ACTOR: Actor = {
+  userId: 'system',
+  organizationId: 'system',
+  workspacePermissions: [],
+};
+
+export function isSystemActor(actor: Actor): boolean {
+  return actor.userId === SYSTEM_ACTOR.userId;
 }
 
 export function userToActor(user: UserCluster.User): Actor {
@@ -74,12 +93,22 @@ export function userToActor(user: UserCluster.User): Actor {
     authSource = user.authSource as AuthSource;
   }
 
+  // Gather workspace permissions for the user
+  let workspacePermissions: WorkspacePermission[] | undefined;
+  if (user.workspacePermissions) {
+    workspacePermissions = user.workspacePermissions.map((wp) => ({
+      workbookId: wp.workbookId as WorkbookId,
+      role: wp.role as WorkspacePermissionRole,
+    }));
+  }
+
   return {
     userId: user.id,
     organizationId: user.organizationId ?? '<empty org id>',
     subscriptionStatus,
     authSource,
     isAdmin: user.role === UserRole.ADMIN,
+    workspacePermissions,
   };
 }
 
