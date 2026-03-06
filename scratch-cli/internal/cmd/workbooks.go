@@ -667,7 +667,7 @@ func initV2Workbook(workbook *api.Workbook, targetDir, serverURL string, creds *
 	return nil
 }
 
-// countFiles counts files in a directory, excluding .git dirs. Returns -1 on error.
+// countFiles counts files in a directory, excluding .git dirs and dotfiles. Returns -1 on error.
 func countFiles(dir string) int {
 	count := 0
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -677,7 +677,7 @@ func countFiles(dir string) int {
 		if info.IsDir() && info.Name() == ".git" {
 			return filepath.SkipDir
 		}
-		if !info.IsDir() {
+		if !info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
 			count++
 		}
 		return nil

@@ -1066,7 +1066,8 @@ func diskToFileMap(rootDir string) (merge.FileMap, error) {
 		if info.IsDir() && name == ".git" {
 			return filepath.SkipDir
 		}
-		if name == ".scratchmd" || name == ".schema.json" || info.IsDir() {
+		// Skip dotfiles (e.g. .DS_Store, .schema.json, .scratchmd) to match scratch-git-2 behavior
+		if strings.HasPrefix(name, ".") || info.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(absRoot, path)
