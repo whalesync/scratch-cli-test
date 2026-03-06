@@ -73,7 +73,7 @@ export class AppModule implements NestModule {
       .apply(RawBodyMiddleware)
       .forRoutes(
         { path: '/payment/webhook', method: RequestMethod.POST },
-        { path: '/shopify/webhooks/*path', method: RequestMethod.POST },
+        { path: '/shopify/webhooks', method: RequestMethod.POST },
       )
       .apply(JsonBodyMiddleware)
       .exclude(
@@ -82,9 +82,7 @@ export class AppModule implements NestModule {
         // Payment webhook
         { path: '/payment/webhook', method: RequestMethod.POST },
         // Shopify GDPR webhooks
-        { path: '/shopify/webhooks/customers-data-request', method: RequestMethod.POST },
-        { path: '/shopify/webhooks/customers-redact', method: RequestMethod.POST },
-        { path: '/shopify/webhooks/shop-redact', method: RequestMethod.POST },
+        { path: '/shopify/webhooks', method: RequestMethod.POST },
         // CLI folder files upload (multipart/form-data)
         { path: '/cli/v1/folders/:id/files', method: RequestMethod.PUT },
         // Git proxy (uses raw body)

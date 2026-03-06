@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ClassSerializerInterceptor,
   Controller,
   HttpCode,
@@ -28,64 +29,31 @@ export class ShopifyWebhooksController {
     }
   }
 
-  /**
-   * Shopify GDPR: customers/data_request
-   * Shopify asks if we have any customer data. We don't store customer PII directly,
-   * so we log the request and return 200.
-   */
-  @Post('customers-data-request')
+  @Post()
   @HttpCode(200)
-  handleCustomersDataRequest(@Req() req: Request): { result: string } {
+  async handleWebhook(@Req() req: Request): Promise<{ result: string }> {
     this.verifyRequest(req);
 
-    const body = JSON.parse((req.body as Buffer).toString()) as Record<string, unknown>;
-    WSLogger.info({
-      source: ShopifyWebhooksController.name,
-      message: `Received customers/data_request webhook for shop: ${body.shop_domain as string}`,
-    });
-
-    return { result: 'ok' };
-  }
-
-  /**
-   * Shopify GDPR: customers/redact
-   * Shopify asks us to delete customer data. We don't store customer PII directly,
-   * so we log the request and return 200.
-   */
-  @Post('customers-redact')
-  @HttpCode(200)
-  handleCustomersRedact(@Req() req: Request): { result: string } {
-    this.verifyRequest(req);
-
-    const body = JSON.parse((req.body as Buffer).toString()) as Record<string, unknown>;
-    WSLogger.info({
-      source: ShopifyWebhooksController.name,
-      message: `Received customers/redact webhook for shop: ${body.shop_domain as string}`,
-    });
-
-    return { result: 'ok' };
-  }
-
-  /**
-   * Shopify GDPR: shop/redact
-   * Shopify asks us to delete all shop data (48h after uninstall).
-   * We delete all ConnectorAccount records for the given shop domain.
-   */
-  @Post('shop-redact')
-  @HttpCode(200)
-  async handleShopRedact(@Req() req: Request): Promise<{ result: string }> {
-    this.verifyRequest(req);
-
+    const topic = req.headers['x-shopify-topic'] as string;
     const body = JSON.parse((req.body as Buffer).toString()) as { shop_domain?: string };
     const shopDomain = body.shop_domain;
 
     WSLogger.info({
       source: ShopifyWebhooksController.name,
-      message: `Received shop/redact webhook for shop: ${shopDomain}`,
+      message: `Received ${topic} webhook for shop: ${shopDomain}`,
     });
 
-    if (shopDomain) {
-      await this.shopifyWebhooksService.handleShopRedact(shopDomain);
+    switch (topic) {
+      case 'customers/data_request':
+      case 'customers/redact':
+        break;
+      case 'shop/redact':
+        if (shopDomain) {
+          await this.shopifyWebhooksService.handleShopRedact(shopDomain);
+        }
+        break;
+      default:
+        throw new BadRequestException(`Unknown webhook topic: ${topic}`);
     }
 
     return { result: 'ok' };
