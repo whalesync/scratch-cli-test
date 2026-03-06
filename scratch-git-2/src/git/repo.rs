@@ -340,6 +340,7 @@ impl GitRepo {
 
     // ── Merge base ──
 
+    #[allow(dead_code)]
     pub fn find_merge_base(
         &self,
         oid_a: ObjectId,
