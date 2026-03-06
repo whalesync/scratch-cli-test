@@ -8,7 +8,8 @@
     "server",
     "scratch-git-2",
     "scratch-git-tests",
-    "packages/*"
+    "packages/*",
+    "test-api-fakes/*"
   ],
   "scripts": {
     "dev": "turbo dev",
