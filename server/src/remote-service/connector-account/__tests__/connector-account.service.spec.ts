@@ -9,6 +9,7 @@ import { OAuthService } from 'src/oauth/oauth.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
+import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { ConnectorsService } from '../../connectors/connectors.service';
 import { ConnectorAccountService } from '../connector-account.service';
 
@@ -49,6 +50,7 @@ describe('ConnectorAccountService', () => {
   let posthogService: jest.Mocked<PostHogService>;
   let auditLogService: jest.Mocked<AuditLogService>;
   let credentialEncryptionService: jest.Mocked<CredentialEncryptionService>;
+  let workbookEventService: jest.Mocked<WorkbookEventService>;
 
   beforeEach(() => {
     dbService = {
@@ -90,6 +92,10 @@ describe('ConnectorAccountService', () => {
       decryptCredentials: jest.fn().mockResolvedValue({}),
     } as unknown as jest.Mocked<CredentialEncryptionService>;
 
+    workbookEventService = {
+      sendWorkbookEvent: jest.fn(),
+    } as unknown as jest.Mocked<WorkbookEventService>;
+
     const connectorsService = {} as jest.Mocked<ConnectorsService>;
     const oauthService = {} as jest.Mocked<OAuthService>;
 
@@ -101,6 +107,7 @@ describe('ConnectorAccountService', () => {
       auditLogService,
       credentialEncryptionService,
       scratchGitService,
+      workbookEventService,
     );
   });
 

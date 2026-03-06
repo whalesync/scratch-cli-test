@@ -131,6 +131,8 @@ export const useWorkbookWebSocketStore = create<WorkbookWebSocketStore>((set, ge
         revalidate: true,
       });
       mutate(SWR_KEYS.workbook.list());
+      mutate(SWR_KEYS.connectorAccounts.list(workbookId), undefined, { revalidate: true });
+      mutate(SWR_KEYS.dataFolders.list(workbookId), undefined, { revalidate: true });
       return;
     }
 

@@ -2,7 +2,12 @@ import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { TestConnectionResponse } from '@/types/server-entities/connector-accounts';
-import { ConnectorAccount, CreateConnectorAccountDto, UpdateConnectorAccountDto } from '@spinner/shared-types';
+import {
+  ConnectorAccount,
+  CreateConnectorAccountDto,
+  UpdateConnectorAccountDto,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { ScratchpadNotifications } from '../app/components/ScratchpadNotifications';
@@ -42,6 +47,8 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     }
     await connectorAccountsApi.delete(workbookId, id);
     mutate(SWR_KEYS.connectorAccounts.list(workbookId));
+    mutate(SWR_KEYS.workbook.detail(workbookId as WorkbookId));
+    mutate(SWR_KEYS.dataFolders.list(workbookId as WorkbookId));
   };
 
   const testConnection = async (con: ConnectorAccount): Promise<TestConnectionResponse> => {

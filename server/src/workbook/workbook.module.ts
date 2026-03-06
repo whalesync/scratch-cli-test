@@ -14,7 +14,7 @@ import { ScratchGitModule } from '../scratch-git/scratch-git.module';
 import { FilesPublicController } from './files-public.controller';
 import { FilesController } from './files.controller';
 import { FilesService } from './files.service';
-import { WorkbookEventService } from './workbook-event.service';
+import { WorkbookEventModule } from './workbook-event.module';
 import { WorkbookController } from './workbook.controller';
 import { WorkbookDataGateway } from './workbook.gateway';
 import { WorkbookService } from './workbook.service';
@@ -37,16 +37,10 @@ import { DataFolderService } from './data-folder.service';
     AuditLogModule,
     ScratchGitModule,
     PublishPlanModule,
+    WorkbookEventModule,
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
-  providers: [
-    WorkbookService,
-    WorkbookEventService,
-    WorkbookDataGateway,
-    FilesService,
-    DataFolderService,
-    DataFolderPublishingService,
-  ],
-  exports: [WorkbookService, WorkbookEventService, FilesService, DataFolderService, DataFolderPublishingService],
+  providers: [WorkbookService, WorkbookDataGateway, FilesService, DataFolderService, DataFolderPublishingService],
+  exports: [WorkbookService, WorkbookEventModule, FilesService, DataFolderService, DataFolderPublishingService],
 })
 export class WorkbookModule {}

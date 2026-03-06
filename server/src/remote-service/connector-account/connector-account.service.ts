@@ -27,6 +27,7 @@ import { Actor } from 'src/users/types';
 import { DbService } from '../../db/db.service';
 import { PostHogService } from '../../posthog/posthog.service';
 import { EncryptedData } from '../../utils/encryption';
+import { WorkbookEventService } from '../../workbook/workbook-event.service';
 import { Connector } from '../connectors/connector';
 import { ConnectorsService } from '../connectors/connectors.service';
 import { getServiceDisplayName } from '../connectors/display-names';
@@ -47,6 +48,7 @@ export class ConnectorAccountService {
     private readonly auditLogService: AuditLogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly workbookEventService: WorkbookEventService,
   ) {}
 
   private async getDecryptedAccount(account: ConnectorAccount): Promise<ConnectorAccount & DecryptedCredentials> {
@@ -287,6 +289,11 @@ export class ConnectorAccountService {
 
     await this.removeConnectionData(account);
 
+    this.workbookEventService.sendWorkbookEvent(workbookId, {
+      type: 'workbook-updated',
+      data: { source: 'user', entityId: id, message: `Connection ${account.displayName} removed` },
+    });
+
     this.posthogService.trackRemoveDataSource(actor, account);
 
     await this.auditLogService.logEvent({
@@ -306,6 +313,11 @@ export class ConnectorAccountService {
   async removeBySystem(workbookId: WorkbookId, id: string): Promise<void> {
     const account = await this.findOneByIdAdmin(id);
     await this.removeConnectionData(account);
+
+    this.workbookEventService.sendWorkbookEvent(workbookId, {
+      type: 'workbook-updated',
+      data: { source: 'user', entityId: id, message: `Connection ${account.displayName} removed` },
+    });
 
     await this.auditLogService.logEvent({
       actor: {
