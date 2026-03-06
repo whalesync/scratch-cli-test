@@ -20,6 +20,8 @@ image:
   image:
     name: unawareguitar/aws-dind:08dd8de0
     #pull_policy: if-not-present
+  variables:
+    DOCKER_TLS_CERTDIR: ""
 
 # Any step can fetch GCP creds by extending from this rule.
 # It will automatically fetch creds via OIDC and make them available as Application Default Credentials (ADC).
