@@ -41,7 +41,14 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     WorkbookEventModule,
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
-  providers: [WorkbookService, WorkbookDataGateway, FilesService, DataFolderService, DataFolderPublishingService],
+  providers: [
+    WorkbookService,
+    WorkbookDataGateway,
+    FilesService,
+    DataFolderService,
+    DataFolderPublishingService,
+    WorkspacePermissionsService,
+  ],
   exports: [
     WorkbookService,
     WorkbookEventModule,
