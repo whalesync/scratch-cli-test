@@ -40,6 +40,7 @@ export * from './dto/workbook/admin-workbook.dto';
 export * from './dto/workbook/create-workbook.dto';
 export * from './dto/workbook/file-details.dto';
 export * from './dto/workbook/list-files.dto';
+export * from './dto/workbook/pull-assets.dto';
 export * from './dto/workbook/pull-files.dto';
 export * from './dto/workbook/update-workbook.dto';
 

@@ -293,6 +293,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
               return this.assetExtractorService.extractAssets({
                 workbookId: dataFolder.workbookId,
                 service: dataFolder.connectorService as Service,
+                dataFolderId: dataFolder.id,
                 recordFilePath: normalizedPath,
                 recordRemoteId,
                 recordContent: content,

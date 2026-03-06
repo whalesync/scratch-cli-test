@@ -71,9 +71,6 @@ describe('AssetExtractorService', () => {
         workbookId: 'wb_1',
         service: Service.AIRTABLE,
         remoteAssetId: 'att_1',
-        recordFilePath: 'folder/record.json',
-        fieldPath: 'Photos[0]',
-        assetContext: 'FIELD_VALUE',
         url: 'https://dl.airtable.com/photo1.jpg',
         filename: 'photo1.jpg',
         size: 1024,
@@ -83,7 +80,6 @@ describe('AssetExtractorService', () => {
 
       expect(result[1]).toMatchObject({
         remoteAssetId: 'att_2',
-        fieldPath: 'Photos[1]',
         filename: 'doc.pdf',
         mimeType: 'application/pdf',
         mediaType: 'document',
@@ -150,7 +146,6 @@ describe('AssetExtractorService', () => {
       // Notion hosted file: should hash URL path (before query params)
       expect(result[0]).toMatchObject({
         service: Service.NOTION,
-        fieldPath: 'Attachments[0]',
         filename: 'image.png',
         url: 'https://prod-files.notion.so/image.png?X-Amz-Signature=abc',
       });
@@ -161,7 +156,6 @@ describe('AssetExtractorService', () => {
 
       // External file: should hash full URL
       expect(result[1]).toMatchObject({
-        fieldPath: 'Attachments[1]',
         filename: 'external.jpg',
         url: 'https://example.com/external.jpg',
       });
@@ -194,11 +188,10 @@ describe('AssetExtractorService', () => {
       const result = service.extractAssets(input);
       expect(result.length).toBeGreaterThanOrEqual(1);
 
-      const coverEntry = result.find((e) => e.fieldPath === 'cover');
+      const coverEntry = result.find((e) => e.url === 'https://images.unsplash.com/cover.jpg');
       expect(coverEntry).toBeDefined();
       expect(coverEntry).toMatchObject({
         url: 'https://images.unsplash.com/cover.jpg',
-        assetContext: 'RECORD_PROPERTY',
         mediaType: 'image',
       });
     });
@@ -250,9 +243,7 @@ describe('AssetExtractorService', () => {
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
         service: Service.NOTION,
-        fieldPath: 'Files & media[0]',
         filename: 'yesno.jpg',
-        assetContext: 'FIELD_VALUE',
         url: 'https://prod-files-secure.s3.us-west-2.amazonaws.com/3fd80bcf/yesno.jpg?X-Amz-Signature=abc',
       });
       expect(result[0].remoteAssetId).toBe(
@@ -294,10 +285,9 @@ describe('AssetExtractorService', () => {
       };
 
       const result = service.extractAssets(input);
-      const imageEntry = result.find((e) => e.fieldPath === 'page_content[1]');
+      const imageEntry = result.find((e) => e.url === 'https://prod-files.notion.so/block-image.png?sig=xyz');
       expect(imageEntry).toBeDefined();
       expect(imageEntry).toMatchObject({
-        assetContext: 'CONTENT_BLOCK',
         mediaType: 'image',
         altText: 'A caption',
         url: 'https://prod-files.notion.so/block-image.png?sig=xyz',
@@ -352,16 +342,15 @@ describe('AssetExtractorService', () => {
       expect(result).toHaveLength(3);
 
       expect(result[0]).toMatchObject({
-        fieldPath: 'main-image',
         url: 'https://uploads-ssl.webflow.com/image.jpg',
         altText: 'Main image',
       });
       expect(result[1]).toMatchObject({
-        fieldPath: 'gallery[0]',
+        url: 'https://uploads-ssl.webflow.com/g1.jpg',
         altText: 'Gallery 1',
       });
       expect(result[2]).toMatchObject({
-        fieldPath: 'gallery[1]',
+        url: 'https://uploads-ssl.webflow.com/g2.jpg',
         altText: 'Gallery 2',
       });
     });
@@ -394,10 +383,9 @@ describe('AssetExtractorService', () => {
       };
 
       const result = service.extractAssets(input);
-      const heroEntry = result.find((e) => e.fieldPath === 'heroImage');
+      const heroEntry = result.find((e) => e.url === 'https://static.wixstatic.com/media/hero.jpg');
       expect(heroEntry).toBeDefined();
       expect(heroEntry).toMatchObject({
-        assetContext: 'RECORD_PROPERTY',
         url: 'https://static.wixstatic.com/media/hero.jpg',
         width: 1200,
         height: 630,
@@ -439,11 +427,10 @@ describe('AssetExtractorService', () => {
       };
 
       const result = service.extractAssets(input);
-      const imageEntry = result.find((e) => e.fieldPath === 'richContent.nodes[1]');
+      const imageEntry = result.find((e) => e.remoteAssetId === 'wix_media_123');
       expect(imageEntry).toBeDefined();
       expect(imageEntry).toMatchObject({
         remoteAssetId: 'wix_media_123',
-        assetContext: 'CONTENT_BLOCK',
         url: 'https://static.wixstatic.com/media/inline.jpg',
         altText: 'Inline image',
         width: 800,
@@ -549,8 +536,6 @@ describe('AssetExtractorService', () => {
         workbookId: 'wb_1',
         service: Service.WORDPRESS,
         remoteAssetId: 'rec_123',
-        recordFilePath: 'folder/record.json',
-        assetContext: 'STANDALONE_ENTITY',
         url: 'https://example.com/wp-content/uploads/photo.jpg',
         filename: 'My Photo',
         mimeType: 'image/jpeg',
@@ -637,7 +622,6 @@ describe('AssetExtractorService', () => {
         workbookId: 'wb_1',
         service: Service.WORDPRESS,
         remoteAssetId: '1057',
-        assetContext: 'STANDALONE_ENTITY',
         url: 'https://mpe.nmc.mybluehost.me/wp-content/uploads/2026/01/banner-03.jpg',
         filename: 'banner-03.jpg',
         mimeType: 'image/jpeg',
@@ -684,7 +668,6 @@ describe('AssetExtractorService', () => {
       expect(result[0]).toMatchObject({
         service: Service.WEBFLOW,
         remoteAssetId: 'rec_123',
-        assetContext: 'STANDALONE_ENTITY',
         url: 'https://uploads-ssl.webflow.com/logo.png',
         filename: 'logo-original.png',
         mimeType: 'image/png',
@@ -730,9 +713,9 @@ describe('AssetExtractorService', () => {
       };
 
       const result = service.extractAssets(input);
-      // Should only have the standalone entry, not a FIELD_VALUE from source_url
+      // Should only have the standalone entry, not an extra entry from source_url
       expect(result).toHaveLength(1);
-      expect(result[0].assetContext).toBe('STANDALONE_ENTITY');
+      expect(result[0].url).toBe('https://example.com/wp-content/uploads/photo.jpg');
     });
 
     it('should fall back to URL hash when recordRemoteId is missing', () => {

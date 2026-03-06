@@ -25,6 +25,7 @@ export class DataFolderEntity implements DataFolder {
   lastSyncTime: string | null;
   version: number;
   tableId: string[];
+  isAssetTable: boolean;
   options: Record<string, unknown> | null;
   schedules: Schedule[];
 
@@ -44,6 +45,7 @@ export class DataFolderEntity implements DataFolder {
     this.lastSyncTime = dataFolder.lastSyncTime ? dataFolder.lastSyncTime.toISOString() : null;
     this.version = dataFolder.version;
     this.tableId = dataFolder.tableId;
+    this.isAssetTable = dataFolder.isAssetTable;
     this.options = dataFolder.options
       ? normalizeJsonObject(dataFolder.options as Prisma.JsonValue | null | undefined)
       : {};

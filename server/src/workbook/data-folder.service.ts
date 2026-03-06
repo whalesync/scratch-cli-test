@@ -24,6 +24,7 @@ import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
+import { ASSET_TABLE } from '../remote-service/connectors/json-schema';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
@@ -255,6 +256,7 @@ export class DataFolderService {
       folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
 
       // Create the DataFolder
+      const isAssetTable = Boolean(tableSpec.schema[ASSET_TABLE]);
       const createdDataFolder = await this.db.client.dataFolder.create({
         data: {
           id: dataFolderId,
@@ -268,6 +270,7 @@ export class DataFolderService {
           lastSchemaRefreshAt: new Date(),
           version: 1,
           tableId: dto.tableId,
+          isAssetTable,
           options: {
             ...(dto.options ?? {}),
             ...(filter ? { filter } : {}),

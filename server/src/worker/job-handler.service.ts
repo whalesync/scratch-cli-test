@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { AssetDownloadService } from 'src/asset/asset-download.service';
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { DbService } from 'src/db/db.service';
@@ -20,6 +21,7 @@ import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
+import { RehostAssetsJobHandler } from './jobs/job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobHandler } from './jobs/job-definitions/sync-data-folders.job';
 import { JobData, JobDefinition, JobHandler } from './jobs/union-types';
 
@@ -38,6 +40,7 @@ export class JobHandlerService {
     private readonly fileReferenceService: FileReferenceService,
     private readonly assetExtractorService: AssetExtractorService,
     private readonly assetIndexService: AssetIndexService,
+    private readonly assetDownloadService: AssetDownloadService,
     private readonly pipelinePlanService: PublishPlanBuildService,
     private readonly pipelineRunService: PublishPlanRunService,
     private readonly dbService: DbService,
@@ -96,6 +99,13 @@ export class JobHandlerService {
           this.scratchGitService,
           this.bullEnqueuerService,
           this.pipelinePlanService,
+        ) as JobHandler<JobDefinition>;
+
+      case 'rehost-assets':
+        return new RehostAssetsJobHandler(
+          prisma,
+          this.assetDownloadService,
+          this.workbookEventService,
         ) as JobHandler<JobDefinition>;
 
       case 'publish':

@@ -211,6 +211,7 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     lastSyncTime: null,
     version: 1,
     tableId: ['appAAA', 'tblPROD'],
+    isAssetTable: false,
     options: null,
     schedules: [],
     ...overrides,

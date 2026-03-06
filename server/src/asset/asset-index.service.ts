@@ -26,17 +26,14 @@ export class AssetIndexService {
         c.map((entry) =>
           this.db.client.asset.upsert({
             where: {
-              workbookId_service_remoteAssetId_recordFilePath: {
+              workbookId_service_remoteAssetId: {
                 workbookId: entry.workbookId,
                 service: entry.service,
                 remoteAssetId: entry.remoteAssetId,
-                recordFilePath: entry.recordFilePath,
               },
             },
             update: {
-              recordRemoteId: entry.recordRemoteId,
-              fieldPath: entry.fieldPath,
-              assetContext: entry.assetContext,
+              dataFolderId: entry.dataFolderId,
               url: entry.url,
               filename: entry.filename,
               mimeType: entry.mimeType,
@@ -52,10 +49,7 @@ export class AssetIndexService {
               workbookId: entry.workbookId,
               service: entry.service,
               remoteAssetId: entry.remoteAssetId,
-              recordFilePath: entry.recordFilePath,
-              recordRemoteId: entry.recordRemoteId,
-              fieldPath: entry.fieldPath,
-              assetContext: entry.assetContext,
+              dataFolderId: entry.dataFolderId,
               url: entry.url,
               filename: entry.filename,
               mimeType: entry.mimeType,
@@ -76,11 +70,11 @@ export class AssetIndexService {
   /**
    * Find asset entries that haven't been seen since the given timestamp.
    */
-  async findStaleEntries(workbookId: string, recordFilePath: string, before: Date, limit: number) {
+  async findStaleEntries(workbookId: string, dataFolderId: string, before: Date, limit: number) {
     return this.db.client.asset.findMany({
       where: {
         workbookId,
-        recordFilePath,
+        dataFolderId,
         OR: [{ lastSeenAt: { lt: before } }, { lastSeenAt: null }],
       },
       take: limit,
@@ -98,11 +92,11 @@ export class AssetIndexService {
   }
 
   /**
-   * Get all assets for a specific record file.
+   * Get all assets for a specific data folder.
    */
-  async getAssetsForRecord(workbookId: string, recordFilePath: string) {
+  async getAssetsForDataFolder(workbookId: string, dataFolderId: string) {
     return this.db.client.asset.findMany({
-      where: { workbookId, recordFilePath },
+      where: { workbookId, dataFolderId },
     });
   }
 

@@ -393,11 +393,16 @@ model DataFolder {
   syncsPairsAsDestination SyncTablePair[]        @relation("destinationDataFolder")
   foreignKeyRecords       SyncForeignKeyRecord[]
   remoteIdMappings        SyncRemoteIdMapping[]
+  assets                  Asset[]
   // publishPipelines        PublishPipeline[] // REMOVED in V2 refactor (scoped to ConnectorAccount)
 
   // Table ID path for connectors that represent tables as a path (e.g., ["database", "schema", "table"])
   // Empty array for scratch folders, populated for linked folders
   tableId String[] @default([])
+
+  // True when the table schema has the x-scratch-asset-table flag,
+  // meaning its records ARE assets (e.g. WordPress media, Webflow Assets).
+  isAssetTable Boolean @default(false)
 
   // Additional options for interacting with the connector
   // Will be an object matching any of the Connector options interfaces such as ConnectorPullOptions.
@@ -726,7 +731,7 @@ model Schedule {
 //#region Asset
 
 /// Tracks file/media assets extracted from record files during pull.
-/// Each row represents a single file attachment found within a record.
+/// Each row represents a unique asset within a workbook.
 model Asset {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -735,12 +740,11 @@ model Asset {
   workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
   workbookId String
 
-  service        Service // AIRTABLE, NOTION, WEBFLOW, etc.
-  remoteAssetId  String // Stable ID per connector (e.g. Airtable attachment id, URL hash, etc.)
-  recordFilePath String // Git path of the record containing this asset
-  recordRemoteId String? // Remote record ID (cross-ref with FileIndex)
-  fieldPath      String? // Location within the record JSON (e.g. "fields.Photos[0]")
-  assetContext   String  @default("FIELD_VALUE") // FIELD_VALUE | CONTENT_BLOCK | RECORD_PROPERTY | STANDALONE_ENTITY
+  dataFolder   DataFolder? @relation(fields: [dataFolderId], references: [id], onDelete: SetNull)
+  dataFolderId String?
+
+  service       Service // AIRTABLE, NOTION, WEBFLOW, etc.
+  remoteAssetId String // Stable ID per connector (e.g. Airtable attachment id, URL hash, etc.)
 
   url          String? // Current URL (may be expired)
   filename     String?
@@ -752,10 +756,12 @@ model Asset {
   mediaType    String? // image | video | audio | document | file | external_video | model_3d
   urlExpiresAt DateTime? // When URL expires (null = permanent)
   lastSeenAt   DateTime? // Updated each pull; stale = deleted upstream
+  rehostedUrl  String? // Permanent GCS URL
+  rehostedAt   DateTime? // When rehosted
 
-  @@unique([workbookId, service, remoteAssetId, recordFilePath])
-  @@index([workbookId, recordFilePath])
+  @@unique([workbookId, service, remoteAssetId])
   @@index([workbookId, service])
+  @@index([dataFolderId])
   @@index([urlExpiresAt])
   @@index([workbookId, lastSeenAt])
 }

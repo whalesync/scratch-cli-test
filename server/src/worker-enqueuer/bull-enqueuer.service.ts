@@ -11,6 +11,7 @@ import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/p
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
 import { PullFilesJobDefinition } from '../worker/jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { RehostAssetsJobDefinition } from '../worker/jobs/job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobDefinition } from '../worker/jobs/job-definitions/sync-data-folders.job';
 
 @Injectable()
@@ -203,6 +204,35 @@ export class BullEnqueuerService implements OnModuleDestroy {
       bullJobId: id,
       workbookId,
       progress: initialProgress,
+      runId: runContext.runId as RunId,
+      runContext,
+    });
+    return await this.enqueueJobWithId(data, id);
+  }
+
+  async enqueueRehostAssetsJob(
+    workbookId: WorkbookId,
+    actor: Actor,
+    dataFolderId: DataFolderId,
+    initialPublicProgress: RehostAssetsJobDefinition['publicProgress'] | undefined,
+    runContext: RunContext,
+  ): Promise<Job> {
+    const id = `rehost-assets-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const data: RehostAssetsJobDefinition['data'] = {
+      workbookId,
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+      dataFolderId,
+      type: 'rehost-assets',
+      initialPublicProgress,
+    };
+    await this.jobService.createJob({
+      userId: actor.userId,
+      type: data.type,
+      data,
+      bullJobId: id,
+      workbookId,
+      dataFolderId,
       runId: runContext.runId as RunId,
       runContext,
     });

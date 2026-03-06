@@ -4,6 +4,7 @@ import {
   createWorkbookId,
   createWorkspacePermissionId,
   DataFolderId,
+  PullAssetsResponseDto,
   PullFilesResponseDto,
   UpdateWorkbookDto,
   ValidatedCreateWorkbookDto,
@@ -424,6 +425,41 @@ export class WorkbookService {
       jobId: jobs[0].id,
       jobIds: jobs.map((j) => j.id),
     };
+  }
+
+  async pullAssets(
+    id: WorkbookId,
+    actor: Actor,
+    dataFolderId: string,
+    runContext: RunContext,
+  ): Promise<PullAssetsResponseDto> {
+    await this.findOneOrThrow(id, actor);
+
+    const dataFolder = await this.db.client.dataFolder.findFirst({
+      where: { id: dataFolderId, workbookId: id },
+    });
+
+    if (!dataFolder) {
+      return { warning: 'Data folder not found in this workspace.' };
+    }
+
+    const job = await this.bullEnqueuerService.enqueueRehostAssetsJob(
+      id,
+      actor,
+      dataFolderId as DataFolderId,
+      {
+        status: 'pending',
+        dataFolderId,
+        dataFolderName: dataFolder.name,
+        totalAssets: 0,
+        succeeded: 0,
+        failed: 0,
+        failures: [],
+      },
+      runContext,
+    );
+
+    return { jobId: job.id as string };
   }
 
   /**

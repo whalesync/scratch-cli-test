@@ -24,6 +24,7 @@ export interface DataFolder {
   lastSyncTime: string | null;
   version: number;
   tableId: string[];
+  isAssetTable: boolean;
   options: Record<string, unknown> | null;
   schedules: Schedule[];
 }

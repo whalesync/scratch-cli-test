@@ -157,6 +157,14 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('SCRATCH_GIT_BACKEND_URL') ?? 'http://localhost:3101';
   }
 
+  getGcsAssetBucket(): string | undefined {
+    return this.getOptionalEnvVariable('GCS_ASSET_BUCKET');
+  }
+
+  getGcsProjectId(): string | undefined {
+    return this.getOptionalEnvVariable('GCS_PROJECT_ID');
+  }
+
   private getEnvVariable<T>(envVariable: string): T {
     const returnedVar: T | undefined = this.configService.get<T>(envVariable);
     if (returnedVar === undefined) {

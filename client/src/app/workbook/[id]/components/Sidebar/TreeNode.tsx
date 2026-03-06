@@ -51,6 +51,7 @@ import {
   FolderIcon,
   GitGraphIcon,
   GitMergeIcon,
+  ImageIcon,
   InfoIcon,
   MoreHorizontalIcon,
   MoveIcon,
@@ -752,7 +753,8 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
   const hiddenFileFolders = useWorkbookUIStore((state) => state.hiddenFileFolders);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
-  const { pullFolders } = useActiveWorkbook();
+  const { pullFolders, pullAssets } = useActiveWorkbook();
+  const { isDevToolsEnabled } = useDevTools();
 
   const nodeId = `table-${folder.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -792,6 +794,15 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
       await pullFolders([folder.id]);
     } catch (error) {
       console.error('Failed to pull table:', error);
+    }
+  };
+
+  // Pull assets for this table
+  const handlePullAssets = async () => {
+    try {
+      await pullAssets(folder.id);
+    } catch (error) {
+      console.error('Failed to pull assets:', error);
     }
   };
 
@@ -1064,6 +1075,9 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
             { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
+            ...(isDevToolsEnabled && folder.isAssetTable
+              ? [{ label: 'Pull Assets', icon: ImageIcon, onClick: handlePullAssets, devtool: true }]
+              : []),
             { type: 'divider' },
             { label: 'Unlink this table', icon: UnlinkIcon, onClick: openRemoveModal, delete: true },
             { label: 'Delete all records', icon: Trash2Icon, onClick: openDeleteAllModal, delete: true },

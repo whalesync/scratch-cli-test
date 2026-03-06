@@ -8,6 +8,12 @@ let nextConfig: NextConfig = {
   devIndicators: {
     position: 'bottom-right',
   },
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.infrastructureLogging = { ...config.infrastructureLogging, level: 'error' };
+    }
+    return config;
+  },
   // Use a separate output directory in dev mode so `yarn build` doesn't clobber
   // the dev server's webpack chunks (which causes MODULE_NOT_FOUND errors).
   ...(process.env.NODE_ENV === 'development' && { distDir: '.next-dev' }),

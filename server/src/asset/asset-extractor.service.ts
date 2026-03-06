@@ -10,9 +10,6 @@ import {
 } from '../remote-service/connectors/json-schema';
 import { AssetExtractionInput, AssetIndexEntry, MediaType } from './asset.types';
 
-/** Well-known top-level properties that are RECORD_PROPERTY context, not FIELD_VALUE. */
-const RECORD_PROPERTY_FIELDS = new Set(['cover', 'icon', 'heroImage']);
-
 /**
  * Extracts asset metadata from record file content using the table schema annotations.
  *
@@ -28,9 +25,8 @@ export class AssetExtractorService {
     const seen = new Set<string>();
 
     const addEntry = (entry: AssetIndexEntry) => {
-      const key = `${entry.remoteAssetId}::${entry.fieldPath ?? ''}`;
-      if (!seen.has(key)) {
-        seen.add(key);
+      if (!seen.has(entry.remoteAssetId)) {
+        seen.add(entry.remoteAssetId);
         entries.push(entry);
       }
     };
@@ -72,9 +68,7 @@ export class AssetExtractorService {
       workbookId: input.workbookId,
       service: input.service,
       remoteAssetId,
-      recordFilePath: input.recordFilePath,
-      recordRemoteId: input.recordRemoteId,
-      assetContext: 'STANDALONE_ENTITY',
+      dataFolderId: input.dataFolderId,
       url,
       filename: opts.filenamePath ? (get(input.recordContent, opts.filenamePath) as string | undefined) : undefined,
       mimeType,
@@ -99,7 +93,7 @@ export class AssetExtractorService {
 
   /** Phase 1: Walk schema to find annotated asset fields. */
   private extractFromSchema(input: AssetExtractionInput, addEntry: (e: AssetIndexEntry) => void): void {
-    const { fieldEntries, topLevelFields } = this.getSchemaProperties(input.schema);
+    const { fieldEntries } = this.getSchemaProperties(input.schema);
     if (!fieldEntries) return;
 
     for (const [fieldName, fieldSchema] of Object.entries(fieldEntries)) {
@@ -113,25 +107,15 @@ export class AssetExtractorService {
       const value = this.resolveFieldValue(input.recordContent, fieldName, input.schema);
       if (value == null) continue;
 
-      // Determine context: top-level properties like cover/icon/heroImage are RECORD_PROPERTY
-      const isTopLevel = topLevelFields.has(fieldName);
-      const assetContext = isTopLevel && RECORD_PROPERTY_FIELDS.has(fieldName) ? 'RECORD_PROPERTY' : 'FIELD_VALUE';
-
       if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) {
           const item = value[i] as Record<string, unknown>;
           if (!item || typeof item !== 'object') continue;
-          const entry = this.buildEntryFromItem(input, item, assetOpts, `${fieldName}[${i}]`, assetContext);
+          const entry = this.buildEntryFromItem(input, item, assetOpts, `${fieldName}[${i}]`);
           if (entry) addEntry(entry);
         }
       } else if (typeof value === 'object') {
-        const entry = this.buildEntryFromItem(
-          input,
-          value as Record<string, unknown>,
-          assetOpts,
-          fieldName,
-          assetContext,
-        );
+        const entry = this.buildEntryFromItem(input, value as Record<string, unknown>, assetOpts, fieldName);
         if (entry) addEntry(entry);
       }
     }
@@ -211,10 +195,7 @@ export class AssetExtractorService {
       workbookId: input.workbookId,
       service: input.service,
       remoteAssetId: urlExpires ? this.hashUrlPath(url) : this.hashUrl(url),
-      recordFilePath: input.recordFilePath,
-      recordRemoteId: input.recordRemoteId,
-      fieldPath: `page_content[${index}]`,
-      assetContext: 'CONTENT_BLOCK',
+      dataFolderId: input.dataFolderId,
       url,
       altText,
       mediaType,
@@ -245,10 +226,7 @@ export class AssetExtractorService {
       workbookId: input.workbookId,
       service: input.service,
       remoteAssetId: id || this.hashUrl(url),
-      recordFilePath: input.recordFilePath,
-      recordRemoteId: input.recordRemoteId,
-      fieldPath: `richContent.nodes[${index}]`,
-      assetContext: 'CONTENT_BLOCK',
+      dataFolderId: input.dataFolderId,
       url,
       altText: imageData['altText'] as string | undefined,
       width: typeof imageData['width'] === 'number' ? imageData['width'] : undefined,
@@ -362,7 +340,6 @@ export class AssetExtractorService {
     item: Record<string, unknown>,
     opts: AssetFieldOptions,
     fieldPath: string,
-    assetContext: AssetIndexEntry['assetContext'],
   ): AssetIndexEntry | null {
     // Determine the URL
     const url = this.extractUrl(item, input.service);
@@ -395,10 +372,7 @@ export class AssetExtractorService {
       workbookId: input.workbookId,
       service: input.service,
       remoteAssetId,
-      recordFilePath: input.recordFilePath,
-      recordRemoteId: input.recordRemoteId,
-      fieldPath,
-      assetContext,
+      dataFolderId: input.dataFolderId,
       url,
       filename: (item['filename'] ?? item['name']) as string | undefined,
       mimeType,
@@ -406,7 +380,7 @@ export class AssetExtractorService {
       width: typeof item['width'] === 'number' ? item['width'] : undefined,
       height: typeof item['height'] === 'number' ? item['height'] : undefined,
       altText: (item['alt'] ?? item['altText'] ?? item['alt_text']) as string | undefined,
-      mediaType: this.inferMediaType(item, assetContext, fieldPath),
+      mediaType: this.inferMediaType(item, fieldPath),
       urlExpiresAt: opts.urlExpires ? this.inferExpiryDate(item) : undefined,
     };
   }
@@ -431,11 +405,7 @@ export class AssetExtractorService {
     return undefined;
   }
 
-  private inferMediaType(
-    item: Record<string, unknown>,
-    assetContext: AssetIndexEntry['assetContext'],
-    fieldPath: string,
-  ): MediaType | undefined {
+  private inferMediaType(item: Record<string, unknown>, fieldPath: string): MediaType | undefined {
     const mime = (item['type'] ?? item['mime_type'] ?? item['contentType'] ?? item['mimeType']) as string | undefined;
     // Skip Notion's 'external'/'file' type values — those aren't MIME types
     const notionFileTypes = new Set(['external', 'file']);
@@ -457,8 +427,8 @@ export class AssetExtractorService {
       if (ext === 'pdf') return 'document';
     }
 
-    // Well-known RECORD_PROPERTY fields are images (cover, icon, heroImage)
-    if (assetContext === 'RECORD_PROPERTY' && RECORD_PROPERTY_FIELDS.has(fieldPath)) {
+    // Well-known property fields are typically images (cover, icon, heroImage)
+    if (['cover', 'icon', 'heroImage'].includes(fieldPath)) {
       return 'image';
     }
 

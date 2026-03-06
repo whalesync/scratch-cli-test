@@ -375,6 +375,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
               return this.assetExtractorService.extractAssets({
                 workbookId: dataFolder.workbookId,
                 service: dataFolder.connectorService as Service,
+                dataFolderId: dataFolder.id,
                 recordFilePath: normalizedPath,
                 recordRemoteId,
                 recordContent: content,

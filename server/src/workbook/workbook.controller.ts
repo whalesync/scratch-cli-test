@@ -13,8 +13,8 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { DataFolderGroup, PullFilesResponseDto, WorkbookId } from '@spinner/shared-types';
-import { CreateWorkbookDto, PullFilesDto, UpdateWorkbookDto } from '@spinner/shared-types';
+import type { DataFolderGroup, PullAssetsResponseDto, PullFilesResponseDto, WorkbookId } from '@spinner/shared-types';
+import { CreateWorkbookDto, PullAssetsDto, PullFilesDto, UpdateWorkbookDto } from '@spinner/shared-types';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -102,6 +102,15 @@ export class WorkbookController {
   ): Promise<PullFilesResponseDto> {
     const dto = pullDto;
     return this.service.pullFiles(id, userToActor(req.user), dto.dataFolderIds, createRunContext('web'));
+  }
+
+  @Post(':id/pull-assets')
+  async pullAssets(
+    @Param('id') id: WorkbookId,
+    @Body() pullDto: PullAssetsDto,
+    @Req() req: RequestWithUser,
+  ): Promise<PullAssetsResponseDto> {
+    return this.service.pullAssets(id, userToActor(req.user), pullDto.dataFolderId, createRunContext('web'));
   }
 
   @Delete(':id')

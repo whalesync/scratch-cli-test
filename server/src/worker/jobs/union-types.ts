@@ -4,6 +4,7 @@ import { PublishDataFolderJobDefinition } from './job-definitions/publish-data-f
 import { PublishJobDefinition } from './job-definitions/publish.job';
 import { PullFilesJobDefinition } from './job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from './job-definitions/pull-linked-folder-files.job';
+import { RehostAssetsJobDefinition } from './job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobDefinition } from './job-definitions/sync-data-folders.job';
 
 export type JobDefinition =
@@ -11,6 +12,7 @@ export type JobDefinition =
   | PublishJobDefinition
   | PullLinkedFolderFilesJobDefinition
   | PullFilesJobDefinition
+  | RehostAssetsJobDefinition
   | SyncDataFoldersJobDefinition;
 export type JobData = JobDefinition['data'];
 export type JobTypes = JobDefinition['type'];

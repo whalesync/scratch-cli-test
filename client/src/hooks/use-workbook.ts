@@ -34,6 +34,7 @@ export interface UseWorkbookReturn {
     triggerPull?: boolean,
   ) => Promise<DataFolder>;
   pullFolders: (dataFolderIds?: DataFolderId[]) => Promise<void>;
+  pullAssets: (dataFolderId: DataFolderId) => Promise<void>;
   discardAllChanges: () => Promise<void>;
 }
 
@@ -130,6 +131,30 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
     });
   }, [globalMutate, id, mutate, data, setWorkbookError]);
 
+  const pullAssets = useCallback(
+    async (dataFolderId: DataFolderId): Promise<void> => {
+      if (!id) {
+        return;
+      }
+      try {
+        const result = await workbookApi.pullAssets(id, dataFolderId);
+        if (result.jobId) {
+          useActiveJobsStore.getState().trackJobIds([result.jobId]);
+        }
+      } catch (error) {
+        console.error('Failed to pull assets:', error);
+        setWorkbookError({
+          scope: 'files',
+          description: 'Failed to start the asset pull job',
+          cause: error as Error,
+        });
+      }
+      await mutate();
+      await useActiveJobsStore.getState().refreshJobs();
+    },
+    [id, mutate, setWorkbookError],
+  );
+
   const pullFolders = useCallback(
     async (folderIds?: DataFolderId[]): Promise<void> => {
       if (!id) {
@@ -162,6 +187,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
     updateWorkbook,
     addLinkedDataFolder,
     pullFolders,
+    pullAssets,
     discardAllChanges,
   };
 };
