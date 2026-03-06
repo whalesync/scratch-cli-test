@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   DirtyFileCountResponse,
   FileDiffStatus,
@@ -57,7 +57,7 @@ export class ScratchGitService {
     if (account?.repoPath) {
       return account.repoPath as RepoId;
     }
-    throw new Error(`Connector account ${connectorAccountId} has no repoPath`);
+    throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
   }
 
   async initRepo(repoId: string): Promise<void> {
