@@ -137,6 +137,6 @@ export const FILES_CONFIG = {
   description: 'Uploaded files and media (read-only)',
   readOnly: true,
   columns: {
-    slug: 'fileSlug',
+    slug: 'id',
   },
 } as const;

@@ -356,6 +356,14 @@ class MutationsGenerator {
       }
     }
 
+    // Exclude stripOnUpdateFields from read-only set — these fields are needed
+    // for create mutations and should only be stripped on update, not globally
+    if (entity.mutations?.stripOnUpdateFields) {
+      for (const field of entity.mutations.stripOnUpdateFields) {
+        readOnlyFields.delete(field);
+      }
+    }
+
     return Array.from(readOnlyFields).sort();
   }
 

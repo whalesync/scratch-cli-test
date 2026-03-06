@@ -21,7 +21,6 @@ export const MetaobjectsSchema = Type.Object(
     createdByApp: Type.Optional(
       Type.Union([
         Type.Object({
-          apiKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           appStoreAppUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           appStoreDeveloperUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           availableAccessScopes: Type.Optional(Type.Array(Type.Unknown())),
@@ -137,7 +136,7 @@ export const MetaobjectsSchema = Type.Object(
 /**
  * GraphQL query field selection for Metaobjects
  */
-export const METAOBJECTS_QUERY_FIELDS = `createdByApp { apiKey appStoreAppUrl appStoreDeveloperUrl description developerName developerType developerUrl embedded features handle id installUrl isPostPurchaseAppInUse launchUrl previouslyInstalled pricingDetails pricingDetailsSummary privacyPolicyUrl publicCategory published shopifyDeveloped title uninstallMessage uninstallUrl webhookApiVersion } definition { description displayNameKey hasThumbnailField id metaobjectsCount name type } displayName fields { jsonValue key type value } handle id thumbnailField { jsonValue key type value } type updatedAt`;
+export const METAOBJECTS_QUERY_FIELDS = `createdByApp { appStoreAppUrl appStoreDeveloperUrl description developerName developerType developerUrl embedded features handle id installUrl isPostPurchaseAppInUse launchUrl previouslyInstalled pricingDetails pricingDetailsSummary privacyPolicyUrl publicCategory published shopifyDeveloped title uninstallMessage uninstallUrl webhookApiVersion } definition { description displayNameKey hasThumbnailField id metaobjectsCount name type } displayName fields { jsonValue key type value } handle id thumbnailField { jsonValue key type value } type updatedAt`;
 
 /**
  * Entity configuration for Metaobjects

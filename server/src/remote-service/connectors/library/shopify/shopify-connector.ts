@@ -5,7 +5,7 @@
  * Uses generated GraphQL schemas and mutations from codegen.
  */
 
-import { type TSchema } from '@sinclair/typebox';
+import { Type, type TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
@@ -148,11 +148,21 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
       throw new ShopifyError(`Schema not found for entity type '${entityType}'`, 500);
     }
 
+    // Add parent foreign key to schema if this is a child entity
+    const parent = 'parent' in config ? (config as { parent: { foreignKey: string } }).parent : null;
+    const resolvedSchema =
+      parent?.foreignKey && schema.properties && !(parent.foreignKey in schema.properties)
+        ? Type.Object(
+            { ...schema.properties, [parent.foreignKey]: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
+            schema.$id || schema.title ? { $id: schema.$id, title: schema.title } : {},
+          )
+        : schema;
+
     const spec: BaseJsonTableSpec = {
       id,
       slug: entityType,
       name: config.displayName,
-      schema,
+      schema: resolvedSchema,
       idColumnRemoteId: 'id',
       generatedAt: new Date().toISOString(),
     };

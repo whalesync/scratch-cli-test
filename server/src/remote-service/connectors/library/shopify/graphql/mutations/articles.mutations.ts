@@ -54,7 +54,6 @@ export const ARTICLES_DELETE_MUTATION = `mutation ArticleDelete($id: ID!) {
  * Fields that are read-only and should be stripped before mutations
  */
 export const ARTICLES_READ_ONLY_FIELDS = new Set([
-  'blog',
   'comments',
   'commentsCount',
   'createdAt',

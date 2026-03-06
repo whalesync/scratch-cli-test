@@ -309,10 +309,6 @@ export class ShopifyApiClient {
             file.url = (f.image as { url?: string })?.url;
             delete file.image;
           }
-          // Extract numeric ID from GID for safe filenames
-          const gid = String(file.id);
-          const numericId = gid.split('/').pop() || gid;
-          file.fileSlug = numericId;
           return file;
         });
 
