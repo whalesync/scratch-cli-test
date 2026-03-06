@@ -26,7 +26,7 @@ image:
 # Just add: extends: .google-oidc:auth
 # NOTE! This breaks if you add a before_step to the step, since that clobbers the added work the rule adds.
 include:
-  - remote: "https://gitlab.com/gitlab-com/gl-security/security-operations/infrastructure-security-public/oidc-modules/-/raw/3.2.0/templates/gcp_auth.yaml"
+  - remote: "https://gitlab.com/gitlab-com/gl-security/security-operations/infrastructure-security-public/oidc-modules/-/raw/3.4.0/templates/gcp_auth.yaml"
 
 .setup_docker_gcp_auth:
   script:
