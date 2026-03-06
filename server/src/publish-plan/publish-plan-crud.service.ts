@@ -91,9 +91,9 @@ export class PublishPlanCrudService {
     });
   }
 
-  async listAssetIndex(workbookId: string) {
+  async listAssetIndex(workbookId: string, dataFolderId?: string) {
     const assets = await this.db.client.asset.findMany({
-      where: { workbookId },
+      where: { workbookId, ...(dataFolderId ? { dataFolderId } : {}) },
       orderBy: [{ service: 'asc' }, { lastSeenAt: 'desc' }],
     });
     return assets.map((a) => ({ ...a, size: a.size != null ? Number(a.size) : null }));

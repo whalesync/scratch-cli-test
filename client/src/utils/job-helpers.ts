@@ -2,12 +2,13 @@ import { JobEntity } from '@/types/server-entities/job';
 import { PublishPlanStatus } from '@spinner/shared-types';
 import pluralize from 'pluralize';
 
-export type JobType = 'sync' | 'publish' | 'pull' | 'unknown';
+export type JobType = 'sync' | 'publish' | 'pull' | 'rehost' | 'unknown';
 
 export const getJobType = (type: string): JobType => {
   if (type.includes('sync')) return 'sync';
   if (type.includes('publish')) return 'publish';
   if (type.includes('pull') || type === 'refresh-records') return 'pull';
+  if (type === 'rehost-assets') return 'rehost';
   return 'unknown';
 };
 
@@ -19,6 +20,8 @@ export const getTypeLabel = (jobType: JobType): string => {
       return 'Publish';
     case 'pull':
       return 'Pull';
+    case 'rehost':
+      return 'Pull Assets';
     default:
       return 'JOB';
   }
@@ -96,6 +99,17 @@ export const getJobDescription = (job: JobEntity): string => {
         return `Pull ${count} record${count !== 1 ? 's' : ''}${folderSuffix}${connectionSuffix}`;
       }
       return 'Pull data';
+    }
+    case 'rehost': {
+      const totalAssets = progress?.totalAssets as number | undefined;
+      const failedAssets = progress?.failed as number | undefined;
+      const folderName = progress?.dataFolderName as string | undefined;
+      const folderSuffix = folderName ? ` for ${folderName}` : '';
+      const failedSuffix = failedAssets ? ` (${failedAssets} failed)` : '';
+      if (totalAssets !== undefined) {
+        return `Pull ${totalAssets} asset${totalAssets !== 1 ? 's' : ''}${folderSuffix}${failedSuffix}`;
+      }
+      return `Pull assets${folderSuffix}${failedSuffix}`;
     }
     default:
       return job.type;

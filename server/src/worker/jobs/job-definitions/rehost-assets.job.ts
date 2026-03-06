@@ -6,6 +6,9 @@ import { AssetDownloadService } from 'src/asset/asset-download.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 
+/** Maximum number of errors to track in progress */
+const MAX_PROGRESS_ERRORS = 100;
+
 export type RehostAssetsPublicProgress = {
   status: 'pending' | 'active' | 'completed' | 'failed';
   dataFolderId: string;
@@ -13,7 +16,7 @@ export type RehostAssetsPublicProgress = {
   totalAssets: number;
   succeeded: number;
   failed: number;
-  failures: Array<{ assetId: string; error: string }>;
+  failures: Array<{ assetId: string; filename: string | null; error: string }>;
 };
 
 export type RehostAssetsJobDefinition = JobDefinitionBuilder<
@@ -110,7 +113,14 @@ export class RehostAssetsJobHandler implements JobHandlerBuilder<RehostAssetsJob
           publicProgress.succeeded++;
         } else {
           publicProgress.failed++;
-          publicProgress.failures.push({ assetId: result.assetId, error: result.error ?? 'Unknown error' });
+          const asset = batch.find((a) => a.id === result.assetId);
+          if (publicProgress.failures.length < MAX_PROGRESS_ERRORS) {
+            publicProgress.failures.push({
+              assetId: result.assetId,
+              filename: asset?.filename ?? null,
+              error: result.error ?? 'Unknown error',
+            });
+          }
         }
       }
 

@@ -66,6 +66,7 @@ import {
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState, type MouseEvent } from 'react';
+import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
 import { GitGraphModal } from '../modals/GitGraphModal';
@@ -787,6 +788,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
     useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const [pullScheduleOpened, { open: openPullSchedule, close: closePullSchedule }] = useDisclosure(false);
+  const [assetIndexOpened, { open: openAssetIndex, close: closeAssetIndex }] = useDisclosure(false);
 
   // Pull handler for this table
   const handlePullTable = async () => {
@@ -1078,6 +1080,9 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             ...(isDevToolsEnabled && folder.isAssetTable
               ? [{ label: 'Pull Assets', icon: ImageIcon, onClick: handlePullAssets, devtool: true }]
               : []),
+            ...(isDevToolsEnabled
+              ? [{ label: 'Asset Index', icon: ImageIcon, onClick: openAssetIndex, devtool: true }]
+              : []),
             { type: 'divider' },
             { label: 'Unlink this table', icon: UnlinkIcon, onClick: openRemoveModal, delete: true },
             { label: 'Delete all records', icon: Trash2Icon, onClick: openDeleteAllModal, delete: true },
@@ -1116,6 +1121,14 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
 
       {/* Advanced Folder Settings Modal */}
       <AdvancedFolderSettingsModal opened={settingsOpened} onClose={closeSettings} folder={folder} />
+
+      {/* Asset Index Modal */}
+      <AssetIndexModal
+        opened={assetIndexOpened}
+        onClose={closeAssetIndex}
+        workbookId={workbookId}
+        dataFolderId={folder.id}
+      />
     </>
   );
 }

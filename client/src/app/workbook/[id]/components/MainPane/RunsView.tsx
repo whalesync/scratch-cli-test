@@ -7,6 +7,7 @@ import {
   Text13Medium,
   Text13Regular,
   TextMono12Regular,
+  TextTitle3,
 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useDevTools } from '@/hooks/use-dev-tools';
@@ -67,6 +68,8 @@ const getTypeColor = (jobType: JobType): string => {
       return 'var(--mantine-color-green-5)';
     case 'pull':
       return 'var(--mantine-color-cyan-5)';
+    case 'rehost':
+      return 'var(--mantine-color-teal-5)';
     default:
       return 'var(--mantine-color-gray-5)';
   }
@@ -365,7 +368,20 @@ function JobRow({
               whiteSpace: 'nowrap',
             }}
           >
-            {description}
+            {(() => {
+              const match = description.match(/^(.+?)(\(\d+ failed\))$/);
+              if (match) {
+                return (
+                  <>
+                    {match[1]}
+                    <Text span c="var(--mantine-color-red-6)" inherit>
+                      {match[2]}
+                    </Text>
+                  </>
+                );
+              }
+              return description;
+            })()}
           </Text>
         </Table.Td>
 
@@ -764,6 +780,8 @@ function ProgressDetails({ jobType, progress }: { jobType: JobType; progress: Re
       return <PublishProgressTable progress={progress} />;
     case 'pull':
       return <PullProgressTable progress={progress} />;
+    case 'rehost':
+      return <RehostProgressTable progress={progress} />;
     default:
       return null;
   }
@@ -1038,6 +1056,72 @@ function PublishProgressTable({ progress }: { progress: Record<string, unknown> 
         </Table.Tbody>
       </Table>
       <AffectedFilesTable files={affectedFiles} />
+    </>
+  );
+}
+
+function RehostProgressTable({ progress }: { progress: Record<string, unknown> }) {
+  const dataFolderName = progress.dataFolderName as string | undefined;
+  const totalAssets = progress.totalAssets as number | undefined;
+  const succeeded = progress.succeeded as number | undefined;
+  const failed = progress.failed as number | undefined;
+  const status = progress.status as string | undefined;
+  const failures =
+    (progress.failures as Array<{ assetId: string; filename: string | null; error: string }> | undefined) ?? [];
+
+  if (totalAssets === undefined) return null;
+
+  return (
+    <>
+      <Table striped highlightOnHover withColumnBorders>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Folder</Table.Th>
+            <Table.Th>Total Assets</Table.Th>
+            <Table.Th>Succeeded</Table.Th>
+            <Table.Th>Failed</Table.Th>
+            <Table.Th>Status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          <Table.Tr>
+            <Table.Td>{dataFolderName ?? '-'}</Table.Td>
+            <Table.Td>{totalAssets}</Table.Td>
+            <Table.Td>
+              <Text13Regular c={succeeded ? 'var(--mantine-color-green-6)' : undefined}>{succeeded ?? 0}</Text13Regular>
+            </Table.Td>
+            <Table.Td>
+              <Text13Regular c={failed ? 'var(--mantine-color-red-6)' : undefined}>{failed ?? 0}</Text13Regular>
+            </Table.Td>
+            <Table.Td>{status ?? '-'}</Table.Td>
+          </Table.Tr>
+        </Table.Tbody>
+      </Table>
+      {failures.length > 0 && (
+        <Box mt="xs">
+          <TextTitle3 c="var(--mantine-color-red-6)" mb={4}>
+            Failures ({failures.length})
+          </TextTitle3>
+          <Table striped highlightOnHover withColumnBorders>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Filename</Table.Th>
+                <Table.Th>Error</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {failures.map((f, i) => (
+                <Table.Tr key={i}>
+                  <Table.Td style={{ fontFamily: 'monospace', fontSize: 12 }}>{f.filename ?? '—'}</Table.Td>
+                  <Table.Td>
+                    <Text13Regular c="var(--mantine-color-red-6)">{f.error}</Text13Regular>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Box>
+      )}
     </>
   );
 }

@@ -482,10 +482,11 @@ export const workbookApi = {
     }
   },
 
-  listAssetIndex: async (workbookId: WorkbookId): Promise<unknown[]> => {
+  listAssetIndex: async (workbookId: WorkbookId, dataFolderId?: string): Promise<unknown[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/assets`);
+      const params = dataFolderId ? { dataFolderId } : {};
+      const res = await axios.get<unknown[]>(`/workbook/${workbookId}/publish-v2/index/assets`, { params });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list asset index');

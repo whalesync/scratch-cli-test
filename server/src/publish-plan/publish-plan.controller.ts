@@ -142,8 +142,8 @@ export class PublishPlanController {
   }
 
   @Get('index/assets')
-  assetIndex(@Param('workbookId') workbookId: WorkbookId) {
-    return this.publishAdminService.listAssetIndex(workbookId);
+  assetIndex(@Param('workbookId') workbookId: WorkbookId, @Query('dataFolderId') dataFolderId?: string) {
+    return this.publishAdminService.listAssetIndex(workbookId, dataFolderId);
   }
 
   @Delete(':pipelineId')

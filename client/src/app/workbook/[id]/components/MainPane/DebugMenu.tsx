@@ -12,19 +12,10 @@ import { RouteUrls } from '@/utils/route-urls';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkbookId } from '@spinner/shared-types';
-import {
-  ChevronRightIcon,
-  DatabaseIcon,
-  EllipsisVertical,
-  ImageIcon,
-  LinkIcon,
-  ServerCrashIcon,
-  Trash2Icon,
-} from 'lucide-react';
+import { ChevronRightIcon, DatabaseIcon, EllipsisVertical, LinkIcon, ServerCrashIcon, Trash2Icon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { mutate } from 'swr';
-import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { FileIndexModal } from '../modals/FileIndexModal';
 import { RefIndexModal } from '../modals/RefIndexModal';
 
@@ -36,7 +27,6 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
   const { isDevToolsEnabled } = useDevTools();
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
-  const [assetIndexOpen, setAssetIndexOpen] = useState(false);
   const router = useRouter();
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const { open: openDeleteConfirmDialog, dialogProps: deleteDialogProps } = useDeleteConfirmDialog();
@@ -134,9 +124,6 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
                   </Menu.Item>
                 </Menu.Dropdown>
               </Menu>
-              <Menu.Item data-devtool leftSection={<ImageIcon size={16} />} onClick={() => setAssetIndexOpen(true)}>
-                Asset Index
-              </Menu.Item>
               <Menu.Item
                 data-devtool
                 leftSection={<ServerCrashIcon size={16} />}
@@ -157,8 +144,6 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       <FileIndexModal opened={fileIndexOpen} onClose={() => setFileIndexOpen(false)} workbookId={workbookId} />
 
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
-
-      <AssetIndexModal opened={assetIndexOpen} onClose={() => setAssetIndexOpen(false)} workbookId={workbookId} />
 
       {/* Confirm Dialogs */}
       <ConfirmDialog {...dialogProps} />
