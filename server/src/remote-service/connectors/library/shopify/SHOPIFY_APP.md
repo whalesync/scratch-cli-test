@@ -30,6 +30,12 @@ All three are handled by a single endpoint: `POST /shopify/webhooks`, which disp
 
 ### Setup Steps
 
+The Shopify CLI requires a `package.json` in the working directory. If you don't have one, create it first:
+
+```bash
+npm init -y
+```
+
 1. **Pull the app config** (if you haven't already):
 
    ```bash
@@ -58,3 +64,7 @@ All three are handled by a single endpoint: `POST /shopify/webhooks`, which disp
    This pushes the webhook configuration to the Shopify Partner Dashboard.
 
 > **Note:** The compliance webhook URL fields are no longer available in the Partner Dashboard UI. The `shopify.app.toml` config file is the only way to configure them.
+
+## App Settings
+
+- **Embedded app**: Must be set to **false**. Scratch is a standalone app, not embedded in the Shopify admin iframe.
