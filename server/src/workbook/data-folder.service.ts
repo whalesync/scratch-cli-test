@@ -19,6 +19,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { DecryptedCredentials } from 'src/remote-service/connector-account/types/encrypted-credentials.interface';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -352,6 +353,7 @@ export class DataFolderService {
         eventType: 'create',
         message: `Created linked data folder ${name} in workbook ${workbook.name}`,
         entityId: dataFolderId,
+        organizationId: workbook.organizationId,
         context: {
           workbookId,
           connectorAccountId,
@@ -393,6 +395,7 @@ export class DataFolderService {
         eventType: 'create',
         message: `Created scratch data folder ${name} in workbook ${workbook.name}`,
         entityId: dataFolderId,
+        organizationId: workbook.organizationId,
         context: {
           workbookId,
           parentFolderId: parentFolderId ?? null,
@@ -416,9 +419,11 @@ export class DataFolderService {
     }
 
     // Verify user has access to the workbook
+    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
+
     const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
     if (!workbook) {
-      throw new NotFoundException('Data folder not found');
+      throw new NotFoundException('Workbook not found');
     }
 
     // Delete folder in git from both branches to avoid orphaned files in git status
@@ -449,6 +454,7 @@ export class DataFolderService {
       eventType: 'delete',
       message: `Deleted data folder ${dataFolder.name} from workbook ${workbook.name}`,
       entityId: id,
+      organizationId: workbook.organizationId,
       context: {
         workbookId: dataFolder.workbookId,
         folderName: dataFolder.name,
@@ -473,9 +479,10 @@ export class DataFolderService {
     }
 
     // Verify user has access to the workbook
+    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
     const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
     if (!workbook) {
-      throw new NotFoundException('Data folder not found');
+      throw new NotFoundException('Workbook not found');
     }
 
     // Build the new path
@@ -501,6 +508,7 @@ export class DataFolderService {
       eventType: 'update',
       message: `Renamed data folder from ${dataFolder.name} to ${newName} in workbook ${workbook.name}`,
       entityId: id,
+      organizationId: workbook.organizationId,
       context: {
         workbookId: dataFolder.workbookId,
         oldName: dataFolder.name,
@@ -530,8 +538,10 @@ export class DataFolderService {
     // Verify user has access to the workbook
     const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
     if (!workbook) {
-      throw new NotFoundException('Data folder not found');
+      throw new NotFoundException('Workbook not found');
     }
+
+    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
 
     // Load new parent folder if specified
     let newParentFolder: DataFolderCluster.DataFolder | null = null;
@@ -575,6 +585,7 @@ export class DataFolderService {
       eventType: 'update',
       message: `Moved data folder ${dataFolder.name} in workbook ${workbook.name}`,
       entityId: id,
+      organizationId: workbook.organizationId,
       context: {
         workbookId: dataFolder.workbookId,
         oldParentId: dataFolder.parentId,
@@ -602,6 +613,8 @@ export class DataFolderService {
     if (!workbook) {
       throw new NotFoundException('Data folder not found');
     }
+
+    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
 
     // When setting a filter, verify the connector supports filters
     if (dto.filter && dataFolder.connectorAccountId) {
@@ -690,6 +703,8 @@ export class DataFolderService {
     if (!workbook) {
       throw new NotFoundException('Data folder not found');
     }
+
+    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
 
     if (dataFolder.connectorAccountId && dataFolder.connectorService) {
       const connectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, actor);

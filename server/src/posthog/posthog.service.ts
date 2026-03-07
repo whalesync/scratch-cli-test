@@ -410,6 +410,9 @@ export enum PostHogEventName {
   CLI_UPLOAD_FOLDER = 'cli_upload_folder',
   CLI_GET_JOB_PROGRESS = 'cli_get_job_progress',
   CLI_LIST_SYNCS = 'cli_list_syncs',
+  WORKSPACE_PERMISSION_CREATED = 'workspace_permission_created',
+  WORKSPACE_PERMISSION_UPDATED = 'workspace_permission_updated',
+  WORKSPACE_PERMISSION_REMOVED = 'workspace_permission_removed',
 }
 
 /*******************************************************

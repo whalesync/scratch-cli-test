@@ -23,6 +23,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { Readable } from 'stream';
@@ -103,6 +104,7 @@ export class CliWorkbookController {
   @Get(':id')
   async getWorkbook(@Req() req: RequestWithUser & Request, @Param('id') id: string): Promise<CliWorkbookResponseDto> {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id as WorkbookId);
     const workbook = await this.workbookService.findOne(id as WorkbookId, actor);
 
     if (!workbook) {
@@ -137,6 +139,7 @@ export class CliWorkbookController {
   @Delete(':id')
   async deleteWorkbook(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id as WorkbookId);
 
     // Verify workbook exists and user has access
     const workbook = await this.workbookService.findOne(id as WorkbookId, actor);
@@ -162,6 +165,7 @@ export class CliWorkbookController {
   ): Promise<void> {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
+    checkWorkspacePermissions(actor, workbookId);
 
     // Verify access
     const workbook = await this.workbookService.findOne(workbookId, actor);

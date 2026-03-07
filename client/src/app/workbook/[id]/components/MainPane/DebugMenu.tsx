@@ -12,12 +12,22 @@ import { RouteUrls } from '@/utils/route-urls';
 import { ActionIcon, Menu } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkbookId } from '@spinner/shared-types';
-import { ChevronRightIcon, DatabaseIcon, EllipsisVertical, LinkIcon, ServerCrashIcon, Trash2Icon } from 'lucide-react';
+import {
+  ChevronRightIcon,
+  DatabaseIcon,
+  EllipsisVertical,
+  LinkIcon,
+  ListRestartIcon,
+  ServerCrashIcon,
+  Trash2Icon,
+  UserRoundCogIcon,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { mutate } from 'swr';
 import { FileIndexModal } from '../modals/FileIndexModal';
 import { RefIndexModal } from '../modals/RefIndexModal';
+import { WorkspacePermissionsModal } from '../modals/WorkspacePermissionsModal';
 
 interface DebugMenuProps {
   workbookId: WorkbookId;
@@ -27,6 +37,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
   const { isDevToolsEnabled } = useDevTools();
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const router = useRouter();
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const { open: openDeleteConfirmDialog, dialogProps: deleteDialogProps } = useDeleteConfirmDialog();
@@ -81,7 +92,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
 
   return (
     <>
-      <Menu shadow="md" width={200} position="bottom-end">
+      <Menu shadow="md" width={240} position="bottom-end">
         <Menu.Target>
           <ActionIcon variant="subtle" color="gray">
             <StyledLucideIcon Icon={EllipsisVertical} size="sm" />
@@ -89,7 +100,11 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
         </Menu.Target>
 
         <Menu.Dropdown>
-          <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleResetWorkbook}>
+          <Menu.Item leftSection={<UserRoundCogIcon size={16} />} onClick={() => setPermissionsOpen(true)}>
+            Workspace Permissions
+          </Menu.Item>
+          <Menu.Divider />
+          <Menu.Item data-delete leftSection={<ListRestartIcon size={16} />} onClick={handleResetWorkbook}>
             Reset Workspace
           </Menu.Item>
           <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleDeleteWorkbook}>
@@ -144,6 +159,12 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       <FileIndexModal opened={fileIndexOpen} onClose={() => setFileIndexOpen(false)} workbookId={workbookId} />
 
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
+
+      <WorkspacePermissionsModal
+        opened={permissionsOpen}
+        onClose={() => setPermissionsOpen(false)}
+        workbookId={workbookId}
+      />
 
       {/* Confirm Dialogs */}
       <ConfirmDialog {...dialogProps} />

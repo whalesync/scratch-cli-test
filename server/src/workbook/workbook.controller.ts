@@ -134,7 +134,9 @@ export class WorkbookController {
     @Body() pullDto: PullAssetsDto,
     @Req() req: RequestWithUser,
   ): Promise<PullAssetsResponseDto> {
-    return this.service.pullAssets(id, userToActor(req.user), pullDto.dataFolderId, createRunContext('web'));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id);
+    return this.service.pullAssets(id, actor, pullDto.dataFolderId, createRunContext('web'));
   }
 
   @Delete(':id')
@@ -197,9 +199,9 @@ export class WorkbookController {
 
     let permission;
     if (dto.userId) {
-      permission = await this.workspacePermissionsService.createByUserId(workbookId, dto.userId, role);
+      permission = await this.workspacePermissionsService.createByUserId(workbookId, dto.userId, role, actor);
     } else if (dto.email) {
-      permission = await this.workspacePermissionsService.createByEmail(workbookId, dto.email, role);
+      permission = await this.workspacePermissionsService.createByEmail(workbookId, dto.email, role, actor);
     } else {
       throw new BadRequestException('Either userId or email must be provided');
     }
@@ -216,7 +218,7 @@ export class WorkbookController {
   ): Promise<void> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    await this.workspacePermissionsService.delete(permissionId);
+    await this.workspacePermissionsService.delete(permissionId, actor);
   }
 
   @Patch(':id/permission/:permissionId')
@@ -229,7 +231,7 @@ export class WorkbookController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const role = dto.role as WorkspacePermissionRole;
-    const permission = await this.workspacePermissionsService.update(permissionId, role);
+    const permission = await this.workspacePermissionsService.update(permissionId, role, actor);
     return new WorkspacePermissionEntity(permission);
   }
 }

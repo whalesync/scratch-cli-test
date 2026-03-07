@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { NotFoundException } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
@@ -31,6 +32,7 @@ function makeReqWithUser(): RequestWithUser & Request {
       stripeCustomerId: null,
       refCode: null,
       firstTimeUser: false,
+      workspacePermissions: [{ id: 'wsp_1', workbookId: WORKBOOK_ID, role: 'editor' }],
     },
     protocol: 'https',
     get: (header: string) => (header === 'host' ? 'scratch.test' : undefined),
@@ -49,7 +51,8 @@ function makeWorkbook(overrides?: Partial<{ version: number; dataFolders: { id: 
     snapshotTables: [{ id: 'st1' }],
     version: overrides?.version ?? 2,
     dataFolders: overrides?.dataFolders ?? [{ id: 'df1', name: 'Posts' }],
-  };
+    workspacePermissions: [{ id: 'wsp_1', workbookId: WORKBOOK_ID, role: 'editor' }],
+  } as any;
 }
 
 describe('CliWorkbookController', () => {
@@ -178,7 +181,6 @@ describe('CliWorkbookController', () => {
       expect(mockJson).toHaveBeenCalledWith(
         expect.objectContaining({
           statusCode: 404,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           message: expect.stringContaining(CONNECTOR_ID),
         }),
       );

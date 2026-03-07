@@ -31,6 +31,7 @@ function makeReqWithUser(overrides?: Partial<{ organizationId: string | null }>)
       stripeCustomerId: null,
       refCode: null,
       firstTimeUser: false,
+      workspacePermissions: [{ id: 'wsp_1', workbookId: WORKBOOK_ID, role: 'editor' }],
     },
   } as unknown as RequestWithUser;
 }

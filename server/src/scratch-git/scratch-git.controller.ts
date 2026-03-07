@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type {
   DirtyFileCountResponse,
   GitGcResponse,
@@ -7,7 +7,10 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
+import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
+import { userToActor } from 'src/users/types';
 import { MigrationService } from './migration.service';
 import { ScratchGitService } from './scratch-git.service';
 
@@ -43,8 +46,11 @@ export class ScratchGitController {
     @Param('id') workbookId: WorkbookId,
     @Query('branch') branch = 'main',
     @Query('folder') folder = '',
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<any[]> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.listRepoFiles(repoId, branch, folder);
   }
@@ -54,8 +60,11 @@ export class ScratchGitController {
     @Param('id') workbookId: WorkbookId,
     @Query('branch') branch = 'main',
     @Query('path') path: string,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<{ content: string } | null> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.getRepoFile(repoId, branch, path);
   }
@@ -63,8 +72,11 @@ export class ScratchGitController {
   @Get(':id/git-status')
   async getRepoStatus(
     @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<unknown> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
     if (repoIds.length === 1) {
       return this.scratchGitService.getRepoStatus(repoIds[0]);
@@ -77,8 +89,11 @@ export class ScratchGitController {
   @Get(':id/git-has-dirty')
   async hasDirtyFiles(
     @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<HasDirtyFilesResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
     if (repoIds.length === 1) {
       return this.scratchGitService.hasDirtyFiles(repoIds[0]);
@@ -91,8 +106,11 @@ export class ScratchGitController {
   @Get(':id/git-status-count')
   async getRepoStatusCount(
     @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<DirtyFileCountResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
     if (repoIds.length === 1) {
       return this.scratchGitService.getRepoStatusCount(repoIds[0]);
@@ -106,8 +124,11 @@ export class ScratchGitController {
   async getFileDiff(
     @Param('id') workbookId: WorkbookId,
     @Query('path') path: string,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<unknown> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.getFileDiff(repoId, path);
   }
@@ -115,8 +136,11 @@ export class ScratchGitController {
   @Get(':id/graph')
   async getGraph(
     @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<unknown> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.getGraph(repoId);
   }
@@ -124,8 +148,11 @@ export class ScratchGitController {
   @Post(':id/rebase')
   async rebaseDirty(
     @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.rebaseDirty(repoId);
   }
@@ -133,8 +160,11 @@ export class ScratchGitController {
   @Get(':id/object-counts')
   async getObjectCounts(
     @Param('id') workbookId: WorkbookId,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<GitObjectCountsResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.getObjectCounts(repoId);
   }
@@ -142,32 +172,56 @@ export class ScratchGitController {
   @Post(':id/gc')
   async runGitGc(
     @Param('id') workbookId: WorkbookId,
-    @Body('aggressive') aggressive?: boolean,
-    @Query('connectorAccountId') connectorAccountId?: string,
+    @Body('aggressive') aggressive: boolean | undefined,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
   ): Promise<GitGcResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.runGitGc(repoId, aggressive);
   }
 
   @Post(':id/checkpoint')
-  async createCheckpoint(@Param('id') workbookId: WorkbookId, @Body('name') name: string): Promise<void> {
+  async createCheckpoint(
+    @Param('id') workbookId: WorkbookId,
+    @Body('name') name: string,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.scratchGitService.createCheckpoint(workbookId, name);
   }
 
   @Get(':id/checkpoints')
   async listCheckpoints(
     @Param('id') workbookId: WorkbookId,
+    @Req() req: RequestWithUser,
   ): Promise<{ name: string; timestamp: number; message: string }[]> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.scratchGitService.listCheckpoints(workbookId);
   }
 
   @Post(':id/checkpoint/revert')
-  async revertToCheckpoint(@Param('id') workbookId: WorkbookId, @Body('name') name: string): Promise<void> {
+  async revertToCheckpoint(
+    @Param('id') workbookId: WorkbookId,
+    @Body('name') name: string,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.scratchGitService.revertToCheckpoint(workbookId, name);
   }
 
   @Delete(':id/checkpoint/:name')
-  async deleteCheckpoint(@Param('id') workbookId: WorkbookId, @Param('name') name: string): Promise<void> {
+  async deleteCheckpoint(
+    @Param('id') workbookId: WorkbookId,
+    @Param('name') name: string,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.scratchGitService.deleteCheckpoint(workbookId, name);
   }
 
@@ -175,7 +229,10 @@ export class ScratchGitController {
   async deleteAllFilesInDataFolder(
     @Param('id') workbookId: WorkbookId,
     @Query('path') folderPath: string,
+    @Req() req: RequestWithUser,
   ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const dataFolder = await this.db.client.dataFolder.findFirst({
       where: { workbookId, path: folderPath },
       select: { connectorAccountId: true },
@@ -185,7 +242,9 @@ export class ScratchGitController {
   }
 
   @Post(':id/migrate-to-v2')
-  async migrateToV2(@Param('id') workbookId: WorkbookId): Promise<{ success: boolean }> {
+  async migrateToV2(@Param('id') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<{ success: boolean }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     await this.migrationService.migrateWorkbookToV2(workbookId);
     return { success: true };
   }

@@ -5,6 +5,8 @@ import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
+import { checkWorkspacePermissions } from '../users/permissions';
+import { userToActor } from '../users/types';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { PublishPlanBuildDto, PublishPlanRunDto } from './dto/publish-v2.dto';
 import { PublishPlanBuildService } from './publish-plan-build.service';
@@ -30,6 +32,9 @@ export class PublishPlanController {
     @Body() body: PublishPlanBuildDto,
     @Req() req: RequestWithUser,
   ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+
     console.log(
       `[DEBUG Controller] /plan-job called. body.filePath: ${body.filePath}, body.folderPath: ${body.folderPath}`,
     );
@@ -82,6 +87,9 @@ export class PublishPlanController {
     @Body() body: PublishPlanRunDto,
     @Req() req: RequestWithUser,
   ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+
     let initialProgress: Progress | undefined;
     const existingPlan = await this.db.client.publishPlan.findUnique({ where: { id: body.pipelineId } });
     if (existingPlan?.activeJobId) {
@@ -106,12 +114,20 @@ export class PublishPlanController {
   // ── Admin / Query ────────────────────────────────────────────────
 
   @Get()
-  list(@Param('workbookId') workbookId: WorkbookId, @Query('connectorAccountId') connectorAccountId?: string) {
+  list(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
+  ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.publishAdminService.listPublishPlans(workbookId, connectorAccountId);
   }
 
   @Get('by-job/:jobId')
-  getByJobId(@Param('workbookId') workbookId: WorkbookId, @Param('jobId') jobId: string) {
+  getByJobId(@Param('workbookId') workbookId: WorkbookId, @Param('jobId') jobId: string, @Req() req: RequestWithUser) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.publishAdminService.getPublishPlanByJobId(workbookId, jobId);
   }
 
@@ -132,17 +148,27 @@ export class PublishPlanController {
   }
 
   @Get('index/files')
-  fileIndex(@Param('workbookId') workbookId: WorkbookId) {
+  fileIndex(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.publishAdminService.listFileIndex(workbookId);
   }
 
   @Get('index/refs')
-  refIndex(@Param('workbookId') workbookId: WorkbookId) {
+  refIndex(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.publishAdminService.listRefIndex(workbookId);
   }
 
   @Get('index/assets')
-  assetIndex(@Param('workbookId') workbookId: WorkbookId, @Query('dataFolderId') dataFolderId?: string) {
+  assetIndex(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('dataFolderId') dataFolderId: string | undefined,
+    @Req() req: RequestWithUser,
+  ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     return this.publishAdminService.listAssetIndex(workbookId, dataFolderId);
   }
 

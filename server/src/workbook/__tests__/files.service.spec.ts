@@ -3,10 +3,14 @@ import { NotFoundException } from '@nestjs/common';
 import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
+import { SchemaHelperService } from 'src/publish-plan/schema-helper.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { FilesService } from '../files.service';
 import { WorkbookEventService } from '../workbook-event.service';
+import { WorkbookService } from '../workbook.service';
 
 const WORKBOOK_ID = 'wkb_test' as WorkbookId;
 const FOLDER_ID = 'df_test' as DataFolderId;
@@ -23,17 +27,14 @@ describe('FilesService', () => {
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let posthogService: jest.Mocked<PostHogService>;
   let workbookEventService: jest.Mocked<WorkbookEventService>;
+  let workbookService: jest.Mocked<WorkbookService>;
+  let schemaHelperService: jest.Mocked<SchemaHelperService>;
+  let refCleanerService: jest.Mocked<RefCleanerService>;
+  let fileIndexService: jest.Mocked<FileIndexService>;
 
   beforeEach(() => {
     dbService = {
       client: {
-        workbook: {
-          findFirst: jest.fn().mockResolvedValue({
-            id: WORKBOOK_ID,
-            organizationId: 'org_test',
-            cluster: { id: 'cluster_test' },
-          }),
-        },
         dataFolder: {
           findUnique: jest.fn().mockResolvedValue({
             id: FOLDER_ID,
@@ -53,7 +54,28 @@ describe('FilesService', () => {
     posthogService = {} as unknown as jest.Mocked<PostHogService>;
     workbookEventService = {} as unknown as jest.Mocked<WorkbookEventService>;
 
-    service = new FilesService(dbService, scratchGitService, posthogService, workbookEventService);
+    workbookService = {
+      findOneOrThrow: jest.fn().mockResolvedValue({
+        id: WORKBOOK_ID,
+        organizationId: 'org_test',
+        cluster: { id: 'cluster_test' },
+      }),
+    } as unknown as jest.Mocked<WorkbookService>;
+
+    schemaHelperService = {} as unknown as jest.Mocked<SchemaHelperService>;
+    refCleanerService = {} as unknown as jest.Mocked<RefCleanerService>;
+    fileIndexService = {} as unknown as jest.Mocked<FileIndexService>;
+
+    service = new FilesService(
+      dbService,
+      scratchGitService,
+      posthogService,
+      workbookEventService,
+      workbookService,
+      schemaHelperService,
+      refCleanerService,
+      fileIndexService,
+    );
   });
 
   describe('listByFolderId', () => {

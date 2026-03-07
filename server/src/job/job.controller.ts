@@ -10,9 +10,10 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { RunId } from '@spinner/shared-types';
+import type { RunId, WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
+import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { dbJobToJobEntity, JobEntity } from './entities/job.entity';
 import { JobService } from './job.service';
@@ -30,6 +31,10 @@ export class JobController {
     @Query('offset') offset?: string,
     @Query('workbookId') workbookId?: string,
   ): Promise<JobEntity[]> {
+    const actor = userToActor(req.user);
+    if (workbookId) {
+      checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    }
     const userId = req.user.id;
     const limitNum = limit ? parseInt(limit, 10) : 50;
     const offsetNum = offset ? parseInt(offset, 10) : 0;
@@ -39,7 +44,12 @@ export class JobController {
   }
 
   @Get('workbook/:workbookId/active')
-  async getActiveJobsByWorkbook(@Param('workbookId') workbookId: string): Promise<JobEntity[]> {
+  async getActiveJobsByWorkbook(
+    @Param('workbookId') workbookId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<JobEntity[]> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
     return await this.jobService.getActiveJobsByWorkbookId(workbookId);
   }
 

@@ -22,6 +22,7 @@ import type {
 import { ScheduleAction } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { ScheduleService } from './schedule.service';
 
@@ -37,12 +38,16 @@ export class ScheduleController {
     @Body() dto: CreateScheduleDto,
     @Req() req: RequestWithUser,
   ): Promise<Schedule> {
-    return this.scheduleService.create(workbookId, dto as ValidatedCreateScheduleDto, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.scheduleService.create(workbookId, dto as ValidatedCreateScheduleDto, actor);
   }
 
   @Get()
   async list(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<Schedule[]> {
-    return this.scheduleService.findAllForWorkbook(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.scheduleService.findAllForWorkbook(workbookId, actor);
   }
 
   @Get('by-entity')
@@ -52,7 +57,9 @@ export class ScheduleController {
     @Query('entityId') entityId: string,
     @Req() req: RequestWithUser,
   ): Promise<Schedule | null> {
-    return this.scheduleService.findByEntity(workbookId, action, entityId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.scheduleService.findByEntity(workbookId, action, entityId, actor);
   }
 
   @Get(':scheduleId')
@@ -61,7 +68,9 @@ export class ScheduleController {
     @Param('scheduleId') scheduleId: string,
     @Req() req: RequestWithUser,
   ): Promise<Schedule> {
-    return this.scheduleService.findOne(workbookId, scheduleId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.scheduleService.findOne(workbookId, scheduleId, actor);
   }
 
   @Patch(':scheduleId')
@@ -71,7 +80,9 @@ export class ScheduleController {
     @Body() dto: UpdateScheduleDto,
     @Req() req: RequestWithUser,
   ): Promise<Schedule> {
-    return this.scheduleService.update(workbookId, scheduleId, dto, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.scheduleService.update(workbookId, scheduleId, dto, actor);
   }
 
   @Delete(':scheduleId')
@@ -80,6 +91,8 @@ export class ScheduleController {
     @Param('scheduleId') scheduleId: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    return this.scheduleService.delete(workbookId, scheduleId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.scheduleService.delete(workbookId, scheduleId, actor);
   }
 }

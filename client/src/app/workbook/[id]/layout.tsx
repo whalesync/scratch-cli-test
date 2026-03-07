@@ -4,6 +4,7 @@ import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { ErrorInfo, Info } from '@/app/components/InfoPanel';
 import MainContent from '@/app/components/layouts/MainContent';
 import { useWorkbook } from '@/hooks/use-workbook';
+import { usersApi } from '@/lib/api/users';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { useWorkbookWebSocketStore } from '@/stores/workbook-websocket-store';
 import { RouteUrls } from '@/utils/route-urls';
@@ -56,9 +57,12 @@ export default function NewWorkbookLayout({ children }: LayoutProps) {
             description="We were unable to find the workspace you are looking for."
             action={
               <Info.ActionButton
-                label="Return home"
+                label="Select a workspace"
                 Icon={ArrowLeftIcon}
-                onClick={() => router.push(RouteUrls.homePageUrl)}
+                onClick={() => {
+                  usersApi.updateLastWorkbook(null).catch(console.error);
+                  router.push(RouteUrls.homePageUrl);
+                }}
               />
             }
           />

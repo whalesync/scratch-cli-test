@@ -15,13 +15,14 @@ export class AuditLogService {
     message: string;
     entityId: AnyId;
     context?: Record<string, any>;
+    organizationId?: string;
   }): Promise<AuditLogEvent> {
     // write the event to the database
     return this.dbService.client.auditLogEvent.create({
       data: {
         id: createAuditLogEventId(),
         userId: args.actor.userId,
-        organizationId: args.actor.organizationId,
+        organizationId: args.organizationId ?? args.actor.organizationId,
         eventType: args.eventType,
         message: args.message,
         entityId: args.entityId,

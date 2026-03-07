@@ -23,6 +23,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -69,6 +70,7 @@ export class CliLinkedController {
   @Get('workbooks/:workbookId/linked')
   async listLinkedTables(@Req() req: RequestWithUser, @Param('workbookId') workbookId: string) {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
     const result = await this.dataFolderService.listGroupedByConnectorBases(workbookId as WorkbookId, actor);
     this.posthogService.trackCliListDataFolders(actor, workbookId, { scope: 'list' });
     return result;
@@ -84,6 +86,7 @@ export class CliLinkedController {
     @Body() dto: CreateCliLinkedTableDto,
   ) {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
     const validatedDto = dto as ValidatedCreateCliLinkedTableDto;
 
     // Verify the user has access to the workbook
@@ -123,6 +126,7 @@ export class CliLinkedController {
     @Param('folderId') folderId: string,
   ): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
 
     // Verify workbook access
     const workbook = await this.workbookService.findOne(workbookId as WorkbookId, actor);
@@ -145,6 +149,7 @@ export class CliLinkedController {
     @Param('folderId') folderId: string,
   ) {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
 
     // Verify workbook access
     const workbook = await this.workbookService.findOne(workbookId as WorkbookId, actor);
@@ -199,6 +204,7 @@ export class CliLinkedController {
     @Param('folderId') folderId: string,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
 
     return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, [folderId], createRunContext('cli'));
   }
@@ -215,6 +221,7 @@ export class CliLinkedController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const wbId = workbookId as WorkbookId;
+    checkWorkspacePermissions(actor, wbId);
     const dfId = folderId as DataFolderId;
 
     // Verify the user has access to the workbook
@@ -286,6 +293,7 @@ export class CliLinkedController {
 
     const actor = userToActor(req.user);
     const wbId = workbookId as WorkbookId;
+    checkWorkspacePermissions(actor, wbId);
     const dfId = folderId as DataFolderId;
 
     // Verify the user has access to the workbook

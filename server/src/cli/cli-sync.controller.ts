@@ -19,6 +19,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SyncService } from 'src/sync/sync.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -144,7 +145,9 @@ export class CliSyncController {
   }
 
   private async verifyWorkbookAccess(workbookId: WorkbookId, req: RequestWithUser) {
-    const workbook = await this.workbookService.findOne(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const workbook = await this.workbookService.findOne(workbookId, actor);
     if (!workbook) {
       throw new ForbiddenException('You do not have access to this workbook');
     }

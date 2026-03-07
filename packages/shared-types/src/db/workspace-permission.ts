@@ -7,4 +7,7 @@ export interface WorkspacePermission {
   userId: string;
   userName: string;
   userEmail: string;
+  organizationId: string | null;
+  organizationName: string | null;
+  isAdmin: boolean;
 }

@@ -6,7 +6,6 @@ import {
   ValidatedCreateFileDto,
   ValidatedUpdateFileDto,
 } from '@spinner/shared-types';
-import { WorkbookCluster } from 'src/db/cluster-types';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { DbService } from '../db/db.service';
 import { FileIndexService } from '../publish-plan/file-index.service';
@@ -16,6 +15,7 @@ import { DIRTY_BRANCH, MAIN_BRANCH, RepoFileRef, ScratchGitService } from '../sc
 import { Actor } from '../users/types';
 import { extractFilenameFromPath } from './util';
 import { WorkbookEventService } from './workbook-event.service';
+import { WorkbookService } from './workbook.service';
 
 @Injectable()
 export class FilesService {
@@ -24,28 +24,11 @@ export class FilesService {
     private readonly scratchGitService: ScratchGitService,
     private readonly posthogService: PostHogService,
     private readonly workbookEventService: WorkbookEventService,
+    private readonly workbookService: WorkbookService,
     private readonly schemaHelperService: SchemaHelperService,
     private readonly refCleanerService: RefCleanerService,
     private readonly fileIndexService: FileIndexService,
   ) {}
-
-  /**
-   * Verify that the actor has access to the workbook and return it (with cluster include for tracking).
-   */
-  public async verifyWorkbookAccess(workbookId: WorkbookId, actor: Actor): Promise<WorkbookCluster.Workbook> {
-    const workbook = await this.db.client.workbook.findFirst({
-      where: {
-        id: workbookId,
-        organizationId: actor.organizationId,
-      },
-      include: WorkbookCluster._validator.include,
-    });
-
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-    return workbook;
-  }
 
   /**
    * Create a new file
@@ -55,7 +38,10 @@ export class FilesService {
     createFileDto: ValidatedCreateFileDto,
     actor: Actor,
   ): Promise<FileRefEntity> {
-    const workbook = await this.verifyWorkbookAccess(workbookId, actor);
+    const workbook = await this.workbookService.findOneOrThrow(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
 
     const content = createFileDto.content ?? '';
 
@@ -100,7 +86,7 @@ export class FilesService {
   }
 
   async listByFolderId(workbookId: WorkbookId, folderId: DataFolderId, actor: Actor): Promise<ListFilesResponseDto> {
-    await this.verifyWorkbookAccess(workbookId, actor);
+    await this.workbookService.findOneOrThrow(workbookId, actor);
 
     const folder = await this.db.client.dataFolder.findUnique({
       where: { id: folderId },
@@ -148,7 +134,7 @@ export class FilesService {
    * Used by the file agent's `cat` command.
    */
   async getFileByPathGit(workbookId: WorkbookId, path: string, actor: Actor): Promise<FileDetailsResponseDto> {
-    await this.verifyWorkbookAccess(workbookId, actor);
+    await this.workbookService.findOneOrThrow(workbookId, actor);
 
     // Resolve the correct repo ID for this file's folder
     const folderPath = path.substring(0, path.lastIndexOf('/')) || '.';
@@ -192,7 +178,7 @@ export class FilesService {
    * Used by the file agent's `rm` command.
    */
   async deleteFileByPathGit(workbookId: WorkbookId, path: string, actor: Actor): Promise<void> {
-    const workbook = await this.verifyWorkbookAccess(workbookId, actor);
+    const workbook = await this.workbookService.findOneOrThrow(workbookId, actor);
 
     const existingFile = await this.getFileByPathGit(workbookId, path, actor);
 
@@ -225,7 +211,7 @@ export class FilesService {
     updateFileDto: ValidatedUpdateFileDto,
     actor: Actor,
   ): Promise<void> {
-    const workbook = await this.verifyWorkbookAccess(workbookId, actor);
+    const workbook = await this.workbookService.findOneOrThrow(workbookId, actor);
 
     const folderPathRaw = path.substring(0, path.lastIndexOf('/'));
     const folderPath = folderPathRaw ? (folderPathRaw.startsWith('/') ? folderPathRaw : `/${folderPathRaw}`) : '/';
@@ -392,7 +378,7 @@ export class FilesService {
   }
 
   async renameFileGit(workbookId: WorkbookId, oldPath: string, newPath: string, actor: Actor): Promise<void> {
-    await this.verifyWorkbookAccess(workbookId, actor);
+    await this.workbookService.findOneOrThrow(workbookId, actor);
 
     const existingFile = await this.getFileByPathGit(workbookId, oldPath, actor);
 

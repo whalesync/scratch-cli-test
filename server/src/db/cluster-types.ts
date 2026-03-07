@@ -33,7 +33,7 @@ export namespace WorkspacePermissionCluster {
   export type User = WorkspacePermission['user'];
 
   export const _validator = Prisma.validator<Prisma.WorkspacePermissionDefaultArgs>()({
-    include: { user: true },
+    include: { user: { include: { organization: true } } },
   });
 }
 

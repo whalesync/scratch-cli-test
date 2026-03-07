@@ -18,6 +18,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { TableList } from 'src/remote-service/connector-account/entities/table-list.entity';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { CreateCliConnectionDto, type ValidatedCreateCliConnectionDto } from './dtos/cli-connection.dto';
@@ -121,7 +122,9 @@ export class CliConnectionController {
   }
 
   private async verifyWorkbookAccess(workbookId: WorkbookId, req: RequestWithUser) {
-    const workbook = await this.workbookService.findOne(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const workbook = await this.workbookService.findOne(workbookId, actor);
     if (!workbook) {
       throw new ForbiddenException('You do not have access to this workbook');
     }

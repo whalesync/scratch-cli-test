@@ -34,6 +34,7 @@ import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { PostHogService } from '../posthog/posthog.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { SchemaField } from '../utils/schema-helpers';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
@@ -57,6 +58,7 @@ export class DataFolderController {
   async create(@Body() createDataFolderDto: CreateDataFolderDto, @Req() req: RequestWithUser): Promise<DataFolder> {
     const dto = createDataFolderDto as ValidatedCreateDataFolderDto;
     const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, dto.workbookId);
 
     // Verify the user has access to the workbook
     const workbook = await this.workbookService.findOne(dto.workbookId, actor);
@@ -113,11 +115,13 @@ export class DataFolderController {
     @Body() body: { name: string; useTemplate?: boolean; workbookId: string },
     @Req() req: RequestWithUser,
   ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, body.workbookId as WorkbookId);
     return await this.dataFolderService.createFile(
       body.workbookId as WorkbookId,
       id,
       { name: body.name, useTemplate: body.useTemplate },
-      userToActor(req.user),
+      actor,
     );
   }
 
@@ -129,6 +133,7 @@ export class DataFolderController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const workbookId = body.workbookId as WorkbookId;
+    checkWorkspacePermissions(actor, workbookId);
 
     // Verify the user has access to the workbook
     const workbook = await this.workbookService.findOne(workbookId, actor);
@@ -180,6 +185,7 @@ export class DataFolderController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const workbookId = body.workbookId as WorkbookId;
+    checkWorkspacePermissions(actor, workbookId);
     const filePaths = body.filePaths;
 
     if (!filePaths || filePaths.length === 0) {

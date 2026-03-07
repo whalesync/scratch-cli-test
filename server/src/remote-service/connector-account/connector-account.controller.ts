@@ -22,6 +22,7 @@ import {
 } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../../auth/types';
+import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { ConnectorAccountService } from './connector-account.service';
 import { ConnectorAccount } from './entities/connector-account.entity';
@@ -41,13 +42,17 @@ export class ConnectorAccountController {
     @Body() createDto: CreateConnectorAccountDto,
     @Req() req: RequestWithUser,
   ): Promise<ConnectorAccount> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
     const dto = createDto as ValidatedCreateConnectorAccountDto;
-    return this.service.create(workbookId as WorkbookId, dto, userToActor(req.user));
+    return this.service.create(workbookId as WorkbookId, dto, actor);
   }
 
   @Get()
   async findAll(@Param('workbookId') workbookId: string, @Req() req: RequestWithUser): Promise<ConnectorAccount[]> {
-    return this.service.findAll(workbookId as WorkbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.findAll(workbookId as WorkbookId, actor);
   }
 
   @Get(':id')
@@ -56,7 +61,9 @@ export class ConnectorAccountController {
     @Param('id') id: string,
     @Req() req: RequestWithUser,
   ): Promise<ConnectorAccount> {
-    return this.service.findOne(workbookId as WorkbookId, id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.findOne(workbookId as WorkbookId, id, actor);
   }
 
   @Get(':connectorAccountId/tables')
@@ -65,16 +72,21 @@ export class ConnectorAccountController {
     @Param('connectorAccountId') connectorAccountId: string,
     @Req() req: RequestWithUser,
   ): Promise<TableList> {
-    return this.service.listTables(connectorAccountId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.listTables(connectorAccountId, actor);
   }
 
   @Get(':connectorAccountId/tables/search')
   async searchTables(
+    @Param('workbookId') workbookId: string,
     @Param('connectorAccountId') connectorAccountId: string,
     @Query('searchTerm') searchTerm: string,
     @Req() req: RequestWithUser,
   ): Promise<TableSearchResult> {
-    return this.service.searchTables(connectorAccountId, searchTerm, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.searchTables(connectorAccountId, searchTerm, actor);
   }
 
   @Get(':connectorAccountId/tables/schema')
@@ -84,16 +96,13 @@ export class ConnectorAccountController {
     @Query('tableRemoteId') tableRemoteId: string,
     @Req() req: RequestWithUser,
   ): Promise<TableSchemaPreview> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
     if (!tableRemoteId?.trim()) {
       throw new BadRequestException('tableRemoteId is required');
     }
     const remoteIdParts = tableRemoteId.split(',');
-    return this.service.getTableSchema(
-      workbookId as WorkbookId,
-      connectorAccountId,
-      remoteIdParts,
-      userToActor(req.user),
-    );
+    return this.service.getTableSchema(workbookId as WorkbookId, connectorAccountId, remoteIdParts, actor);
   }
 
   @Post(':id/test')
@@ -102,7 +111,9 @@ export class ConnectorAccountController {
     @Param('id') id: string,
     @Req() req: RequestWithUser,
   ): Promise<TestConnectionResponse> {
-    return this.service.testConnection(workbookId as WorkbookId, id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.testConnection(workbookId as WorkbookId, id, actor);
   }
 
   @Patch(':id')
@@ -112,8 +123,10 @@ export class ConnectorAccountController {
     @Body() updateDto: UpdateConnectorAccountDto,
     @Req() req: RequestWithUser,
   ): Promise<ConnectorAccount> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
     const dto = updateDto;
-    return this.service.update(workbookId as WorkbookId, id, dto, userToActor(req.user));
+    return this.service.update(workbookId as WorkbookId, id, dto, actor);
   }
 
   @Delete(':id')
@@ -123,7 +136,9 @@ export class ConnectorAccountController {
     @Param('id') id: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    return this.service.remove(workbookId as WorkbookId, id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.remove(workbookId as WorkbookId, id, actor);
   }
 
   @Post(':id/reset')
@@ -133,6 +148,8 @@ export class ConnectorAccountController {
     @Param('id') id: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    return this.service.resetConnection(workbookId as WorkbookId, id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.resetConnection(workbookId as WorkbookId, id, actor);
   }
 }

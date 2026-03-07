@@ -32,6 +32,7 @@ import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { FilesService } from './files.service';
 
@@ -55,7 +56,9 @@ export class FilesController {
     @Query('folderId') folderId: DataFolderId,
     @Req() req: RequestWithUser,
   ): Promise<ListFilesResponseDto> {
-    return await this.filesService.listByFolderId(workbookId, folderId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.filesService.listByFolderId(workbookId, folderId, actor);
   }
 
   /**
@@ -69,7 +72,8 @@ export class FilesController {
     @Query('branch') branch: string = DIRTY_BRANCH,
     @Req() req: RequestWithUser,
   ): Promise<{ references: Record<string, Record<string, string>> }> {
-    await this.filesService.verifyWorkbookAccess(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
 
     try {
       const references = await this.filesService.resolveReferences(workbookId, path, branch);
@@ -97,7 +101,9 @@ export class FilesController {
     @Query('path') path: string,
     @Req() req: RequestWithUser,
   ): Promise<FileDetailsResponseDto> {
-    return await this.filesService.getFileByPathGit(workbookId, path, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.filesService.getFileByPathGit(workbookId, path, actor);
   }
 
   /**
@@ -112,7 +118,9 @@ export class FilesController {
     @Body() updateFileDto: UpdateFileDto,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    await this.filesService.updateFileByPathGit(workbookId, path, updateFileDto, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    await this.filesService.updateFileByPathGit(workbookId, path, updateFileDto, actor);
   }
 
   /**
@@ -138,7 +146,8 @@ export class FilesController {
     @Query('path') path: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    await this.filesService.verifyWorkbookAccess(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
 
     try {
       const repoId = await this.resolveRepoIdForPath(workbookId, path);
@@ -165,8 +174,10 @@ export class FilesController {
     @Body() createFileDto: CreateFileDto,
     @Req() req: RequestWithUser,
   ): Promise<FileRefEntity> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const dto = createFileDto as ValidatedCreateFileDto;
-    return this.filesService.createFile(workbookId, dto, userToActor(req.user));
+    return this.filesService.createFile(workbookId, dto, actor);
   }
 
   /**
@@ -175,7 +186,13 @@ export class FilesController {
    */
   @Post('publish')
   @HttpCode(204)
-  async publishFile(@Param('workbookId') workbookId: WorkbookId, @Body() body: { path: string }): Promise<void> {
+  async publishFile(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Body() body: { path: string },
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const { path } = body;
 
     try {
@@ -210,7 +227,8 @@ export class FilesController {
     @Req() req: RequestWithUser,
     @Res() res: Response,
   ): Promise<void> {
-    await this.filesService.verifyWorkbookAccess(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
 
     const folder = await this.db.client.dataFolder.findUnique({ where: { id: folderId } });
     if (!folder || !folder.path) {

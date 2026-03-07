@@ -75,6 +75,7 @@ export class WorkbookService {
       eventType: 'create',
       message: `Created workbook ${newWorkbook.name}`,
       entityId: newWorkbook.id as WorkbookId,
+      organizationId: newWorkbook.organizationId,
       context: {},
     });
 
@@ -139,6 +140,7 @@ export class WorkbookService {
       eventType: 'delete',
       message: `Deleted workbook ${workbook.name}`,
       entityId: workbook.id as WorkbookId,
+      organizationId: workbook.organizationId,
       context: {},
     });
   }
@@ -183,6 +185,7 @@ export class WorkbookService {
       eventType: 'delete',
       message: `Discarded unpublished changes in workbook${path ? ` for ${path}` : ''}`,
       entityId: workbookId,
+      organizationId: workbook.organizationId,
     });
   }
 
@@ -247,6 +250,7 @@ export class WorkbookService {
       eventType: 'update', // Using update as "reset" is a form of update to base state
       message: `Reset workbook ${workbook.name}`,
       entityId: workbook.id as WorkbookId,
+      organizationId: workbook.organizationId,
       context: { action: 'reset_workbook' },
     });
   }
@@ -301,7 +305,7 @@ export class WorkbookService {
     });
   }
 
-  private async findOneOrThrow(id: WorkbookId, actor: Actor): Promise<WorkbookCluster.Workbook> {
+  async findOneOrThrow(id: WorkbookId, actor: Actor): Promise<WorkbookCluster.Workbook> {
     const workbook = await this.findOne(id, actor);
     if (!workbook) {
       throw new NotFoundException('Workbook not found');
@@ -330,6 +334,7 @@ export class WorkbookService {
       eventType: 'update',
       message: `Updated snapshot ${updatedWorkbook.name}`,
       entityId: updatedWorkbook.id as WorkbookId,
+      organizationId: updatedWorkbook.organizationId,
       context: {
         changes: Object.keys(updateWorkbookDto),
       },

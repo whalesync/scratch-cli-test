@@ -20,7 +20,7 @@ export class ScheduleService {
 
   async create(workbookId: WorkbookId, dto: ValidatedCreateScheduleDto, actor: Actor): Promise<ScheduleEntity> {
     const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId, organizationId: actor.organizationId },
+      where: { id: workbookId },
     });
     if (!workbook) {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
@@ -35,7 +35,7 @@ export class ScheduleService {
       data: {
         id: createScheduleId(),
         workbookId,
-        organizationId: actor.organizationId,
+        organizationId: workbook.organizationId,
         userId: actor.userId,
         name: dto.name,
         action: dto.action,

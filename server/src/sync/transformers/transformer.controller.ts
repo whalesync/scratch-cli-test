@@ -14,6 +14,7 @@ import get from 'lodash/get';
 
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { FilesService } from '../../workbook/files.service';
 import { getTransformer } from './transformer-registry';
@@ -29,12 +30,11 @@ export class TransformerController {
     @Req() req: RequestWithUser,
   ): Promise<TestTransformerResponse> {
     try {
+      const actor = userToActor(req.user);
+      checkWorkspacePermissions(actor, dto.workbookId as WorkbookId);
+
       // 1. Fetch file content
-      const fileDetails = await this.filesService.getFileByPathGit(
-        dto.workbookId as WorkbookId,
-        dto.fileId,
-        userToActor(req.user),
-      );
+      const fileDetails = await this.filesService.getFileByPathGit(dto.workbookId as WorkbookId, dto.fileId, actor);
       if (!fileDetails.file.content) {
         throw new NotFoundException('File content not found');
       }

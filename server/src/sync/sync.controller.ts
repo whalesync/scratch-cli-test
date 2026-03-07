@@ -28,6 +28,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
@@ -52,7 +53,9 @@ export class SyncController {
     @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    return await this.syncService.createSync(workbookId, body, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.createSync(workbookId, body, actor);
   }
 
   @Patch(':syncId')
@@ -62,11 +65,15 @@ export class SyncController {
     @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    return await this.syncService.updateSync(workbookId, syncId, body, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.updateSync(workbookId, syncId, body, actor);
   }
   @Get()
   async listSyncs(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<unknown> {
-    return await this.syncService.findAllForWorkbook(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.findAllForWorkbook(workbookId, actor);
   }
 
   @Get('ai-context')
@@ -74,7 +81,9 @@ export class SyncController {
     @Param('workbookId') workbookId: WorkbookId,
     @Req() req: RequestWithUser,
   ): Promise<AiContextResponse> {
-    return this.syncService.generateAiContext(workbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.syncService.generateAiContext(workbookId, actor);
   }
 
   @Get(':syncId')
@@ -83,7 +92,9 @@ export class SyncController {
     @Param('syncId') syncId: SyncId,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    return await this.syncService.findOneForWorkbook(workbookId, syncId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.findOneForWorkbook(workbookId, syncId, actor);
   }
 
   @Post(':syncId/run')
@@ -92,6 +103,9 @@ export class SyncController {
     @Param('syncId') syncId: SyncId,
     @Req() req: RequestWithUser,
   ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+
     const workbook = await this.dbService.client.workbook.findUnique({
       where: { id: workbookId },
       select: { userId: true, organizationId: true },
@@ -141,7 +155,9 @@ export class SyncController {
     @Param('syncId') syncId: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    return await this.syncService.deleteSync(workbookId, syncId as SyncId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.deleteSync(workbookId, syncId as SyncId, actor);
   }
 
   @Post('import-preview')
@@ -150,7 +166,9 @@ export class SyncController {
     @Body() body: WhalesyncImportPreviewBody,
     @Req() req: RequestWithUser,
   ): Promise<WhalesyncImportPreviewResponse> {
-    return this.whalesyncImportApiService.previewImport(workbookId, body, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.whalesyncImportApiService.previewImport(workbookId, body, actor);
   }
 
   @Post('preview-record')
@@ -159,7 +177,9 @@ export class SyncController {
     @Body() body: PreviewRecordBody,
     @Req() req: RequestWithUser,
   ): Promise<PreviewRecordResponse> {
-    return this.syncService.previewRecord(workbookId, body, userToActor(req.user));
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.syncService.previewRecord(workbookId, body, actor);
   }
 
   @Post('validate-mapping')
@@ -168,12 +188,14 @@ export class SyncController {
     @Body() body: ValidateMappingBody,
     @Req() req: RequestWithUser,
   ): Promise<{ valid: boolean }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
     const valid = await this.syncService.validateFolderMapping(
       workbookId,
       body.sourceId as DataFolderId,
       body.destId as DataFolderId,
       body.columnMappings,
-      userToActor(req.user),
+      actor,
     );
     return { valid };
   }

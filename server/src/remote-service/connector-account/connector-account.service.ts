@@ -22,8 +22,9 @@ import { CredentialEncryptionService } from 'src/credential-encryption/credentia
 import { WSLogger } from 'src/logger';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';
-import { Actor } from 'src/users/types';
+import { Actor, SYSTEM_ACTOR } from 'src/users/types';
 import { DbService } from '../../db/db.service';
 import { PostHogService } from '../../posthog/posthog.service';
 import { EncryptedData } from '../../utils/encryption';
@@ -51,6 +52,14 @@ export class ConnectorAccountService {
     private readonly workbookEventService: WorkbookEventService,
   ) {}
 
+  private async loadWorkbook(workbookId: WorkbookId) {
+    const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+    return workbook;
+  }
+
   private async getDecryptedAccount(account: ConnectorAccount): Promise<ConnectorAccount & DecryptedCredentials> {
     const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
       account.encryptedCredentials as unknown as EncryptedData,
@@ -67,12 +76,9 @@ export class ConnectorAccountService {
     actor: Actor,
   ): Promise<ConnectorAccount> {
     // Verify workbook access
-    const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId, organizationId: actor.organizationId },
-    });
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    const workbook = await this.loadWorkbook(workbookId);
+
+    checkWorkspacePermissions(actor, workbookId);
 
     if (!canCreateDataSource(actor.subscriptionStatus, await this.countForType(createDto.service, workbookId, actor))) {
       throw new ForbiddenException(
@@ -97,11 +103,8 @@ export class ConnectorAccountService {
       parsedCredentials as unknown as DecryptedCredentials,
     );
 
-    if (!actor.organizationId) {
-      throw new Error(`Cannot create repoPath without organizationId`);
-    }
     const accountId = createConnectorAccountId();
-    const repoPath = getDefaultRepoPath(actor.organizationId, workbookId, accountId);
+    const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
     const connectorAccount = await this.db.client.connectorAccount.create({
       data: {
@@ -130,6 +133,7 @@ export class ConnectorAccountService {
       eventType: 'create',
       message: `Created new connection ${connectorAccount.displayName}`,
       entityId: connectorAccount.id as ConnectorAccountId,
+      organizationId: workbook.organizationId,
       context: {
         service: connectorAccount.service,
         authType: connectorAccount.authType,
@@ -201,11 +205,11 @@ export class ConnectorAccountService {
   /**
    * Find a connector account by ID only, without workbook context.
    * Used for internal operations like OAuth callback where we need to look up an account.
-   * Organization check is done via the workbook relation.
    */
-  async findOneById(id: string, actor: Actor): Promise<ConnectorAccount & DecryptedCredentials> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async findOneById(id: string, _actor: Actor): Promise<ConnectorAccount & DecryptedCredentials> {
     const connectorAccount = await this.db.client.connectorAccount.findFirst({
-      where: { id, workbook: { organizationId: actor.organizationId } },
+      where: { id },
     });
     if (!connectorAccount) {
       throw new NotFoundException('ConnectorAccount not found');
@@ -266,11 +270,13 @@ export class ConnectorAccountService {
       changedFields: Object.keys(updateDto),
     });
 
+    const workbook = await this.loadWorkbook(workbookId);
     await this.auditLogService.logEvent({
       actor,
       eventType: 'update',
       message: `Updated connection ${account.displayName}`,
       entityId: account.id as ConnectorAccountId,
+      organizationId: workbook.organizationId,
       context: {
         service: account.service as Service,
         authType: account.authType,
@@ -287,6 +293,8 @@ export class ConnectorAccountService {
       throw new NotFoundException('ConnectorAccount not found');
     }
 
+    const workbook = await this.loadWorkbook(workbookId);
+
     await this.removeConnectionData(account);
 
     this.workbookEventService.sendWorkbookEvent(workbookId, {
@@ -301,6 +309,7 @@ export class ConnectorAccountService {
       eventType: 'delete',
       message: `Deleted connection ${account.displayName}`,
       entityId: account.id as ConnectorAccountId,
+      organizationId: workbook.organizationId,
     });
   }
 
@@ -311,6 +320,7 @@ export class ConnectorAccountService {
    * TODO: Remerge this with remove() once there are system-level Actors to use.
    */
   async removeBySystem(workbookId: WorkbookId, id: string): Promise<void> {
+    const workbook = await this.loadWorkbook(workbookId);
     const account = await this.findOneByIdAdmin(id);
     await this.removeConnectionData(account);
 
@@ -320,13 +330,11 @@ export class ConnectorAccountService {
     });
 
     await this.auditLogService.logEvent({
-      actor: {
-        userId: 'system',
-        organizationId: 'system',
-      },
+      actor: SYSTEM_ACTOR,
       eventType: 'delete',
       message: `Deleted connection ${account.displayName} by system`,
       entityId: account.id as ConnectorAccountId,
+      organizationId: workbook.organizationId,
     });
   }
 
@@ -388,6 +396,8 @@ export class ConnectorAccountService {
    * deletes and re-initializes its git repository.
    */
   async resetConnection(workbookId: WorkbookId, id: string, actor: Actor): Promise<void> {
+    const workbook = await this.loadWorkbook(workbookId);
+
     const account = await this.findOne(workbookId, id, actor);
     if (!account) {
       throw new NotFoundException('ConnectorAccount not found');
@@ -434,6 +444,7 @@ export class ConnectorAccountService {
       eventType: 'update',
       message: `Reset connection ${account.displayName}`,
       entityId: account.id as ConnectorAccountId,
+      organizationId: workbook.organizationId,
       context: { action: 'reset_connection' },
     });
   }

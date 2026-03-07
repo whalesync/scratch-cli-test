@@ -27,8 +27,10 @@ export default function HomePage() {
   const isLoading = isUserLoading || isWorkbooksLoading;
   const hasWorkbooks = workbooks && workbooks.length > 0;
 
-  // Redirect if user has a last workbook (in useEffect to avoid setState during render)
-  const shouldRedirect = !isUserLoading && !!user?.lastWorkbookId;
+  // Redirect if user has a last workbook that they still have access to
+  const lastWorkbookIsAccessible =
+    !isWorkbooksLoading && !!user?.lastWorkbookId && workbooks?.some((wb) => wb.id === user.lastWorkbookId);
+  const shouldRedirect = !isUserLoading && !isWorkbooksLoading && lastWorkbookIsAccessible;
   useEffect(() => {
     if (shouldRedirect && user?.lastWorkbookId) {
       router.replace(`/workbook/${user.lastWorkbookId}/files`);

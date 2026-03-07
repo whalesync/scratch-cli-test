@@ -28,6 +28,7 @@ import {
   SupabaseApiClient,
 } from 'src/remote-service/connectors/library/supabase';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor } from 'src/users/types';
 import { DbService } from '../db/db.service';
@@ -181,11 +182,13 @@ export class OAuthService {
 
     // Validate workbookId
     const workbook = await this.db.client.workbook.findFirst({
-      where: { id: statePayload.workbookId, organizationId: actor.organizationId },
+      where: { id: statePayload.workbookId },
     });
     if (!workbook) {
       throw new NotFoundException('Workbook not found');
     }
+
+    checkWorkspacePermissions(actor, statePayload.workbookId as WorkbookId);
 
     let existingConnectorAccount: ConnectorAccount | null = null;
     if (statePayload.connectorAccountId) {
@@ -305,6 +308,11 @@ export class OAuthService {
     const serviceEnum = this.mapServiceStringToEnum(service);
     const isShopify = serviceEnum === Service.SHOPIFY;
 
+    // Load the workbook to get its organizationId (don't rely on actor's organizationId)
+    const workbook = await this.db.client.workbook.findUniqueOrThrow({
+      where: { id: workbookId },
+    });
+
     // Prepare credentials for encryption
     // For Shopify, the shop domain is stored in extras (not encrypted) so it can be queried directly
     const credentials: DecryptedCredentials = {
@@ -332,7 +340,7 @@ export class OAuthService {
 
     // Create new account
     const accountId = createConnectorAccountId();
-    const repoPath = getDefaultRepoPath(actor.organizationId, workbookId, accountId);
+    const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
     // Store non-sensitive metadata in extras for direct querying (e.g. GDPR shop/redact lookups)
     const extras: ShopifyConnectorExtras | undefined =

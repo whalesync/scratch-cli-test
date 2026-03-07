@@ -690,7 +690,8 @@ model Schedule {
   workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
   workbookId String
 
-  /// The organization that owns this schedule. Deleting the org cascades to its schedules.
+  /// This was added so jobs can be run under the organization that owns the workbook
+  /// Once jobs are moved to using system actors, this can be removed.
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
 
