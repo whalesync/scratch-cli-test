@@ -18,6 +18,7 @@ include:
   server:
     - server/**/*
     - packages/**/*
+    - test-api-fakes/**/*
     - gitlab-ci/stages/01-build-and-test.yml
   server-docker:
     - server/Dockerfile.monorepo

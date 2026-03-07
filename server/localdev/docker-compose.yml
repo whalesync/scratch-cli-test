@@ -16,6 +16,10 @@ services:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+  fake-airtable:
+    build: ../../test-api-fakes/airtable
+    ports:
+      - "4646:4646"
 
 volumes:
   mongodb_data:
