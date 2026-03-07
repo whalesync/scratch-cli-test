@@ -54,13 +54,13 @@ const IN_MEMORY_FLAGS = {
     disabled: false,
     defaultVariant: 'on',
   },
-  [UserFlag.ENABLE_SHOPIFY_OAUTH]: {
+  [UserFlag.SHOPIFY_API_KEYS]: {
     variants: {
       on: true,
       off: false,
     },
     disabled: false,
-    defaultVariant: 'on',
+    defaultVariant: 'off',
   },
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: {
     variants: {

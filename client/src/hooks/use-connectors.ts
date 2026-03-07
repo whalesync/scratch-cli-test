@@ -25,9 +25,7 @@ export const useConnectors = () => {
       if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
         oauthSupportedServices.push(Service.WEBFLOW);
       }
-      if (service === Service.SHOPIFY && user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH) {
-        oauthSupportedServices.push(Service.SHOPIFY);
-      }
+      oauthSupportedServices.push(Service.SHOPIFY);
 
       // Services that use generic parameters
       const genericParametersSupportedServices = [
@@ -49,7 +47,7 @@ export const useConnectors = () => {
         return 'oauth'; // Default fallback
       }
     },
-    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH],
+    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH],
   );
 
   const getSupportedAuthMethods = useCallback(
@@ -65,16 +63,14 @@ export const useConnectors = () => {
       if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
         oauthSupportedServices.push(Service.WEBFLOW);
       }
-      if (service === Service.SHOPIFY && user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH) {
-        oauthSupportedServices.push(Service.SHOPIFY);
-      }
+      oauthSupportedServices.push(Service.SHOPIFY);
 
       const userProvidedParamsSupportedServices = [
         Service.NOTION,
         Service.AIRTABLE,
         Service.WORDPRESS,
         Service.WEBFLOW,
-        Service.SHOPIFY,
+        ...(user?.experimentalFlags?.SHOPIFY_API_KEYS ? [Service.SHOPIFY] : []),
         Service.AUDIENCEFUL,
         Service.MOCO,
         Service.POSTGRES,
@@ -93,7 +89,7 @@ export const useConnectors = () => {
       }
       return methods;
     },
-    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.ENABLE_SHOPIFY_OAUTH],
+    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.SHOPIFY_API_KEYS],
   );
 
   // For admins show all services. Dedupe in case of overlap between flags and internal services.

@@ -18,7 +18,7 @@ export enum UserFlag {
   CONNECTOR_LIST = 'CONNECTOR_LIST',
   ENABLE_TOKEN_LIMIT_WARNINGS = 'ENABLE_TOKEN_LIMIT_WARNINGS',
   ENABLE_WEBFLOW_OAUTH = 'ENABLE_WEBFLOW_OAUTH',
-  ENABLE_SHOPIFY_OAUTH = 'ENABLE_SHOPIFY_OAUTH',
+  SHOPIFY_API_KEYS = 'SHOPIFY_API_KEYS',
   ENABLE_CREATE_BUG_REPORT = 'ENABLE_CREATE_BUG_REPORT',
 }
 
@@ -42,6 +42,6 @@ export const ClientUserFlags: Record<UserFlag, FlagDataType> = {
   [UserFlag.SAMPLE_USER_FLAG]: 'boolean',
   [UserFlag.ENABLE_TOKEN_LIMIT_WARNINGS]: 'boolean',
   [UserFlag.ENABLE_WEBFLOW_OAUTH]: 'boolean',
-  [UserFlag.ENABLE_SHOPIFY_OAUTH]: 'boolean',
+  [UserFlag.SHOPIFY_API_KEYS]: 'boolean',
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: 'boolean',
 };
