@@ -280,3 +280,8 @@ variable "scratch_git_snapshot_hours_in_cycle" {
   default     = 4
   description = "Hours between each disk snapshot for the scratch-git data disk (1, 2, 3, 4, 6, 8, 12, or 24)."
 }
+
+variable "langsmith_project" {
+  type        = string
+  description = "LangSmith project name for tracing (e.g., 'scratchmd', 'scratchmd-test')."
+}

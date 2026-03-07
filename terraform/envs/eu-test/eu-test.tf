@@ -39,6 +39,9 @@ module "eu_test" {
   api_service_min_instance_count = 2
   api_service_max_instance_count = 2
   worker_concurrency             = 10
+
+  # LangSmith
+  langsmith_project = "scratchmd-test"
 }
 
 variable "as_gitlab" {

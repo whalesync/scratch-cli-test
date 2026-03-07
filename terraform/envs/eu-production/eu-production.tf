@@ -35,6 +35,9 @@ module "eu_production" {
   api_service_min_instance_count = 4
   api_service_max_instance_count = 4
   worker_concurrency             = 10
+
+  # LangSmith
+  langsmith_project = "scratchmd"
 }
 
 variable "as_gitlab" {
