@@ -181,6 +181,17 @@ local build scratch-git docker image:
       changes: !reference [.changes, scratch-git-docker]
 
 # -----------------------------------------------------------------------------
+# Turbo Dev
+# -----------------------------------------------------------------------------
+
+local verify turbo dev:
+  extends:
+    - .verify-turbo-dev
+    - .local-runner-defaults
+  rules:
+    - if: *local-user-if
+
+# -----------------------------------------------------------------------------
 # Misc
 # -----------------------------------------------------------------------------
 
