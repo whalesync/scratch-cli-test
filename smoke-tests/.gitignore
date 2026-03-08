@@ -1,0 +1,4 @@
+.env
+.env.*
+!.env.integration.example
+node_modules

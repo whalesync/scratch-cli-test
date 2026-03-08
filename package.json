@@ -7,9 +7,9 @@
     "client",
     "server",
     "scratch-git-2",
-    "scratch-git-tests",
     "packages/*",
-    "test-api-fakes/*"
+    "test-api-fakes/*",
+    "smoke-tests"
   ],
   "scripts": {
     "dev": "turbo dev",

@@ -3,6 +3,37 @@ import { store } from '../store';
 
 const router = Router();
 
+router.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+
+router.get('/dump', (req, res) => {
+  const { baseId, tableId } = req.query;
+
+  // Dump a specific table's records
+  if (typeof baseId === 'string' && typeof tableId === 'string') {
+    const records = store.listRecords(baseId, tableId);
+    res.json({
+      records: records.map((r) => ({ id: r.id, fields: r.fields, createdTime: r.createdTime })),
+    });
+    return;
+  }
+
+  // Dump everything
+  const bases: Record<string, { tables: Record<string, { records: ReturnType<typeof store.listRecords> }> }> = {};
+  for (const [baseId, base] of store.bases) {
+    bases[baseId] = { tables: {} };
+    const tables = store.listTables(baseId) ?? [];
+    for (const table of tables) {
+      const records = store.listRecords(baseId, table.id);
+      bases[baseId].tables[table.id] = {
+        records: records.map((r) => ({ id: r.id, fields: r.fields, createdTime: r.createdTime })),
+      };
+    }
+  }
+  res.json({ bases });
+});
+
 router.post('/reset', (_req, res) => {
   store.reset();
   res.status(200).json({ ok: true });

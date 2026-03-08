@@ -315,45 +315,44 @@ Assert:  All 25 records created in fake (exercises batch-of-10 splitting)
 ## File Structure
 
 ```
-server/test/smoke/
+packages/test-utils/                    # Shared test utilities (Clerk auth)
+├── package.json
+├── tsconfig.json
+├── index.ts
+└── clerk-auth.ts                      # getAuthToken() — used by integration + smoke tests
+
+smoke-tests/                           # E2E smoke tests (repo root, not inside server/)
+├── package.json
+├── jest.config.json                   # Jest config (120s timeout, single worker)
+├── tsconfig.json
 ├── docker-compose.smoke-test.yml
-├── jest-smoke.json                    # Jest config (long timeout, single worker)
 ├── helpers/
 │   ├── test-api-client.ts             # HTTP client wrapper with auth
-│   ├── test-fixtures.ts               # createTestWorkspace(), resetFake()
+│   ├── test-fixtures.ts               # createTestWorkspace(), pullAndWait(), planPublish(), runPublish()
 │   ├── wait-for-job.ts                # Job polling helper
 │   └── connector-fixtures/
 │       ├── types.ts                   # ConnectorFixture interface
 │       └── airtable.fixture.ts        # Airtable-specific seed/verify logic
 ├── pull/
-│   ├── pull-basic.spec.ts             # Tests 1-2
-│   └── pull-incremental.spec.ts       # Test 3
+│   ├── pull-basic.spec.ts             # Tests 1-3 (basic, pagination, file content)
+│   └── pull-incremental.spec.ts       # Test: re-pull after remote changes
 └── publish/
-    ├── publish-happy-path.spec.ts     # Tests 4-5
-    ├── publish-references.spec.ts     # Test 6
-    ├── publish-errors.spec.ts         # Test 7
-    ├── publish-rate-limit.spec.ts     # Test 8
-    └── publish-edge-cases.spec.ts     # Tests 9-10
+    ├── publish-happy-path.spec.ts     # Tests: create + edit + delete → publish → verify
+    ├── publish-references.spec.ts     # Test: circular FK resolution via BACKFILL
+    ├── publish-errors.spec.ts         # Test: invalid field values → error surfaced
+    ├── publish-rate-limit.spec.ts     # Test: pull succeeds after 429 retries
+    └── publish-edge-cases.spec.ts     # Tests: 25+ batch creates, no-op publish
 ```
 
 ## Running
 
 ```bash
 # Start all services
-cd server/test/smoke && docker compose -f docker-compose.smoke-test.yml up -d
+docker compose -f smoke-tests/docker-compose.smoke-test.yml up --build -d
 
-# Wait for services to be healthy, run migrations
-yarn migrate
-
-# Run smoke tests
-yarn test:smoke
+# Wait for services to be healthy, then run smoke tests
+cd smoke-tests && yarn test
 
 # Tear down
-docker compose -f docker-compose.smoke-test.yml down -v
-```
-
-Or as a single script:
-
-```bash
-./scripts/run-smoke-tests.sh
+docker compose -f smoke-tests/docker-compose.smoke-test.yml down -v
 ```

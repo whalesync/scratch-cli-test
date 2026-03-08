@@ -1,0 +1,19 @@
+{
+  "name": "@spinner/smoke-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:smoke": "jest --config jest.config.json"
+  },
+  "dependencies": {
+    "@spinner/test-utils": "1.0.0",
+    "axios": "*",
+    "dotenv": "*"
+  },
+  "devDependencies": {
+    "@types/jest": "*",
+    "jest": "*",
+    "ts-jest": "*",
+    "typescript": "*"
+  }
+}

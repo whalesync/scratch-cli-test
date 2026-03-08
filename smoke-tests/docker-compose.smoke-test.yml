@@ -1,0 +1,131 @@
+# E2E smoke tests: all services needed for pull/publish testing.
+# Run from repo root: docker compose -f smoke-tests/docker-compose.smoke-test.yml up --build
+#
+# The server, scratch-git-2, and fake-airtable are built from source.
+# Tests run on the host and hit the server API over HTTP.
+
+services:
+  db:
+    image: postgres:16
+    ports:
+      - "5442:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: scratchpad_smoke
+    command: postgres -c timezone=UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis
+    ports:
+      - "6389:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  scratch-git-2:
+    build:
+      context: ..
+      dockerfile: scratch-git-2/Dockerfile
+    ports:
+      - "3110:3100"
+      - "3111:3101"
+    environment:
+      GIT_REPOS_DIR: /data/repos
+      GIT_REPOS_V2_DIR: /data/repos-v2
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/3100"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  fake-airtable:
+    build:
+      context: ../test-api-fakes/airtable
+    ports:
+      - "4656:4646"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4646/test/health || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  # Run migrations before starting the server
+  migrate:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile.monorepo
+      target: builder
+    working_dir: /app/server
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/scratchpad_smoke?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+
+  server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile.monorepo
+    ports:
+      - "3020:8080"
+    environment:
+      NODE_ENV: test
+      APP_ENV: test
+      SERVICE_TYPE: monolith
+      PORT: 8080
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/scratchpad_smoke?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SCRATCH_GIT_API_URL: http://scratch-git-2:3100
+      SCRATCH_GIT_BACKEND_URL: http://scratch-git-2:3101
+      API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646"
+      ENCRYPTION_MASTER_KEY: "12345678901234567890123456789012"
+      USE_JOBS: "true"
+      # Clerk auth — override these via .env or environment
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-pk_test_ZmFjdHVhbC1ndXBweS01NS5jbGVyay5hY2NvdW50cy5kZXYk}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set CLERK_SECRET_KEY for smoke tests}
+      # Disable optional services
+      POSTHOG_API_KEY: ""
+      POSTHOG_FEATURE_FLAG_API_KEY: ""
+      SLACK_NOTIFICATION_ENABLED: "false"
+      LINEAR_API_KEY: ""
+      STRIPE_API_KEY: fakekey
+      STRIPE_WEBHOOK_SECRET: fakesecret
+      # OAuth (not needed for smoke tests)
+      NOTION_CLIENT_ID: fake_id
+      NOTION_CLIENT_SECRET: fake_key
+      WEBFLOW_CLIENT_ID: fake_id
+      WEBFLOW_CLIENT_SECRET: fake_key
+      GOOGLE_CLIENT_ID: fake_id
+      GOOGLE_CLIENT_SECRET: fake_key
+      SHOPIFY_CLIENT_ID: fake_id
+      SHOPIFY_CLIENT_SECRET: fake_key
+      SUPABASE_CLIENT_ID: fake_id
+      SUPABASE_CLIENT_SECRET: fake_key
+      AIRTABLE_CLIENT_ID: fake_id
+      AIRTABLE_CLIENT_SECRET: fake_key
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scratch-git-2:
+        condition: service_healthy
+      fake-airtable:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 20

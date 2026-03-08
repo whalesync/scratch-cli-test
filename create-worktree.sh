@@ -49,6 +49,7 @@ ENV_FILES=(
   "client/.env.test"
   "server/.env"
   "server/.env.integration"
+  "smoke-tests/.env.integration"
 )
 
 MAIN_WORKTREE=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')

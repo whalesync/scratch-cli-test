@@ -1,0 +1,9 @@
+{
+  "name": "@spinner/test-utils",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "dependencies": {
+    "@clerk/backend": "*"
+  }
+}
