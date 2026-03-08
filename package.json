@@ -7,6 +7,7 @@
     "client",
     "server",
     "scratch-git-2",
+    "scratch-cli-tests",
     "packages/*",
     "test-api-fakes/*",
     "smoke-tests"

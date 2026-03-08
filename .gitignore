@@ -34,6 +34,9 @@ node_modules/
 # Scratch CLI hidden dir.
 .scratchmd/
 
+# Integration test local env files
+.env.integration
+
 # Docker image exports from CI builds.
 *.tar
 
