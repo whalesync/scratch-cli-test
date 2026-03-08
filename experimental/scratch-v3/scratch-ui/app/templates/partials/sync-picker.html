@@ -1,0 +1,52 @@
+<header>
+  <span>New Sync</span>
+  <button hx-get="/w/{{ workbook_id }}/syncs"
+          hx-target="#main" hx-push-url="true">&larr; Back</button>
+</header>
+<section>
+  <form hx-post="/w/{{ workbook_id }}/syncs/mapper"
+        hx-target="#main" hx-swap="innerHTML">
+
+    <sync-folder-picker>
+      <section>
+        <h3>Source</h3>
+        <p><small>Where data comes from</small></p>
+        <folder-pick-list>
+          {% for f in folders %}
+          <folder-pick-item>
+            <label>
+              <input type="radio" name="src_folder_id" value="{{ f.id }}"
+                     onchange="this.closest('folder-pick-list').querySelectorAll('folder-pick-item').forEach(i=>i.removeAttribute('aria-selected'));this.closest('folder-pick-item').setAttribute('aria-selected','true')">
+              <span>{{ f.name }}</span>
+              <small>{{ f.path }}</small>
+            </label>
+          </folder-pick-item>
+          {% endfor %}
+        </folder-pick-list>
+      </section>
+
+      <sync-arrow>&rarr;</sync-arrow>
+
+      <section>
+        <h3>Destination</h3>
+        <p><small>Where data goes</small></p>
+        <folder-pick-list>
+          {% for f in folders %}
+          <folder-pick-item>
+            <label>
+              <input type="radio" name="dst_folder_id" value="{{ f.id }}"
+                     onchange="this.closest('folder-pick-list').querySelectorAll('folder-pick-item').forEach(i=>i.removeAttribute('aria-selected'));this.closest('folder-pick-item').setAttribute('aria-selected','true')">
+              <span>{{ f.name }}</span>
+              <small>{{ f.path }}</small>
+            </label>
+          </folder-pick-item>
+          {% endfor %}
+        </folder-pick-list>
+      </section>
+    </sync-folder-picker>
+
+    <nav style="margin-top: 1.5rem;">
+      <button data-primary type="submit">Next: Map Fields</button>
+    </nav>
+  </form>
+</section>

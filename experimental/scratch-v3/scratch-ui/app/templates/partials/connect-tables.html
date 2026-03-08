@@ -1,0 +1,28 @@
+<header>
+  <span>Choose Tables</span>
+</header>
+<section>
+  <form hx-post="/w/{{ workbook_id }}/connections/{{ conn_id }}/link"
+        hx-target="#main"
+        hx-swap="innerHTML">
+
+    {% if tables %}
+    <ul class="table-list">
+      {% for tbl in tables %}
+      <li>
+        <input type="checkbox" name="tables" value="{{ tbl.remoteId }}" id="tbl-{{ loop.index }}">
+        <label for="tbl-{{ loop.index }}">{{ tbl.name }}</label>
+        <input type="hidden" name="table_name_{{ tbl.remoteId }}" value="{{ tbl.name }}">
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p>No tables found in this connection.</p>
+    {% endif %}
+
+    <button type="submit" data-primary style="margin-top: 1rem;">
+      Link Selected Tables
+      <span class="htmx-indicator spinner"></span>
+    </button>
+  </form>
+</section>

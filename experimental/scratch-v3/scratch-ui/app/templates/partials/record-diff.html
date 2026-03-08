@@ -1,0 +1,38 @@
+<editor-pane>
+  <header>
+    <span>{{ record_name }}</span>
+    <menu>
+      <change-count>{{ changes|length }} change{{ 's' if changes|length != 1 else '' }}</change-count>
+      <view-toggle>
+        <button data-active>Changes</button>
+        <button hx-get="/w/{{ workbook_id }}/files{{ path }}?view=record"
+                hx-target="#main" hx-swap="innerHTML">Edit</button>
+        <button hx-get="/w/{{ workbook_id }}/files{{ path }}?view=raw"
+                hx-target="#main" hx-swap="innerHTML">Raw</button>
+      </view-toggle>
+    </menu>
+  </header>
+  <record-fields>
+    {% macro render_fields(nodes, depth=0) %}
+      {% for node in nodes %}
+      {% set change = changes_by_path.get(node.path) %}
+      <record-field {{ 'data-changed' if change else '' }} {% if depth > 0 %}style="padding-left: {{ depth * 16 + 8 }}px"{% endif %}>
+        <record-field-label>{{ node.key }}</record-field-label>
+        <record-field-value>
+          {% if change %}
+            <span>{{ change.diff_html if change.diff_html else (change.new_value if change.new_value is not none else '') }}</span>
+          {% elif node.children %}
+            <small>{{ format_value(node.value) }}</small>
+          {% else %}
+            <span>{{ format_value(node.value) }}</span>
+          {% endif %}
+        </record-field-value>
+      </record-field>
+      {% if node.children %}
+        {{ render_fields(node.children, depth + 1) }}
+      {% endif %}
+      {% endfor %}
+    {% endmacro %}
+    {{ render_fields(field_tree) }}
+  </record-fields>
+</editor-pane>

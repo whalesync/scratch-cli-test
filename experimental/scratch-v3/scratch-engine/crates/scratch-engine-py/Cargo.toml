@@ -1,0 +1,21 @@
+[package]
+name = "scratch-engine-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+scratch-core = { workspace = true }
+scratch-merge = { workspace = true }
+scratch-validate = { workspace = true }
+scratch-transform = { workspace = true }
+scratch-sync = { workspace = true }
+scratch-publish = { workspace = true }
+futures = { workspace = true }
+scratch-git-client = { workspace = true }
+tokio = { workspace = true }

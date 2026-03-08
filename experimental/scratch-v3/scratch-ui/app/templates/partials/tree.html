@@ -1,0 +1,39 @@
+<ul>
+  {% for item in items if not item.name.startswith('.') %}
+  <li>
+    {% if item.type == 'FOLDER' or item.get('type') == 'FOLDER' %}
+    <details>
+      <summary hx-get="/w/{{ workbook_id }}/tree/{{ item.id }}"
+               hx-target="#children-{{ item.id }}"
+               hx-trigger="click once"
+               hx-swap="innerHTML">
+        {{ item.name }}
+        <a class="folder-table-link"
+           hx-get="/w/{{ workbook_id }}/files{{ item.path or ('/' + item.name) }}"
+           hx-target="#main"
+           hx-push-url="true"
+           hx-swap="innerHTML"
+           onclick="event.stopPropagation()">&#8862;</a>
+      </summary>
+      <section id="children-{{ item.id }}"></section>
+    </details>
+    {% else %}
+    {% set fpath = item.path or ('/' + item.name) %}
+    {% if not fpath.startswith('/') %}{% set fpath = '/' + fpath %}{% endif %}
+    <a hx-get="/w/{{ workbook_id }}/files{{ fpath }}"
+       hx-target="#main"
+       hx-push-url="true"
+       hx-swap="innerHTML">
+      {{ item.name }}
+      {% if dirty_paths is defined and fpath in dirty_paths %}
+        {% set ds = dirty_paths[fpath] %}
+        <mark data-status="{{ ds }}">{{ 'A' if ds == 'added' else ('D' if ds == 'deleted' else 'M') }}</mark>
+      {% endif %}
+    </a>
+    {% endif %}
+  </li>
+  {% endfor %}
+  {% if not items %}
+  <li>Empty</li>
+  {% endif %}
+</ul>

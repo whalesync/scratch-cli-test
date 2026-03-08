@@ -1,0 +1,7 @@
+<empty-state>
+  <p>All files are in sync.</p>
+  <p>No pending changes.</p>
+  {% if message is defined %}
+  <p data-status="{{ 'saved' if status == 'success' else 'error' }}">{{ message }}</p>
+  {% endif %}
+</empty-state>

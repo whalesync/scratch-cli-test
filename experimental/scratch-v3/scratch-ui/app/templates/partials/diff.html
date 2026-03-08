@@ -1,0 +1,11 @@
+{% if diff_html %}
+<diff-unified>{{ diff_html }}</diff-unified>
+{% elif file.content %}
+<diff-new-file>{{ file.content }}</diff-new-file>
+{% elif file.originalContent %}
+<diff-unified><del>{{ file.originalContent }}</del></diff-unified>
+{% else %}
+<section>
+  <p>No content to compare.</p>
+</section>
+{% endif %}

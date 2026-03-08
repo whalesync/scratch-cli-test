@@ -1,0 +1,73 @@
+{% if connections %}
+<connections-page>
+  <header>
+    <h2>Connections <span>· {{ connections|length }}</span></h2>
+    <menu>
+      <button data-primary
+              hx-get="/w/{{ workbook_id }}/connections/new"
+              hx-target="#main"
+              hx-swap="innerHTML">
+        New Connection
+      </button>
+    </menu>
+  </header>
+  <section>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Service</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for conn in connections %}
+        <tr>
+          <td>{{ conn.displayName or conn.service }}</td>
+          <td><mark data-status="info">{{ conn.service }}</mark></td>
+          <td>{{ conn.createdAt[:10] if conn.createdAt else '' }}</td>
+          <td>
+            <menu>
+              <button hx-post="/w/{{ workbook_id }}/connections/{{ conn.id }}/test"
+                      hx-target="closest td menu"
+                      hx-swap="afterend">
+                Test
+              </button>
+              <button hx-get="/w/{{ workbook_id }}/connections/{{ conn.id }}/edit"
+                      hx-target="#main"
+                      hx-swap="innerHTML">
+                Edit
+              </button>
+              <button hx-post="/w/{{ workbook_id }}/connections/{{ conn.id }}/tables"
+                      hx-target="#main"
+                      hx-swap="innerHTML">
+                Tables
+              </button>
+              <button data-danger
+                      hx-post="/w/{{ workbook_id }}/connections/{{ conn.id }}/delete"
+                      hx-target="#main"
+                      hx-swap="innerHTML"
+                      hx-confirm="Delete this connection and all its linked folders?">
+                Delete
+              </button>
+            </menu>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</connections-page>
+{% else %}
+<empty-state>
+  <p>No connections yet.</p>
+  <p>Connect a service to start syncing data.</p>
+  <button data-primary
+          hx-get="/w/{{ workbook_id }}/connections/new"
+          hx-target="#main"
+          hx-swap="innerHTML">
+    New Connection
+  </button>
+</empty-state>
+{% endif %}

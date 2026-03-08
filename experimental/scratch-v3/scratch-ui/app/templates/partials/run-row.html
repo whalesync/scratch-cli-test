@@ -1,0 +1,161 @@
+{% set s = (job.state or job.status or 'unknown')|lower %}
+{% set pp = job.publicProgress or {} %}
+{% set jid = job.bullJobId or job.dbJobId or job.id %}
+{% set active = job_is_active(job) %}
+<tbody id="run-{{ jid }}" class="run-group"
+    {% if active %}
+    hx-get="/w/{{ workbook_id }}/runs/{{ jid }}"
+    hx-trigger="every 3s"
+    hx-swap="outerHTML"
+    {% endif %}>
+  <tr class="run-row" onclick="toggleRunDetail(this)">
+    <td>{{ job.type or 'unknown' }}</td>
+    <td>
+      {% if s == 'completed' %}
+        <mark data-status="success">{{ s }}</mark>
+      {% elif s == 'failed' %}
+        <mark data-status="danger">{{ s }}</mark>
+      {% elif active %}
+        <mark data-status="warning">{{ s }}</mark>
+      {% elif s == 'canceled' or s == 'paused' %}
+        <mark data-status="neutral">{{ s }}</mark>
+      {% else %}
+        <mark data-status="info">{{ s }}</mark>
+      {% endif %}
+    </td>
+    <td>
+      {% if job.runContext and job.runContext.trigger %}
+        {{ job.runContext.trigger }}
+      {% else %}
+        —
+      {% endif %}
+    </td>
+    <td class="run-ops-cell">
+      {# Compact operations summary — pick whichever data is available #}
+      {% if pp.createsPlanned is defined or pp.editsPlanned is defined %}
+        {% if pp.createsExecuted is defined or pp.createsPlanned %}{{ pp.createsExecuted|default(0) }}/{{ pp.createsPlanned|default(0) }}C{% endif %}
+        {% if pp.editsExecuted is defined or pp.editsPlanned %} {{ pp.editsExecuted|default(0) }}/{{ pp.editsPlanned|default(0) }}E{% endif %}
+        {% if pp.deletesPlanned %} {{ pp.deletesExecuted|default(0) }}/{{ pp.deletesPlanned }}D{% endif %}
+      {% elif pp.totalEntries is defined %}
+        {{ pp.completedEntries|default(0) }}/{{ pp.totalEntries }}{% if pp.failedEntries %} <small class="run-stat-danger">{{ pp.failedEntries }}err</small>{% endif %}
+      {% elif pp.totalFiles is defined %}
+        {{ pp.totalFiles }} file{{ 's' if pp.totalFiles != 1 else '' }}
+      {% elif pp.totalFilesSynced is defined %}
+        {{ pp.totalFilesSynced }} synced
+      {% elif pp.totalFilesPublished is defined %}
+        {{ pp.totalFilesPublished }} pushed
+      {% elif pp.totalRequested is defined %}
+        {{ pp.totalRequested }} requested
+      {% else %}
+        —
+      {% endif %}
+    </td>
+    <td>{{ (job.processedOn or job.createdAt or '')[:19]|replace('T', ' ') if (job.processedOn or job.createdAt) else '' }}</td>
+    <td>
+      {% if job.finishedOn %}
+        {{ job.finishedOn[:19]|replace('T', ' ') }}
+      {% elif active %}
+        <span class="spinner" style="width: 0.75rem; height: 0.75rem;"></span>
+      {% else %}
+        —
+      {% endif %}
+    </td>
+    <td>
+      {% if active %}
+      <button data-danger
+              hx-post="/w/{{ workbook_id }}/runs/{{ jid }}/cancel"
+              hx-target="#run-{{ jid }}"
+              hx-swap="outerHTML"
+              hx-confirm="Cancel this job?"
+              onclick="event.stopPropagation()">
+        Cancel
+      </button>
+      {% endif %}
+    </td>
+  </tr>
+  <tr class="run-detail" hidden>
+    <td colspan="7">
+      <div class="run-detail-grid">
+        {# -- Created/updated/deleted paths -- #}
+        {% if pp.createdPaths or pp.updatedPaths or pp.deletedPaths %}
+        <div class="run-detail-section">
+          <h4>Changed files</h4>
+          <div class="run-stats">
+            {% if pp.createdPaths %}<span class="run-stat"><strong>{{ pp.createdPaths|length }}</strong> created</span>{% endif %}
+            {% if pp.updatedPaths %}<span class="run-stat"><strong>{{ pp.updatedPaths|length }}</strong> updated</span>{% endif %}
+            {% if pp.deletedPaths %}<span class="run-stat"><strong>{{ pp.deletedPaths|length }}</strong> deleted</span>{% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# -- Per-folder/table breakdown (sync & publish jobs) -- #}
+        {% for item in pp.get('folders', pp.get('tables', [])) %}
+        <div class="run-detail-section">
+          <h4>{{ item.name or item.id }}{% if item.connector %} <small>({{ item.connector }})</small>{% endif %}</h4>
+          <div class="run-stats">
+            {% if item.creates is defined %}<span class="run-stat"><strong>{{ item.creates }}</strong> creates</span>{% endif %}
+            {% if item.updates is defined %}<span class="run-stat"><strong>{{ item.updates }}</strong> updates</span>{% endif %}
+            {% if item.deletes is defined %}<span class="run-stat"><strong>{{ item.deletes }}</strong> deletes</span>{% endif %}
+            {% if item.errorCount %}<span class="run-stat run-stat-danger"><strong>{{ item.errorCount }}</strong> error{{ 's' if item.errorCount != 1 else '' }}</span>{% endif %}
+            {% if item.status %}<mark data-status="{{ 'success' if item.status == 'completed' else ('danger' if item.status == 'failed' else 'warning') }}">{{ item.status }}</mark>{% endif %}
+          </div>
+          {% if item.errors %}
+          <ul class="run-errors">
+            {% for err in item.errors[:5] %}
+            <li>{{ err.error }}{% if err.sourceRemoteId %} <small>({{ err.sourceRemoteId }})</small>{% endif %}</li>
+            {% endfor %}
+            {% if item.errors|length > 5 %}<li class="text-muted">…and {{ item.errors|length - 5 }} more</li>{% endif %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+
+        {# -- Folder/connector info (pull jobs) -- #}
+        {% if pp.folderName is defined %}
+        <div class="run-detail-section">
+          <h4>Source</h4>
+          <div class="run-stats">
+            <span class="run-stat">{{ pp.folderName }}{% if pp.connector %} ({{ pp.connector }}){% endif %}</span>
+            {% if pp.folderCount is defined %}<span class="run-stat"><strong>{{ pp.folderCount }}</strong> folder{{ 's' if pp.folderCount != 1 else '' }}</span>{% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# -- Error info -- #}
+        {% if job.failedReason %}
+        <div class="run-detail-section run-detail-error">
+          <h4>Error</h4>
+          <pre>{{ job.failedReason }}</pre>
+        </div>
+        {% endif %}
+        {% if pp.lastSyncError %}
+        <div class="run-detail-section run-detail-error">
+          <h4>Last sync error</h4>
+          <pre>{{ pp.lastSyncError }}</pre>
+        </div>
+        {% endif %}
+
+        {# -- Pipeline phase -- #}
+        {% if pp.currentPhase %}
+        <div class="run-detail-section">
+          <h4>Phase</h4>
+          <span class="run-stat">{{ pp.currentPhase }}</span>
+        </div>
+        {% endif %}
+
+        {# -- Run ID -- #}
+        {% if job.runContext and job.runContext.runId %}
+        <div class="run-detail-section">
+          <h4>Run</h4>
+          <span class="run-stat"><small>{{ job.runContext.runId[:12] }}</small></span>
+        </div>
+        {% endif %}
+
+        {# -- Fallback -- #}
+        {% if not pp and not job.failedReason and not (job.runContext and job.runContext.runId) %}
+        <p class="text-muted">No additional details available.</p>
+        {% endif %}
+      </div>
+    </td>
+  </tr>
+</tbody>

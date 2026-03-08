@@ -1,0 +1,16 @@
+<empty-state>
+  <p>Linked {{ count }} table{{ 's' if count != 1 else '' }} successfully.</p>
+  <p><small>Files are being pulled from the service.</small></p>
+  <menu>
+    <a hx-get="/w/{{ workbook_id }}/review"
+       hx-target="#main"
+       hx-push-url="/w/{{ workbook_id }}">
+      <button data-primary>View Files</button>
+    </a>
+    <a hx-get="/w/{{ workbook_id }}/runs"
+       hx-target="#main"
+       hx-push-url="true">
+      <button>View Runs</button>
+    </a>
+  </menu>
+</empty-state>

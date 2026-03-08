@@ -1,0 +1,22 @@
+# Rust build artifacts
+scratch-engine/target/
+
+# Python
+scratch-ui/.venv/
+__pycache__/
+*.pyc
+
+# SQLite databases
+*.db
+*.db.bak
+*.db-journal
+
+# Credentials
+.env
+
+# Generated at test time
+scratch-scenarios/syncs/
+scratch-scenarios/.scratch/
+
+# OS
+.DS_Store

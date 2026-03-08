@@ -1,0 +1,68 @@
+<div class="audit-dashboard">
+
+  <!-- Top-line stats -->
+  <div class="audit-row audit-stats">
+    <div class="stat">
+      <span class="stat-value">{{ summary.total }}</span>
+      <span class="stat-label">file{{ 's' if summary.total != 1 else '' }} changed</span>
+    </div>
+    {% for status, count in summary.status_counts.items() %}
+    <div class="stat">
+      <mark data-status="{{ status }}">{{ count }} {{ status }}</mark>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Breakdown by folder -->
+  <div class="audit-row">
+    <h4>By folder</h4>
+    <div class="audit-bars">
+      {% for folder, count in summary.folder_counts.items() %}
+      <div class="audit-bar-row">
+        <code>{{ folder }}</code>
+        <div class="audit-bar">
+          <div class="audit-bar-fill" style="width: {{ (count / summary.total * 100)|round }}%"></div>
+        </div>
+        <span class="audit-bar-count">{{ count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Field frequency -->
+  <div class="audit-row">
+    <h4>Fields changed</h4>
+    <div class="audit-bars">
+      {% for field, count in summary.field_freq.items() %}
+      <div class="audit-bar-row">
+        <code>{{ field }}</code>
+        <div class="audit-bar">
+          <div class="audit-bar-fill" style="width: {{ (count / summary.total * 100)|round }}%"></div>
+        </div>
+        <span class="audit-bar-count">{{ count }}<small>/{{ summary.total }}</small></span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Anomalies -->
+  {% if summary.anomalies %}
+  <div class="audit-row audit-warnings">
+    <h4>Worth checking</h4>
+    <ul>
+      {% for a in summary.anomalies %}
+      <li>
+        {% if a.get('type') == 'emptied' %}
+        <mark data-status="danger">emptied</mark>
+        <strong>{{ a.field }}</strong> was cleared in {{ a.count }} file{{ 's' if a.count != 1 else '' }}
+        {% else %}
+        <mark data-status="warning">uncommon</mark>
+        <strong>{{ a.field }}</strong> only changed in {{ a.count }} of {{ summary.total }} files
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+</div>

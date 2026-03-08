@@ -1,0 +1,8 @@
+[package]
+name = "scratch-merge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scratch-core = { workspace = true }
+similar = { workspace = true }

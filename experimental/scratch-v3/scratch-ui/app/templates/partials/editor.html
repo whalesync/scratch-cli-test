@@ -1,0 +1,29 @@
+<editor-pane>
+  <header>
+    <span>{{ path }}</span>
+    <menu>
+      <output id="save-status"></output>
+      {% if is_json is defined and is_json %}
+      <view-toggle>
+        <button hx-get="/w/{{ workbook_id }}/files{{ path }}?view=diff"
+                hx-target="#main" hx-swap="innerHTML">Diff</button>
+        <button hx-get="/w/{{ workbook_id }}/files{{ path }}?view=record"
+                hx-target="#main" hx-swap="innerHTML">Edit</button>
+        <button data-active>Raw</button>
+      </view-toggle>
+      {% endif %}
+      <button data-primary
+              hx-patch="/w/{{ workbook_id }}/files{{ path }}"
+              hx-target="#save-status"
+              hx-swap="innerHTML"
+              hx-include="[name='content']"
+              hx-vals='js:{"content": document.getElementById("editor").innerText}'>
+        Save
+        <span class="htmx-indicator spinner"></span>
+      </button>
+    </menu>
+  </header>
+  <pre id="editor"
+       contenteditable="{{ 'false' if file.get('ref', {}).get('readOnly') else 'true' }}"
+       spellcheck="false">{{ file.content or '' }}</pre>
+</editor-pane>

@@ -1,0 +1,70 @@
+{% if dirty_files %}
+<review-page>
+  <header>
+    <hgroup>
+      <h2>Pending Changes</h2>
+      <p>{{ dirty_files|length }} changed file{{ 's' if dirty_files|length != 1 else '' }}</p>
+    </hgroup>
+    <view-toggle>
+      <button {{ 'data-active' if view == 'diff' }}
+              hx-get="/w/{{ workbook_id }}/review?view=diff"
+              hx-target="#main"
+              hx-swap="innerHTML">Diff</button>
+      <button {{ 'data-active' if view == 'table' }}
+              hx-get="/w/{{ workbook_id }}/review?view=table"
+              hx-target="#main"
+              hx-swap="innerHTML">Table</button>
+      <button {{ 'data-active' if view == 'summary' }}
+              hx-get="/w/{{ workbook_id }}/review?view=summary"
+              hx-target="#main"
+              hx-swap="innerHTML">Summary</button>
+    </view-toggle>
+    <menu>
+      <form hx-post="/w/{{ workbook_id }}/review/discard"
+            hx-target="#main"
+            hx-swap="innerHTML"
+            hx-confirm="Discard ALL changes? This cannot be undone.">
+        <button type="submit" data-danger>Discard All</button>
+      </form>
+    </menu>
+  </header>
+
+  <section>
+    {% if publish_message is defined and publish_message %}
+    <p data-status="{{ 'saved' if publish_status == 'success' else 'error' }}">{{ publish_message }}</p>
+    {% endif %}
+
+    {% if view == 'table' %}
+      {% include "partials/review-table.html" %}
+    {% elif view == 'summary' %}
+      {% include "partials/review-summary.html" %}
+    {% else %}
+      {% for f in dirty_files %}
+      {% set fpath = f.path if f.path.startswith('/') else '/' + f.path %}
+      <diff-card>
+        <header>
+          <mark data-status="{{ f.status }}">{{ 'A' if f.status == 'added' else ('D' if f.status == 'deleted' else 'M') }}</mark>
+          <code>{{ fpath }}</code>
+          <menu>
+            <form hx-post="/w/{{ workbook_id }}/review/discard"
+                  hx-target="closest diff-card"
+                  hx-swap="outerHTML"
+                  hx-confirm="Discard changes to {{ fpath }}?">
+              <input type="hidden" name="path" value="{{ fpath }}">
+              <button type="submit" data-danger>Discard</button>
+            </form>
+          </menu>
+        </header>
+        <section hx-get="/w/{{ workbook_id }}/review{{ fpath }}"
+                 hx-trigger="intersect once"
+                 hx-swap="innerHTML">
+          <p>Loading diff…</p>
+        </section>
+      </diff-card>
+      {% endfor %}
+    {% endif %}
+  </section>
+</review-page>
+{% else %}
+{% include "partials/empty.html" %}
+{% endif %}

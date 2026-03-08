@@ -1,0 +1,40 @@
+<header>
+  <span>New Connection — Choose Service</span>
+</header>
+<section>
+  <service-picker>
+    {% set svc_domains = {
+      'AIRTABLE': 'airtable.com',
+      'NOTION': 'notion.so',
+      'WEBFLOW': 'webflow.com',
+      'SHOPIFY': 'shopify.com',
+      'WORDPRESS': 'wordpress.com',
+      'POSTGRES': 'postgresql.org',
+      'SUPABASE': 'supabase.com',
+      'YOUTUBE': 'youtube.com',
+      'AUDIENCEFUL': 'audienceful.com',
+      'MOCO': 'mocoapp.com',
+      'WIX_BLOG': 'wix.com',
+    } %}
+    {% for key, svc in services.items() %}
+    {% if svc.oauth_only %}
+    <button disabled title="OAuth only — use the main Scratch app">
+      {% if svc_domains.get(key) %}
+      <img class="svc-icon" src="https://www.google.com/s2/favicons?domain={{ svc_domains[key] }}&sz=32" alt="">
+      {% endif %}
+      {{ svc.display_name }}
+      <small>(OAuth only)</small>
+    </button>
+    {% else %}
+    <button hx-get="/w/{{ workbook_id }}/connections/new?service={{ key }}"
+            hx-target="#main"
+            hx-swap="innerHTML">
+      {% if svc_domains.get(key) %}
+      <img class="svc-icon" src="https://www.google.com/s2/favicons?domain={{ svc_domains[key] }}&sz=32" alt="">
+      {% endif %}
+      {{ svc.display_name }}
+    </button>
+    {% endif %}
+    {% endfor %}
+  </service-picker>
+</section>

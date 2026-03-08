@@ -1,0 +1,61 @@
+{% if dirty_files %}
+<review-page>
+  <header>
+    <hgroup>
+      <h2>Publish</h2>
+      <p>{{ dirty_files|length }} file{{ 's' if dirty_files|length != 1 else '' }} ready to publish</p>
+    </hgroup>
+    <menu>
+      <form hx-post="/w/{{ workbook_id }}/review/publish-all"
+            hx-target="#main"
+            hx-swap="innerHTML">
+        <button type="submit" data-primary>
+          {{ push_label|default('Publish') }} All
+          <span class="htmx-indicator spinner"></span>
+        </button>
+      </form>
+    </menu>
+  </header>
+
+  <section>
+    <table class="review-table">
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in dirty_files %}
+        {% set fpath = f.path if f.path.startswith('/') else '/' + f.path %}
+        <tr>
+          <td><code>{{ fpath }}</code></td>
+          <td>
+            <mark data-status="{{ f.status }}">{{ 'Added' if f.status == 'added' else ('Deleted' if f.status == 'deleted' else 'Modified') }}</mark>
+          </td>
+          <td>
+            <menu>
+              <form hx-post="/w/{{ workbook_id }}/review/publish"
+                    hx-target="closest tr"
+                    hx-swap="outerHTML">
+                <input type="hidden" name="path" value="{{ fpath }}">
+                <button type="submit" data-primary>
+                  Publish
+                  <span class="htmx-indicator spinner"></span>
+                </button>
+              </form>
+            </menu>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</review-page>
+{% else %}
+<empty-state>
+  <p>Nothing to publish</p>
+  <p>All files are up to date.</p>
+</empty-state>
+{% endif %}

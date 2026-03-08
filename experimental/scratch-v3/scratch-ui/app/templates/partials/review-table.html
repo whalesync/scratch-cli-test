@@ -1,0 +1,53 @@
+<table class="review-table">
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Status</th>
+      <th>Changes</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in enriched_files %}
+    {% set fpath = f.path if f.path.startswith('/') else '/' + f.path %}
+    <tr>
+      <td><code>{{ fpath }}</code></td>
+      <td>
+        <mark data-status="{{ f.status }}">{{ 'Added' if f.status == 'added' else ('Deleted' if f.status == 'deleted' else 'Modified') }}</mark>
+      </td>
+      <td>
+        {% if f.changes %}
+        <span class="field-changes-compact">
+          {% for c in f.changes %}
+          <span class="field-change-inline">
+            <strong>{{ c.field }}</strong>:
+            {% if c.diff_html %}
+            <span class="word-diff">{{ c.diff_html }}</span>
+            {% else %}
+            {% if c.old_value is not none %}<del>{{ truncate(c.old_value, 30) }}</del>{% endif %}
+            {% if c.old_value is not none and c.new_value is not none %} → {% endif %}
+            {% if c.new_value is not none %}<ins>{{ truncate(c.new_value, 30) }}</ins>{% endif %}
+            {% endif %}
+          </span>
+          {% if not loop.last %}<span class="field-sep">·</span>{% endif %}
+          {% endfor %}
+        </span>
+        {% else %}
+        <span class="text-muted">Content changed</span>
+        {% endif %}
+      </td>
+      <td>
+        <menu>
+          <form hx-post="/w/{{ workbook_id }}/review/discard"
+                hx-target="#main"
+                hx-swap="innerHTML"
+                hx-confirm="Discard changes to {{ fpath }}?">
+            <input type="hidden" name="path" value="{{ fpath }}">
+            <button type="submit" data-danger>Discard</button>
+          </form>
+        </menu>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
