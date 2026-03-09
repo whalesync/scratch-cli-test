@@ -19,6 +19,7 @@ import type {
   PullAssetsResponseDto,
   PullFilesResponseDto,
   WorkbookId,
+  WorkspaceInviteId,
   WorkspacePermissionId,
 } from '@spinner/shared-types';
 import {
@@ -35,7 +36,7 @@ import type { RequestWithUser } from '../auth/types';
 import { WorkspacePermissionRole, userToActor } from '../users/types';
 import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
-import { Workbook, WorkspacePermissionEntity } from './entities';
+import { Workbook, WorkspaceInviteEntity, WorkspacePermissionEntity } from './entities';
 
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { checkWorkspacePermissions } from 'src/users/permissions';
@@ -187,26 +188,34 @@ export class WorkbookController {
     return permissions.map((p) => new WorkspacePermissionEntity(p));
   }
 
+  @Get(':id/invites')
+  async listInvites(
+    @Param('id') workbookId: WorkbookId,
+    @Req() req: RequestWithUser,
+  ): Promise<WorkspaceInviteEntity[]> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const invites = await this.workspacePermissionsService.listInvitesByWorkbook(workbookId);
+    return invites.map((i) => new WorkspaceInviteEntity(i));
+  }
+
   @Post(':id/permissions/add')
   async addPermission(
     @Param('id') workbookId: WorkbookId,
     @Body() dto: AddWorkspacePermissionDto,
     @Req() req: RequestWithUser,
-  ): Promise<WorkspacePermissionEntity> {
+  ): Promise<WorkspacePermissionEntity | void> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const role = (dto.role ?? 'editor') as WorkspacePermissionRole;
 
-    let permission;
     if (dto.userId) {
-      permission = await this.workspacePermissionsService.createByUserId(workbookId, dto.userId, role, actor);
+      await this.workspacePermissionsService.createByUserId(workbookId, dto.userId, role, actor);
     } else if (dto.email) {
-      permission = await this.workspacePermissionsService.createByEmail(workbookId, dto.email, role, actor);
+      await this.workspacePermissionsService.createByEmail(workbookId, dto.email, role, actor);
     } else {
       throw new BadRequestException('Either userId or email must be provided');
     }
-
-    return new WorkspacePermissionEntity(permission);
   }
 
   @Delete(':id/permission/:permissionId')
@@ -219,6 +228,18 @@ export class WorkbookController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     await this.workspacePermissionsService.delete(permissionId, actor);
+  }
+
+  @Delete(':id/invite/:inviteId')
+  @HttpCode(204)
+  async removeInvite(
+    @Param('id') workbookId: WorkbookId,
+    @Param('inviteId') inviteId: WorkspaceInviteId,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    await this.workspacePermissionsService.deleteInvite(inviteId, actor);
   }
 
   @Patch(':id/permission/:permissionId')

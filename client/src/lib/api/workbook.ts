@@ -19,6 +19,8 @@ import {
   UpdateWorkspacePermissionDto,
   Workbook,
   WorkbookId,
+  WorkspaceInvite,
+  WorkspaceInviteId,
   WorkspacePermission,
   WorkspacePermissionId,
 } from '@spinner/shared-types';
@@ -567,6 +569,16 @@ export const workbookApi = {
     }
   },
 
+  listInvites: async (workbookId: WorkbookId): Promise<WorkspaceInvite[]> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<WorkspaceInvite[]>(`/workbook/${workbookId}/invites`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to list workspace invites');
+    }
+  },
+
   listPermissions: async (workbookId: WorkbookId): Promise<WorkspacePermission[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
@@ -577,11 +589,10 @@ export const workbookApi = {
     }
   },
 
-  addPermission: async (workbookId: WorkbookId, dto: AddWorkspacePermissionDto): Promise<WorkspacePermission> => {
+  addPermission: async (workbookId: WorkbookId, dto: AddWorkspacePermissionDto): Promise<void> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<WorkspacePermission>(`/workbook/${workbookId}/permissions/add`, dto);
-      return res.data;
+      await axios.post<WorkspacePermission>(`/workbook/${workbookId}/permissions/add`, dto);
     } catch (error) {
       handleAxiosError(error, 'Failed to add workspace permission');
     }
@@ -593,6 +604,15 @@ export const workbookApi = {
       await axios.delete(`/workbook/${workbookId}/permission/${permissionId}`);
     } catch (error) {
       handleAxiosError(error, 'Failed to remove workspace permission');
+    }
+  },
+
+  deleteInvite: async (workbookId: WorkbookId, inviteId: WorkspaceInviteId): Promise<void> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.delete(`/workbook/${workbookId}/invite/${inviteId}`);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to delete workspace invite');
     }
   },
 

@@ -1,5 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { createWorkspacePermissionId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
+import { Injectable } from '@nestjs/common';
+import {
+  createWorkspaceInviteId,
+  createWorkspacePermissionId,
+  WorkbookId,
+  WorkspaceInviteId,
+  WorkspacePermissionId,
+} from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { WorkspacePermissionCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
@@ -19,7 +25,7 @@ export class WorkspacePermissionsService {
     userId: string,
     role: WorkspacePermissionRole,
     actor: Actor,
-  ): Promise<WorkspacePermissionCluster.WorkspacePermission> {
+  ): Promise<void> {
     const permission = await this.db.client.workspacePermission.create({
       data: {
         id: createWorkspacePermissionId(),
@@ -45,8 +51,6 @@ export class WorkspacePermissionsService {
       organizationId: actor.organizationId,
       context: { workbookId, role, userId },
     });
-
-    return permission;
   }
 
   async createByEmail(
@@ -54,16 +58,33 @@ export class WorkspacePermissionsService {
     email: string,
     role: WorkspacePermissionRole,
     actor: Actor,
-  ): Promise<WorkspacePermissionCluster.WorkspacePermission> {
+  ): Promise<void> {
     const user = await this.db.client.user.findFirst({
       where: { email },
     });
 
     if (!user) {
-      throw new NotFoundException(`User with email ${email} not found`);
+      await this.db.client.workspaceInvites.create({
+        data: {
+          id: createWorkspaceInviteId(),
+          email,
+          workbookId,
+          userId: actor.userId,
+        },
+      });
+
+      await this.auditLogService.logEvent({
+        actor,
+        eventType: 'create',
+        message: `Created workspace invite for ${email}`,
+        entityId: workbookId,
+        organizationId: actor.organizationId,
+        context: { workbookId, email },
+      });
+      return;
     }
 
-    return this.createByUserId(workbookId, user.id, role, actor);
+    await this.createByUserId(workbookId, user.id, role, actor);
   }
 
   async listByUser(userId: string): Promise<WorkspacePermissionCluster.WorkspacePermission[]> {
@@ -77,6 +98,13 @@ export class WorkspacePermissionsService {
     return this.db.client.workspacePermission.findMany({
       where: { workbookId },
       include: WorkspacePermissionCluster._validator.include,
+    });
+  }
+
+  async listInvitesByWorkbook(workbookId: WorkbookId) {
+    return this.db.client.workspaceInvites.findMany({
+      where: { workbookId },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
@@ -115,6 +143,27 @@ export class WorkspacePermissionsService {
     });
 
     return permission;
+  }
+
+  async deleteInvite(inviteId: WorkspaceInviteId, actor: Actor): Promise<void> {
+    const invite = await this.db.client.workspaceInvites.findUnique({
+      where: { id: inviteId },
+    });
+
+    await this.db.client.workspaceInvites.delete({
+      where: { id: inviteId },
+    });
+
+    if (invite) {
+      await this.auditLogService.logEvent({
+        actor,
+        eventType: 'delete',
+        message: `Removed workspace invite for ${invite.email}`,
+        entityId: invite.workbookId as WorkbookId,
+        organizationId: actor.organizationId,
+        context: { workbookId: invite.workbookId, email: invite.email },
+      });
+    }
   }
 
   async delete(workspacePermissionId: WorkspacePermissionId, actor: Actor): Promise<void> {

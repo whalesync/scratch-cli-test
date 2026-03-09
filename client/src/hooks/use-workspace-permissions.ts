@@ -3,6 +3,8 @@ import { workbookApi } from '@/lib/api/workbook';
 import {
   AddWorkspacePermissionDto,
   WorkbookId,
+  WorkspaceInvite,
+  WorkspaceInviteId,
   WorkspacePermission,
   WorkspacePermissionId,
 } from '@spinner/shared-types';
@@ -11,11 +13,13 @@ import useSWR from 'swr';
 
 export interface UseWorkspacePermissionsReturn {
   permissions: WorkspacePermission[];
+  invites: WorkspaceInvite[];
   isLoading: boolean;
   error: Error | undefined;
   refresh: () => Promise<void>;
   addPermission: (dto: AddWorkspacePermissionDto) => Promise<void>;
   removePermission: (permissionId: WorkspacePermissionId) => Promise<void>;
+  removeInvite: (inviteId: WorkspaceInviteId) => Promise<void>;
 }
 
 export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorkspacePermissionsReturn => {
@@ -27,17 +31,30 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
     },
   );
 
+  const {
+    data: invitesData,
+    error: invitesError,
+    isLoading: invitesLoading,
+    mutate: mutateInvites,
+  } = useSWR(
+    workbookId ? SWR_KEYS.workbook.invites(workbookId) : null,
+    () => (workbookId ? workbookApi.listInvites(workbookId) : undefined),
+    {
+      revalidateOnFocus: false,
+    },
+  );
+
   const refresh = useCallback(async () => {
-    await mutate();
-  }, [mutate]);
+    await Promise.all([mutate(), mutateInvites()]);
+  }, [mutate, mutateInvites]);
 
   const addPermission = useCallback(
     async (dto: AddWorkspacePermissionDto) => {
       if (!workbookId) return;
       await workbookApi.addPermission(workbookId, dto);
-      await mutate();
+      await Promise.all([mutate(), mutateInvites()]);
     },
-    [workbookId, mutate],
+    [workbookId, mutate, mutateInvites],
   );
 
   const removePermission = useCallback(
@@ -49,12 +66,23 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
     [workbookId, mutate],
   );
 
+  const removeInvite = useCallback(
+    async (inviteId: WorkspaceInviteId) => {
+      if (!workbookId) return;
+      await workbookApi.deleteInvite(workbookId, inviteId);
+      await mutateInvites();
+    },
+    [workbookId, mutateInvites],
+  );
+
   return {
     permissions: data ?? [],
-    isLoading,
-    error,
+    invites: invitesData ?? [],
+    isLoading: isLoading || invitesLoading,
+    error: error ?? invitesError,
     refresh,
     addPermission,
     removePermission,
+    removeInvite,
   };
 };

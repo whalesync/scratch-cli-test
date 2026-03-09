@@ -8,7 +8,7 @@ import { useWorkspacePermissions } from '@/hooks/use-workspace-permissions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { ActionIcon, Group, Table, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
+import { WorkbookId, WorkspaceInviteId, WorkspacePermissionId } from '@spinner/shared-types';
 import { Trash2Icon, UserPlusIcon } from 'lucide-react';
 import { useState } from 'react';
 
@@ -20,7 +20,7 @@ interface WorkspacePermissionsModalProps {
 
 export function WorkspacePermissionsModal({ opened, onClose, workbookId }: WorkspacePermissionsModalProps) {
   const { user } = useScratchPadUser();
-  const { permissions, isLoading, addPermission, removePermission } = useWorkspacePermissions(
+  const { permissions, invites, isLoading, addPermission, removePermission, removeInvite } = useWorkspacePermissions(
     opened ? workbookId : null,
   );
   const [email, setEmail] = useState('');
@@ -51,6 +51,19 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
       notifications.show({
         title: 'Error',
         message: 'Failed to remove permission',
+        color: 'red',
+      });
+      console.error(e);
+    }
+  };
+
+  const handleRemoveInvite = async (inviteId: WorkspaceInviteId) => {
+    try {
+      await removeInvite(inviteId);
+    } catch (e) {
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to remove invite',
         color: 'red',
       });
       console.error(e);
@@ -144,6 +157,48 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
             )}
           </Table.Tbody>
         </Table>
+      )}
+
+      {!isLoading && invites.length > 0 && (
+        <>
+          <Text size="sm" fw={600} px="md" pt="md" pb="xs">
+            Pending Invites
+          </Text>
+          <Table stickyHeader highlightOnHover horizontalSpacing="md">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Sent</Table.Th>
+                <Table.Th>Email</Table.Th>
+                <Table.Th>Role</Table.Th>
+                <Table.Th w={60} />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {invites.map((invite) => (
+                <Table.Tr key={invite.id}>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {new Date(invite.createdAt).toLocaleDateString()}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" ff="monospace">
+                      {invite.email}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs">{invite.role}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <ActionIcon variant="subtle" color="red" size="sm" onClick={() => handleRemoveInvite(invite.id)}>
+                      <Trash2Icon size={14} />
+                    </ActionIcon>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </>
       )}
     </ModalWrapper>
   );

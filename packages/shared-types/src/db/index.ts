@@ -5,4 +5,5 @@ export * from './organization';
 export * from './schedule';
 export * from './sync';
 export * from './workbook';
+export * from './workspace-invite';
 export * from './workspace-permission';

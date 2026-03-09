@@ -1,6 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { TokenType, UserRole } from '@prisma/client';
-import { createApiTokenId, createOrganizationId, createUserId, UpdateSettingsDto } from '@spinner/shared-types';
+import {
+  createApiTokenId,
+  createOrganizationId,
+  createUserId,
+  createWorkspacePermissionId,
+  UpdateSettingsDto,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -132,6 +139,10 @@ export class UsersService {
 
     await this.slackNotificationService.sendMessage(SlackFormatters.newUserSignup(newUser));
 
+    if (email) {
+      await this.redeemWorkspaceInvites(email, newUser.id);
+    }
+
     return newUser;
   }
 
@@ -194,6 +205,32 @@ export class UsersService {
       where: { id: user.id },
       data: { settings: updatedSettings },
     });
+  }
+
+  private async redeemWorkspaceInvites(email: string, userId: string): Promise<void> {
+    const invites = await this.db.client.workspaceInvites.findMany({
+      where: { email },
+    });
+
+    if (invites.length === 0) {
+      return;
+    }
+
+    await this.db.client.$transaction(
+      invites.flatMap((invite) => [
+        this.db.client.workspacePermission.create({
+          data: {
+            id: createWorkspacePermissionId(),
+            workbookId: invite.workbookId as WorkbookId,
+            userId,
+            role: 'editor',
+          },
+        }),
+        this.db.client.workspaceInvites.delete({
+          where: { id: invite.id },
+        }),
+      ]),
+    );
   }
 
   public async updateLastWorkbook(userId: string, workbookId: string | null): Promise<void> {

@@ -32,6 +32,7 @@ export enum IdPrefixes {
   SCRATCH_PENDING_PUBLISH = 'scratch_pending_publish_', // Temporary ID for sync-created records before publishing
   RUN = 'run_', // Run
   WORKSPACE_PERMISSION = 'wpe_', // Workspace permission
+  WORKSPACE_INVITE = 'win_', // Workspace invite
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -305,4 +306,15 @@ export function isWorkspacePermissionId(id: unknown): id is WorkspacePermissionI
 
 export function createWorkspacePermissionId(): WorkspacePermissionId {
   return createId(IdPrefixes.WORKSPACE_PERMISSION) as WorkspacePermissionId;
+}
+
+// ------- WorkspaceInvite -------
+export type WorkspaceInviteId = PrefixedId<IdPrefixes.WORKSPACE_INVITE>;
+
+export function isWorkspaceInviteId(id: unknown): id is WorkspaceInviteId {
+  return isId(id, IdPrefixes.WORKSPACE_INVITE);
+}
+
+export function createWorkspaceInviteId(): WorkspaceInviteId {
+  return createId(IdPrefixes.WORKSPACE_INVITE) as WorkspaceInviteId;
 }

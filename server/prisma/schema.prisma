@@ -110,6 +110,7 @@ model User {
   publishPlans            PublishPlan[]
   schedules               Schedule[]
   workspacePermissions    WorkspacePermission[]
+  workspaceInvites        WorkspaceInvites[]
 }
 
 model ApiToken {
@@ -205,6 +206,7 @@ model Workbook {
   syncs                Sync[]
   assets               Asset[]
   workspacePermissions WorkspacePermission[]
+  workspaceInvites     WorkspaceInvites[]
 
   @@index([userId])
   @@index([organizationId])
@@ -226,6 +228,23 @@ model WorkspacePermission {
 
   @@unique([userId, workbookId])
   @@index([userId])
+  @@index([workbookId])
+}
+
+model WorkspaceInvites {
+  id         String   @id // type: WorkspaceInvitesId
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  email      String
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  workbookId String
+  role       String   @default("editor")
+
+  userId String? // the user that created the invite  
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([email, workbookId])
+  @@index([email])
   @@index([workbookId])
 }
 
