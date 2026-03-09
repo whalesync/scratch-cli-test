@@ -265,8 +265,11 @@ build server docker image:
   stage: build and test
   image: golang:1.25
   interruptible: true
+  variables:
+    GOFLAGS: "-buildvcs=false"
   script:
     - cd scratch-cli
+    - go clean -cache -modcache 2>/dev/null || true
     - echo "Checking code formatting"
     - test -z "$(gofmt -l .)" || (echo "Code is not formatted. Run 'gofmt -w .'" && gofmt -l . && exit 1)
     - echo "Building scratch-cli"
