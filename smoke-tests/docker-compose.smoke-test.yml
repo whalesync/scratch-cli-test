@@ -3,6 +3,9 @@
 #
 # The server, scratch-git-2, and fake-airtable are built from source.
 # Tests run on the host and hit the server API over HTTP.
+#
+# CI mode: docker compose --profile ci ... up --build --exit-code-from test-runner
+# The test-runner container runs inside the Docker network, avoiding DinD port issues.
 
 services:
   db:
@@ -129,3 +132,23 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+
+  # CI-only test runner: runs inside the Docker network so it can reach services
+  # by hostname. Activated with `--profile ci`. Not started by default (local dev
+  # runs tests on the host via run.sh).
+  test-runner:
+    profiles: [ci]
+    build:
+      context: ..
+      dockerfile: smoke-tests/Dockerfile.ci
+    environment:
+      SMOKE_TEST_SERVER_URL: http://server:8080
+      FAKE_AIRTABLE_URL: http://fake-airtable:4646
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set CLERK_SECRET_KEY for smoke tests}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:?Set CLERK_PUBLISHABLE_KEY for smoke tests}
+      INTEGRATION_TEST_USER_ID: ${INTEGRATION_TEST_USER_ID:?Set INTEGRATION_TEST_USER_ID for smoke tests}
+    depends_on:
+      server:
+        condition: service_healthy
+      fake-airtable:
+        condition: service_healthy

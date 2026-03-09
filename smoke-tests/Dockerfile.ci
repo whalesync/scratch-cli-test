@@ -1,0 +1,29 @@
+# Lightweight container that runs smoke tests inside the Docker Compose network.
+# Used by CI only (via `--profile ci`); local dev runs tests on the host via run.sh.
+
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Copy root yarn.lock for reproducible installs
+COPY yarn.lock ./
+
+# Create a minimal root package.json with only the workspaces we need
+# (the full monorepo package.json references client/server/etc. which aren't here)
+RUN echo '{ "private": true, "workspaces": ["packages/test-utils", "smoke-tests"] }' > package.json
+
+# Copy test-utils (workspace dependency of smoke-tests)
+COPY packages/test-utils/ packages/test-utils/
+
+# Copy smoke-tests package metadata first for layer caching
+COPY smoke-tests/package.json smoke-tests/package.json
+
+# Install dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy test source files
+COPY smoke-tests/ smoke-tests/
+
+WORKDIR /app/smoke-tests
+
+CMD ["yarn", "test:smoke"]

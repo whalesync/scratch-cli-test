@@ -50,6 +50,7 @@
 
 include:
   - "/gitlab-ci/stages/01-build-and-test.yml"
+  - "/gitlab-ci/stages/01-smoke-tests.yml"
 
 .local-runner-defaults:
   tags:
@@ -179,6 +180,19 @@ local build scratch-git docker image:
   rules:
     - if: *local-user-if
       changes: !reference [.changes, scratch-git-docker]
+
+# -----------------------------------------------------------------------------
+# Smoke Tests
+# -----------------------------------------------------------------------------
+
+local smoke tests:
+  extends:
+    - .smoke-tests
+    - .local-runner-defaults
+    - .local-docker-build
+  rules:
+    - if: *local-user-if
+      changes: !reference [.changes, smoke-tests]
 
 # -----------------------------------------------------------------------------
 # Turbo Dev

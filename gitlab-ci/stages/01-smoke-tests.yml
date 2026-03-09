@@ -1,0 +1,72 @@
+include:
+  - "/gitlab-ci/stages.yml"
+  - "/gitlab-ci/common.yml"
+
+# =============================================================================
+# SMOKE TESTS
+#
+# Runs end-to-end pull/publish smoke tests inside a Docker Compose stack.
+# A test-runner container executes Jest inside the Docker network (--profile ci),
+# so there are no DinD port-mapping issues.
+# =============================================================================
+
+.changes:
+  smoke-tests:
+    - gitlab-ci/stages/01-smoke-tests.yml
+    - smoke-tests/**/*
+
+.smoke-tests:
+  stage: build and test
+  extends:
+    - .docker_builder_image
+  cache: []
+  services:
+    - docker:26-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+  timeout: 15m
+  script:
+    # Write the env file that docker compose reads for variable substitution
+    - |
+      cat > smoke-tests/.env.integration <<EOF
+      CLERK_SECRET_KEY=${CLERK_SECRET_KEY_DEVELOPMENT}
+      CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY_DEVELOPMENT}
+      INTEGRATION_TEST_USER_ID=user_31KEiMetcHKOtODOxcYSHeaRgDC
+      EOF
+    # Build and start the full stack + test-runner in detached mode.
+    # We can't use --exit-code-from because it implies --abort-on-container-exit,
+    # which tears everything down when the migrate container exits after running.
+    - >
+      docker compose
+      --env-file smoke-tests/.env.integration
+      -f smoke-tests/docker-compose.smoke-test.yml
+      --profile ci
+      up --build -d
+    # Stream test-runner logs, then wait for its exit code
+    - >
+      docker compose
+      --env-file smoke-tests/.env.integration
+      -f smoke-tests/docker-compose.smoke-test.yml
+      logs -f test-runner &
+    - >
+      docker compose
+      --env-file smoke-tests/.env.integration
+      -f smoke-tests/docker-compose.smoke-test.yml
+      wait test-runner
+  after_script:
+    # Always tear down, even on failure
+    - >
+      docker compose
+      --env-file smoke-tests/.env.integration
+      -f smoke-tests/docker-compose.smoke-test.yml
+      --profile ci
+      down -v || true
+
+smoke tests:
+  extends: .smoke-tests
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, smoke-tests]
+    - !reference [.rules, on_merge_to_master]
+    - !reference [.rules, on_merge_to_prod]
