@@ -147,6 +147,10 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('SCRATCH_GIT_API_URL') ?? 'http://localhost:3100';
   }
 
+  getOpenRouterApiKeyOptional(): string | undefined {
+    return this.getOptionalEnvVariable('OPENROUTER_API_KEY');
+  }
+
   getWhalesyncApiUrl(): string {
     return (
       this.getOptionalEnvVariable('WHALESYNC_API_URL') ?? 'https://production-bottlenose-frontend-service.whalesync.com'

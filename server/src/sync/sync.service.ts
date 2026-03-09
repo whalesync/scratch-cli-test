@@ -1577,15 +1577,19 @@ export class SyncService {
     }
     lines.push('');
 
-    // Output instruction
-    lines.push('## Output');
-    lines.push('');
-    lines.push(
-      'Respond with ONLY the JSON `SyncMapping` object. The user will paste it directly into the Scratch sync editor.',
-    );
-    lines.push('');
-
     return { markdown: lines.join('\n') };
+  }
+
+  /**
+   * Appends output instructions for external agents: respond with only the raw SyncMapping JSON.
+   */
+  async generateExternalAgentContext(workbookId: WorkbookId, actor: Actor): Promise<string> {
+    const { markdown } = await this.generateAiContext(workbookId, actor);
+    const lines: string[] = [markdown, '## Output', ''];
+    lines.push('Respond with ONLY the raw `SyncMapping` JSON object — no envelope, no prose, no markdown fences.');
+    lines.push('The response must be valid JSON that can be parsed directly as a SyncMapping.');
+    lines.push('');
+    return lines.join('\n');
   }
 
   /**

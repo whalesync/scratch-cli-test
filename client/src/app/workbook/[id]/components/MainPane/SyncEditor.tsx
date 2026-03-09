@@ -34,6 +34,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type {
+  AiGenerateSyncResponse,
   AutoConvertOptions,
   ColumnMapping,
   DataFolder,
@@ -60,11 +61,14 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AiSyncCreatedModal } from '../modals/AiSyncCreatedModal';
 import { AddFolderMappingModal } from './AddFolderMappingModal';
+import { AiSyncBuilder } from './AiSyncBuilder';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
 import { SyncToolbar } from './SyncToolbar';
 import { TablePairSelector } from './TablePairSelector';
@@ -347,6 +351,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [saving, setSaving] = useState(false);
   const [aiContextCopying, setAiContextCopying] = useState(false);
   const [errorBanner, setErrorBanner] = useState<{ title: string; body: string } | null>(null);
+  const [aiCreatedResult, setAiCreatedResult] = useState<AiGenerateSyncResponse | null>(null);
+  const [aiEditOpen, setAiEditOpen] = useState(false);
   const [schemaCache, setSchemaCache] = useState<
     Record<string, { path: string; type: string; displayLabel?: string; suggestedTransformer?: TransformerConfig }[]>
   >({});
@@ -526,7 +532,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncId, existingSync?.id]);
+  }, [syncId, existingSync?.id, existingSync?.updatedAt]);
 
   // Capture saved state after initialization settles
   const initSettled = useRef(false);
@@ -916,15 +922,40 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                     {activePair.fieldMappings.filter((m) => m.sourceField && m.destField).length} column mappings
                   </Text12Regular>
                 )}
+                {!isNew && (
+                  <Button
+                    ml="auto"
+                    size="xs"
+                    variant="subtle"
+                    leftSection={<Sparkles size={13} />}
+                    onClick={() => setAiEditOpen((v) => !v)}
+                  >
+                    Edit with AI
+                  </Button>
+                )}
               </Group>
             )}
 
             {folderPairs.length === 0 ? (
-              <Stack align="center" gap="md" py="xl">
-                <Text12Regular c="dimmed">No folder mappings yet</Text12Regular>
-                <ButtonSecondaryOutline leftSection={<StyledLucideIcon Icon={Plus} size="sm" />} onClick={addPair}>
-                  Add folder mapping
-                </ButtonSecondaryOutline>
+              <Stack gap="md" py="xl" px="md">
+                <Stack align="center" gap="sm">
+                  <Text12Regular c="dimmed">No folder mappings yet</Text12Regular>
+                  <ButtonSecondaryOutline leftSection={<StyledLucideIcon Icon={Plus} size="sm" />} onClick={addPair}>
+                    Add folder mapping
+                  </ButtonSecondaryOutline>
+                </Stack>
+                <Divider label="OR" labelPosition="center" />
+                <AiSyncBuilder
+                  workbookId={workbookId}
+                  initialHistory={
+                    existingSync?.aiPromptHistory ? JSON.stringify(existingSync.aiPromptHistory, null, 2) : undefined
+                  }
+                  onCreated={async (result) => {
+                    await fetchSyncs(workbookId);
+                    setAiCreatedResult(result);
+                    router.push(`/workbook/${workbookId}/syncs/${result.sync.id}`);
+                  }}
+                />
               </Stack>
             ) : (
               <>
@@ -1229,6 +1260,24 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                 )}
               </>
             )}
+
+            {!isNew && aiEditOpen && (
+              <>
+                <Divider label="Edit with AI" labelPosition="center" />
+                <AiSyncBuilder
+                  workbookId={workbookId}
+                  syncId={syncId as SyncId}
+                  initialHistory={
+                    existingSync?.aiPromptHistory ? JSON.stringify(existingSync.aiPromptHistory, null, 2) : undefined
+                  }
+                  onCreated={async (result) => {
+                    await fetchSyncs(workbookId);
+                    setAiCreatedResult(result);
+                    // Keeping the edit open behind the modal
+                  }}
+                />
+              </>
+            )}
           </Stack>
         </ScrollArea>
       ) : (
@@ -1303,6 +1352,11 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         }}
         allFolders={allFolders}
       />
+
+      {/* AI Sync Created Modal */}
+      {aiCreatedResult && (
+        <AiSyncCreatedModal opened={true} onClose={() => setAiCreatedResult(null)} result={aiCreatedResult} />
+      )}
     </Stack>
   );
 }

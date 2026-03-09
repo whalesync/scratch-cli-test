@@ -14,6 +14,9 @@ import {
 } from '@nestjs/common';
 import type {
   AiContextResponse,
+  AiEditSyncBody,
+  AiGenerateSyncBody,
+  AiGenerateSyncResponse,
   DataFolderId,
   PreviewRecordBody,
   PreviewRecordResponse,
@@ -32,6 +35,7 @@ import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
+import { AiSyncBuilderService } from './ai-sync-builder.service';
 import { SyncService } from './sync.service';
 import { WhalesyncImportApiService } from './whalesync-import';
 
@@ -41,6 +45,7 @@ import { WhalesyncImportApiService } from './whalesync-import';
 export class SyncController {
   constructor(
     private readonly syncService: SyncService,
+    private readonly aiSyncBuilderService: AiSyncBuilderService,
     private readonly whalesyncImportApiService: WhalesyncImportApiService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly dbService: DbService,
@@ -84,6 +89,29 @@ export class SyncController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     return this.syncService.generateAiContext(workbookId, actor);
+  }
+
+  @Post('ai-generate')
+  async aiGenerateSync(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Body() body: AiGenerateSyncBody,
+    @Req() req: RequestWithUser,
+  ): Promise<AiGenerateSyncResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.aiSyncBuilderService.generateSyncFromPrompt(workbookId, body.prompt, actor, body.model);
+  }
+
+  @Post(':syncId/ai-edit')
+  async aiEditSync(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('syncId') syncId: SyncId,
+    @Body() body: AiEditSyncBody,
+    @Req() req: RequestWithUser,
+  ): Promise<AiGenerateSyncResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.aiSyncBuilderService.editSyncWithPrompt(workbookId, syncId, body.prompt, actor, body.model);
   }
 
   @Get(':syncId')

@@ -16,6 +16,14 @@ export interface SyncTablePair {
 /// Begin "keep in sync" section
 ///
 
+export interface AiPromptHistoryEntry {
+  prompt: string;
+  output?: string;
+  error?: string;
+  summary?: string;
+  result?: 'success' | 'message';
+}
+
 export interface Sync {
   id: SyncId;
   createdAt: string;
@@ -27,6 +35,7 @@ export interface Sync {
   syncStateLastChanged: string | null;
   lastSyncTime: string | null;
   publishAfterSync: boolean;
+  aiPromptHistory: AiPromptHistoryEntry[];
   syncTablePairs: SyncTablePair[];
 }
 

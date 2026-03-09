@@ -81,7 +81,7 @@ const tableMappingSchema = z
   })
   .strict();
 
-const syncMappingSchema = z
+export const syncMappingSchema = z
   .object({
     version: z.literal(1),
     tableMappings: z.array(tableMappingSchema).min(1),

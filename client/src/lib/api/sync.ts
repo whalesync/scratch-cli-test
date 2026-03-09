@@ -1,5 +1,7 @@
 import {
   AiContextResponse,
+  AiEditSyncBody,
+  AiGenerateSyncResponse,
   ColumnMapping,
   DataFolderId,
   PreviewRecordResponse,
@@ -78,6 +80,35 @@ export const syncApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to preview record');
+    }
+  },
+
+  aiGenerate: async (workbookId: WorkbookId, prompt: string, model?: string): Promise<AiGenerateSyncResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<AiGenerateSyncResponse>(`/workbooks/${workbookId}/syncs/ai-generate`, {
+        prompt,
+        model,
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to generate sync');
+    }
+  },
+
+  aiEdit: async (
+    workbookId: WorkbookId,
+    syncId: SyncId,
+    prompt: string,
+    model?: string,
+  ): Promise<AiGenerateSyncResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const body: AiEditSyncBody = { prompt, model };
+      const res = await axios.post<AiGenerateSyncResponse>(`/workbooks/${workbookId}/syncs/${syncId}/ai-edit`, body);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to edit sync');
     }
   },
 

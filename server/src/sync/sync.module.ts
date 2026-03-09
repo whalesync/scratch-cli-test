@@ -8,6 +8,7 @@ import { ScheduleModule } from 'src/schedule/schedule.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
+import { AiSyncBuilderService } from './ai-sync-builder.service';
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
 import { TransformerController } from './transformers/transformer.controller';
@@ -26,7 +27,7 @@ import { WhalesyncImportApiService } from './whalesync-import';
     PublishPlanModule,
   ],
   controllers: [SyncController, TransformerController],
-  providers: [SyncService, WhalesyncImportApiService],
+  providers: [SyncService, WhalesyncImportApiService, AiSyncBuilderService],
   exports: [SyncService],
 })
 export class SyncModule {}
