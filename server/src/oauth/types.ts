@@ -14,6 +14,7 @@ export type OAuthStatePayload = {
   returnPage?: string;
   connectorAccountId?: string;
   shopDomain?: string;
+  quickbooksSandbox?: boolean;
   codeVerifier?: string;
   ts: number;
 };

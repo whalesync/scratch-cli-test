@@ -9,6 +9,7 @@ import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
+import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
 import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
 import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
@@ -27,6 +28,7 @@ import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
     WebflowOAuthProvider,
     WixOAuthProvider,
     YouTubeOAuthProvider,
+    QuickBooksOAuthProvider,
   ],
   exports: [OAuthService],
 })

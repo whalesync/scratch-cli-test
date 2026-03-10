@@ -23,6 +23,30 @@ export function isShopifyConnectorExtras(extras: unknown): extras is ShopifyConn
   );
 }
 
+// ============= QuickBooks Connector Extras =============
+
+/**
+ * Extras stored on QuickBooks ConnectorAccount records.
+ * The realmId (company ID) is stored unencrypted in `extras` so it can be used for API calls.
+ */
+export interface QuickBooksConnectorExtras {
+  realmId: string;
+  sandbox?: boolean;
+}
+
+/**
+ * Type guard for QuickBooksConnectorExtras.
+ * Validates that the extras JSON has a `realmId` string property.
+ */
+export function isQuickBooksConnectorExtras(extras: unknown): extras is QuickBooksConnectorExtras {
+  return (
+    typeof extras === 'object' &&
+    extras !== null &&
+    'realmId' in extras &&
+    typeof (extras as Record<string, unknown>).realmId === 'string'
+  );
+}
+
 // ============= Credentials =============
 
 export interface SupabaseProjectCredentials {

@@ -10,6 +10,7 @@ export interface OAuthInitiateResponse {
 export interface OAuthCallbackRequest {
   code: string;
   state: string;
+  realmId?: string;
 }
 
 export interface OAuthCallbackResponse {

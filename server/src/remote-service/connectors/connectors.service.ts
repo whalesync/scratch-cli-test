@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AuthType, ConnectorAccount } from '@prisma/client';
-import { isShopifyConnectorExtras, Service } from '@spinner/shared-types';
+import { isQuickBooksConnectorExtras, isShopifyConnectorExtras, Service } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { OAuthService } from '../../oauth/oauth.service';
 import { RateLimiter } from '../../rate-limiter/rate-limiter';
@@ -13,6 +13,7 @@ import { AudiencefulConnector } from './library/audienceful/audienceful-connecto
 import { MocoConnector } from './library/moco/moco-connector';
 import { NotionConnector } from './library/notion/notion-connector';
 import { PostgresConnector } from './library/postgres/postgres-connector';
+import { QuickBooksConnector } from './library/quickbooks/quickbooks-connector';
 import { ShopifyConnector } from './library/shopify/shopify-connector';
 import { SupabaseAuthParser } from './library/supabase/supabase-auth-parser';
 import { SupabaseConnector } from './library/supabase/supabase-connector';
@@ -222,6 +223,25 @@ export class ConnectorsService {
           return new SupabaseConnector({
             connectionString: decryptedCredentials.connectionString,
           });
+        }
+      }
+      case Service.QUICKBOOKS: {
+        if (!connectorAccount) {
+          throw new ConnectorInstantiationError('Connector account is required for QuickBooks', service);
+        }
+        const quickbooksRateLimiter = this.createRateLimiter(service, connectorAccount);
+        if (!isQuickBooksConnectorExtras(connectorAccount.extras)) {
+          throw new ConnectorInstantiationError('Realm ID is required for QuickBooks', service);
+        }
+        const { realmId, sandbox } = connectorAccount.extras;
+        if (connectorAccount.authType === AuthType.OAUTH) {
+          const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
+          return new QuickBooksConnector(
+            { accessToken, realmId },
+            { rateLimiter: quickbooksRateLimiter, sandbox: sandbox ?? false },
+          );
+        } else {
+          throw new ConnectorInstantiationError('QuickBooks only supports OAuth authentication', service);
         }
       }
       default:

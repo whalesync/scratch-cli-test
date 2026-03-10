@@ -4,6 +4,7 @@ import { AudiencefulConnector } from './library/audienceful/audienceful-connecto
 import { MocoConnector } from './library/moco/moco-connector';
 import { NotionConnector } from './library/notion/notion-connector';
 import { PostgresConnector } from './library/postgres/postgres-connector';
+import { QuickBooksConnector } from './library/quickbooks/quickbooks-connector';
 import { SupabaseConnector } from './library/supabase/supabase-connector';
 import { WebflowConnector } from './library/webflow/webflow-connector';
 import { WixBlogConnector } from './library/wix/wix-blog/wix-blog-connector';
@@ -39,6 +40,8 @@ export function getServiceDisplayName(service: Service): string {
       return 'Shopify';
     case Service.SUPABASE:
       return SupabaseConnector.displayName;
+    case Service.QUICKBOOKS:
+      return QuickBooksConnector.displayName;
     default: {
       // Exhaustive check - TypeScript will error if a Service case is missing
       const _exhaustiveCheck: never = service;

@@ -155,6 +155,18 @@ export const ServiceNamingConventions: Record<Service, ServiceNamingConvention> 
     pushOperationName: 'Publish',
     pullOperationName: 'Download',
   },
+  [Service.QUICKBOOKS]: {
+    service: 'QuickBooks Online',
+    table: 'entity',
+    record: 'record',
+    base: 'company',
+    tables: 'entities',
+    records: 'records',
+    bases: 'companies',
+    oauthLabel: 'OAuth',
+    pushOperationName: 'Publish',
+    pullOperationName: 'Download',
+  },
 };
 
 export const serviceName = (serviceCode: Service): string => {

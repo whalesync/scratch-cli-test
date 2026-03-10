@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 /**
  * Keep in sync with spinner/client/src/types/server-entities/oauth.ts:OAuthInitiateOptionsDto.
@@ -47,6 +47,10 @@ export class OAuthInitiateOptionsDto {
   @IsString()
   @IsOptional()
   shopDomain?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  quickbooksSandbox?: boolean;
 }
 
 export type ValidatedOAuthInitiateOptionsDto = Required<
@@ -61,4 +65,5 @@ export type ValidatedOAuthInitiateOptionsDto = Required<
     | 'returnPage'
     | 'connectorAccountId'
     | 'shopDomain'
+    | 'quickbooksSandbox'
   >;

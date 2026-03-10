@@ -15,4 +15,5 @@ export const RATE_LIMITER_SPECS: Partial<Record<Service, RateLimiterSpec>> = {
   [Service.AIRTABLE]: { points: 5, duration: 1 }, // 5 req/sec
   [Service.WEBFLOW]: { points: 120, duration: 60 }, // 120 req/min
   [Service.SHOPIFY]: { points: 4, duration: 1 }, // 4 req/sec (coarse safety net)
+  [Service.QUICKBOOKS]: { points: 450, duration: 60 }, // 450 req/min (safety margin under 500 QBO limit)
 };

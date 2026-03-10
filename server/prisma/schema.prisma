@@ -48,6 +48,7 @@ enum Service {
   MOCO
   SHOPIFY
   SUPABASE
+  QUICKBOOKS
 }
 
 enum AuthType {

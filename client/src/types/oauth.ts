@@ -21,7 +21,8 @@ export type OAuthService =
   | Service.WEBFLOW
   | Service.WIX_BLOG
   | Service.SHOPIFY
-  | Service.SUPABASE;
+  | Service.SUPABASE
+  | Service.QUICKBOOKS;
 
 export interface OAuthError {
   error: string;

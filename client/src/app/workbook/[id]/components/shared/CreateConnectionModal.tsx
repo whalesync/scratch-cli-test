@@ -9,6 +9,7 @@ import { OAuthService } from '@/types/oauth';
 import { initiateOAuth } from '@/utils/oauth';
 import {
   Alert,
+  Checkbox,
   Group,
   Text as MantineText,
   ModalProps,
@@ -47,6 +48,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const [authMethod, setAuthMethod] = useState<AuthMethod>('oauth');
 
   const [shopDomain, setShopDomain] = useState('');
+  const [quickbooksSandbox, setQuickbooksSandbox] = useState(false);
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [customClientId, setCustomClientId] = useState('');
@@ -72,6 +74,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
     setDomain('');
     setConnectionString('');
     setShopDomain('');
+    setQuickbooksSandbox(false);
     setNewService(null);
     setNewModifier(null);
     setNewDisplayName(null);
@@ -101,6 +104,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
         connectionName: connectionName,
         returnPage: returnPage,
         shopDomain: newService === Service.SHOPIFY ? shopDomain : undefined,
+        quickbooksSandbox: newService === Service.QUICKBOOKS ? quickbooksSandbox : undefined,
       });
       // The initiateOAuth function will redirect the user, so we don't need to do anything else here
     } catch (error) {
@@ -336,6 +340,14 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
               description="Enter your Shopify store domain"
               value={shopDomain}
               onChange={(e) => setShopDomain(e.currentTarget.value)}
+            />
+          )}
+          {authMethod === 'oauth' && newService === Service.QUICKBOOKS && (
+            <Checkbox
+              label="Sandbox mode"
+              description="Connect to the QuickBooks sandbox environment for testing"
+              checked={quickbooksSandbox}
+              onChange={(e) => setQuickbooksSandbox(e.currentTarget.checked)}
             />
           )}
           {authMethod === 'user_provided_params' && newService === Service.SHOPIFY && (
