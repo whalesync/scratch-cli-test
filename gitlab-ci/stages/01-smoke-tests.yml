@@ -24,7 +24,10 @@ include:
     - docker:26-dind
   variables:
     DOCKER_TLS_CERTDIR: ""
-  timeout: 15m
+    # Build images one at a time to avoid network timeouts in DinD.
+    # Parallel builds compete for bandwidth, causing yarn install failures.
+    COMPOSE_PARALLEL_LIMIT: "1"
+  timeout: 30m
   script:
     # Write the env file that docker compose reads for variable substitution
     - |
