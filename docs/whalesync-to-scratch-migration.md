@@ -171,10 +171,10 @@ class WhalesyncImportService {
 
 For bidirectional table pairs (`syncDirection: 'both'`), two Scratch syncs are created:
 
-- **Left→Right sync**: includes column pairs with direction `'left'` or `'both'`
-- **Right→Left sync**: includes column pairs with direction `'right'` or `'both'`
+- **Left→Right sync**: includes column pairs with direction `'right'` or `'both'` (Whalesync `syncDirection` indicates the **destination** side)
+- **Right→Left sync**: includes column pairs with direction `'left'` or `'both'`
 
-One-way table pairs (`'left'` or `'right'`) only appear in the corresponding sync. When multiple DataFolders match the same remote ID, the first match is used.
+One-way table pairs appear in the sync matching their direction: `'left'` (data flows to left) maps to the Right→Left sync, `'right'` (data flows to right) maps to Left→Right. When multiple DataFolders match the same remote ID, the first match is used.
 
 #### DataFolder Resolution
 

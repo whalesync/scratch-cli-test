@@ -88,7 +88,7 @@ export function makeWhalesyncTablePair(overrides?: Partial<WhalesyncExportTableP
   return {
     leftTableId: '',
     rightTableId: '',
-    syncDirection: 'left' as WhalesyncSyncDirection,
+    syncDirection: 'right' as WhalesyncSyncDirection,
     leftDeleteBehavior: 'do_nothing',
     rightDeleteBehavior: 'do_nothing',
     leftSelectedConfigExtras: null,
@@ -103,7 +103,7 @@ export function makeWhalesyncColumnPair(overrides?: Partial<WhalesyncExportColum
   return {
     leftColumnId: '',
     rightColumnId: '',
-    syncDirection: 'left' as WhalesyncSyncDirection,
+    syncDirection: 'right' as WhalesyncSyncDirection,
     initializeOnMergeWinner: 'left',
     transforms: {
       leftToCoreTransforms: [],

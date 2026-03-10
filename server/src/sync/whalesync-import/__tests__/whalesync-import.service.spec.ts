@@ -27,7 +27,7 @@ beforeEach(() => {
 
 /** Build a left-Airtable / right-Webflow scenario with column pairs. */
 function buildAirtableToWebflowScenario(opts?: { syncDirection?: 'left' | 'right' | 'both' }) {
-  const direction = opts?.syncDirection ?? 'left';
+  const direction = opts?.syncDirection ?? 'right';
 
   const leftCol = makeWhalesyncColumn({ name: 'Title' });
   const rightCol = makeWhalesyncColumn({ name: 'name', connectorType: 'webflow' });
@@ -98,7 +98,7 @@ describe('convertWhalesyncExport', () => {
   describe('one-way left→right', () => {
     it('produces one SaveSyncBody with correct source/dest mapping', () => {
       const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
-        syncDirection: 'left',
+        syncDirection: 'right',
       });
 
       const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
@@ -121,7 +121,7 @@ describe('convertWhalesyncExport', () => {
   describe('one-way right→left', () => {
     it('swaps source and destination', () => {
       const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
-        syncDirection: 'right',
+        syncDirection: 'left',
       });
 
       const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
@@ -200,24 +200,24 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable1.id,
             rightTableId: rightTable1.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol1.id,
                 rightColumnId: rightCol1.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
             ],
           }),
           makeWhalesyncTablePair({
             leftTableId: leftTable2.id,
             rightTableId: rightTable2.id,
-            syncDirection: 'right',
+            syncDirection: 'left',
             columnPairs: [
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol2.id,
                 rightColumnId: rightCol2.id,
-                syncDirection: 'right',
+                syncDirection: 'left',
               }),
             ],
           }),
@@ -280,7 +280,7 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
           }),
         ],
       });
@@ -343,10 +343,10 @@ describe('convertWhalesyncExport', () => {
         makeWhalesyncTablePair({
           leftTableId: leftTable.id,
           rightTableId: rightTable.id,
-          syncDirection: 'left',
+          syncDirection: 'right',
           leftDeleteBehavior: 'sync',
           columnPairs: [
-            makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+            makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'right' }),
           ],
         }),
       ];
@@ -366,7 +366,7 @@ describe('convertWhalesyncExport', () => {
         makeWhalesyncTablePair({
           leftTableId: leftTable.id,
           rightTableId: rightTable.id,
-          syncDirection: 'left',
+          syncDirection: 'right',
           filter: {
             type: 'group',
             id: 'filter-1',
@@ -374,7 +374,7 @@ describe('convertWhalesyncExport', () => {
             conditions: [],
           },
           columnPairs: [
-            makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+            makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'right' }),
           ],
         }),
       ];
@@ -412,12 +412,12 @@ describe('convertWhalesyncExport', () => {
         makeWhalesyncTablePair({
           leftTableId: leftTable.id,
           rightTableId: rightTable.id,
-          syncDirection: 'left',
+          syncDirection: 'right',
           columnPairs: [
             makeWhalesyncColumnPair({
               leftColumnId: leftCol.id,
               rightColumnId: rightCol.id,
-              syncDirection: 'left',
+              syncDirection: 'right',
               transforms: {
                 leftToCoreTransforms: ['UPPERCASE'],
                 leftToExternalTransforms: [],
@@ -464,9 +464,9 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
-              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'right' }),
             ],
           }),
         ],
@@ -496,7 +496,7 @@ describe('convertWhalesyncExport', () => {
   describe('column matching', () => {
     it('matches columns by last path segment name', () => {
       const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
-        syncDirection: 'left',
+        syncDirection: 'right',
       });
 
       const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
@@ -547,7 +547,7 @@ describe('convertWhalesyncExport', () => {
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol1.id,
                 rightColumnId: rightCol1.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
               // Price→slug goes both ways
               makeWhalesyncColumnPair({
@@ -619,12 +619,12 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol.id,
                 rightColumnId: rightCol.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
             ],
           }),
@@ -705,7 +705,7 @@ describe('convertWhalesyncExport', () => {
         rightFolder,
         schemas: baseSchemas,
       } = buildAirtableToWebflowScenario({
-        syncDirection: 'left',
+        syncDirection: 'right',
       });
 
       const firstFolder = makeDataFolder({
@@ -731,7 +731,7 @@ describe('convertWhalesyncExport', () => {
 
     it('skips DataFolders with null connectorService or empty tableId', () => {
       const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
-        syncDirection: 'left',
+        syncDirection: 'right',
       });
 
       const badFolder1 = makeDataFolder({ connectorService: null, tableId: ['appAAA', 'tblPROD'] });
@@ -747,7 +747,7 @@ describe('convertWhalesyncExport', () => {
 
   describe('null schema', () => {
     it('returns empty column mappings when source schema is null', () => {
-      const { wsExport, rightFolder, schemas } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, rightFolder, schemas } = buildAirtableToWebflowScenario({ syncDirection: 'right' });
 
       // Override leftFolder without schema in the map
       const leftFolder = makeDataFolder({
@@ -764,7 +764,7 @@ describe('convertWhalesyncExport', () => {
     });
 
     it('returns empty column mappings when destination schema is null', () => {
-      const { wsExport, leftFolder, schemas } = buildAirtableToWebflowScenario({ syncDirection: 'left' });
+      const { wsExport, leftFolder, schemas } = buildAirtableToWebflowScenario({ syncDirection: 'right' });
 
       // Override rightFolder without schema in the map
       const rightFolder = makeDataFolder({
@@ -815,12 +815,12 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol.id,
                 rightColumnId: rightCol.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
             ],
           }),
@@ -881,12 +881,12 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol.id,
                 rightColumnId: rightCol.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
             ],
           }),
@@ -954,7 +954,7 @@ describe('convertWhalesyncExport', () => {
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol.id,
                 rightColumnId: rightCol.id,
-                syncDirection: 'right',
+                syncDirection: 'left',
               }),
             ],
           }),
@@ -1021,17 +1021,17 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol1.id,
                 rightColumnId: rightCol1.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
               makeWhalesyncColumnPair({
                 leftColumnId: leftCol2.id,
                 rightColumnId: rightCol2.id,
-                syncDirection: 'left',
+                syncDirection: 'right',
               }),
             ],
           }),
@@ -1063,7 +1063,7 @@ describe('convertWhalesyncExport', () => {
   describe('displayName format', () => {
     it('includes the Whalesync sync name and direction', () => {
       const { wsExport, leftFolder, rightFolder, schemas } = buildAirtableToWebflowScenario({
-        syncDirection: 'left',
+        syncDirection: 'right',
       });
 
       const result = convertWhalesyncExport([leftFolder, rightFolder], wsExport, schemas);
@@ -1102,12 +1102,12 @@ describe('convertWhalesyncExport', () => {
         makeWhalesyncTablePair({
           leftTableId: leftTable.id,
           rightTableId: rightTable.id,
-          syncDirection: 'left',
+          syncDirection: 'right',
           columnPairs: [
             makeWhalesyncColumnPair({
               leftColumnId: leftCol.id,
               rightColumnId: rightCol.id,
-              syncDirection: 'left',
+              syncDirection: 'right',
               initializeOnMergeWinner: 'left',
             }),
           ],
@@ -1131,12 +1131,12 @@ describe('convertWhalesyncExport', () => {
         makeWhalesyncTablePair({
           leftTableId: leftTable.id,
           rightTableId: rightTable.id,
-          syncDirection: 'left',
+          syncDirection: 'right',
           columnPairs: [
             makeWhalesyncColumnPair({
               leftColumnId: leftCol.id,
               rightColumnId: rightCol.id,
-              syncDirection: 'left',
+              syncDirection: 'right',
               initializeOnMergeWinner: 'either',
             }),
           ],
@@ -1179,9 +1179,9 @@ describe('convertWhalesyncExport', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
-              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'right' }),
             ],
           }),
         ],

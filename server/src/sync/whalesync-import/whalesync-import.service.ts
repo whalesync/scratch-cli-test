@@ -134,12 +134,14 @@ function buildSyncs(
     const rightResolved = resolvedTables.get(pair.rightTableId);
     if (!leftResolved || !rightResolved) continue;
 
+    // Whalesync syncDirection indicates the DESTINATION side (where data flows TO).
+    // 'left' = data flows TO left = right→left; 'right' = data flows TO right = left→right.
     switch (pair.syncDirection) {
       case 'left':
-        leftToRight.push(pair);
+        rightToLeft.push(pair);
         break;
       case 'right':
-        rightToLeft.push(pair);
+        leftToRight.push(pair);
         break;
       case 'both':
         leftToRight.push(pair);
@@ -303,7 +305,9 @@ function resolveColumnMappings(
 
 /** Check if a column pair applies to the given source direction. */
 function columnPairMatchesDirection(colPair: WhalesyncExportColumnPair, sourceDirection: 'left' | 'right'): boolean {
-  return colPair.syncDirection === 'both' || colPair.syncDirection === sourceDirection;
+  // Whalesync syncDirection indicates the DESTINATION side. A column pair with syncDirection 'left'
+  // flows data TO the left, which matches when the source is the right side (sourceDirection 'right').
+  return colPair.syncDirection === 'both' || colPair.syncDirection !== sourceDirection;
 }
 
 interface FieldLookup {

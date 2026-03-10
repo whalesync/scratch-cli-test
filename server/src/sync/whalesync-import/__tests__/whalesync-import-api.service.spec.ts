@@ -106,9 +106,9 @@ describe('WhalesyncImportApiService', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
-              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'right' }),
             ],
           }),
         ],
@@ -230,9 +230,9 @@ describe('WhalesyncImportApiService', () => {
           makeWhalesyncTablePair({
             leftTableId: leftTable.id,
             rightTableId: rightTable.id,
-            syncDirection: 'left',
+            syncDirection: 'right',
             columnPairs: [
-              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'left' }),
+              makeWhalesyncColumnPair({ leftColumnId: leftCol.id, rightColumnId: rightCol.id, syncDirection: 'right' }),
             ],
           }),
         ],
