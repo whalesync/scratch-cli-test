@@ -5,6 +5,15 @@ import { WSLogger } from 'src/logger';
 import { ScratchGitClient } from './scratch-git.client';
 import { DIRTY_BRANCH, getDefaultRepoPath, MAIN_BRANCH } from './scratch-git.service';
 
+export interface StripPrefixConnectionResult {
+  connectorAccountId: string;
+  displayName: string;
+  repoId: string;
+  case: string;
+  foldersUpdated: number;
+  error?: string;
+}
+
 const MIGRATION_BATCH_SIZE = 500;
 
 @Injectable()
@@ -198,6 +207,165 @@ export class MigrationService {
       connAccountId: connAccount.id,
       v2RepoId,
     });
+  }
+
+  /**
+   * For each ConnectorAccount in the workbook with a repoPath:
+   *  1. Call the Rust strip-prefix endpoint to rewrite the git tree.
+   *  2. On success, strip the first path segment from all DataFolder.path values for that account.
+   */
+  async stripConnectionPrefixForWorkbook(
+    workbookId: WorkbookId,
+    connectorAccountId?: string,
+  ): Promise<StripPrefixConnectionResult[]> {
+    const connAccounts = await this.db.client.connectorAccount.findMany({
+      where: { workbookId, repoPath: { not: null }, ...(connectorAccountId ? { id: connectorAccountId } : {}) },
+      include: { dataFolders: { select: { id: true, path: true } } },
+    });
+
+    const results: StripPrefixConnectionResult[] = [];
+
+    for (const connAccount of connAccounts) {
+      const repoId = connAccount.repoPath as string;
+      WSLogger.info({
+        source: 'MigrationService.stripConnectionPrefixForWorkbook',
+        message: 'Stripping connection prefix',
+        connectorAccountId: connAccount.id,
+        repoId,
+      });
+
+      try {
+        // Pre-check: if the top-level structure is not exactly 1 folder matching the connection name, throw an error
+        const listItems = (await this.scratchGitClient.list(repoId, MAIN_BRANCH, '')) as Array<{
+          type: string;
+          name: string;
+          mode: string;
+        }>;
+
+        const visibleItems = listItems;
+
+        if (visibleItems.length !== 1) {
+          throw new Error(
+            `Expected exactly 1 top-level item, but found ${visibleItems.length} (${visibleItems.map((i) => i.name).join(', ')})`,
+          );
+        }
+
+        const topItem = visibleItems[0];
+        const isDir =
+          topItem.type === 'tree' ||
+          topItem.type === 'dir' ||
+          topItem.mode === '040000' ||
+          topItem.type === 'directory';
+
+        if (!isDir) {
+          throw new Error(`Expected the top-level item to be a directory, but found a file: ${topItem.name}`);
+        }
+
+        if (topItem.name !== connAccount.displayName) {
+          throw new Error(
+            `Top-level folder "${topItem.name}" does not match connection name "${connAccount.displayName}"`,
+          );
+        }
+
+        const stripResult = (await this.scratchGitClient.stripConnectionPrefix(repoId)) as {
+          case: string;
+          prefixStripped?: string;
+        };
+
+        if (stripResult.case === 'empty') {
+          results.push({
+            connectorAccountId: connAccount.id,
+            displayName: connAccount.displayName,
+            repoId,
+            case: 'empty',
+            foldersUpdated: 0,
+          });
+          continue;
+        }
+
+        // Use the exact prefix stripped by the Git repo
+        const strippedPrefix = stripResult.prefixStripped;
+
+        if (!strippedPrefix) {
+          throw new Error('Prefix stripped is missing from response');
+        }
+
+        const prefixWithSlash = `/${strippedPrefix}/`;
+        const prefixWithoutSlash = `${strippedPrefix}/`;
+
+        const foldersToUpdate = connAccount.dataFolders.filter(
+          (f) =>
+            f.path &&
+            (f.path.startsWith(prefixWithSlash) ||
+              f.path.startsWith(prefixWithoutSlash) ||
+              f.path === strippedPrefix ||
+              f.path === `/${strippedPrefix}`),
+        );
+
+        for (const folder of foldersToUpdate) {
+          const path = folder.path as string;
+          let newPath = path;
+
+          if (path.startsWith(prefixWithSlash)) {
+            newPath = '/' + path.substring(prefixWithSlash.length);
+          } else if (path.startsWith(prefixWithoutSlash)) {
+            newPath = '/' + path.substring(prefixWithoutSlash.length);
+          } else if (path === strippedPrefix || path === `/${strippedPrefix}`) {
+            newPath = '/';
+          }
+
+          // ensure we don't end up with '//'
+          if (newPath.startsWith('//')) {
+            newPath = newPath.replace(/^\/+/, '/');
+          }
+
+          if (newPath === '/') {
+            newPath = ''; // Root is empty string on DataFolder
+          }
+
+          await this.db.client.dataFolder.update({
+            where: { id: folder.id },
+            data: { path: newPath },
+          });
+        }
+
+        WSLogger.info({
+          source: 'MigrationService.stripConnectionPrefixForWorkbook',
+          message: 'Strip prefix complete',
+          connectorAccountId: connAccount.id,
+          repoId,
+          case: stripResult.case,
+          foldersUpdated: foldersToUpdate.length,
+        });
+
+        results.push({
+          connectorAccountId: connAccount.id,
+          displayName: connAccount.displayName,
+          repoId,
+          case: stripResult.case,
+          foldersUpdated: foldersToUpdate.length,
+        });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        WSLogger.error({
+          source: 'MigrationService.stripConnectionPrefixForWorkbook',
+          message: 'Strip prefix failed',
+          connectorAccountId: connAccount.id,
+          repoId,
+          error,
+        });
+        results.push({
+          connectorAccountId: connAccount.id,
+          displayName: connAccount.displayName,
+          repoId,
+          case: 'error',
+          foldersUpdated: 0,
+          error,
+        });
+      }
+    }
+
+    return results;
   }
 
   /**

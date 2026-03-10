@@ -99,13 +99,20 @@ const INDENT_PX = 10;
 
 /**
  * Extract all intermediate path segments from a folder path.
- * Given `/Connection/a/b/c/Table`, returns `["a", "b", "c"]` — any number of levels.
- * First segment (connection) and last segment (table) are excluded.
+ * Handles both old format `/ConnectionName/schema/Table` and new format `/schema/Table`.
+ * If connectionName is provided and the first segment matches, it is stripped (old format).
+ * The last segment (table name) is always excluded.
+ * Example old: `/Supabase1/public/tableA` → `["public"]`
+ * Example new: `/public/tableA` → `["public"]`
  */
-function getIntermediateSegments(folderPath: string): string[] {
+function getIntermediateSegments(folderPath: string, connectionName?: string): string[] {
   const segments = folderPath.replace(/^\//, '').split('/');
-  if (segments.length <= 2) return [];
-  return segments.slice(1, -1);
+  const adjusted =
+    connectionName && segments[0] === connectionName
+      ? segments.slice(1) // old format: drop connection-name prefix
+      : segments; // new format: use as-is
+  if (adjusted.length <= 1) return [];
+  return adjusted.slice(0, -1);
 }
 
 interface FolderTreeNode {
@@ -118,7 +125,10 @@ function buildFolderTree(folders: DataFolder[], groupName: string): FolderTreeNo
   const root: FolderTreeNode = { folders: [], children: new Map() };
 
   for (const folder of folders) {
-    const segments = getIntermediateSegments(folder.path ?? `/${groupName}/${folder.name}`);
+    const segments = getIntermediateSegments(
+      folder.path ?? `/${groupName}/${folder.name}`,
+      folder.connectorDisplayName ?? groupName,
+    );
     let node = root;
     for (const seg of segments) {
       let child = node.children.get(seg);

@@ -519,6 +519,137 @@ impl GitRepo {
         Ok(entries)
     }
 
+    /// Strip the single top-level directory prefix from every branch/tag in the repo.
+    ///
+    /// Current layout: `{prefix}/{schema}/{table}/file.json`
+    /// New layout:     `{schema}/{table}/file.json`
+    ///
+    /// Determines the case by comparing main, dirty, and merge_base OIDs:
+    ///   A: all three equal → one new orphan commit, update all three refs
+    ///   B: main == merge_base, dirty differs → two new orphan commits
+    ///   C: all three differ → three new orphan commits
+    ///
+    /// Returns an error if the root tree does not contain exactly one directory entry,
+    /// or if the repo is already stripped (root tree has no subdirectory at position 0).
+    pub fn strip_top_level_prefix(&self) -> Result<StripPrefixResult, AppError> {
+        let main_oid = self.resolve_ref(MAIN_BRANCH)?;
+        let dirty_oid = self.resolve_ref(DIRTY_BRANCH)?;
+        let merge_base_oid = self.resolve_merge_base_or_main()?;
+
+        // Helper: given a commit OID, extract the single top-level directory's child tree OID.
+        // Returns (prefix_name, child_tree_oid).
+        let extract_child_tree = |commit_oid: ObjectId| -> Result<(String, ObjectId), AppError> {
+            let commit = self
+                .repo
+                .find_commit(commit_oid)
+                .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
+            let root_tree_oid: ObjectId = commit
+                .tree_id()
+                .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?
+                .into();
+
+            let tree_obj = self
+                .repo
+                .find_object(root_tree_oid)
+                .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?;
+            let tree = tree_obj
+                .try_into_tree()
+                .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+
+            // Collect top-level entries
+            let entries: Vec<(String, ObjectId, bool)> = tree
+                .iter()
+                .map(|e| {
+                    let entry = e.map_err(|err| {
+                        AppError::internal(format!("Failed to read tree entry: {}", err))
+                    })?;
+                    let name = std::str::from_utf8(entry.filename())
+                        .map_err(|err| AppError::internal(format!("Invalid UTF-8: {}", err)))?
+                        .to_string();
+                    let is_tree = entry.mode().is_tree();
+                    Ok((name, entry.object_id().into(), is_tree))
+                })
+                .collect::<Result<_, AppError>>()?;
+
+            if entries.is_empty() {
+                return Err(AppError::bad_request(
+                    "Repo root tree is empty — nothing to strip",
+                ));
+            }
+
+            // Filter to directory entries only (ignore dotfiles like .schema.json etc.)
+            let dir_entries: Vec<_> = entries.iter().filter(|(_, _, is_tree)| *is_tree).collect();
+
+            if dir_entries.len() != 1 {
+                let names: Vec<&str> = entries.iter().map(|(n, _, _)| n.as_str()).collect();
+                return Err(AppError::bad_request(format!(
+                    "Expected exactly one top-level directory but found {}: {:?}",
+                    dir_entries.len(),
+                    names
+                )));
+            }
+
+            let (prefix_name, child_tree_oid, _) = &dir_entries[0];
+            Ok((prefix_name.clone(), *child_tree_oid))
+        };
+
+        // Helper: write an orphan commit (no parents) with a given tree.
+        let make_orphan = |tree_oid: ObjectId, message: &str| -> Result<ObjectId, AppError> {
+            self.write_commit(tree_oid, &[], message)
+        };
+
+        if main_oid == dirty_oid && main_oid == merge_base_oid {
+            // Case A: single commit covers all three refs
+            let (prefix, child_tree) = extract_child_tree(main_oid)?;
+            let new_commit = make_orphan(child_tree, "Strip connection prefix")?;
+            self.force_ref(MAIN_BRANCH, new_commit)?;
+            self.force_ref(DIRTY_BRANCH, new_commit)?;
+            self.write_tag("merge_base", new_commit)?;
+            Ok(StripPrefixResult {
+                case: "A".to_string(),
+                prefix_stripped: prefix,
+                new_main: new_commit.to_string(),
+                new_dirty: new_commit.to_string(),
+                new_merge_base: new_commit.to_string(),
+            })
+        } else if main_oid == merge_base_oid {
+            // Case B: main == merge_base, dirty is ahead
+            let (prefix, main_child) = extract_child_tree(main_oid)?;
+            let (_, dirty_child) = extract_child_tree(dirty_oid)?;
+            let new_main = make_orphan(main_child, "Strip connection prefix")?;
+            let new_dirty = self.write_commit(dirty_child, &[new_main], "Strip connection prefix (dirty)")?;
+            self.force_ref(MAIN_BRANCH, new_main)?;
+            self.force_ref(DIRTY_BRANCH, new_dirty)?;
+            self.write_tag("merge_base", new_main)?;
+            Ok(StripPrefixResult {
+                case: "B".to_string(),
+                prefix_stripped: prefix,
+                new_main: new_main.to_string(),
+                new_dirty: new_dirty.to_string(),
+                new_merge_base: new_main.to_string(),
+            })
+        } else {
+            // Case C: all three differ
+            let (prefix, main_child) = extract_child_tree(main_oid)?;
+            let (_, dirty_child) = extract_child_tree(dirty_oid)?;
+            let (_, merge_base_child) = extract_child_tree(merge_base_oid)?;
+            let new_merge_base =
+                make_orphan(merge_base_child, "Strip connection prefix (merge_base)")?;
+            let new_main = self.write_commit(main_child, &[new_merge_base], "Strip connection prefix")?;
+            let new_dirty = self.write_commit(dirty_child, &[new_merge_base], "Strip connection prefix (dirty)")?;
+            self.force_ref(MAIN_BRANCH, new_main)?;
+            self.force_ref(DIRTY_BRANCH, new_dirty)?;
+            self.write_tag("merge_base", new_merge_base)?;
+            Ok(StripPrefixResult {
+                case: "C".to_string(),
+                prefix_stripped: prefix,
+                new_main: new_main.to_string(),
+                new_dirty: new_dirty.to_string(),
+                new_merge_base: new_merge_base.to_string(),
+            })
+        }
+    }
+
     /// Read commit info (for graph/checkpoint listing).
     pub fn read_commit_info(&self, oid: ObjectId) -> Result<CommitInfo, AppError> {
         let commit = self

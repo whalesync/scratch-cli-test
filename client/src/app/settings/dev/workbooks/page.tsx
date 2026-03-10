@@ -2,7 +2,10 @@
 
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import MainContent from '@/app/components/layouts/MainContent';
+import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
+import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
 import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
+import { useDataFolders } from '@/hooks/use-data-folders';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
 import {
@@ -33,7 +36,18 @@ import {
   Service,
   WorkbookId,
 } from '@spinner/shared-types';
-import { BookOpenIcon, DatabaseIcon, GitMergeIcon, MoreVerticalIcon, MoveIcon, Trash2Icon } from 'lucide-react';
+import {
+  BookOpenIcon,
+  DatabaseIcon,
+  FileCodeIcon,
+  FolderIcon,
+  GitGraphIcon,
+  GitMergeIcon,
+  MoreVerticalIcon,
+  MoveIcon,
+  ScissorsIcon,
+  Trash2Icon,
+} from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
@@ -51,6 +65,18 @@ function useGitActions() {
   const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
   const [gcData, setGcData] = useState<GitGcResponse | null>(null);
   const [gcModalOpen, setGcModalOpen] = useState(false);
+  const [stripPrefixData, setStripPrefixData] = useState<
+    import('@/lib/api/workbook').StripPrefixConnectionResult[] | null
+  >(null);
+  const [stripPrefixModalOpen, setStripPrefixModalOpen] = useState(false);
+
+  const [gitGraphTarget, setGitGraphTarget] = useState<{ workbookId: WorkbookId; connectorAccountId: string } | null>(
+    null,
+  );
+  const [gitBrowserTarget, setGitBrowserTarget] = useState<{
+    workbookId: WorkbookId;
+    connectorAccountId: string;
+  } | null>(null);
 
   const handleGetObjectCounts = async (workbookId: WorkbookId, connectorAccountId?: string) => {
     try {
@@ -82,6 +108,41 @@ function useGitActions() {
     }
   };
 
+  const handleStripPrefix = async (workbookId: WorkbookId, connectorAccountId: string) => {
+    try {
+      const result = await workbookApi.stripConnectionPrefix(workbookId, connectorAccountId);
+      setStripPrefixData(result.results);
+      setStripPrefixModalOpen(true);
+      notifications.show({ title: 'Success', message: 'Strip prefix complete', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to strip connection prefix', color: 'red' });
+    }
+  };
+
+  const handleStripAllPrefixes = async (workbookId: WorkbookId) => {
+    try {
+      const result = await workbookApi.stripConnectionPrefix(workbookId);
+      setStripPrefixData(result.results);
+      setStripPrefixModalOpen(true);
+      const errors = result.results.filter((r) => r.error).length;
+      if (errors > 0) {
+        notifications.show({
+          title: 'Partial success',
+          message: `${errors} connection(s) failed — see results`,
+          color: 'yellow',
+        });
+      } else {
+        notifications.show({
+          title: 'Success',
+          message: `Stripped ${result.results.length} connection(s)`,
+          color: 'green',
+        });
+      }
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to strip connection prefixes', color: 'red' });
+    }
+  };
+
   return {
     objectCountsData,
     objectCountsModalOpen,
@@ -89,9 +150,18 @@ function useGitActions() {
     gcData,
     gcModalOpen,
     setGcModalOpen,
+    stripPrefixData,
+    stripPrefixModalOpen,
+    setStripPrefixModalOpen,
+    gitGraphTarget,
+    setGitGraphTarget,
+    gitBrowserTarget,
+    setGitBrowserTarget,
     handleGetObjectCounts,
     handleRunGc,
     handleRebase,
+    handleStripPrefix,
+    handleStripAllPrefixes,
   };
 }
 
@@ -103,12 +173,14 @@ function GitActionsMenu({
   repoPath,
   gitActions,
   onMoveRepo,
+  onShowDataFolders,
 }: {
   workbookId: WorkbookId;
   connectorAccountId?: string;
   repoPath?: string | null;
   gitActions: ReturnType<typeof useGitActions>;
   onMoveRepo?: () => void;
+  onShowDataFolders?: () => void;
 }) {
   return (
     <Menu shadow="md" width={200} position="bottom-end">
@@ -119,6 +191,22 @@ function GitActionsMenu({
       </Menu.Target>
       <Menu.Dropdown>
         <Menu.Label>Git</Menu.Label>
+        {connectorAccountId && (
+          <>
+            <Menu.Item
+              leftSection={<GitGraphIcon size={14} />}
+              onClick={() => gitActions.setGitGraphTarget({ workbookId, connectorAccountId })}
+            >
+              Git Graph
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<FileCodeIcon size={14} />}
+              onClick={() => gitActions.setGitBrowserTarget({ workbookId, connectorAccountId })}
+            >
+              Git File Browser
+            </Menu.Item>
+          </>
+        )}
         <Menu.Item
           leftSection={<DatabaseIcon size={14} />}
           onClick={() => void gitActions.handleGetObjectCounts(workbookId, connectorAccountId)}
@@ -143,11 +231,30 @@ function GitActionsMenu({
         >
           GC (Aggressive)
         </Menu.Item>
+        {connectorAccountId && (
+          <>
+            <Menu.Divider />
+            <Menu.Item
+              leftSection={<ScissorsIcon size={14} />}
+              onClick={() => void gitActions.handleStripPrefix(workbookId, connectorAccountId)}
+            >
+              Strip Connection Prefix
+            </Menu.Item>
+          </>
+        )}
         {repoPath && onMoveRepo && (
           <>
             <Menu.Divider />
             <Menu.Item leftSection={<MoveIcon size={14} />} onClick={onMoveRepo}>
               Move Repo
+            </Menu.Item>
+          </>
+        )}
+        {connectorAccountId && onShowDataFolders && (
+          <>
+            <Menu.Divider />
+            <Menu.Item leftSection={<FolderIcon size={14} />} onClick={onShowDataFolders}>
+              Show Data Folders
             </Menu.Item>
           </>
         )}
@@ -170,6 +277,7 @@ function ConnectionsModal({
   onRefresh: () => void;
 }) {
   const [moveConn, setMoveConn] = useState<AdminWorkbookConnectionDto | null>(null);
+  const [showDataFoldersConn, setShowDataFoldersConn] = useState<AdminWorkbookConnectionDto | null>(null);
 
   return (
     <>
@@ -233,6 +341,7 @@ function ConnectionsModal({
                         repoPath={conn.repoPath}
                         gitActions={gitActions}
                         onMoveRepo={() => setMoveConn(conn)}
+                        onShowDataFolders={() => setShowDataFoldersConn(conn)}
                       />
                     </Table.Td>
                   </Table.Tr>
@@ -250,7 +359,84 @@ function ConnectionsModal({
           onSuccess={onRefresh}
         />
       )}
+      {showDataFoldersConn && workbook && (
+        <DataFoldersModal
+          opened={!!showDataFoldersConn}
+          onClose={() => setShowDataFoldersConn(null)}
+          workbookId={workbook.id}
+          connectorAccountId={showDataFoldersConn.id}
+          displayName={showDataFoldersConn.displayName}
+        />
+      )}
     </>
+  );
+}
+
+// ── Data Folders modal ─────────────────────────────────────────────────────────
+
+function DataFoldersModal({
+  opened,
+  onClose,
+  workbookId,
+  connectorAccountId,
+  displayName,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  workbookId: WorkbookId;
+  connectorAccountId: string;
+  displayName: string;
+}) {
+  const { folders, isLoading } = useDataFolders(workbookId);
+
+  // Filter out the data folders for just this connection
+  const connFolders = folders.filter((f) => f.connectorAccountId === connectorAccountId);
+
+  return (
+    <Modal opened={opened} onClose={onClose} title={`Data Folders — ${displayName}`} size="xl" centered>
+      {isLoading ? (
+        <Center p="xl">
+          <Loader size="sm" />
+        </Center>
+      ) : connFolders.length === 0 ? (
+        <Text c="dimmed" size="sm">
+          No data folders for this connection
+        </Text>
+      ) : (
+        <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+          <Table stickyHeader>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>ID</Table.Th>
+                <Table.Th>Path</Table.Th>
+                <Table.Th>Table ID</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {connFolders.map((f) => (
+                <Table.Tr key={f.id}>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+                      {f.id}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" style={{ fontFamily: 'monospace' }}>
+                      {f.path || '/'}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {f.tableId ? f.tableId.join(' / ') : '—'}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -323,6 +509,7 @@ function ConnectionCountCell({
 function WorkbookRow({
   workbook,
   onShowConnections,
+  gitActions,
 }: {
   workbook: AdminWorkbookDto;
   onShowConnections: (w: AdminWorkbookDto) => void;
@@ -350,6 +537,24 @@ function WorkbookRow({
         <Text size="sm" c="dimmed">
           {new Date(workbook.createdAt).toLocaleDateString()}
         </Text>
+      </Table.Td>
+      <Table.Td>
+        <Menu shadow="md" width={220} position="bottom-end">
+          <Menu.Target>
+            <ActionIcon variant="subtle" size="sm">
+              <MoreVerticalIcon size={14} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>Migration</Menu.Label>
+            <Menu.Item
+              leftSection={<ScissorsIcon size={14} />}
+              onClick={() => void gitActions.handleStripAllPrefixes(workbook.id)}
+            >
+              Strip All Connection Prefixes
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </Table.Td>
     </Table.Tr>
   );
@@ -516,6 +721,7 @@ export default function WorkbooksDevPage() {
                     <Table.Th>Org</Table.Th>
                     <Table.Th>Connections</Table.Th>
                     <Table.Th>Created</Table.Th>
+                    <Table.Th />
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -546,6 +752,40 @@ export default function WorkbooksDevPage() {
         gitActions={gitActions}
         onRefresh={fetchWorkbooks}
       />
+      <Modal
+        opened={gitActions.stripPrefixModalOpen}
+        onClose={() => gitActions.setStripPrefixModalOpen(false)}
+        title="Strip Connection Prefix Results"
+        size="lg"
+        centered
+      >
+        {gitActions.stripPrefixData && (
+          <Stack>
+            {gitActions.stripPrefixData.map((r) => (
+              <Stack key={r.connectorAccountId} gap={2}>
+                <Text size="sm" fw={600}>
+                  {r.displayName}
+                </Text>
+                <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+                  {r.repoId}
+                </Text>
+                {r.error ? (
+                  <Text size="xs" c="red">
+                    Error: {r.error}
+                  </Text>
+                ) : (
+                  <Text size="xs" c="green">
+                    Case {r.case} — {r.foldersUpdated} folder{r.foldersUpdated !== 1 ? 's' : ''} updated
+                  </Text>
+                )}
+              </Stack>
+            ))}
+            <Group justify="flex-end">
+              <Button onClick={() => gitActions.setStripPrefixModalOpen(false)}>Close</Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
       <Modal
         opened={gitActions.objectCountsModalOpen}
         onClose={() => gitActions.setObjectCountsModalOpen(false)}
@@ -591,6 +831,22 @@ export default function WorkbooksDevPage() {
           </Stack>
         )}
       </Modal>
+      {gitActions.gitGraphTarget && (
+        <GitGraphModal
+          opened={!!gitActions.gitGraphTarget}
+          onClose={() => gitActions.setGitGraphTarget(null)}
+          workbookId={gitActions.gitGraphTarget.workbookId}
+          connectorAccountId={gitActions.gitGraphTarget.connectorAccountId}
+        />
+      )}
+      {gitActions.gitBrowserTarget && (
+        <GitFileBrowserModal
+          opened={!!gitActions.gitBrowserTarget}
+          onClose={() => gitActions.setGitBrowserTarget(null)}
+          workbookId={gitActions.gitBrowserTarget.workbookId}
+          connectorAccountId={gitActions.gitBrowserTarget.connectorAccountId}
+        />
+      )}
     </MainContent>
   );
 }

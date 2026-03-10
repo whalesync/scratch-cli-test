@@ -333,6 +333,24 @@ pub async fn copy_repo(State(state): State<AppState>, Json(body): Json<CopyBody>
     }
 }
 
+pub async fn strip_prefix(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let result = tokio::task::spawn_blocking({
+        let repos_dir = state.repos_dir.clone();
+        let id = id.clone();
+        move || {
+            let git_repo = GitRepo::open(&repos_dir, &id)?;
+            let result = git_repo.strip_top_level_prefix()?;
+            Ok::<_, AppError>(result)
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), AppError> {
     std::fs::create_dir_all(dst)
         .map_err(|e| AppError::internal(format!("Failed to create dir {:?}: {}", dst, e)))?;

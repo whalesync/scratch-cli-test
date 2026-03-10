@@ -98,6 +98,10 @@ async fn main() {
             "/api/repo/manage/copy",
             post(routes::manage::copy_repo),
         )
+        .route(
+            "/api/repo/manage/{id}/strip-prefix",
+            post(routes::manage::strip_prefix),
+        )
         // Read
         .route("/api/repo/read/{id}/list", get(routes::read::list))
         .route("/api/repo/read/{id}/file", get(routes::read::file))

@@ -47,3 +47,13 @@ pub const MAIN_BRANCH: &str = "main";
 pub const DIRTY_BRANCH: &str = "dirty";
 pub const DEFAULT_AUTHOR_NAME: &str = "Scratch";
 pub const DEFAULT_AUTHOR_EMAIL: &str = "scratch@example.com";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StripPrefixResult {
+    pub case: String,
+    pub prefix_stripped: String,
+    pub new_main: String,
+    pub new_dirty: String,
+    pub new_merge_base: String,
+}

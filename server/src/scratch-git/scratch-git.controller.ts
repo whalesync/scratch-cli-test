@@ -11,7 +11,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
-import { MigrationService } from './migration.service';
+import { MigrationService, StripPrefixConnectionResult } from './migration.service';
 import { ScratchGitService } from './scratch-git.service';
 
 @Controller('scratch-git')
@@ -247,5 +247,17 @@ export class ScratchGitController {
     checkWorkspacePermissions(actor, workbookId);
     await this.migrationService.migrateWorkbookToV2(workbookId);
     return { success: true };
+  }
+
+  @Post(':id/strip-connection-prefix')
+  async stripConnectionPrefix(
+    @Param('id') workbookId: WorkbookId,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<{ results: StripPrefixConnectionResult[] }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const results = await this.migrationService.stripConnectionPrefixForWorkbook(workbookId, connectorAccountId);
+    return { results };
   }
 }

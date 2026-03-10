@@ -28,6 +28,15 @@ import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
 export type WorkbookSortBy = 'name' | 'createdAt' | 'updatedAt';
+
+export interface StripPrefixConnectionResult {
+  connectorAccountId: string;
+  displayName: string;
+  repoId: string;
+  case: string;
+  foldersUpdated: number;
+  error?: string;
+}
 export type WorkbookSortOrder = 'asc' | 'desc';
 
 export interface GitFile {
@@ -565,6 +574,24 @@ export const workbookApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to migrate workspace to v2');
+      throw error;
+    }
+  },
+
+  stripConnectionPrefix: async (
+    workbookId: WorkbookId,
+    connectorAccountId?: string,
+  ): Promise<{ results: StripPrefixConnectionResult[] }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ results: StripPrefixConnectionResult[] }>(
+        `/scratch-git/${workbookId}/strip-connection-prefix`,
+        {},
+        { params: { connectorAccountId } },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to strip connection prefix');
       throw error;
     }
   },
