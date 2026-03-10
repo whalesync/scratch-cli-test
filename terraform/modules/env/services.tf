@@ -229,6 +229,8 @@ resource "google_cloud_run_v2_service" "api_service" {
           "OPENROUTER_API_KEY",
           "POSTHOG_API_KEY",
           "POSTHOG_FEATURE_FLAG_API_KEY",
+          "QUICKBOOKS_CLIENT_ID",
+          "QUICKBOOKS_CLIENT_SECRET",
           "REDIS_PASSWORD",
           "SHOPIFY_CLIENT_ID",
           "SHOPIFY_CLIENT_SECRET",
