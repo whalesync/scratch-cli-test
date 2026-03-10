@@ -16,16 +16,15 @@ import {
 } from './quickbooks-types';
 
 const PAGE_SIZE = 1000;
-const SCHEMA_SAMPLE_SIZE = 5;
 
 /**
  * Read-only connector for QuickBooks Online.
  *
  * Features:
  * - OAuth 2.0 authentication (access tokens last 1 hour, refresh tokens 100 days)
- * - Runtime schema inference from sample records (no hardcoded schemas)
+ * - Static schemas based on Intuit's API documentation (no runtime inference)
  * - Offset-based pagination using QBO's SQL-like query language
- * - Supports ~28 entity types (Invoices, Customers, Items, Bills, etc.)
+ * - Supports 23 entity types (Invoices, Customers, Items, Bills, etc.)
  *
  * This connector is read-only — create, update, and delete operations are not supported.
  */
@@ -66,12 +65,12 @@ export class QuickBooksConnector extends Connector<typeof Service.QUICKBOOKS, Qu
   }
 
   /**
-   * Fetch the JSON Table Spec by inferring schema from sample records.
+   * Fetch the JSON Table Spec using static schemas.
    *
-   * Queries up to 5 sample records from the entity type and walks the JSON
-   * to dynamically build a TypeBox schema. If no records exist, returns a
-   * minimal schema with just an Id field.
+   * Returns a pre-defined TypeBox schema for the entity type. All schemas
+   * have additionalProperties: true to handle undocumented fields gracefully.
    */
+  // eslint-disable-next-line @typescript-eslint/require-await
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const entityType = id.remoteId[0] as QuickBooksEntityType;
 
@@ -83,10 +82,7 @@ export class QuickBooksConnector extends Connector<typeof Service.QUICKBOOKS, Qu
       );
     }
 
-    // Fetch sample records to infer schema
-    const { entities } = await this.client.query(entityType, 1, SCHEMA_SAMPLE_SIZE);
-
-    return buildQuickBooksJsonTableSpec(id, entityType, entities);
+    return buildQuickBooksJsonTableSpec(id, entityType);
   }
 
   /**
