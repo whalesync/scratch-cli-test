@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "GIT_REPOS_DIR=$INIT_CWD/local/scratch-git-repos cargo run"
+    "dev": "GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" GIT_REPOS_V2_DIR=\"$INIT_CWD/../local/scratch-git-repos-v2\" cargo run"
   }
 }
