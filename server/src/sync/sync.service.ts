@@ -1231,13 +1231,16 @@ export class SyncService {
     };
 
     // Schemas
-    const sourceTableSpec = await this.dataFolderService.fetchSchemaSpec(sourceId, actor);
+    let sourceTableSpec = (await this.dataFolderService.getStoredSchema(sourceId, actor)) as BaseJsonTableSpec | null;
     if (!sourceTableSpec) {
-      throw new NotFoundException(`Schema not found for source folder`);
+      sourceTableSpec = await this.dataFolderService.fetchSchemaSpec(sourceId, actor).catch(() => null);
     }
-    const destinationTableSpec = await this.dataFolderService.fetchSchemaSpec(body.destFolderId, actor);
+    let destinationTableSpec = (await this.dataFolderService.getStoredSchema(
+      body.destFolderId,
+      actor,
+    )) as BaseJsonTableSpec | null;
     if (!destinationTableSpec) {
-      throw new NotFoundException(`Schema not found for destination folder ${body.destFolderId}`);
+      destinationTableSpec = await this.dataFolderService.fetchSchemaSpec(body.destFolderId, actor).catch(() => null);
     }
 
     const fields: PreviewFieldResult[] = [];

@@ -1004,10 +1004,18 @@ export class DataFolderService {
 
   /**
    * Returns schema paths (dot notation) for a data folder.
-   * Fetches fresh schema from the connector.
+   * Tries to read the schema from the git repo first, falling back to the connector.
    */
   async getSchemaPaths(id: DataFolderId, actor: Actor): Promise<SchemaField[]> {
-    const spec = await this.fetchSchemaSpec(id, actor);
+    let spec = (await this.getStoredSchema(id, actor)) as BaseJsonTableSpec | null;
+    if (!spec || !spec.schema) {
+      WSLogger.warn({
+        source: 'DataFolderService.getSchemaPaths',
+        message: 'Schema missing from git, fetching from connector',
+        dataFolderId: id,
+      });
+      spec = await this.fetchSchemaSpec(id, actor);
+    }
     if (!spec || !spec.schema) {
       return [];
     }
