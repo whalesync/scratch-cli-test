@@ -1,4 +1,5 @@
 import type { WorkbookId } from '@spinner/shared-types';
+import type { PostHogService } from 'src/posthog/posthog.service';
 import type { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import type { WorkbookEventService } from 'src/workbook/workbook-event.service';
@@ -40,6 +41,7 @@ export type PublishJobDefinition = JobDefinitionBuilder<
     folderPath?: string;
     filePath?: string;
     executeSinglePhase?: boolean; // If only executing a single stage
+    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
   },
   PublishPublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -58,6 +60,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     private readonly db: import('src/db/db.service').DbService,
     private readonly workbookEventService: WorkbookEventService,
     private readonly bullEnqueuerService?: BullEnqueuerService,
+    private readonly postHogService?: PostHogService,
   ) {}
 
   async run(params: {
@@ -278,6 +281,28 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         },
       });
 
+      try {
+        const totalRecordsPushed =
+          (runResult.successByPhase?.create ?? 0) +
+          (runResult.successByPhase?.edit ?? 0) +
+          (runResult.successByPhase?.delete ?? 0);
+        this.postHogService?.trackPublishCompleted(data.userId, {
+          workbookId: data.workbookId,
+          trigger: data.trigger,
+          result: 'success',
+          totalRecordsPushed,
+          creates: runResult.successByPhase?.create ?? 0,
+          edits: runResult.successByPhase?.edit ?? 0,
+          deletes: runResult.successByPhase?.delete ?? 0,
+        });
+      } catch (err) {
+        WSLogger.warn({
+          source: 'PublishJob',
+          message: 'Failed to track publish completed event',
+          error: err,
+        });
+      }
+
       WSLogger.info({
         source: 'PublishJob',
         message: 'Publish run phase completed',
@@ -306,6 +331,21 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           jobProgress: {},
           connectorProgress: {},
         });
+
+        try {
+          this.postHogService?.trackPublishCompleted(data.userId, {
+            workbookId: data.workbookId,
+            trigger: data.trigger,
+            result: 'failure',
+            totalRecordsPushed: 0,
+            creates: 0,
+            edits: 0,
+            deletes: 0,
+          });
+        } catch {
+          // PostHog tracking should never break the error flow
+        }
+
         WSLogger.error({
           source: 'PublishJob',
           message: 'Publish job failed',

@@ -5,6 +5,7 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 import { createRunContext } from '../base-types';
 // Non type imports
 import { RunId } from '@spinner/shared-types';
+import type { PostHogService } from 'src/posthog/posthog.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
@@ -47,6 +48,7 @@ export type PublishDataFolderJobDefinition = JobDefinitionBuilder<
     dataFolderIds: DataFolderId[];
     userId: string;
     organizationId: string;
+    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
     initialPublicProgress?: PublishDataFolderPublicProgress;
   },
   PublishDataFolderPublicProgress,
@@ -67,6 +69,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
     private readonly dataFolderPublishingService: DataFolderPublishingService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly postHogService: PostHogService,
   ) {}
 
   async run(params: {
@@ -424,5 +427,28 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
       totalFilesPublished,
       folderCount: dataFolders.length,
     });
+
+    try {
+      const totalCreates = foldersProgress.reduce((sum, f) => sum + f.creates, 0);
+      const totalUpdates = foldersProgress.reduce((sum, f) => sum + f.updates, 0);
+      const totalDeletes = foldersProgress.reduce((sum, f) => sum + f.deletes, 0);
+      const anyFailed = foldersProgress.some((f) => f.status === 'failed');
+
+      this.postHogService.trackPublishCompleted(data.userId, {
+        workbookId: data.workbookId,
+        trigger: data.trigger,
+        result: anyFailed ? 'failure' : 'success',
+        totalRecordsPushed: totalCreates + totalUpdates + totalDeletes,
+        creates: totalCreates,
+        edits: totalUpdates,
+        deletes: totalDeletes,
+      });
+    } catch (err) {
+      WSLogger.warn({
+        source: 'PublishDataFolderJob',
+        message: 'Failed to track publish completed event',
+        error: err,
+      });
+    }
   }
 }

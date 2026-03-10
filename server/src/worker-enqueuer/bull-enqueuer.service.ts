@@ -74,6 +74,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       userId: actor.userId,
       organizationId: actor.organizationId,
       dataFolderIds,
+      trigger: runContext.trigger,
       type: 'pull-linked-folder-files',
       initialPublicProgress,
     };
@@ -105,6 +106,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       userId: actor.userId,
       organizationId: actor.organizationId,
       dataFolderIds,
+      trigger: runContext.trigger,
       type: 'publish-data-folder',
       initialPublicProgress,
     };
@@ -136,6 +138,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       syncId,
       userId: actor.userId,
       organizationId: actor.organizationId,
+      trigger: runContext.trigger,
       type: 'sync-data-folders',
       initialPublicProgress,
     };
@@ -171,6 +174,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       userId: actor.userId,
       pipelineId,
       type: 'publish',
+      trigger: runContext.trigger,
       ...(connectorAccountId && { connectorAccountId }),
       ...(runAfterPlan && { runAfterPlan }),
       ...(folderPath && { folderPath }),
@@ -206,6 +210,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       workbookId,
       userId: actor.userId,
       type: 'publish',
+      trigger: runContext.trigger,
       // We are enqueuing a run explicitly
       runAfterPlan: true,
       ...(executeSinglePhase && { executeSinglePhase }),
@@ -273,6 +278,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       organizationId: actor.organizationId,
       dataFolderId,
       filePaths,
+      trigger: runContext.trigger,
       type: 'refresh-records',
       initialPublicProgress,
     };

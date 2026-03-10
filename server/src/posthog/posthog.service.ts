@@ -297,6 +297,54 @@ export class PostHogService implements OnModuleDestroy {
     });
   }
 
+  trackSyncCompleted(
+    actor: Actor | string,
+    properties: {
+      syncId: string;
+      syncName: string;
+      trigger?: string;
+      result: 'success' | 'failure';
+      totalRecordsSynced: number;
+      recordsCreated: number;
+      recordsUpdated: number;
+      tablesProcessed: number;
+      failedTableCount: number;
+    },
+  ): void {
+    this.captureEvent(PostHogEventName.SYNC_COMPLETED, actor, properties);
+  }
+
+  trackPublishCompleted(
+    actor: Actor | string,
+    properties: {
+      workbookId: string;
+      trigger?: string;
+      result: 'success' | 'failure';
+      totalRecordsPushed: number;
+      creates: number;
+      edits: number;
+      deletes: number;
+    },
+  ): void {
+    this.captureEvent(PostHogEventName.PUBLISH_COMPLETED, actor, properties);
+  }
+
+  trackPullCompleted(
+    actor: Actor | string,
+    properties: {
+      workbookId: string;
+      trigger?: string;
+      result: 'success' | 'failure';
+      totalFilesPulled: number;
+      filesCreated: number;
+      filesUpdated: number;
+      filesDeleted: number;
+      foldersProcessed: number;
+    },
+  ): void {
+    this.captureEvent(PostHogEventName.PULL_COMPLETED, actor, properties);
+  }
+
   /*******************************************************
    * Subscription events
    *******************************************************/
@@ -394,6 +442,9 @@ export enum PostHogEventName {
   SYNC_UPDATED = 'sync_updated',
   SYNC_REMOVED = 'sync_removed',
   START_SYNC_RUN = 'start_sync_run',
+  SYNC_COMPLETED = 'sync_completed',
+  PUBLISH_COMPLETED = 'publish_completed',
+  PULL_COMPLETED = 'pull_completed',
   PULL_FILES = 'pull_files',
   RECORD_CREATED = 'record_created',
   RECORD_EDITED = 'record_edited',

@@ -5,6 +5,7 @@ import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
+import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
@@ -44,6 +45,7 @@ export class JobHandlerService {
     private readonly pipelinePlanService: PublishPlanBuildService,
     private readonly pipelineRunService: PublishPlanRunService,
     private readonly dbService: DbService,
+    private readonly postHogService: PostHogService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -65,6 +67,7 @@ export class JobHandlerService {
           this.fileReferenceService,
           this.assetExtractorService,
           this.assetIndexService,
+          this.postHogService,
         ) as JobHandler<JobDefinition>;
 
       case 'refresh-records':
@@ -78,6 +81,7 @@ export class JobHandlerService {
           this.fileReferenceService,
           this.assetExtractorService,
           this.assetIndexService,
+          this.postHogService,
         ) as JobHandler<JobDefinition>;
 
       case 'publish-data-folder':
@@ -89,6 +93,7 @@ export class JobHandlerService {
           this.dataFolderPublishingService,
           this.bullEnqueuerService,
           this.scratchGitService,
+          this.postHogService,
         ) as JobHandler<JobDefinition>;
 
       case 'sync-data-folders':
@@ -99,6 +104,7 @@ export class JobHandlerService {
           this.scratchGitService,
           this.bullEnqueuerService,
           this.pipelinePlanService,
+          this.postHogService,
         ) as JobHandler<JobDefinition>;
 
       case 'rehost-assets':
@@ -115,6 +121,7 @@ export class JobHandlerService {
           this.dbService,
           this.workbookEventService,
           this.bullEnqueuerService,
+          this.postHogService,
         ) as JobHandler<JobDefinition>;
 
       default:

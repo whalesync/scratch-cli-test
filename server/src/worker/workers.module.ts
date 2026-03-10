@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AssetModule } from 'src/asset/asset.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { PosthogModule } from 'src/posthog/posthog.module';
 import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from 'src/remote-service/connectors/connectors.module';
@@ -32,6 +33,7 @@ import { WorkersController } from './test/workers.controller';
     SyncModule,
     PublishPlanModule,
     AssetModule,
+    PosthogModule,
   ],
   controllers: [WorkersController],
   providers: [WorkerPoolService, QueueService, QueueTestService, JobHandlerService],

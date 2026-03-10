@@ -7,6 +7,7 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 // Non type imports
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
+import type { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -37,6 +38,7 @@ export type PullFilesJobDefinition = JobDefinitionBuilder<
     userId: string;
     organizationId: string;
     filePaths: string[];
+    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
     progress?: JsonSafeObject;
     initialPublicProgress?: PullFilesPublicProgress;
   },
@@ -61,6 +63,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
     private readonly fileReferenceService: FileReferenceService,
     private readonly assetExtractorService: AssetExtractorService,
     private readonly assetIndexService: AssetIndexService,
+    private readonly postHogService: PostHogService,
   ) {}
 
   async run(params: {
@@ -392,6 +395,25 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         type: 'job-completed',
         data: { entityId: dataFolder.id, source: 'job', message: 'Pull completed for data folder', jobId },
       });
+
+      try {
+        this.postHogService.trackPullCompleted(data.userId, {
+          workbookId: data.workbookId,
+          trigger: data.trigger,
+          result: 'success',
+          totalFilesPulled: publicProgress.createdPaths.length + publicProgress.updatedPaths.length,
+          filesCreated: publicProgress.createdPaths.length,
+          filesUpdated: publicProgress.updatedPaths.length,
+          filesDeleted: 0,
+          foldersProcessed: 1,
+        });
+      } catch (err) {
+        WSLogger.warn({
+          source: 'PullFilesJob',
+          message: 'Failed to track pull completed event',
+          error: err,
+        });
+      }
     } catch (error) {
       publicProgress.status = 'failed';
 
@@ -423,6 +445,21 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         type: 'job-failed',
         data: { entityId: dataFolder.id, source: 'job', message: 'Pull failed for data folder', jobId },
       });
+
+      try {
+        this.postHogService.trackPullCompleted(data.userId, {
+          workbookId: data.workbookId,
+          trigger: data.trigger,
+          result: 'failure',
+          totalFilesPulled: 0,
+          filesCreated: 0,
+          filesUpdated: 0,
+          filesDeleted: 0,
+          foldersProcessed: 1,
+        });
+      } catch {
+        // PostHog tracking should never break the error flow
+      }
 
       throw exceptionForConnectorError(error, connector);
     }

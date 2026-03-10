@@ -112,6 +112,7 @@ describe('PublishDataFolderJobHandler', () => {
       mockDataFolderPublishingService,
       mockBullEnqueuerService,
       mockScratchGitService,
+      { trackPublishCompleted: jest.fn() } as any,
     );
   });
 

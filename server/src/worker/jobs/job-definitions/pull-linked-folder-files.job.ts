@@ -7,6 +7,7 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 // Non type imports
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
+import type { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -40,6 +41,7 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
     dataFolderIds: DataFolderId[];
     userId: string;
     organizationId: string;
+    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
     progress?: JsonSafeObject;
     initialPublicProgress?: PullLinkedFolderFilesPublicProgress;
   },
@@ -63,6 +65,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     private readonly fileReferenceService: FileReferenceService,
     private readonly assetExtractorService: AssetExtractorService,
     private readonly assetIndexService: AssetIndexService,
+    private readonly postHogService: PostHogService,
   ) {}
 
   async run(params: {
@@ -115,6 +118,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     await this.scratchGitService.initRepo(repoId);
 
     const totalFilesAccumulator = { count: 0 };
+    const pullStats = { created: 0, updated: 0, deleted: 0, failed: false };
     for (const dataFolderId of data.dataFolderIds) {
       await this.pullFolder({
         jobId,
@@ -123,9 +127,29 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         connectionName,
         repoId,
         totalFilesAccumulator,
+        pullStats,
         data,
         checkpoint,
         progress,
+      });
+    }
+
+    try {
+      this.postHogService.trackPullCompleted(data.userId, {
+        workbookId: data.workbookId,
+        trigger: data.trigger,
+        result: pullStats.failed ? 'failure' : 'success',
+        totalFilesPulled: totalFilesAccumulator.count,
+        filesCreated: pullStats.created,
+        filesUpdated: pullStats.updated,
+        filesDeleted: pullStats.deleted,
+        foldersProcessed: folderCount,
+      });
+    } catch (err) {
+      WSLogger.warn({
+        source: 'PullLinkedFolderFilesJob',
+        message: 'Failed to track pull completed event',
+        error: err,
       });
     }
   }
@@ -137,6 +161,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     connectionName: string;
     repoId: string;
     totalFilesAccumulator: { count: number };
+    pullStats: { created: number; updated: number; deleted: number; failed: boolean };
     data: PullLinkedFolderFilesJobDefinition['data'];
     progress: Progress<
       PullLinkedFolderFilesJobDefinition['publicProgress'],
@@ -159,6 +184,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       connectionName,
       repoId,
       totalFilesAccumulator,
+      pullStats,
       data,
       checkpoint,
       progress,
@@ -500,6 +526,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       // Mark as completed
       publicProgress.status = 'completed';
+      pullStats.created += publicProgress.createdPaths.length;
+      pullStats.updated += publicProgress.updatedPaths.length;
+      pullStats.deleted += publicProgress.deletedPaths.length;
 
       // Checkpoint final status
       await checkpoint({
@@ -557,6 +586,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     } catch (error) {
       // Mark as failed
       publicProgress.status = 'failed';
+      pullStats.failed = true;
 
       // Checkpoint failed status
       await checkpoint({

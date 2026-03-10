@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
 import { RunId, TransformerTypes } from '@spinner/shared-types';
+import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -49,6 +50,7 @@ export type SyncDataFoldersJobDefinition = JobDefinitionBuilder<
     syncId: SyncId;
     organizationId: string;
     userId: string;
+    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
     progress?: JsonSafeObject;
     initialPublicProgress?: SyncDataFoldersPublicProgress;
   },
@@ -65,6 +67,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     private readonly scratchGitService: ScratchGitService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly publishPlanBuildService: PublishPlanBuildService,
+    private readonly postHogService: PostHogService,
   ) {}
 
   async run(params: {
@@ -431,5 +434,25 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       tablesProcessed: tableMappings.length,
       allTablesSucceeded,
     });
+
+    try {
+      this.postHogService.trackSyncCompleted(data.userId, {
+        syncId: data.syncId,
+        syncName: sync.displayName ?? data.syncId,
+        trigger: data.trigger,
+        result: allTablesSucceeded ? 'success' : 'failure',
+        totalRecordsSynced: totalFilesSynced,
+        recordsCreated: tablesProgress.reduce((sum, t) => sum + t.creates, 0),
+        recordsUpdated: tablesProgress.reduce((sum, t) => sum + t.updates, 0),
+        tablesProcessed: tableMappings.length,
+        failedTableCount: failedTables.length,
+      });
+    } catch (err) {
+      WSLogger.warn({
+        source: 'SyncDataFoldersJob',
+        message: 'Failed to track sync completed event',
+        error: err,
+      });
+    }
   }
 }
