@@ -84,6 +84,8 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { Pool } from 'pg';
+import { AssetExtractorService } from 'src/asset/asset-extractor.service';
+import { AssetIndexService } from 'src/asset/asset-index.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
@@ -406,9 +408,19 @@ describe('Fetch → Edit → Publish Integration', () => {
     // ── 8. Wire up all services ──────────────────────────────────────────────
     const dbService = makeDbService(prisma);
 
+    // Real PostgresConnector — used for both pull and publish
+    const realConnectorsService = new ConnectorsService({} as any);
+
+    const credentialEncryptionService = new CredentialEncryptionService();
+
     fileIndexService = new FileIndexService(dbService);
     const refCleanerService = new RefCleanerService();
-    const schemaHelperService = new SchemaHelperService(dbService, mockScratchGitService);
+    const schemaHelperService = new SchemaHelperService(
+      dbService,
+      mockScratchGitService,
+      realConnectorsService,
+      credentialEncryptionService,
+    );
     fileReferenceService = new FileReferenceService(dbService, refCleanerService, schemaHelperService);
     const refResolverService = new RefResolverService(fileIndexService);
 
@@ -421,14 +433,17 @@ describe('Fetch → Edit → Publish Integration', () => {
       }),
     } as unknown as ConnectorAccountService;
 
-    // Real PostgresConnector — used for both pull and publish
-    const realConnectorsService = new ConnectorsService({} as any);
-
-    const credentialEncryptionService = new CredentialEncryptionService();
-
     const mockWorkbookEventService = {
       sendWorkbookEvent: jest.fn(),
     } as unknown as WorkbookEventService;
+
+    const mockAssetExtractorService = {
+      extractAssets: jest.fn().mockReturnValue([]),
+    } as unknown as AssetExtractorService;
+
+    const mockAssetIndexService = {
+      upsertBatch: jest.fn().mockResolvedValue(undefined),
+    } as unknown as AssetIndexService;
 
     pullHandler = new PullLinkedFolderFilesJobHandler(
       prisma,
@@ -438,6 +453,8 @@ describe('Fetch → Edit → Publish Integration', () => {
       mockScratchGitService,
       fileIndexService,
       fileReferenceService,
+      mockAssetExtractorService,
+      mockAssetIndexService,
     );
 
     publishPlanService = new PublishPlanBuildService(

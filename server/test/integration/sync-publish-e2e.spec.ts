@@ -139,13 +139,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       }),
     } as unknown as ScratchGitService;
 
-    // ---- Real services ----
-    fileIndexService = new FileIndexService(dbService);
-    publishSchemaService = new SchemaHelperService(dbService, scratchGitService);
-    refCleanerService = new RefCleanerService();
-    publishRefResolverService = new RefResolverService(fileIndexService);
-    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
-
     // ---- Mock: DataFolderService ----
     folderPathMap.clear();
 
@@ -235,6 +228,18 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     credentialEncryptionService = {
       decryptCredentials: jest.fn().mockResolvedValue({}),
     } as unknown as CredentialEncryptionService;
+
+    // ---- Real services ----
+    fileIndexService = new FileIndexService(dbService);
+    publishSchemaService = new SchemaHelperService(
+      dbService,
+      scratchGitService,
+      connectorsService,
+      credentialEncryptionService,
+    );
+    refCleanerService = new RefCleanerService();
+    publishRefResolverService = new RefResolverService(fileIndexService);
+    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Instantiate SyncService (real, with mocked deps) ----
     const scheduleService = {
@@ -787,13 +792,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       }),
     } as unknown as ScratchGitService;
 
-    // ---- Real services ----
-    fileIndexService = new FileIndexService(dbService);
-    publishSchemaService = new SchemaHelperService(dbService, scratchGitService);
-    refCleanerService = new RefCleanerService();
-    publishRefResolverService = new RefResolverService(fileIndexService);
-    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
-
     // ---- Mock: DataFolderService ----
     folderPathMap.clear();
 
@@ -883,6 +881,18 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     credentialEncryptionService = {
       decryptCredentials: jest.fn().mockResolvedValue({}),
     } as unknown as CredentialEncryptionService;
+
+    // ---- Real services ----
+    fileIndexService = new FileIndexService(dbService);
+    publishSchemaService = new SchemaHelperService(
+      dbService,
+      scratchGitService,
+      connectorsService,
+      credentialEncryptionService,
+    );
+    refCleanerService = new RefCleanerService();
+    publishRefResolverService = new RefResolverService(fileIndexService);
+    fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Instantiate SyncService ----
     const scheduleService = {

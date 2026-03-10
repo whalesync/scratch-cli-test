@@ -157,6 +157,20 @@ export class PublishPlanBuildService {
     // and brings merge_base up to date if a pull job just finished without rebasing.
     await this.scratchGitService.rebaseDirty(repoId);
 
+    // Refresh schemas from the remote connector so the planner uses up-to-date field definitions.
+    // This mirrors what the pull job does at the start of each pull.
+    if (connectorAccountId) {
+      await onProgress?.({
+        editsPlanned: 0,
+        createsPlanned: 0,
+        deletesPlanned: 0,
+        backfillsPlanned: 0,
+        renameFilesPlanned: 0,
+        step: 'Refreshing schemas from remote',
+      });
+      await this.schemaService.refreshSchemasForConnection(workbookId, connectorAccountId, repoId);
+    }
+
     // Running counts — updated as each entry is planned and passed to onProgress
     const liveCounts = {
       editsPlanned: 0,

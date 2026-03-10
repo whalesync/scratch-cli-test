@@ -1,17 +1,22 @@
 import { Injectable } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
+import { Service, WorkbookId } from '@spinner/shared-types';
 import { DbService } from '../db/db.service';
 
 import { WSLogger } from 'src/logger';
 import { Schema } from 'src/utils/objects';
+import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
+import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { EncryptedData } from '../utils/encryption';
 
 @Injectable()
 export class SchemaHelperService {
   constructor(
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly connectorsService: ConnectorsService,
+    private readonly credentialEncryptionService: CredentialEncryptionService,
   ) {}
 
   /**
@@ -181,6 +186,99 @@ export class SchemaHelperService {
         cache.set(dataFolderId, null);
       }
       return null;
+    }
+  }
+
+  /**
+   * Refreshes schemas from the remote connector for all data folders belonging to a connection.
+   * Fetches fresh schema via the connector, updates lastSchemaRefreshAt in DB, and writes to git.
+   * Follows the same pattern used in the pull job (pull-linked-folder-files.job.ts).
+   */
+  async refreshSchemasForConnection(workbookId: string, connectorAccountId: string, repoId: string): Promise<void> {
+    const dataFolders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, connectorAccountId },
+      select: {
+        id: true,
+        path: true,
+        tableId: true,
+        connectorService: true,
+        options: true,
+        connectorAccount: true,
+      },
+    });
+
+    if (dataFolders.length === 0) return;
+
+    const account = await this.db.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId },
+    });
+    if (!account) {
+      WSLogger.warn({
+        source: 'SchemaHelperService.refreshSchemasForConnection',
+        message: `ConnectorAccount not found: ${connectorAccountId}`,
+        workbookId,
+      });
+      return;
+    }
+
+    const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
+      account.encryptedCredentials as unknown as EncryptedData,
+    );
+
+    const connector = await this.connectorsService.getConnector({
+      service: account.service as Service,
+      connectorAccount: account,
+      decryptedCredentials,
+    });
+
+    for (const folder of dataFolders) {
+      if (!folder.tableId || folder.tableId.length === 0 || !folder.path) continue;
+
+      try {
+        const tableSpec = await connector.fetchJsonTableSpec({
+          wsId: folder.tableId[0],
+          remoteId: folder.tableId,
+        });
+
+        // Re-apply user field overrides from options
+        const options =
+          folder.options && typeof folder.options === 'object' && !Array.isArray(folder.options) ? folder.options : {};
+        const idOverride =
+          'idFieldOverride' in options ? (options as Record<string, unknown>).idFieldOverride : undefined;
+        const nameOverride =
+          'nameFieldOverride' in options ? (options as Record<string, unknown>).nameFieldOverride : undefined;
+        if (typeof idOverride === 'string') {
+          tableSpec.idColumnRemoteId = idOverride;
+        }
+        if (typeof nameOverride === 'string') {
+          tableSpec.titleColumnRemoteId = [nameOverride];
+        }
+
+        // Persist refreshed schema timestamp
+        await this.db.client.dataFolder.update({
+          where: { id: folder.id },
+          data: { lastSchemaRefreshAt: new Date() },
+        });
+
+        // Write refreshed schema to git
+        await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
+
+        WSLogger.info({
+          source: 'SchemaHelperService.refreshSchemasForConnection',
+          message: `Refreshed schema for folder ${folder.path}`,
+          workbookId,
+          dataFolderId: folder.id,
+        });
+      } catch (error) {
+        WSLogger.error({
+          source: 'SchemaHelperService.refreshSchemasForConnection',
+          message: `Failed to refresh schema for folder ${folder.path}`,
+          error,
+          workbookId,
+          dataFolderId: folder.id,
+        });
+        // Continue with other folders — don't fail the entire publish for one schema refresh failure
+      }
     }
   }
 }
