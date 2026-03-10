@@ -18,11 +18,6 @@ export const sourceFkToDestFkTransformer: FieldTransformer = {
   type: TransformerTypes.SourceFkToDestFk,
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    // In DATA phase, skip transform: resolution happens in FOREIGN_KEY_MAPPING phase
-    if (ctx.phase === 'DATA') {
-      return { success: true, skip: true };
-    }
-
     const { sourceValue, lookupTools, options, destinationValue } = ctx;
     const typedOptions = options as SourceFkToDestFkOptions;
     const ignoreUnresolved = typedOptions.onUnresolved === 'ignore';

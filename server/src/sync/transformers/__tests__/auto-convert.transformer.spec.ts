@@ -23,13 +23,6 @@ describe('autoConvertTransformer', () => {
   });
 
   describe('general behavior', () => {
-    it('should skip non-DATA phases', async () => {
-      const ctx = createContext('hello', { targetType: 'string' });
-      ctx.phase = 'FOREIGN_KEY_MAPPING';
-      const result = await autoConvertTransformer.transform(ctx);
-      expect(result).toEqual({ success: true, skip: true });
-    });
-
     it('should return null for null input', async () => {
       const result = await autoConvertTransformer.transform(createContext(null, { targetType: 'string' }));
       expect(result).toEqual({ success: true, value: null });

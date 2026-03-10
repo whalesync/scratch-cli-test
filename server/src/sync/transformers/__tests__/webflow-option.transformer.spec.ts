@@ -42,13 +42,6 @@ describe('webflowOptionTransformer', () => {
     expect(webflowOptionTransformer.type).toBe('webflow_option');
   });
 
-  it('should skip non-DATA phases', async () => {
-    const ctx = createContext('USA');
-    ctx.phase = 'FOREIGN_KEY_MAPPING';
-    const result = await webflowOptionTransformer.transform(ctx);
-    expect(result).toEqual({ success: true, skip: true });
-  });
-
   it('should return null for null input', async () => {
     const result = await webflowOptionTransformer.transform(createContext(null));
     expect(result).toEqual({ success: true, value: null });

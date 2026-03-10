@@ -23,13 +23,6 @@ describe('jsonpathTransformer', () => {
   });
 
   describe('general behavior', () => {
-    it('should skip non-DATA phases', async () => {
-      const ctx = createContext({ name: 'Alice' }, { expression: '$.name' });
-      ctx.phase = 'FOREIGN_KEY_MAPPING';
-      const result = await jsonpathTransformer.transform(ctx);
-      expect(result).toEqual({ success: true, skip: true });
-    });
-
     it('should return null for null input', async () => {
       const result = await jsonpathTransformer.transform(createContext(null, { expression: '$.name' }));
       expect(result).toEqual({ success: true, value: null });

@@ -10,7 +10,12 @@ export {
 } from './transformer-registry';
 
 // Pipeline
-export { applyTransformerPipeline, findTransformerConfigs, getTransformerConfigs } from './transformer-pipeline';
+export {
+  applyTransformerPipeline,
+  findTransformerConfigs,
+  getColumnMappingPhase,
+  getTransformerConfigs,
+} from './transformer-pipeline';
 
 // Lookup tools
 export { createLookupTools } from './lookup-tools';

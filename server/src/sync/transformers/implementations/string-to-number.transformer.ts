@@ -14,12 +14,8 @@ export const stringToNumberTransformer: FieldTransformer = {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    const { sourceValue, options, phase } = ctx;
+    const { sourceValue, options } = ctx;
     const typedOptions = options as StringToNumberOptions;
-
-    if (phase !== 'DATA') {
-      return { success: true, skip: true };
-    }
 
     // Handle null/undefined
     if (sourceValue === null || sourceValue === undefined) {

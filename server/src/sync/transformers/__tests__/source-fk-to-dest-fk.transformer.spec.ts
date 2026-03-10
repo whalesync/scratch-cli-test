@@ -40,13 +40,6 @@ describe('sourceFkToDestFkTransformer', () => {
     expect(sourceFkToDestFkTransformer.type).toBe('source_fk_to_dest_fk');
   });
 
-  it('should skip during DATA phase', async () => {
-    const result = await sourceFkToDestFkTransformer.transform(
-      createContext('src_1', createSimpleLookupTools(), undefined, 'DATA'),
-    );
-    expect(result).toEqual({ success: true, skip: true });
-  });
-
   describe('null/undefined handling', () => {
     it('should return null for null input', async () => {
       const result = await sourceFkToDestFkTransformer.transform(createContext(null, createSimpleLookupTools()));

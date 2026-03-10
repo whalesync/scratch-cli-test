@@ -13,12 +13,8 @@ export const autoConvertTransformer: FieldTransformer = {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    const { sourceValue, options, phase } = ctx;
+    const { sourceValue, options } = ctx;
     const { targetType } = options as AutoConvertOptions;
-
-    if (phase !== 'DATA') {
-      return { success: true, skip: true };
-    }
 
     if (sourceValue === null || sourceValue === undefined) {
       return { success: true, value: null };

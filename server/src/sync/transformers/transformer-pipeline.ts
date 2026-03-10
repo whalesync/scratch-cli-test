@@ -1,4 +1,4 @@
-import { ColumnMapping, TransformerConfig, TransformerType } from '@spinner/shared-types';
+import { ColumnMapping, TransformerConfig, TransformerType, TransformerTypes } from '@spinner/shared-types';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { getTransformer } from './transformer-registry';
 import { LookupTools, SyncPhase, SyncRecord, TransformContext } from './transformer.types';
@@ -23,6 +23,15 @@ export function getTransformerConfigs(mapping: ColumnMapping): TransformerConfig
  */
 export function findTransformerConfigs(mapping: ColumnMapping, type: TransformerType): TransformerConfig[] {
   return getTransformerConfigs(mapping).filter((c) => c.type === type);
+}
+
+/**
+ * Determines which sync phase a column mapping belongs to based on its transformer configs.
+ * Mappings with a SourceFkToDestFk transformer run in FOREIGN_KEY_MAPPING phase; all others in DATA.
+ */
+export function getColumnMappingPhase(mapping: ColumnMapping): SyncPhase {
+  const configs = getTransformerConfigs(mapping);
+  return configs.some((c) => c.type === TransformerTypes.SourceFkToDestFk) ? 'FOREIGN_KEY_MAPPING' : 'DATA';
 }
 
 export interface PipelineBaseContext {

@@ -28,11 +28,7 @@ export const webflowOptionTransformer: FieldTransformer = {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    const { sourceValue, phase, destinationTableSpec, destinationFieldPath } = ctx;
-
-    if (phase !== 'DATA') {
-      return { success: true, skip: true };
-    }
+    const { sourceValue, destinationTableSpec, destinationFieldPath } = ctx;
 
     if (sourceValue === null || sourceValue === undefined || sourceValue === '') {
       return { success: true, value: null };

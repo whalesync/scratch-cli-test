@@ -18,11 +18,7 @@ export const slugifyTransformer: FieldTransformer = {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    const { sourceValue, phase } = ctx;
-
-    if (phase !== 'DATA') {
-      return { success: true, skip: true };
-    }
+    const { sourceValue } = ctx;
 
     if (sourceValue === null || sourceValue === undefined) {
       return { success: true, value: null };

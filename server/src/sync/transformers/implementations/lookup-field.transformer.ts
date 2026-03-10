@@ -16,11 +16,6 @@ export const lookupFieldTransformer: FieldTransformer = {
   type: TransformerTypes.LookupField,
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    // Only operate in DATA phase — FK records are pre-cached before transformation
-    if (ctx.phase !== 'DATA') {
-      return { success: true, skip: true };
-    }
-
     const { sourceValue, lookupTools, options } = ctx;
     const typedOptions = options as LookupFieldOptions;
 

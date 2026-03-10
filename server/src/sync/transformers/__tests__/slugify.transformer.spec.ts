@@ -1,7 +1,7 @@
 import { slugifyTransformer } from '../implementations/slugify.transformer';
 import { SyncRecord, TransformContext } from '../transformer.types';
 
-function createContext(sourceValue: unknown, phase: 'DATA' | 'FK' = 'DATA'): TransformContext {
+function createContext(sourceValue: unknown): TransformContext {
   const sourceRecord: SyncRecord = { id: 'test', fields: { value: sourceValue } };
   return {
     sourceRecord,
@@ -12,7 +12,7 @@ function createContext(sourceValue: unknown, phase: 'DATA' | 'FK' = 'DATA'): Tra
       lookupFieldFromFkRecord: jest.fn(),
     },
     options: {},
-    phase,
+    phase: 'DATA',
   };
 }
 
@@ -105,13 +105,6 @@ describe('slugifyTransformer', () => {
       if (!result.success) {
         expect(result.useOriginal).toBe(true);
       }
-    });
-  });
-
-  describe('phase handling', () => {
-    it('should skip in FK phase', async () => {
-      const result = await slugifyTransformer.transform(createContext('Hello World', 'FK'));
-      expect(result).toEqual({ success: true, skip: true });
     });
   });
 });

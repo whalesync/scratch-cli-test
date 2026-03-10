@@ -8,6 +8,7 @@ import {
 import {
   applyTransformerPipeline,
   findTransformerConfigs,
+  getColumnMappingPhase,
   getTransformerConfigs,
   PipelineBaseContext,
 } from '../transformer-pipeline';
@@ -202,5 +203,50 @@ describe('applyTransformerPipeline', () => {
     const configs: TransformerConfig[] = [{ type: TransformerTypes.AutoConvert, options: { targetType: 'number' } }];
     const result = await applyTransformerPipeline(configs, '99', createBaseCtx());
     expect(result).toEqual({ success: true, value: 99 });
+  });
+});
+
+// ─── getColumnMappingPhase ───────────────────────────────────────────────────
+
+describe('getColumnMappingPhase', () => {
+  it('returns DATA for mapping with no transformers', () => {
+    const mapping: ColumnMapping = { sourceColumnId: 'a', destinationColumnId: 'b' };
+    expect(getColumnMappingPhase(mapping)).toBe('DATA');
+  });
+
+  it('returns DATA for mapping with a DATA-phase transformer', () => {
+    const mapping: ColumnMapping = {
+      sourceColumnId: 'a',
+      destinationColumnId: 'b',
+      transformer: { type: TransformerTypes.AutoConvert, options: { targetType: 'string' } },
+    };
+    expect(getColumnMappingPhase(mapping)).toBe('DATA');
+  });
+
+  it('returns FOREIGN_KEY_MAPPING for mapping with SourceFkToDestFk transformer', () => {
+    const mapping: ColumnMapping = {
+      sourceColumnId: 'a',
+      destinationColumnId: 'b',
+      transformer: {
+        type: TransformerTypes.SourceFkToDestFk,
+        options: { referencedDataFolderId: 'df-1' as DataFolderId },
+      },
+    };
+    expect(getColumnMappingPhase(mapping)).toBe('FOREIGN_KEY_MAPPING');
+  });
+
+  it('returns FOREIGN_KEY_MAPPING when SourceFkToDestFk is in a transformers array', () => {
+    const mapping: ColumnMapping = {
+      sourceColumnId: 'a',
+      destinationColumnId: 'b',
+      transformers: [
+        { type: TransformerTypes.StringToNumber },
+        {
+          type: TransformerTypes.SourceFkToDestFk,
+          options: { referencedDataFolderId: 'df-1' as DataFolderId },
+        },
+      ],
+    };
+    expect(getColumnMappingPhase(mapping)).toBe('FOREIGN_KEY_MAPPING');
   });
 });

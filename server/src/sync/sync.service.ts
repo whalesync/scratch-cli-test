@@ -36,6 +36,7 @@ import {
   applyTransformerPipeline,
   createLookupTools,
   findTransformerConfigs,
+  getColumnMappingPhase,
   getTransformerConfigs,
   LookupTools,
   SyncPhase,
@@ -1696,7 +1697,9 @@ export async function transformRecordAsync(
   const definedValues: unknown[] = [];
   const warnings: string[] = [];
 
-  for (const mapping of columnMappings) {
+  const phaseFilteredMappings = columnMappings.filter((mapping) => getColumnMappingPhase(mapping) === phase);
+
+  for (const mapping of phaseFilteredMappings) {
     const sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
 
     // Skip undefined source values

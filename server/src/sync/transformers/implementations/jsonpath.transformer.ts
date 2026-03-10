@@ -15,13 +15,9 @@ export const jsonpathTransformer: FieldTransformer = {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
-    const { sourceValue, options, phase } = ctx;
+    const { sourceValue, options } = ctx;
     const { arrayHandling = 'first' } = options as JSONPathOptions;
     let { expression } = options as JSONPathOptions;
-
-    if (phase !== 'DATA') {
-      return { success: true, skip: true };
-    }
 
     if (sourceValue === null || sourceValue === undefined) {
       return { success: true, value: null };

@@ -4,15 +4,20 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type { DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
+import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { SyncService, transformRecordAsync } from '../sync.service';
+
+// Import transformer implementations to register them
+import 'src/sync/transformers/implementations/auto-convert.transformer';
+import 'src/sync/transformers/implementations/source-fk-to-dest-fk.transformer';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -879,6 +884,107 @@ describe('transformRecordAsync', () => {
       expect((result as any).fieldData.slug).toBe('new-item');
       // No extra keys from any base — only the mapped fields
       expect(Object.keys(result)).toEqual(['fieldData']);
+    });
+  });
+
+  describe('phase-based column mapping filtering', () => {
+    // A mix of mappings: plain (DATA), auto_convert (DATA), and source_fk_to_dest_fk (FK phase).
+    // Verifies that transformRecordAsync only processes mappings belonging to the requested phase.
+    const REFERENCED_FOLDER = 'dfd_dest_authors' as DataFolderId;
+
+    const columnMappings: ColumnMapping[] = [
+      // 1. Simple string → string, no transformer (DATA phase)
+      { sourceColumnId: 'title', destinationColumnId: 'name' },
+      // 2. String → number via auto_convert (DATA phase)
+      {
+        sourceColumnId: 'price',
+        destinationColumnId: 'amount',
+        transformer: { type: 'auto_convert' as const, options: { targetType: 'number' as const } },
+      },
+      // 3. FK mapping: source_fk_to_dest_fk → auto_convert to string (FOREIGN_KEY_MAPPING phase)
+      {
+        sourceColumnId: 'authorIds',
+        destinationColumnId: 'author',
+        transformers: [
+          { type: 'source_fk_to_dest_fk' as const, options: { referencedDataFolderId: REFERENCED_FOLDER } },
+          { type: 'auto_convert' as const, options: { targetType: 'string' as const } },
+        ],
+      },
+    ];
+
+    const sourceRecord = {
+      id: 'rec_1',
+      filePath: 'source/item.json',
+      fields: {
+        title: 'My Article',
+        price: '42.5',
+        authorIds: ['src_author_1'],
+      },
+    };
+
+    const lookupTools: LookupTools = {
+      getDestinationMappingForSourceFk: jest.fn((fk: string): Promise<FkMappingResult | null> => {
+        const map: Record<string, FkMappingResult> = {
+          src_author_1: { destinationFilePath: 'authors/alice.json', destinationRemoteId: 'wf-author-1' },
+        };
+        return Promise.resolve(map[fk] ?? null);
+      }),
+      lookupFieldFromFkRecord: jest.fn(),
+    };
+
+    it('DATA phase processes plain and auto_convert mappings, skips FK mapping', async () => {
+      const { fields } = await transformRecordAsync(sourceRecord, columnMappings, null, null, lookupTools, 'DATA');
+
+      // Plain string passthrough
+      expect(fields.name).toBe('My Article');
+      // auto_convert string → number
+      expect(fields.amount).toBe(42.5);
+      // FK mapping must NOT be processed in DATA phase
+      expect(fields.author).toBeUndefined();
+    });
+
+    it('FOREIGN_KEY_MAPPING phase processes only the FK mapping, skips plain and auto_convert', async () => {
+      const { fields } = await transformRecordAsync(
+        sourceRecord,
+        columnMappings,
+        null,
+        null,
+        lookupTools,
+        'FOREIGN_KEY_MAPPING',
+      );
+
+      // Plain and auto_convert mappings must NOT be processed in FK phase
+      expect(fields.name).toBeUndefined();
+      expect(fields.amount).toBeUndefined();
+      // FK resolved → auto_convert to string: single-element array becomes the string value
+      expect(fields.author).toBe('wf-author-1');
+    });
+
+    it('running both phases sequentially produces the complete record', async () => {
+      // Phase 1: DATA
+      const { fields: dataFields } = await transformRecordAsync(
+        sourceRecord,
+        columnMappings,
+        null,
+        null,
+        lookupTools,
+        'DATA',
+      );
+
+      // Phase 2: FOREIGN_KEY_MAPPING, using dataFields as the base
+      const { fields: finalFields } = await transformRecordAsync(
+        sourceRecord,
+        columnMappings,
+        null,
+        null,
+        lookupTools,
+        'FOREIGN_KEY_MAPPING',
+        dataFields,
+      );
+
+      expect(finalFields.name).toBe('My Article');
+      expect(finalFields.amount).toBe(42.5);
+      expect(finalFields.author).toBe('wf-author-1');
     });
   });
 });
