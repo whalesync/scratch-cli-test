@@ -11,7 +11,6 @@ import {
 } from './exception-filters/generic-errors.exception-filter';
 import { LoggingInterceptor } from './interceptors/logging.interceptor';
 import { WSLogger, WSLoggerShim } from './logger';
-import './remote-service/connectors/api-url-overrides';
 
 /** Give our server a max amount of time to start before we fail. */
 const STARTUP_TIMEOUT_SECONDS = 10;

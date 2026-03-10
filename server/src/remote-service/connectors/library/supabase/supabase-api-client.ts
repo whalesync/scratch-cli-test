@@ -4,19 +4,24 @@
  *
  * All endpoints authenticate with Bearer token from the Supabase OAuth flow.
  */
-import axios, { AxiosError } from 'axios';
+import { AxiosError, AxiosInstance } from 'axios';
+import { createApiClient } from '../../create-api-client';
 import { SupabasePoolerConfig, SupabaseProject } from './supabase-types';
 
 const SUPABASE_API_BASE = 'https://api.supabase.com/v1';
 
 export class SupabaseApiClient {
-  private readonly headers: Record<string, string>;
+  private readonly client: AxiosInstance;
 
   constructor(accessToken: string) {
-    this.headers = {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    };
+    this.client = createApiClient({
+      baseURL: SUPABASE_API_BASE,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15_000,
+    });
   }
 
   /**
@@ -45,23 +50,13 @@ export class SupabaseApiClient {
    * grant permissions, and execute DDL that the service account cannot.
    */
   async executeQuery(projectRef: string, query: string): Promise<unknown> {
-    const response = await axios.post(
-      `${SUPABASE_API_BASE}/projects/${projectRef}/database/query`,
-      { query },
-      {
-        headers: this.headers,
-        timeout: 30_000,
-      },
-    );
+    const response = await this.client.post(`/projects/${projectRef}/database/query`, { query }, { timeout: 30_000 });
     return response.data;
   }
 
   private async get<T>(path: string): Promise<T> {
     try {
-      const response = await axios.get<T>(`${SUPABASE_API_BASE}${path}`, {
-        headers: this.headers,
-        timeout: 15_000,
-      });
+      const response = await this.client.get<T>(path);
       return response.data;
     } catch (error) {
       throw this.wrapError(error, path);

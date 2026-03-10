@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import { createApiClient } from '../../create-api-client';
 import { MocoCompany, MocoContact, MocoCredentials, MocoEntityType, MocoPagination, MocoProject } from './moco-types';
 
 /**
@@ -37,7 +38,7 @@ export class MocoApiClient {
       Accept: 'application/json',
     };
 
-    this.client = axios.create({
+    this.client = createApiClient({
       baseURL: `https://${credentials.domain}.mocoapp.com/api/v1`,
       headers,
     });

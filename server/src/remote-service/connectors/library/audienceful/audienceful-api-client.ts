@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import { createApiClient } from '../../create-api-client';
 import {
   AudiencefulCreatePersonRequest,
   AudiencefulDeletePersonRequest,
@@ -41,7 +42,7 @@ export class AudiencefulApiClient {
       Accept: 'application/json',
     };
 
-    this.client = axios.create({
+    this.client = createApiClient({
       baseURL: AUDIENCEFUL_API_BASE_URL,
       headers,
     });

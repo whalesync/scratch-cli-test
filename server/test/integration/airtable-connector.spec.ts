@@ -1,4 +1,8 @@
-import axios from 'axios';
+// Set the URL override before any connector modules are imported, so the
+// interceptor is configured when createApiClient() is first called.
+const FAKE_AIRTABLE_PORT = 14_646;
+process.env.API_URL_OVERRIDES = `https://api.airtable.com=http://localhost:${FAKE_AIRTABLE_PORT}`;
+
 import http from 'http';
 import { createApp } from '../../../test-api-fakes/airtable/src/index';
 import { store } from '../../../test-api-fakes/airtable/src/store';
@@ -14,8 +18,6 @@ import { BaseJsonTableSpec, ConnectorFile, EntityId } from 'src/remote-service/c
 // ─── Test Setup ──────────────────────────────────────────────────────────────
 
 let server: http.Server;
-let baseUrl: string;
-let interceptorId: number;
 
 const TEST_BASE = {
   id: 'appTEST123',
@@ -79,26 +81,10 @@ async function collectPulledFiles(
 
 beforeAll((done) => {
   const app = createApp();
-  server = app.listen(0, () => {
-    const addr = server.address();
-    if (addr && typeof addr === 'object') {
-      baseUrl = `http://localhost:${addr.port}`;
-    }
-
-    // Install Axios interceptor to redirect Airtable API calls to the fake
-    interceptorId = axios.interceptors.request.use((config) => {
-      if (config.url?.startsWith('https://api.airtable.com')) {
-        config.url = config.url.replace('https://api.airtable.com', baseUrl);
-      }
-      return config;
-    });
-
-    done();
-  });
+  server = app.listen(FAKE_AIRTABLE_PORT, done);
 });
 
 afterAll((done) => {
-  axios.interceptors.request.eject(interceptorId);
   server.close(done);
 });
 

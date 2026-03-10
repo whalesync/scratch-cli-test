@@ -1,5 +1,6 @@
-import axios, { RawAxiosRequestHeaders } from 'axios';
+import axios, { AxiosInstance } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
+import { createApiClient } from '../../create-api-client';
 import {
   AirtableApiPushResponse,
   AirtableBaseSchemaResponseV2,
@@ -23,17 +24,17 @@ const AIRTABLE_RETRY_OPTS: WithRetryOpts = {
  * Client for making api calls to airtable.
  */
 export class AirtableApiClient {
-  private readonly authHeaders: RawAxiosRequestHeaders;
+  private readonly client: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  constructor(
-    private readonly apiKey: string,
-    opts?: { rateLimiter?: RateLimiter },
-  ) {
-    this.authHeaders = {
-      Authorization: `Bearer ${this.apiKey}`,
-      accept: 'application/json',
-    };
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
+    this.client = createApiClient({
+      baseURL: AIRTABLE_API_BASE_URL,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        accept: 'application/json',
+      },
+    });
     this.rateLimiter = opts?.rateLimiter;
   }
 
@@ -48,19 +49,13 @@ export class AirtableApiClient {
    * https://airtable.com/developers/web/api/list-bases
    */
   async listBases(): Promise<AirtableListBasesResponse> {
-    const r = await this.retryableRequest(() =>
-      axios.get<AirtableListBasesResponse>(`${AIRTABLE_API_BASE_URL}/meta/bases`, {
-        headers: this.authHeaders,
-      }),
-    );
+    const r = await this.retryableRequest(() => this.client.get<AirtableListBasesResponse>('/meta/bases'));
     return r.data;
   }
 
   async getBaseSchema(baseId: string): Promise<AirtableBaseSchemaResponseV2> {
     const r = await this.retryableRequest(() =>
-      axios.get<AirtableBaseSchemaResponseV2>(`${AIRTABLE_API_BASE_URL}/meta/bases/${baseId}/tables`, {
-        headers: this.authHeaders,
-      }),
+      this.client.get<AirtableBaseSchemaResponseV2>(`/meta/bases/${baseId}/tables`),
     );
     return r.data;
   }
@@ -73,11 +68,10 @@ export class AirtableApiClient {
     let offset: string | undefined;
     do {
       const r = await this.retryableRequest(() =>
-        axios.get<{
+        this.client.get<{
           records: AirtableRecord[];
           offset?: string;
-        }>(`${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`, {
-          headers: this.authHeaders,
+        }>(`/${baseId}/${tableId}`, {
           params: { offset, ...options },
         }),
       );
@@ -93,10 +87,10 @@ export class AirtableApiClient {
     records: { fields: Record<string, unknown> }[],
   ): Promise<AirtableRecord[]> {
     const r = await this.retryableRequest(() =>
-      axios.post<AirtableApiPushResponse>(
-        `${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`,
+      this.client.post<AirtableApiPushResponse>(
+        `/${baseId}/${tableId}`,
         { records, typecast: true },
-        { headers: { ...this.authHeaders, 'Content-Type': 'application/json' } },
+        { headers: { 'Content-Type': 'application/json' } },
       ),
     );
     return r.data.records ?? [];
@@ -108,10 +102,10 @@ export class AirtableApiClient {
     records: { id?: string; fields: Record<string, unknown> }[],
   ): Promise<AirtableRecord[]> {
     const r = await this.retryableRequest(() =>
-      axios.patch<AirtableApiPushResponse>(
-        `${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`,
+      this.client.patch<AirtableApiPushResponse>(
+        `/${baseId}/${tableId}`,
         { records, typecast: true },
-        { headers: { ...this.authHeaders, 'Content-Type': 'application/json' } },
+        { headers: { 'Content-Type': 'application/json' } },
       ),
     );
     return r.data.records ?? [];
@@ -119,8 +113,7 @@ export class AirtableApiClient {
 
   async deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<void> {
     await this.retryableRequest(() =>
-      axios.delete(`${AIRTABLE_API_BASE_URL}/${baseId}/${tableId}`, {
-        headers: this.authHeaders,
+      this.client.delete(`/${baseId}/${tableId}`, {
         params: { records: recordIds },
       }),
     );

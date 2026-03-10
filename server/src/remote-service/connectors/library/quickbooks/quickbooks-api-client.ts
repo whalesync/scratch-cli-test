@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
+import { createApiClient } from '../../create-api-client';
 import { QuickBooksCredentials, QuickBooksQueryResponse } from './quickbooks-types';
 
 const QBO_PRODUCTION_BASE = 'https://quickbooks.api.intuit.com';
@@ -40,7 +41,7 @@ export class QuickBooksApiClient {
 
     const baseURL = opts?.sandbox ? QBO_SANDBOX_BASE : QBO_PRODUCTION_BASE;
 
-    this.client = axios.create({
+    this.client = createApiClient({
       baseURL: `${baseURL}/v3/company/${credentials.realmId}`,
       headers: {
         Authorization: `Bearer ${credentials.accessToken}`,

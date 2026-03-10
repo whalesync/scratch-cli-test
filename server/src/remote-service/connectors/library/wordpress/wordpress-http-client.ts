@@ -1,7 +1,8 @@
 import { Service } from '@spinner/shared-types';
-import axios, { AxiosResponse, RawAxiosRequestHeaders } from 'axios';
+import axios, { AxiosInstance, AxiosResponse, RawAxiosRequestHeaders } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
+import { createApiClient } from '../../create-api-client';
 import { ConnectorAuthError } from '../../error';
 import { WORDPRESS_ORG_V2_PATH, WORDPRESS_UPLOAD_TIMEOUT_MS } from './wordpress-constants';
 import {
@@ -19,7 +20,7 @@ import {
  * Client for making HTTP requests to WordPress REST API.
  */
 export class WordPressHttpClient {
-  private readonly authHeaders: RawAxiosRequestHeaders;
+  private readonly client: AxiosInstance;
 
   constructor(
     private readonly endpoint: string,
@@ -28,11 +29,13 @@ export class WordPressHttpClient {
   ) {
     const usernamePassword = `${username}:${password}`;
     const base64Credentials = Buffer.from(usernamePassword).toString('base64');
-    this.authHeaders = {
-      Authorization: `Basic ${base64Credentials}`,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    };
+    this.client = createApiClient({
+      headers: {
+        Authorization: `Basic ${base64Credentials}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    });
   }
 
   private generateUrl(
@@ -86,7 +89,7 @@ export class WordPressHttpClient {
     ]);
     let wordpressPollResponse: AxiosResponse<WordPressRecord[]>;
     try {
-      wordpressPollResponse = await axios.get<WordPressRecord[]>(url, { headers: this.authHeaders });
+      wordpressPollResponse = await this.client.get<WordPressRecord[]>(url);
     } catch (error) {
       throw new Error('Failed to test connection: ' + (error instanceof Error ? error.message : String(error)));
     }
@@ -100,9 +103,7 @@ export class WordPressHttpClient {
    * https://developer.wordpress.org/rest-api/using-the-rest-api/discovery/
    */
   async getDiscoveryInfo(): Promise<WordPressGetDiscoveryApiResponse> {
-    const response = await axios.get<WordPressGetDiscoveryApiResponse>(this.endpoint, {
-      headers: this.authHeaders,
-    });
+    const response = await this.client.get<WordPressGetDiscoveryApiResponse>(this.endpoint);
     return response.data;
   }
 
@@ -120,7 +121,7 @@ export class WordPressHttpClient {
     }
     searchParams.push({ name: 'context', value: 'edit' }); // Return raw content and all fields
     const url = this.generateUrl(this.endpoint, tableId, null, searchParams);
-    const response = await axios.get<WordPressRecord[]>(url, { headers: this.authHeaders });
+    const response = await this.client.get<WordPressRecord[]>(url);
     return response.data;
   }
 
@@ -130,7 +131,7 @@ export class WordPressHttpClient {
    */
   async getTypes(): Promise<WordPressGetTypesApiResponse> {
     const url = this.generateUrl(this.endpoint, 'types', null, []);
-    const response = await axios.get<WordPressGetTypesApiResponse>(url, { headers: this.authHeaders });
+    const response = await this.client.get<WordPressGetTypesApiResponse>(url);
     return response.data;
   }
 
@@ -140,7 +141,7 @@ export class WordPressHttpClient {
    */
   async getTaxonomies(): Promise<WordPressGetTaxonomiesApiResponse> {
     const url = this.generateUrl(this.endpoint, 'taxonomies', null, []);
-    const response = await axios.get<WordPressGetTaxonomiesApiResponse>(url, { headers: this.authHeaders });
+    const response = await this.client.get<WordPressGetTaxonomiesApiResponse>(url);
     return response.data;
   }
 
@@ -149,10 +150,9 @@ export class WordPressHttpClient {
    */
   async getEndpointOptions(tableId: string): Promise<WordPressEndpointOptionsResponse> {
     const url = this.generateUrl(this.endpoint, tableId, null, []);
-    const response = await axios.request<WordPressEndpointOptionsResponse>({
+    const response = await this.client.request<WordPressEndpointOptionsResponse>({
       method: 'OPTIONS',
       url,
-      headers: this.authHeaders,
     });
     return response.data;
   }
@@ -163,7 +163,7 @@ export class WordPressHttpClient {
   async getRecord(tableId: string, recordId: string): Promise<WordPressRecord | null> {
     const url = this.generateUrl(this.endpoint, tableId, recordId, [{ name: 'context', value: 'edit' }]);
     try {
-      const response = await axios.get<WordPressRecord>(url, { headers: this.authHeaders });
+      const response = await this.client.get<WordPressRecord>(url);
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -178,7 +178,7 @@ export class WordPressHttpClient {
    */
   async createRecord(tableId: string, record: WordPressRecord): Promise<WordPressRecord> {
     const url = this.generateUrl(this.endpoint, tableId, null, []);
-    const response = await axios.post<WordPressRecord>(url, record, { headers: this.authHeaders });
+    const response = await this.client.post<WordPressRecord>(url, record);
     return response.data;
   }
 
@@ -187,7 +187,7 @@ export class WordPressHttpClient {
    */
   async updateRecord(tableId: string, recordId: string, record: WordPressRecord): Promise<WordPressRecord> {
     const url = this.generateUrl(this.endpoint, tableId, recordId, []);
-    const response = await axios.patch<WordPressRecord>(url, record, { headers: this.authHeaders });
+    const response = await this.client.patch<WordPressRecord>(url, record);
     return response.data;
   }
 
@@ -196,7 +196,7 @@ export class WordPressHttpClient {
    */
   async deleteRecord(tableId: string, recordId: string): Promise<void> {
     const url = this.generateUrl(this.endpoint, tableId, recordId, [{ name: 'force', value: 'true' }]);
-    await axios.delete(url, { headers: this.authHeaders });
+    await this.client.delete(url);
   }
 
   /**
@@ -206,11 +206,10 @@ export class WordPressHttpClient {
   async uploadMedia(buffer: Buffer, filename: string, mimeType: string): Promise<WordPressMediaUploadResponse> {
     const url = this.generateUrl(this.endpoint, 'media', null, []);
     const headers: RawAxiosRequestHeaders = {
-      ...this.authHeaders,
       'Content-Type': mimeType,
       'Content-Disposition': `attachment; filename="${filename}"`,
     };
-    const response = await axios.post<WordPressMediaUploadResponse>(url, buffer, {
+    const response = await this.client.post<WordPressMediaUploadResponse>(url, buffer, {
       headers,
       timeout: WORDPRESS_UPLOAD_TIMEOUT_MS,
     });
@@ -224,11 +223,10 @@ export class WordPressHttpClient {
    */
   async batchRequest(requests: WordPressBatchRequestItem[]): Promise<WordPressBatchResponse> {
     const url = this.generateRawUrl(this.endpoint, 'batch/v1');
-    const response = await axios.post<WordPressBatchResponse>(
-      url,
-      { validation: 'require-all-validate', requests },
-      { headers: this.authHeaders },
-    );
+    const response = await this.client.post<WordPressBatchResponse>(url, {
+      validation: 'require-all-validate',
+      requests,
+    });
     return response.data;
   }
 
@@ -258,11 +256,7 @@ export class WordPressHttpClient {
 
       // Option 2: Try endpoint discovery from Link header
       try {
-        const headResponse = await axios.head(`https://${url.hostname}`, {
-          headers: {
-            Authorization: `Basic ${Buffer.from(`${this.username}:${this.password}`).toString('base64')}`,
-          },
-        });
+        const headResponse = await this.client.head(`https://${url.hostname}`);
         const link = headResponse?.headers?.link as string | undefined;
         if (link && typeof link === 'string') {
           const linkParts = link.split('>;').flatMap((s) => s.split('<'));

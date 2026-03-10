@@ -7,8 +7,9 @@
  * API docs: https://shopify.dev/docs/api/admin-graphql
  */
 
-import axios, { AxiosInstance } from 'axios';
+import { AxiosInstance } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
+import { createApiClient } from '../../create-api-client';
 import {
   ShopifyArticleInput,
   ShopifyBlogInput,
@@ -162,7 +163,7 @@ export class ShopifyApiClient {
     this.domain = normalizeDomain(credentials.shopDomain);
     this.rateLimiter = opts?.rateLimiter;
 
-    this.client = axios.create({
+    this.client = createApiClient({
       baseURL: `https://${this.domain}/admin/api/${API_VERSION}`,
       headers: {
         'Content-Type': 'application/json',
