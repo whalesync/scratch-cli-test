@@ -160,6 +160,7 @@ export const ServiceNamingConventions: Record<Service, ServiceNamingConvention> 
     table: 'entity',
     record: 'record',
     base: 'company',
+    logo: 'quickbooks.svg',
     tables: 'entities',
     records: 'records',
     bases: 'companies',
