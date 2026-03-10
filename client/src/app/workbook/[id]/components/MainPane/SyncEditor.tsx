@@ -843,6 +843,27 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     return [{ type: TransformerTypes.AutoConvert, options: { targetType } }];
   };
 
+  const handleReapplyDefaults = (scope: 'current' | 'all') => {
+    const nextPairs = [...folderPairs];
+    const pairsToUpdate = scope === 'current' ? [activePairIndex] : folderPairs.map((_, i) => i);
+
+    pairsToUpdate.forEach((pairIdx) => {
+      const pair = { ...nextPairs[pairIdx] };
+      const newMappings = pair.fieldMappings.map((mapping) => {
+        if (mapping.sourceField && mapping.destField) {
+          return {
+            ...mapping,
+            transformers: computeAutoTransformers(pairIdx, mapping.sourceField, mapping.destField),
+          };
+        }
+        return mapping;
+      });
+      nextPairs[pairIdx] = { ...pair, fieldMappings: newMappings };
+    });
+
+    setFolderPairs(nextPairs);
+  };
+
   const getFolderName = (id: string) => allFolders.find((f) => f.id === id)?.name || 'Unknown';
   const getFolderConnectorService = (id: string) => allFolders.find((f) => f.id === id)?.connectorService;
 
@@ -876,6 +897,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         onAutoPublishChange={setAutoPublish}
         editorMode={editorMode}
         onEditorModeChange={handleModeChange}
+        onReapplyDefaults={handleReapplyDefaults}
       />
 
       {/* Error Banner */}

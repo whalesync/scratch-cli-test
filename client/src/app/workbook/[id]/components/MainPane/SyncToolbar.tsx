@@ -5,6 +5,7 @@ import { DottedUnderlineButton } from '@/app/components/base/DottedUnderlineButt
 import { Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { syncApi } from '@/lib/api/sync';
 import { useSyncStore } from '@/stores/sync-store';
@@ -22,6 +23,7 @@ import {
   PlayIcon,
   RefreshCwIcon,
   Trash2Icon,
+  Wand2Icon,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -45,6 +47,7 @@ interface SyncToolbarProps {
   onAutoPublishChange: (enabled: boolean) => void;
   editorMode: 'visual' | 'json';
   onEditorModeChange: (mode: string) => void;
+  onReapplyDefaults: (scope: 'current' | 'all') => void;
 }
 
 // Shared styles for the title input and static text to prevent layout shift
@@ -71,6 +74,7 @@ export function SyncToolbar({
   onAutoPublishChange,
   editorMode,
   onEditorModeChange,
+  onReapplyDefaults,
 }: SyncToolbarProps) {
   const router = useRouter();
   const syncs = useSyncStore((state) => state.syncs);
@@ -81,6 +85,7 @@ export function SyncToolbar({
   const isNew = syncId === 'new';
   const existingSync = useMemo(() => syncs.find((s) => s.id === syncId), [syncs, syncId]);
   const isRunning = !isNew && !!activeJobs[syncId];
+  const { isDevToolsEnabled } = useDevTools();
 
   // Schedule modal
   const [scheduleModalOpened, { open: openScheduleModal, close: closeScheduleModal }] = useDisclosure(false);
@@ -360,6 +365,26 @@ export function SyncToolbar({
                 <Menu.Divider />
                 <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={handleDelete}>
                   Delete sync
+                </Menu.Item>
+              </>
+            )}
+            {isDevToolsEnabled && (
+              <>
+                <Menu.Divider />
+                <Menu.Label>Debug Options</Menu.Label>
+                <Menu.Item
+                  leftSection={<Wand2Icon size={16} />}
+                  onClick={() => onReapplyDefaults('current')}
+                  color="var(--mantine-color-devTool-9)"
+                >
+                  Reapply default transforms (Current Table)
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<Wand2Icon size={16} />}
+                  onClick={() => onReapplyDefaults('all')}
+                  color="var(--mantine-color-devTool-9)"
+                >
+                  Reapply default transforms (All Tables)
                 </Menu.Item>
               </>
             )}
