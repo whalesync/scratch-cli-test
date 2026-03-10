@@ -13,6 +13,7 @@
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
+      allow_failure: true
 
 # Auto-deploy patch release on every merge to prod
 release-cli-patch:
@@ -48,6 +49,7 @@ release-cli-major:
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
+      allow_failure: true
 
 # Auto-deploy patch release on every merge to master
 release-cli-test-patch:
