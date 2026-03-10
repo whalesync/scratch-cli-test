@@ -4,6 +4,7 @@ import { Job, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { JobService } from 'src/job/job.service';
+import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
@@ -76,16 +77,19 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'pull-linked-folder-files',
       initialPublicProgress,
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
   }
 
   async enqueuePublishDataFolderJob(
@@ -104,16 +108,19 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'publish-data-folder',
       initialPublicProgress,
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
   }
 
   async enqueueSyncDataFoldersJob(
@@ -132,16 +139,19 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'sync-data-folders',
       initialPublicProgress,
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
   }
 
   async enqueuePlanPipelineJob(
@@ -166,17 +176,20 @@ export class BullEnqueuerService implements OnModuleDestroy {
       ...(folderPath && { folderPath }),
       ...(filePath && { filePath }),
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        progress: initialProgress,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      progress: initialProgress,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
   }
 
   async enqueueRunPipelineJob(
@@ -197,17 +210,20 @@ export class BullEnqueuerService implements OnModuleDestroy {
       runAfterPlan: true,
       ...(executeSinglePhase && { executeSinglePhase }),
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        progress: initialProgress,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      progress: initialProgress,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
   }
 
   async enqueueRehostAssetsJob(
@@ -226,17 +242,20 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'rehost-assets',
       initialPublicProgress,
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        dataFolderId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      dataFolderId,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
   }
 
   async enqueuePullFilesJob(
@@ -257,17 +276,44 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: 'refresh-records',
       initialPublicProgress,
     };
-    await this.jobService.createJob({
-      userId: actor.userId,
-      type: data.type,
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        dataFolderId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
       data,
-      bullJobId: id,
-      workbookId,
-      dataFolderId,
-      runId: runContext.runId as RunId,
-      runContext,
-    });
-    return await this.enqueueJobWithId(data, id);
+      id,
+    );
+  }
+
+  private async createAndEnqueue(
+    params: Parameters<JobService['createJob']>[0],
+    data: JobData,
+    id: string,
+  ): Promise<Job> {
+    const dbJob = await this.jobService.createJob(params);
+    try {
+      return await this.enqueueJobWithId(data, id);
+    } catch (error) {
+      WSLogger.error({
+        source: 'BullEnqueuerService',
+        message: `Failed to enqueue BullMQ job ${id}, marking DbJob ${dbJob.id} as failed`,
+        error,
+      });
+      await this.jobService.updateJobStatus({
+        id: dbJob.id,
+        status: 'failed',
+        error: `Failed to enqueue to BullMQ: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        finishedOn: new Date(),
+      });
+      throw error;
+    }
   }
 
   private getQueue(): Queue {

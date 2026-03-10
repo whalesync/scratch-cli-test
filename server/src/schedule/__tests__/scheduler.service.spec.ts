@@ -117,4 +117,17 @@ describe('SchedulerService', () => {
     expect(scheduleService.entityExists).not.toHaveBeenCalled();
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
   });
+
+  it('skips workbook when a created job exists (busy check)', async () => {
+    const schedule = makeSchedule();
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+
+    // Simulate a zombie "created" job blocking the workbook
+    (dbService.client.dbJob.count as jest.Mock).mockResolvedValue(1);
+
+    await service.evaluateSchedules();
+
+    expect(scheduleService.atomicClaim).not.toHaveBeenCalled();
+    expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
+  });
 });
