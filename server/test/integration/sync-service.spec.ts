@@ -1487,6 +1487,102 @@ describe('SyncService - syncTableMapping', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(scratchGitService.commitFilesToBranch).not.toHaveBeenCalled();
   });
+
+  it('should apply DATA-phase transformer to source match key values for record matching', async () => {
+    // Source records have a complex object in the match field (e.g. Notion rich text blocks).
+    // Without a transformer, the raw object value would fail the type check and the record
+    // would be excluded from matching. A JSONPath transformer on the match column should
+    // extract the scalar value so that matching works correctly.
+    const sourceFiles = [
+      {
+        folderId: sourceFolderId,
+        path: 'src/file1.json',
+        content: JSON.stringify({
+          id: 'rec1',
+          title: [{ type: 'text', text: { content: 'hello-world' } }],
+          name: 'John',
+        }),
+      },
+      {
+        folderId: sourceFolderId,
+        path: 'src/file2.json',
+        content: JSON.stringify({
+          id: 'rec2',
+          title: [{ type: 'text', text: { content: 'goodbye-world' } }],
+          name: 'Jane',
+        }),
+      },
+      {
+        folderId: sourceFolderId,
+        path: 'src/file3.json',
+        content: JSON.stringify({
+          id: 'rec3',
+          title: [{ type: 'text', text: { content: 'new-post' } }],
+          name: 'Bob',
+        }),
+      },
+    ];
+
+    // Only john exists in destination (matched by slug)
+    const destFiles = [
+      {
+        folderId: destFolderId,
+        path: 'dest/john.json',
+        content: '{"id": "dest1", "slug": "hello-world", "full_name": "John Old", "phone": "555-9999"}',
+      },
+    ];
+
+    (dataFolderService.getAllFileContentsByFolderId as jest.Mock).mockImplementation((_workbookIdArg, folderIdArg) => {
+      if (folderIdArg === sourceFolderId) {
+        return Promise.resolve(sourceFiles);
+      } else if (folderIdArg === destFolderId) {
+        return Promise.resolve(destFiles);
+      }
+      return Promise.resolve([]);
+    });
+
+    const columnMappings: ColumnMapping[] = [
+      {
+        sourceColumnId: 'title',
+        destinationColumnId: 'slug',
+        transformer: { type: 'jsonpath', options: { expression: '$[0].text.content' } },
+      },
+      { sourceColumnId: 'name', destinationColumnId: 'full_name' },
+    ];
+
+    const tableMapping: TableMapping = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings,
+      recordMatching: {
+        sourceColumnId: 'title',
+        destinationColumnId: 'slug',
+      },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    // John should be updated (matched via transformed title -> slug),
+    // Jane and Bob should be created (no match in destination)
+    expect(result.recordsCreated).toBe(2);
+    expect(result.recordsUpdated).toBe(1);
+    expect(result.errors).toHaveLength(0);
+    expect(writtenFiles).toHaveLength(3);
+
+    // Verify john's update uses existing destination path and preserves unmapped fields
+    const johnFile = writtenFiles.find((f) => f.path === 'dest/john.json');
+    expect(johnFile).toBeDefined();
+    const johnContent = JSON.parse(johnFile!.content) as Record<string, unknown>;
+    expect(johnContent.full_name).toBe('John');
+    expect(johnContent.phone).toBe('555-9999');
+    expect(johnContent.id).toBe('dest1');
+    // The slug field should have the transformed value
+    expect(johnContent.slug).toBe('hello-world');
+
+    // Verify new files (jane, bob) use generated paths
+    const newFiles = writtenFiles.filter((f) => f.path.startsWith('dest/scratch_pending_publish_'));
+    expect(newFiles).toHaveLength(2);
+  });
 });
 
 describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {

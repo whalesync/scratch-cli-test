@@ -17,6 +17,7 @@ import {
   SyncId,
   SyncMapping,
   TableMapping,
+  TransformerConfig,
   TransformerTypes,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -59,6 +60,13 @@ interface FileContent {
   folderId: DataFolderId;
   path: string;
   content: string;
+}
+
+interface MatchKeyTransformContext {
+  sourceTableSpec: BaseJsonTableSpec | null;
+  destinationTableSpec: BaseJsonTableSpec | null;
+  sourceService: Service;
+  destinationService: Service;
 }
 
 export interface SyncTableMappingResult {
@@ -470,6 +478,14 @@ export class SyncService {
     const usedDestFileNames = new Set<string>();
     const fkValuesByFolder = new Map<DataFolderId, Set<string>>();
 
+    // Build transform context for applying transformers to source match key values
+    const matchKeyTransformContext: MatchKeyTransformContext = {
+      sourceTableSpec,
+      destinationTableSpec,
+      sourceService: sourceFolder.connectorService as Service,
+      destinationService: destinationFolder.connectorService as Service,
+    };
+
     if (phase === 'DATA') {
       // Clear existing caches for this sync's table mapping
       await this.clearMatchKeysForDataFolder(syncId, tableMapping.sourceDataFolderId);
@@ -498,7 +514,7 @@ export class SyncService {
           batch: batchCounter,
         });
 
-        await this.fillSyncCachesBatch(syncId, tableMapping, batchRecords, []);
+        await this.fillSyncCachesBatch(syncId, tableMapping, batchRecords, [], matchKeyTransformContext);
         this.collectForeignKeyValues(tableMapping, batchRecords, fkValuesByFolder);
 
         sourceCursor = page.nextCursor;
@@ -800,6 +816,7 @@ export class SyncService {
     tableMapping: TableMapping,
     sourceRecords: SyncRecord[],
     destinationRecords: SyncRecord[],
+    transformContext?: MatchKeyTransformContext,
   ): Promise<void> {
     if (!tableMapping.recordMatching) {
       // No record matching — every source record is a create.
@@ -817,7 +834,7 @@ export class SyncService {
 
     // Insert match keys for both sides
     if (sourceRecords.length > 0) {
-      await this.insertSourceMatchKeys(syncId, tableMapping, sourceRecords);
+      await this.insertSourceMatchKeys(syncId, tableMapping, sourceRecords, transformContext);
     }
     if (destinationRecords.length > 0) {
       await this.insertDestinationMatchKeys(syncId, tableMapping, destinationRecords);
@@ -1154,16 +1171,126 @@ export class SyncService {
     syncId: SyncId,
     tableMapping: TableMapping,
     records: SyncRecord[],
+    transformContext?: MatchKeyTransformContext,
   ): Promise<void> {
     if (!tableMapping.recordMatching) {
       throw new Error('TableMapping must have recordMatching configured');
     }
+
+    // Check if the source match column has DATA-phase transformers configured
+    if (transformContext) {
+      const matchColumnId = tableMapping.recordMatching.sourceColumnId;
+      const matchMapping = tableMapping.columnMappings?.find((m) => m.sourceColumnId === matchColumnId);
+      if (matchMapping) {
+        const allConfigs = getTransformerConfigs(matchMapping);
+        const dataConfigs = allConfigs.filter((c) => {
+          // Build a temporary mapping with just this config to check its phase
+          const tempMapping: ColumnMapping = { ...matchMapping, transformer: c, transformers: undefined };
+          return getColumnMappingPhase(tempMapping) === 'DATA';
+        });
+
+        if (dataConfigs.length > 0) {
+          await this.insertTransformedMatchKeys(syncId, tableMapping, records, dataConfigs, transformContext);
+          return;
+        }
+      }
+    }
+
     await this.insertMatchKeys(
       syncId,
       tableMapping.sourceDataFolderId,
       records,
       tableMapping.recordMatching.sourceColumnId,
     );
+  }
+
+  /**
+   * Inserts match keys for source records after applying DATA-phase transformers
+   * from the matching column's ColumnMapping.
+   */
+  private async insertTransformedMatchKeys(
+    syncId: SyncId,
+    tableMapping: TableMapping,
+    records: SyncRecord[],
+    transformerConfigs: TransformerConfig[],
+    ctx: MatchKeyTransformContext,
+  ): Promise<void> {
+    const matchColumnId = tableMapping.recordMatching!.sourceColumnId;
+    const destColumnId = tableMapping.recordMatching!.destinationColumnId;
+
+    const noopLookupTools: LookupTools = {
+      getDestinationMappingForSourceFk: () => Promise.resolve(null),
+      lookupFieldFromFkRecord: () => Promise.resolve(undefined),
+      getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available during match key insertion')),
+    };
+
+    const matchKeys: Array<{
+      syncId: SyncId;
+      dataFolderId: DataFolderId;
+      matchId: string;
+      remoteId: string;
+      filePath: string;
+    }> = [];
+
+    for (const record of records) {
+      const rawValue = get(record.fields, matchColumnId);
+
+      try {
+        const result = await applyTransformerPipeline(transformerConfigs, rawValue, {
+          sourceRecord: record,
+          sourceFieldPath: matchColumnId,
+          sourceTableSpec: ctx.sourceTableSpec,
+          sourceService: ctx.sourceService,
+          destinationFieldPath: destColumnId,
+          destinationTableSpec: ctx.destinationTableSpec,
+          destinationService: ctx.destinationService,
+          lookupTools: noopLookupTools,
+          phase: 'DATA',
+        });
+
+        if (!result.success) {
+          WSLogger.warn({
+            source: 'SyncService.insertTransformedMatchKeys',
+            message: `Transformer failed for match key, skipping record`,
+            syncId,
+            remoteId: record.id,
+            error: result.error,
+          });
+          continue;
+        }
+
+        const matchValue = result.value;
+        if ((typeof matchValue !== 'string' && typeof matchValue !== 'number') || String(matchValue).trim() === '') {
+          continue;
+        }
+
+        matchKeys.push({
+          syncId,
+          dataFolderId: tableMapping.sourceDataFolderId,
+          matchId: String(matchValue),
+          remoteId: record.id,
+          filePath: record.filePath,
+        });
+      } catch (err) {
+        WSLogger.warn({
+          source: 'SyncService.insertTransformedMatchKeys',
+          message: `Unexpected error transforming match key, skipping record`,
+          syncId,
+          remoteId: record.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+    }
+
+    if (matchKeys.length === 0) {
+      return;
+    }
+
+    await this.db.client.syncMatchKeys.createMany({
+      data: matchKeys,
+      skipDuplicates: true,
+    });
   }
 
   /**
