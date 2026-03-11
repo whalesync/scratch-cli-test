@@ -2,36 +2,17 @@
 
 ## Overview
 
-The experiments module provides a feature flagging system for the Whalesync Spinner application, enabling A/B testing, controlled feature rollout, and experimentation.
-
-## Purpose
-
-This module implements an abstraction layer around OpenFeature, a vendor-agnostic feature management SDK, allowing the application to support multiple backend providers while maintaining a consistent interface for feature flags.
+The experiments module provides a feature flagging system for the Scratch application using PostHog feature flags via the `posthog-node` SDK.
 
 ## Flag Types
 
 ### System-Wide Flags
 
-Flags that apply globally across the application:
-
-- `SAMPLE_SYSTEM_FLAG`
+Flags that apply globally across the application. Things like system config or tweaked settings that might change based on a scenario or that we need realtime control over instead of updating an environment variable and triggering a new deployment.
 
 ### User-Scoped Flags
 
-Flags evaluated per-user:
-
-- `DEV_TOOLBOX`: Developer tools access
-- `CONNECTOR_LIST`: Available connector list configuration
-
-## Core Service Methods
-
-### ExperimentsService
-
-- **getBooleanFlag()**: Evaluate boolean feature flags
-- **getStringFlag()**: Evaluate string feature flags
-- **getNumberFlag()**: Evaluate numeric feature flags
-- **getJsonFlag()**: Evaluate JSON object feature flags
-- **resolveClientFeatureFlagsForUser()**: Batch-evaluate all client-facing flags for a user
+These are flags that are evaluated for the user and passed to the client.
 
 ## Special Flag Handling
 
@@ -41,28 +22,11 @@ Flags evaluated per-user:
 - ADMIN users automatically get access
 - No external flag evaluation needed
 
-## Backend Providers
+## PostHog Integration
 
-### Production
-
-- Connects to PostHog for dynamic flag management
-- Supports local evaluation for performance
-- Real-time flag updates
-
-### Development
-
-- Falls back to in-memory flag definitions
-- Predefined flag values for local testing
-- No external service dependency
-
-## Integration
-
-The module integrates with:
-
-- **NestJS**: Dependency injection and module system
-- **PostHog**: Production feature flag provider
-- **Configuration**: System-level flag values
-- **Users Controller**: Includes flags in current user endpoint
+- Requires `POSTHOG_API_KEY` and `POSTHOG_FEATURE_FLAG_API_KEY` environment variables
+- When keys are not configured (local dev), all flags return their default values
+- Flag evaluation errors are caught and logged — they never crash the caller
 
 ## Client Integration
 
@@ -77,15 +41,14 @@ The frontend receives personalized flag settings when fetching the current user 
 - A/B testing new features
 - Gradual feature rollout
 - User segment targeting
-- Development vs. production differences
 - Emergency feature kill switches
 - Beta feature access control
 
 ## Configuration
 
-Flags can be configured through:
+Flags are configured through the PostHog dashboard:
 
-- PostHog dashboard (production)
-- Environment variables (system flags)
-- Application configuration service
-- In-memory definitions (development)
+- Test: https://us.posthog.com/project/225935/feature_flags
+- Production: https://us.posthog.com/project/214130/feature_flags
+
+**Important**: Do NOT set "Persist flag across authentication steps" on PostHog flag settings — this causes FlagNotFoundError.

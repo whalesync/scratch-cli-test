@@ -1,4 +1,4 @@
-import { JsonValue } from '@openfeature/core';
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export type FlagDataType = 'boolean' | 'string' | 'number' | 'array';
 
