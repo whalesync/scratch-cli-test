@@ -13,6 +13,7 @@ import {
   ForeignKeyOptionSchema,
   READONLY_FLAG,
   REMOTE_FIELD_ID,
+  SUGGESTED_IN_TRANSFORMER,
   SUGGESTED_TRANSFORMER,
 } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
@@ -87,6 +88,9 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
           {
             description,
             [SUGGESTED_TRANSFORMER]: {
+              type: TransformerTypes.WebflowOptionIdToValue,
+            },
+            [SUGGESTED_IN_TRANSFORMER]: {
               type: TransformerTypes.WebflowOption,
             },
           },

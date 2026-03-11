@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 // -- Transformer schemas --
 
+const arrayAutoConvertOptionsSchema = z
+  .object({
+    targetType: z.enum(['string', 'number', 'integer', 'boolean']),
+  })
+  .strict();
+
 const autoConvertOptionsSchema = z
   .object({
     targetType: z.enum(['string', 'number', 'integer', 'boolean', 'array']),
@@ -64,7 +70,12 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.NotionToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.AirmarkToHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.HtmlToAirmark), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.ArrayAutoConvert), options: arrayAutoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.WebflowOption), options: z.record(z.string(), z.never()).optional() }),
+  z.object({
+    type: z.literal(TransformerTypes.WebflowOptionIdToValue),
+    options: z.record(z.string(), z.never()).optional(),
+  }),
   z.object({ type: z.literal(TransformerTypes.Slugify), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.JSONPath), options: jsonpathOptionsSchema }),
   z.object({

@@ -19,6 +19,9 @@ export const REMOTE_FIELD_ID = 'x-scratch-remote-field-id';
 // The suggested transformer to auto-apply when this field is selected as a source in the sync editor.
 export const SUGGESTED_TRANSFORMER = 'x-scratch-suggested-transformer';
 
+// The suggested transformer to auto-apply when this field is selected as a destination in the sync editor.
+export const SUGGESTED_IN_TRANSFORMER = 'x-scratch-suggested-in-transformer';
+
 // An array of virtual field definitions that provide human-readable shortcuts for complex nested fields.
 export const VIRTUAL_FIELDS = 'x-scratch-virtual-fields';
 

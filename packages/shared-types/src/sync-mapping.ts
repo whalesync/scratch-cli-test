@@ -61,6 +61,7 @@ export const TransformerTypes = {
   AirmarkToHtml: 'airmark_to_html',
   HtmlToAirmark: 'html_to_airmark',
   WebflowOption: 'webflow_option',
+  WebflowOptionIdToValue: 'webflow_option_id_to_value',
   Slugify: 'slugify',
   JSONPath: 'jsonpath',
   SourceAssetToDestAsset: 'source_asset_to_dest_asset',
@@ -86,6 +87,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.AirmarkToHtml, label: 'AirMark to HTML' },
   { type: TransformerTypes.HtmlToAirmark, label: 'HTML to AirMark' },
   { type: TransformerTypes.WebflowOption, label: 'Webflow Option' },
+  { type: TransformerTypes.WebflowOptionIdToValue, label: 'Webflow Option ID to Value' },
   { type: TransformerTypes.Slugify, label: 'Slugify' },
   { type: TransformerTypes.JSONPath, label: 'JSONPath' },
   { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup', devOnly: true },
@@ -190,6 +192,7 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.AirmarkToHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.HtmlToAirmark; options?: Record<string, never> }
   | { type: typeof TransformerTypes.WebflowOption; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.WebflowOptionIdToValue; options?: Record<string, never> }
   | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> }
   | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions }
   | { type: typeof TransformerTypes.SourceAssetToDestAsset; options: SourceAssetToDestAssetOptions }

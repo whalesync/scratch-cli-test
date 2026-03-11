@@ -22,6 +22,7 @@ export { createLookupTools, createNullLookupTools } from './lookup-tools';
 
 // Implementations - import to register transformers
 import './implementations/airmark-to-html.transformer';
+import './implementations/array-auto-convert.transformer';
 import './implementations/auto-convert.transformer';
 import './implementations/ensure-type.transformer';
 import './implementations/html-to-airmark.transformer';
@@ -32,4 +33,5 @@ import './implementations/slugify.transformer';
 import './implementations/source-asset-to-dest-asset.transformer';
 import './implementations/source-fk-to-dest-fk.transformer';
 import './implementations/string-to-number.transformer';
+import './implementations/webflow-option-id-to-value.transformer';
 import './implementations/webflow-option.transformer';
