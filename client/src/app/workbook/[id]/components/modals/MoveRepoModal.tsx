@@ -5,6 +5,10 @@ import { Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useEffect, useState } from 'react';
 
+function toDeepPath(repoPath: string): string {
+  return repoPath.replaceAll('--', '/');
+}
+
 interface MoveRepoModalProps {
   opened: boolean;
   onClose: () => void;
@@ -56,6 +60,14 @@ export function MoveRepoModal({ opened, onClose, connectorAccountId, currentRepo
           onKeyDown={(e) => {
             if (e.key === 'Enter') void handleMove();
           }}
+          rightSection={
+            currentRepoPath.includes('--') ? (
+              <Button size="compact-xs" variant="subtle" onClick={() => setNewPath(toDeepPath(currentRepoPath))}>
+                Normalize
+              </Button>
+            ) : null
+          }
+          rightSectionWidth={90}
           autoFocus
         />
         <Group justify="flex-end">

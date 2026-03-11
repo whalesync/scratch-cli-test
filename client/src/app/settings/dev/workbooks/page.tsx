@@ -594,6 +594,7 @@ export default function WorkbooksDevPage() {
       });
       setWorkbooks(result.workbooks);
       setTotal(result.total);
+      setConnectionsWorkbook((prev) => (prev ? (result.workbooks.find((w) => w.id === prev.id) ?? prev) : null));
     } catch {
       setLoadError(true);
     } finally {

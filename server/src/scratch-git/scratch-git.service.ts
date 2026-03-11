@@ -22,19 +22,14 @@ export const MAIN_BRANCH = 'main';
 export const DIRTY_BRANCH = 'dirty';
 export const SCHEMA_JSON_FILENAME = '.schema.json';
 
-/** Separator used in composite repo IDs (must match Rust constant in state.rs) */
-const REPO_ID_SEPARATOR = '--';
-
-export type RepoId = `${string}--${string}--${string}`;
+export type RepoId = `${string}/${string}/${string}`;
 
 /**
  * Returns the repo ID to pass to scratch-git for a given workbook connection.
- * Format: `{orgId}--{workbookId}--{connAccountId}`  →  `repos-v2/{orgId}/{workbookId}/{connAccountId}.git`
- *
- * The Rust backend splits on `--` and constructs the nested directory path.
+ * Format: `{orgId}/{workbookId}/{connAccountId}`  →  `repos-v2/{orgId}/{workbookId}/{connAccountId}.git`
  */
 export function getDefaultRepoPath(orgId: string, workbookId: WorkbookId, connAccountId: string): RepoId {
-  return [orgId, workbookId, connAccountId].join(REPO_ID_SEPARATOR) as RepoId;
+  return [orgId, workbookId, connAccountId].join('/') as RepoId;
 }
 
 @Injectable()

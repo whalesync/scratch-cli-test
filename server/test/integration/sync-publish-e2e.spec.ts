@@ -1044,7 +1044,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     await prisma.$disconnect();
   });
 
-  it('should resolve composite V2 repo ID (orgId--workbookId--connAccountId) when building pipeline', async () => {
+  it('should resolve composite V2 repo ID (orgId/workbookId/connAccountId) when building pipeline', async () => {
     const { sourceTags, destTags } = generateTagData();
     const { sourcePosts, destPosts } = generatePostData();
 
@@ -1143,7 +1143,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
 
     // Verify the composite repo ID was computed correctly
     const expectedRepoId = getDefaultRepoPath(orgId, workbookId, connectorAccountId);
-    expect(expectedRepoId).toBe(`${orgId}--${workbookId}--${connectorAccountId}`);
+    expect(expectedRepoId).toBe(`${orgId}/${workbookId}/${connectorAccountId}`);
 
     // Run pipeline
     const runResult = await publishRunService.runPipeline(buildResult.pipelineId);

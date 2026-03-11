@@ -79,18 +79,6 @@ export class WorkbookService {
       context: {},
     });
 
-    // Initialize Git Repo
-    try {
-      await this.scratchGitService.initRepo(newWorkbook.id as WorkbookId);
-    } catch (err) {
-      WSLogger.error({
-        source: 'WorkbookService.create',
-        message: 'Failed to init git repo',
-        error: err,
-        workbookId: newWorkbook.id,
-      });
-    }
-
     return newWorkbook;
   }
 
