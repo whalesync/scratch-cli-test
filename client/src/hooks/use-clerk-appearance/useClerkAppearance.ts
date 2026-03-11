@@ -1,8 +1,7 @@
-import type { SignInProps } from '@clerk/types';
 import { useMantineTheme } from '@mantine/core';
 import styles from './Clerk.module.css';
 
-export const useClerkAppearance = (): SignInProps['appearance'] => {
+export const useClerkAppearance = (): ClerkAppearanceRegistry['theme'] => {
   const theme = useMantineTheme();
 
   return {

@@ -4,7 +4,6 @@ import { usersApi } from '@/lib/api/users';
 import { User, UserSetting, UserSettingValue } from '@/types/server-entities/users';
 import { RouteUrls } from '@/utils/route-urls';
 import { useAuth, useUser } from '@clerk/nextjs';
-import { UserResource } from '@clerk/types';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import useSWR from 'swr';
@@ -12,7 +11,8 @@ import useSWR from 'swr';
 export interface ScratchPadUser {
   isLoading: boolean;
   user: User | null;
-  clerkUser: UserResource | null;
+  // Clerk doesn't expost the UserResource type anymore, so we use the useUser hook to get the user object
+  clerkUser: ReturnType<typeof useUser>['user'] | null;
   signOut: () => void;
   isSignedIn?: boolean;
   isAdmin?: boolean;
