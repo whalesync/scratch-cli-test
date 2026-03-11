@@ -39,6 +39,15 @@ const jsonpathOptionsSchema = z
   })
   .strict();
 
+const sourceAssetToDestAssetOptionsSchema = z
+  .object({
+    sourceDataFolderId: z.string().min(1),
+    destinationDataFolderId: z.string().min(1),
+    onUnresolved: z.enum(['fail', 'ignore']).optional(),
+    outputType: z.enum(['array', 'single']).optional(),
+  })
+  .strict();
+
 const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.AutoConvert), options: autoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
@@ -50,6 +59,10 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.WebflowOption), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.Slugify), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.JSONPath), options: jsonpathOptionsSchema }),
+  z.object({
+    type: z.literal(TransformerTypes.SourceAssetToDestAsset),
+    options: sourceAssetToDestAssetOptionsSchema,
+  }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

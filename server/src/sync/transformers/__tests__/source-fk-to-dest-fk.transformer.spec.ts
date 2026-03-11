@@ -1,8 +1,8 @@
-import { createScratchPendingPublishId, SourceFkToDestFkOptions } from '@spinner/shared-types';
+import { createScratchPendingPublishId, DataFolderId, Service, SourceFkToDestFkOptions } from '@spinner/shared-types';
 import { sourceFkToDestFkTransformer } from '../implementations/source-fk-to-dest-fk.transformer';
 import { FkMappingResult, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
 
-const REFERENCED_FOLDER = 'dfd_dest_authors' as const;
+const REFERENCED_FOLDER = 'dfd_dest_authors' as DataFolderId;
 
 function createLookupTools(
   mapping: Record<string, { destinationFilePath: string; destinationRemoteId: string | null }> = {},
@@ -12,6 +12,7 @@ function createLookupTools(
       return Promise.resolve(mapping[fk] ?? null);
     }),
     lookupFieldFromFkRecord: jest.fn(),
+    getOrCreateDestinationAssetMapping: jest.fn(),
   };
 }
 
@@ -32,7 +33,20 @@ function createContext(
   destinationValue?: unknown,
 ): TransformContext {
   const sourceRecord: SyncRecord = { id: 'test', filePath: '/test.json', fields: { fk: sourceValue } };
-  return { sourceRecord, sourceFieldPath: 'fk', sourceValue, lookupTools, destinationValue, options, phase };
+  return {
+    sourceRecord,
+    sourceFieldPath: 'fk',
+    sourceValue,
+    sourceTableSpec: null,
+    sourceService: Service.AIRTABLE,
+    destinationFieldPath: 'fk',
+    destinationTableSpec: null,
+    destinationService: Service.WEBFLOW,
+    lookupTools,
+    destinationValue,
+    options,
+    phase,
+  };
 }
 
 describe('sourceFkToDestFkTransformer', () => {

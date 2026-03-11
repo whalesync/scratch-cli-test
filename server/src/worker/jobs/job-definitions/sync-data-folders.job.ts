@@ -263,10 +263,12 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     // Phase 2: Resolve FK references by re-running table mappings with FOREIGN_KEY_MAPPING phase
     for (let i = 0; i < tableMappings.length; i++) {
       const tableMapping = tableMappings[i];
-      const hasFkColumns = tableMapping.columnMappings.some(
-        (m) => findTransformerConfigs(m, TransformerTypes.SourceFkToDestFk).length > 0,
+      const hasFkOrAssetColumns = tableMapping.columnMappings.some(
+        (m) =>
+          findTransformerConfigs(m, TransformerTypes.SourceFkToDestFk).length > 0 ||
+          findTransformerConfigs(m, TransformerTypes.SourceAssetToDestAsset).length > 0,
       );
-      if (hasFkColumns) {
+      if (hasFkOrAssetColumns) {
         try {
           const fkResult = await this.syncService.syncTableMapping(
             data.syncId,

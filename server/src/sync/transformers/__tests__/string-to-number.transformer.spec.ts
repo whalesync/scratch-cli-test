@@ -1,17 +1,20 @@
-import { StringToNumberOptions } from '@spinner/shared-types';
+import { Service, StringToNumberOptions } from '@spinner/shared-types';
 import { stringToNumberTransformer } from '../implementations/string-to-number.transformer';
+import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';
 
 function createContext(sourceValue: unknown, options: StringToNumberOptions = {}): TransformContext {
-  const sourceRecord: SyncRecord = { id: 'test', fields: { value: sourceValue } };
+  const sourceRecord: SyncRecord = { id: 'test', filePath: '/test', fields: { value: sourceValue } };
   return {
     sourceRecord,
     sourceFieldPath: 'value',
     sourceValue,
-    lookupTools: {
-      getDestinationMappingForSourceFk: jest.fn(),
-      lookupFieldFromFkRecord: jest.fn(),
-    },
+    sourceTableSpec: null,
+    sourceService: Service.AIRTABLE,
+    destinationFieldPath: 'value',
+    destinationTableSpec: null,
+    destinationService: Service.WEBFLOW,
+    lookupTools: createNullLookupTools(),
     options,
     phase: 'DATA',
   };

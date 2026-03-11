@@ -1,5 +1,6 @@
-import { JSONPathOptions } from '@spinner/shared-types';
+import { JSONPathOptions, Service } from '@spinner/shared-types';
 import { jsonpathTransformer } from '../implementations/jsonpath.transformer';
+import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';
 
 function createContext(sourceValue: unknown, options: JSONPathOptions): TransformContext {
@@ -8,10 +9,12 @@ function createContext(sourceValue: unknown, options: JSONPathOptions): Transfor
     sourceRecord,
     sourceFieldPath: 'value',
     sourceValue,
-    lookupTools: {
-      getDestinationMappingForSourceFk: jest.fn(),
-      lookupFieldFromFkRecord: jest.fn(),
-    },
+    sourceTableSpec: null,
+    sourceService: Service.AIRTABLE,
+    destinationFieldPath: 'value',
+    destinationTableSpec: null,
+    destinationService: Service.WEBFLOW,
+    lookupTools: createNullLookupTools(),
     options,
     phase: 'DATA',
   };

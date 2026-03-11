@@ -1,4 +1,4 @@
-import { ColumnMapping, TransformerConfig, TransformerType, TransformerTypes } from '@spinner/shared-types';
+import { ColumnMapping, Service, TransformerConfig, TransformerType, TransformerTypes } from '@spinner/shared-types';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { getTransformer } from './transformer-registry';
 import { LookupTools, SyncPhase, SyncRecord, TransformContext } from './transformer.types';
@@ -27,19 +27,23 @@ export function findTransformerConfigs(mapping: ColumnMapping, type: Transformer
 
 /**
  * Determines which sync phase a column mapping belongs to based on its transformer configs.
- * Mappings with a SourceFkToDestFk transformer run in FOREIGN_KEY_MAPPING phase; all others in DATA.
+ * Mappings with a SourceFkToDestFk or SourceAssetToDestAsset transformer run in
+ * FOREIGN_KEY_MAPPING phase; all others in DATA.
  */
 export function getColumnMappingPhase(mapping: ColumnMapping): SyncPhase {
   const configs = getTransformerConfigs(mapping);
-  return configs.some((c) => c.type === TransformerTypes.SourceFkToDestFk) ? 'FOREIGN_KEY_MAPPING' : 'DATA';
+  const fkPhaseTypes: string[] = [TransformerTypes.SourceFkToDestFk, TransformerTypes.SourceAssetToDestAsset];
+  return configs.some((c) => fkPhaseTypes.includes(c.type)) ? 'FOREIGN_KEY_MAPPING' : 'DATA';
 }
 
 export interface PipelineBaseContext {
   sourceRecord: SyncRecord;
   sourceFieldPath: string;
   sourceTableSpec: BaseJsonTableSpec | null;
+  sourceService: Service;
   destinationFieldPath: string;
   destinationTableSpec: BaseJsonTableSpec | null;
+  destinationService: Service;
   lookupTools: LookupTools;
   destinationValue?: unknown;
   phase: SyncPhase;
@@ -79,8 +83,10 @@ export async function applyTransformerPipeline(
       sourceFieldPath: baseCtx.sourceFieldPath,
       sourceValue: currentValue,
       sourceTableSpec: baseCtx.sourceTableSpec,
+      sourceService: baseCtx.sourceService,
       destinationFieldPath: baseCtx.destinationFieldPath,
       destinationTableSpec: baseCtx.destinationTableSpec,
+      destinationService: baseCtx.destinationService,
       lookupTools: baseCtx.lookupTools,
       destinationValue: baseCtx.destinationValue,
       options: (config.options ?? {}) as TransformContext['options'],

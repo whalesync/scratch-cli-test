@@ -563,7 +563,13 @@ export class SyncService {
     const destIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
     // Create lookup tools for transformers that need FK resolution
-    const lookupTools = createLookupTools(this.db, syncId);
+    const lookupTools = createLookupTools(
+      this.db,
+      syncId,
+      workbookId,
+      sourceFolder.connectorService as Service,
+      destinationFolder.connectorService as Service,
+    );
 
     // Track new records so we can backfill SyncRemoteIdMapping with their file paths and record IDs
     const newRecordMappings: Array<{ sourceRemoteId: string; filePath: string; destinationRecordId: string }> = [];
@@ -645,6 +651,11 @@ export class SyncService {
               destinationTableSpec,
               lookupTools,
               phase,
+              undefined,
+              {
+                sourceService: sourceFolder.connectorService as Service,
+                destinationService: destinationFolder.connectorService as Service,
+              },
             );
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
@@ -693,6 +704,10 @@ export class SyncService {
               lookupTools,
               phase,
               existingRecord?.fields,
+              {
+                sourceService: sourceFolder.connectorService as Service,
+                destinationService: destinationFolder.connectorService as Service,
+              },
             );
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
@@ -1206,6 +1221,11 @@ export class SyncService {
       throw new NotFoundException(`Source folder ${body.sourceFolderId} not found`);
     }
 
+    const destinationFolder = await this.db.client.dataFolder.findUnique({ where: { id: body.destFolderId } });
+    if (!destinationFolder) {
+      throw new NotFoundException(`Destination folder ${body.destFolderId} not found`);
+    }
+
     const sourceSchema = await this.readSchemaFromGit(workbookId, sourceFolder.connectorAccountId, sourceFolder.path);
     const sourceIdColumn = this.getIdColumnFromSchema(sourceSchema);
 
@@ -1223,11 +1243,12 @@ export class SyncService {
     );
     const columnMappings = body.columnMappings;
 
-    // Stub lookup tools — FK lookups are not available in preview
+    // Stub lookup tools — FK/asset lookups are not available in preview
     const notAvailableInPreviewError = new Error('Lookup is not available in preview');
     const previewLookupTools: LookupTools = {
       getDestinationMappingForSourceFk: () => Promise.reject(notAvailableInPreviewError),
       lookupFieldFromFkRecord: () => Promise.reject(notAvailableInPreviewError),
+      getOrCreateDestinationAssetMapping: () => Promise.reject(notAvailableInPreviewError),
     };
 
     // Schemas
@@ -1256,8 +1277,10 @@ export class SyncService {
             sourceRecord: record,
             sourceFieldPath: mapping.sourceColumnId,
             sourceTableSpec,
+            sourceService: sourceFolder.connectorService as Service,
             destinationFieldPath: mapping.destinationColumnId,
             destinationTableSpec,
+            destinationService: destinationFolder.connectorService as Service,
             lookupTools: previewLookupTools,
             phase: 'DATA',
           });
@@ -1695,6 +1718,7 @@ export async function transformRecordAsync(
   lookupTools?: LookupTools,
   phase: SyncPhase = 'DATA',
   baseFields?: Record<string, unknown>,
+  syncContext?: { sourceService: Service; destinationService: Service },
 ): Promise<TransformRecordResult> {
   const definedPaths: string[] = [];
   const definedValues: unknown[] = [];
@@ -1720,11 +1744,14 @@ export async function transformRecordAsync(
         sourceRecord,
         sourceFieldPath: mapping.sourceColumnId,
         sourceTableSpec,
+        sourceService: syncContext!.sourceService,
         destinationFieldPath: mapping.destinationColumnId,
         destinationTableSpec,
+        destinationService: syncContext!.destinationService,
         lookupTools: lookupTools ?? {
           getDestinationMappingForSourceFk: () => Promise.resolve(null),
           lookupFieldFromFkRecord: () => Promise.resolve(null),
+          getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
         },
         destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
         phase,

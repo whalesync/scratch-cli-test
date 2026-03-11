@@ -22,18 +22,21 @@ export class AssetIndexService {
     const chunks = chunk(entries, 500);
 
     for (const c of chunks) {
+      // Filter to entries with a dataFolderId — required by the unique constraint
+      const valid = c.filter((e) => e.dataFolderId != null);
+
       await this.db.client.$transaction(
-        c.map((entry) =>
+        valid.map((entry) =>
           this.db.client.asset.upsert({
             where: {
-              workbookId_service_remoteAssetId: {
+              workbookId_dataFolderId_remoteAssetId: {
                 workbookId: entry.workbookId,
-                service: entry.service,
+                dataFolderId: entry.dataFolderId!,
                 remoteAssetId: entry.remoteAssetId,
               },
             },
             update: {
-              dataFolderId: entry.dataFolderId,
+              service: entry.service,
               url: entry.url,
               filename: entry.filename,
               mimeType: entry.mimeType,

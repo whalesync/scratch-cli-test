@@ -18,7 +18,7 @@ export {
 } from './transformer-pipeline';
 
 // Lookup tools
-export { createLookupTools } from './lookup-tools';
+export { createLookupTools, createNullLookupTools } from './lookup-tools';
 
 // Implementations - import to register transformers
 import './implementations/airmark-to-html.transformer';
@@ -28,6 +28,7 @@ import './implementations/jsonpath.transformer';
 import './implementations/lookup-field.transformer';
 import './implementations/notion-to-html.transformer';
 import './implementations/slugify.transformer';
+import './implementations/source-asset-to-dest-asset.transformer';
 import './implementations/source-fk-to-dest-fk.transformer';
 import './implementations/string-to-number.transformer';
 import './implementations/webflow-option.transformer';

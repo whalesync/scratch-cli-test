@@ -1,10 +1,12 @@
 import {
   ColumnMapping,
   DataFolderId,
+  Service,
   TransformerConfig,
   TransformerType,
   TransformerTypes,
 } from '@spinner/shared-types';
+import { createNullLookupTools } from '../lookup-tools';
 import {
   applyTransformerPipeline,
   findTransformerConfigs,
@@ -12,7 +14,7 @@ import {
   getTransformerConfigs,
   PipelineBaseContext,
 } from '../transformer-pipeline';
-import { FieldTransformer, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
+import { FieldTransformer, SyncRecord, TransformContext } from '../transformer.types';
 
 // Import implementations to register transformers
 import '../implementations/auto-convert.transformer';
@@ -49,17 +51,15 @@ function mockConfig(type: string): TransformerConfig {
 
 function createBaseCtx(overrides?: Partial<PipelineBaseContext>): PipelineBaseContext {
   const sourceRecord: SyncRecord = { id: 'rec-1', filePath: '/test.json', fields: { name: 'Alice' } };
-  const lookupTools: LookupTools = {
-    getDestinationMappingForSourceFk: jest.fn(),
-    lookupFieldFromFkRecord: jest.fn(),
-  };
   return {
     sourceRecord,
     sourceFieldPath: 'name',
     sourceTableSpec: null,
+    sourceService: Service.AIRTABLE,
     destinationFieldPath: 'name',
     destinationTableSpec: null,
-    lookupTools,
+    destinationService: Service.WEBFLOW,
+    lookupTools: createNullLookupTools(),
     phase: 'DATA',
     ...overrides,
   };
@@ -246,6 +246,21 @@ describe('getColumnMappingPhase', () => {
           options: { referencedDataFolderId: 'df-1' as DataFolderId },
         },
       ],
+    };
+    expect(getColumnMappingPhase(mapping)).toBe('FOREIGN_KEY_MAPPING');
+  });
+
+  it('returns FOREIGN_KEY_MAPPING for mapping with SourceAssetToDestAsset transformer', () => {
+    const mapping: ColumnMapping = {
+      sourceColumnId: 'a',
+      destinationColumnId: 'b',
+      transformer: {
+        type: TransformerTypes.SourceAssetToDestAsset,
+        options: {
+          sourceDataFolderId: 'df-src' as DataFolderId,
+          destinationDataFolderId: 'df-dest' as DataFolderId,
+        },
+      },
     };
     expect(getColumnMappingPhase(mapping)).toBe('FOREIGN_KEY_MAPPING');
   });

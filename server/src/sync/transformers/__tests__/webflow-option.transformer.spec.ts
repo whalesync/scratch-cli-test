@@ -1,6 +1,8 @@
 import { Type } from '@sinclair/typebox';
+import { Service } from '@spinner/shared-types';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { webflowOptionTransformer } from '../implementations/webflow-option.transformer';
+import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';
 
 /** Build a mock BaseJsonTableSpec whose schema has a single `region` field with the given anyOf options */
@@ -26,12 +28,11 @@ function createContext(sourceValue: unknown, options = DEFAULT_OPTIONS): Transfo
     sourceFieldPath: 'region',
     sourceValue,
     sourceTableSpec: null,
-    lookupTools: {
-      getDestinationMappingForSourceFk: jest.fn(),
-      lookupFieldFromFkRecord: jest.fn(),
-    },
+    sourceService: Service.AIRTABLE,
+    lookupTools: createNullLookupTools(),
     destinationFieldPath: 'region',
     destinationTableSpec: buildDestinationSchema(options),
+    destinationService: Service.WEBFLOW,
     options: {},
     phase: 'DATA',
   };

@@ -1,5 +1,6 @@
-import { AutoConvertOptions } from '@spinner/shared-types';
+import { AutoConvertOptions, Service } from '@spinner/shared-types';
 import { autoConvertTransformer } from '../implementations/auto-convert.transformer';
+import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';
 
 function createContext(sourceValue: unknown, options: AutoConvertOptions): TransformContext {
@@ -8,10 +9,12 @@ function createContext(sourceValue: unknown, options: AutoConvertOptions): Trans
     sourceRecord,
     sourceFieldPath: 'value',
     sourceValue,
-    lookupTools: {
-      getDestinationMappingForSourceFk: jest.fn(),
-      lookupFieldFromFkRecord: jest.fn(),
-    },
+    sourceTableSpec: null,
+    sourceService: Service.AIRTABLE,
+    destinationFieldPath: 'value',
+    destinationTableSpec: null,
+    destinationService: Service.WEBFLOW,
+    lookupTools: createNullLookupTools(),
     options,
     phase: 'DATA',
   };

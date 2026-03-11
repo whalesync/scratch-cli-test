@@ -5,6 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
+import { Service } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
@@ -930,10 +931,25 @@ describe('transformRecordAsync', () => {
         return Promise.resolve(map[fk] ?? null);
       }),
       lookupFieldFromFkRecord: jest.fn(),
+      getOrCreateDestinationAssetMapping: jest.fn(),
+    };
+
+    const syncContext = {
+      sourceService: Service.AIRTABLE,
+      destinationService: Service.WEBFLOW,
     };
 
     it('DATA phase processes plain and auto_convert mappings, skips FK mapping', async () => {
-      const { fields } = await transformRecordAsync(sourceRecord, columnMappings, null, null, lookupTools, 'DATA');
+      const { fields } = await transformRecordAsync(
+        sourceRecord,
+        columnMappings,
+        null,
+        null,
+        lookupTools,
+        'DATA',
+        undefined,
+        syncContext,
+      );
 
       // Plain string passthrough
       expect(fields.name).toBe('My Article');
@@ -951,6 +967,8 @@ describe('transformRecordAsync', () => {
         null,
         lookupTools,
         'FOREIGN_KEY_MAPPING',
+        undefined,
+        syncContext,
       );
 
       // Plain and auto_convert mappings must NOT be processed in FK phase
@@ -969,6 +987,8 @@ describe('transformRecordAsync', () => {
         null,
         lookupTools,
         'DATA',
+        undefined,
+        syncContext,
       );
 
       // Phase 2: FOREIGN_KEY_MAPPING, using dataFields as the base
@@ -980,6 +1000,7 @@ describe('transformRecordAsync', () => {
         lookupTools,
         'FOREIGN_KEY_MAPPING',
         dataFields,
+        syncContext,
       );
 
       expect(finalFields.name).toBe('My Article');

@@ -1,4 +1,4 @@
-import { DataFolderId, TransformerOptions, TransformerType } from '@spinner/shared-types';
+import { DataFolderId, Service, TransformerOptions, TransformerType } from '@spinner/shared-types';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 
 export type SyncPhase = 'DATA' | 'FOREIGN_KEY_MAPPING';
@@ -19,6 +19,16 @@ export interface SyncRecord {
 export interface FkMappingResult {
   destinationFilePath: string;
   destinationRemoteId: string | null;
+}
+
+/**
+ * Result of resolving a source asset to a destination asset mapping.
+ */
+export interface AssetMappingResult {
+  /** The remoteAssetId of the destination asset */
+  destinationAssetRemoteId: string;
+  /** Whether this destination asset was just created (true) or already existed (false) */
+  isNew: boolean;
 }
 
 /**
@@ -53,6 +63,24 @@ export interface LookupTools {
     referencedDataFolderId: DataFolderId,
     fieldPath: string,
   ): Promise<unknown>;
+
+  /**
+   * Looks up or creates a destination asset for a source asset.
+   *
+   * Finds the source Asset by (workbookId, sourceDataFolderId, sourceService, remoteAssetId),
+   * then upserts a destination Asset keyed by (sourceAssetId, destinationDataFolderId).
+   * If no destination asset exists, creates one with a temporary remoteAssetId and the same
+   * rehostedUrl. Scoping is by dataFolderId (not service) to correctly handle multiple
+   * connections of the same service type.
+   *
+   * @throws Error with message 'ASSET_NOT_FOUND' if the source asset does not exist
+   * @throws Error with message 'ASSET_NOT_REHOSTED' if the source asset has no rehostedUrl
+   */
+  getOrCreateDestinationAssetMapping(
+    sourceAssetRemoteId: string,
+    sourceDataFolderId: DataFolderId,
+    destinationDataFolderId: DataFolderId,
+  ): Promise<AssetMappingResult>;
 }
 
 /**
@@ -71,6 +99,9 @@ export interface TransformContext {
   /** The JSON Schema for the source field */
   sourceTableSpec: BaseJsonTableSpec | null;
 
+  /** The Service of the source connector (e.g. AIRTABLE) */
+  sourceService: Service;
+
   /** Target path for the field being transformed in the destination folder (e.g. 'company.name'). */
   destinationFieldPath: string;
 
@@ -79,6 +110,9 @@ export interface TransformContext {
 
   /** The JSON Schema for the destination field */
   destinationTableSpec: BaseJsonTableSpec | null;
+
+  /** The Service of the destination connector (e.g. WEBFLOW) */
+  destinationService: Service;
 
   /** Tools for FK lookups (only available for lookup-based transformers) */
   lookupTools: LookupTools;

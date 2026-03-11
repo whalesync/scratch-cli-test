@@ -62,6 +62,7 @@ export const TransformerTypes = {
   WebflowOption: 'webflow_option',
   Slugify: 'slugify',
   JSONPath: 'jsonpath',
+  SourceAssetToDestAsset: 'source_asset_to_dest_asset',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -69,6 +70,8 @@ export type TransformerType = (typeof TransformerTypes)[keyof typeof Transformer
 export interface TransformerTypeInfo {
   type: TransformerType;
   label: string;
+  /** If true, this transformer is only visible when dev tools are enabled */
+  devOnly?: boolean;
 }
 
 export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
@@ -82,6 +85,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.WebflowOption, label: 'Webflow Option' },
   { type: TransformerTypes.Slugify, label: 'Slugify' },
   { type: TransformerTypes.JSONPath, label: 'JSONPath' },
+  { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup', devOnly: true },
 ];
 
 /** Get the display label for a transformer type */
@@ -132,13 +136,26 @@ export interface JSONPathOptions {
   arrayHandling?: JSONPathArrayHandling;
 }
 
+/** Options for the source_asset_to_dest_asset transformer */
+export interface SourceAssetToDestAssetOptions {
+  /** The DataFolder ID for the source assets table — primary scope for source asset lookup */
+  sourceDataFolderId: DataFolderId;
+  /** The DataFolder ID on the destination side where created assets will be associated */
+  destinationDataFolderId: DataFolderId;
+  /** What to do when a source asset is not found or not rehosted. Default: 'fail' */
+  onUnresolved?: 'fail' | 'ignore';
+  /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to the first element or null */
+  outputType?: 'array' | 'single';
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
   | StringToNumberOptions
   | SourceFkToDestFkOptions
   | LookupFieldOptions
-  | JSONPathOptions;
+  | JSONPathOptions
+  | SourceAssetToDestAssetOptions;
 
 /** Configuration for a field transformer with strictly typed options */
 export type TransformerConfig =
@@ -151,4 +168,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.HtmlToAirmark; options?: Record<string, never> }
   | { type: typeof TransformerTypes.WebflowOption; options?: Record<string, never> }
   | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> }
-  | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions };
+  | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions }
+  | { type: typeof TransformerTypes.SourceAssetToDestAsset; options: SourceAssetToDestAssetOptions };

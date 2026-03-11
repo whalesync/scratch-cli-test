@@ -783,11 +783,20 @@ model Asset {
   rehostedUrl  String? // Permanent GCS URL
   rehostedAt   DateTime? // When rehosted
 
-  @@unique([workbookId, service, remoteAssetId])
+  /// Points to the source Asset this was created from during sync (null for pulled assets)
+  sourceAsset   Asset?  @relation("AssetSyncLink", fields: [sourceAssetId], references: [id], onDelete: SetNull)
+  sourceAssetId String?
+
+  /// Destination assets created from this source asset
+  derivedAssets Asset[] @relation("AssetSyncLink")
+
+  @@unique([workbookId, dataFolderId, remoteAssetId])
+  @@unique([sourceAssetId, dataFolderId])
   @@index([workbookId, service])
   @@index([dataFolderId])
   @@index([urlExpiresAt])
   @@index([workbookId, lastSeenAt])
+  @@index([sourceAssetId])
 }
 
 //#endregion

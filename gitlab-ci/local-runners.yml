@@ -102,7 +102,7 @@ include:
 #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
 .rules:
   local_runner_users:
-    - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+    - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari)$/'
 
 # -----------------------------------------------------------------------------
 # Client

@@ -1,6 +1,7 @@
 'use client';
 
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { DocsUrls } from '@/utils/docs-urls';
 import type { ComboboxItem } from '@mantine/core';
 import {
@@ -22,13 +23,14 @@ import type {
   DataFolder,
   DataFolderId,
   JSONPathArrayHandling,
+  SourceAssetToDestAssetOptions,
   SourceFkToDestFkOptions,
   TransformerConfig,
   TransformerType,
 } from '@spinner/shared-types';
 import { TRANSFORMER_TYPES, TransformerTypes } from '@spinner/shared-types';
 import { Plus, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface TransformerConfigModalProps {
   opened: boolean;
@@ -38,7 +40,7 @@ interface TransformerConfigModalProps {
   allFolders: DataFolder[];
 }
 
-const TRANSFORMER_OPTIONS = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label }));
+const TRANSFORMER_OPTIONS = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label, devOnly: t.devOnly }));
 
 const ON_UNRESOLVED_OPTIONS: { value: NonNullable<SourceFkToDestFkOptions['onUnresolved']>; label: string }[] = [
   { value: 'fail', label: 'Stop and fail the sync' },
@@ -58,6 +60,10 @@ interface StepState {
   outputType: NonNullable<SourceFkToDestFkOptions['outputType']>;
   expression: string;
   arrayHandling: JSONPathArrayHandling;
+  sourceDataFolderId: DataFolderId | '';
+  destinationDataFolderId: DataFolderId | '';
+  assetOnUnresolved: NonNullable<SourceAssetToDestAssetOptions['onUnresolved']>;
+  assetOutputType: NonNullable<SourceAssetToDestAssetOptions['outputType']>;
 }
 
 let stepIdCounter = 0;
@@ -78,6 +84,18 @@ function configToStepState(config: TransformerConfig): StepState {
     outputType: config.type === TransformerTypes.SourceFkToDestFk ? (config.options.outputType ?? 'array') : 'array',
     expression: config.type === TransformerTypes.JSONPath ? config.options.expression : '',
     arrayHandling: config.type === TransformerTypes.JSONPath ? (config.options.arrayHandling ?? 'first') : 'first',
+    sourceDataFolderId:
+      config.type === TransformerTypes.SourceAssetToDestAsset
+        ? config.options.sourceDataFolderId
+        : ('' as DataFolderId | ''),
+    destinationDataFolderId:
+      config.type === TransformerTypes.SourceAssetToDestAsset
+        ? config.options.destinationDataFolderId
+        : ('' as DataFolderId | ''),
+    assetOnUnresolved:
+      config.type === TransformerTypes.SourceAssetToDestAsset ? (config.options.onUnresolved ?? 'fail') : 'fail',
+    assetOutputType:
+      config.type === TransformerTypes.SourceAssetToDestAsset ? (config.options.outputType ?? 'array') : 'array',
   };
 }
 
@@ -94,6 +112,10 @@ function createEmptyStep(): StepState {
     outputType: 'array',
     expression: '',
     arrayHandling: 'first',
+    sourceDataFolderId: '' as DataFolderId | '',
+    destinationDataFolderId: '' as DataFolderId | '',
+    assetOnUnresolved: 'fail',
+    assetOutputType: 'array',
   };
 }
 
@@ -129,6 +151,16 @@ function stepStateToConfig(step: StepState): TransformerConfig | null {
           ...(step.arrayHandling !== 'first' ? { arrayHandling: step.arrayHandling } : {}),
         },
       };
+    case TransformerTypes.SourceAssetToDestAsset:
+      return {
+        type: step.type,
+        options: {
+          sourceDataFolderId: step.sourceDataFolderId as DataFolderId,
+          destinationDataFolderId: step.destinationDataFolderId as DataFolderId,
+          ...(step.assetOnUnresolved !== 'fail' ? { onUnresolved: step.assetOnUnresolved } : {}),
+          ...(step.assetOutputType !== 'array' ? { outputType: step.assetOutputType } : {}),
+        },
+      };
     default:
       return { type: step.type } as TransformerConfig;
   }
@@ -140,6 +172,11 @@ function isStepValid(step: StepState): boolean {
   if (step.type === TransformerTypes.LookupField && (!step.referencedDataFolderId || !step.referencedFieldPath))
     return false;
   if (step.type === TransformerTypes.JSONPath && !step.expression.trim()) return false;
+  if (
+    step.type === TransformerTypes.SourceAssetToDestAsset &&
+    (!step.sourceDataFolderId || !step.destinationDataFolderId)
+  )
+    return false;
   return true;
 }
 
@@ -150,7 +187,13 @@ export function TransformerConfigModal({
   onSave,
   allFolders,
 }: TransformerConfigModalProps) {
+  const { isDevToolsEnabled } = useDevTools();
   const [steps, setSteps] = useState<StepState[]>([]);
+
+  const transformerOptions = useMemo(
+    () => TRANSFORMER_OPTIONS.filter((opt) => !opt.devOnly || isDevToolsEnabled),
+    [isDevToolsEnabled],
+  );
 
   // Sync form state whenever the modal opens
   useEffect(() => {
@@ -190,6 +233,14 @@ export function TransformerConfigModal({
     connectorService: f.connectorService,
   }));
 
+  const assetFolderSelectData = allFolders
+    .filter((f) => f.isAssetTable)
+    .map((f) => ({
+      value: f.id,
+      label: f.name,
+      connectorService: f.connectorService,
+    }));
+
   const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
     <Group gap="xs" wrap="nowrap">
       {option.connectorService && <ConnectorIcon connector={option.connectorService} size={16} p={0} />}
@@ -219,7 +270,7 @@ export function TransformerConfigModal({
             <Select
               label="Transformer Type"
               placeholder="None"
-              data={TRANSFORMER_OPTIONS}
+              data={transformerOptions}
               value={step.type || null}
               onChange={(val) => updateStep(index, { type: (val as TransformerType) || '' })}
               clearable
@@ -340,6 +391,55 @@ export function TransformerConfigModal({
                   ]}
                   value={step.arrayHandling}
                   onChange={(val) => updateStep(index, { arrayHandling: (val as JSONPathArrayHandling) || 'first' })}
+                />
+              </>
+            )}
+
+            {step.type === TransformerTypes.SourceAssetToDestAsset && (
+              <>
+                <Select
+                  label="Source Asset Folder"
+                  description="The asset folder on the source side containing the referenced files"
+                  placeholder="Select asset folder"
+                  data={assetFolderSelectData}
+                  value={step.sourceDataFolderId || null}
+                  onChange={(val) => updateStep(index, { sourceDataFolderId: (val || '') as DataFolderId | '' })}
+                  renderOption={renderFolderOption}
+                  searchable
+                />
+                <Select
+                  label="Destination Asset Folder"
+                  description="The asset folder on the destination side where assets will be created"
+                  placeholder="Select asset folder"
+                  data={assetFolderSelectData}
+                  value={step.destinationDataFolderId || null}
+                  onChange={(val) => updateStep(index, { destinationDataFolderId: (val || '') as DataFolderId | '' })}
+                  renderOption={renderFolderOption}
+                  searchable
+                />
+                <Select
+                  label="Output type"
+                  description="Whether to output multiple values (array) or a single value"
+                  data={[
+                    { value: 'array', label: 'Multiple values (array)' },
+                    { value: 'single', label: 'Single value (first item)' },
+                  ]}
+                  value={step.assetOutputType}
+                  onChange={(val) =>
+                    updateStep(index, {
+                      assetOutputType: (val as SourceAssetToDestAssetOptions['outputType']) || 'array',
+                    })
+                  }
+                />
+                <Select
+                  label="When a source asset cannot be found"
+                  data={ON_UNRESOLVED_OPTIONS}
+                  value={step.assetOnUnresolved}
+                  onChange={(val) =>
+                    updateStep(index, {
+                      assetOnUnresolved: (val as SourceAssetToDestAssetOptions['onUnresolved']) || 'fail',
+                    })
+                  }
                 />
               </>
             )}

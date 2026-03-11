@@ -1,15 +1,36 @@
-import { DataFolderId, SyncId } from '@spinner/shared-types';
+import { createScratchPendingPublishId, DataFolderId, Service, SyncId, WorkbookId } from '@spinner/shared-types';
 import get from 'lodash/get';
 import { DbService } from 'src/db/db.service';
-import { FkMappingResult, LookupTools } from './transformer.types';
+import { AssetMappingResult, FkMappingResult, LookupTools } from './transformer.types';
+
+/**
+ * Creates a no-op LookupTools where every method returns null / rejects.
+ * Useful in tests for transformers that don't need FK or asset lookups.
+ */
+export function createNullLookupTools(): LookupTools {
+  return {
+    getDestinationMappingForSourceFk: () => Promise.resolve(null),
+    lookupFieldFromFkRecord: () => Promise.resolve(undefined),
+    getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
+  };
+}
 
 /**
  * Factory function to create LookupTools for a specific sync context.
  *
  * @param db - Database service
  * @param syncId - The sync ID for looking up mappings
+ * @param workbookId - The workbook ID for asset lookups
+ * @param sourceService - The Service of the source connector
+ * @param destinationService - The Service of the destination connector
  */
-export function createLookupTools(db: DbService, syncId: SyncId): LookupTools {
+export function createLookupTools(
+  db: DbService,
+  syncId: SyncId,
+  workbookId: WorkbookId,
+  sourceService: Service,
+  destinationService: Service,
+): LookupTools {
   return {
     async getDestinationMappingForSourceFk(
       sourceFkValue: string,
@@ -63,6 +84,69 @@ export function createLookupTools(db: DbService, syncId: SyncId): LookupTools {
       // Record not found in cache — return undefined as a sentinel value.
       // Callers can distinguish this from a null field value in the referenced record.
       return undefined;
+    },
+
+    async getOrCreateDestinationAssetMapping(
+      sourceAssetRemoteId: string,
+      sourceDataFolderId: DataFolderId,
+      destinationDataFolderId: DataFolderId,
+    ): Promise<AssetMappingResult> {
+      // 1. Look up the source asset by (workbookId, sourceDataFolderId, sourceService, remoteAssetId).
+      //    Scoped by dataFolderId (not just service) to correctly handle multiple connections
+      //    of the same service type. sourceService is kept as a secondary safety filter.
+      const sourceAsset = await db.client.asset.findFirst({
+        where: {
+          workbookId,
+          dataFolderId: sourceDataFolderId,
+          service: sourceService,
+          remoteAssetId: sourceAssetRemoteId,
+        },
+      });
+
+      if (!sourceAsset) {
+        throw new Error('ASSET_NOT_FOUND');
+      }
+
+      if (!sourceAsset.rehostedUrl) {
+        throw new Error('ASSET_NOT_REHOSTED');
+      }
+
+      // 2. Upsert destination asset — atomic to avoid race conditions when
+      //    concurrent calls process the same source asset.
+      //    Uses the @@unique([sourceAssetId, dataFolderId]) constraint on Asset.
+      const tempId = createScratchPendingPublishId();
+
+      const destAsset = await db.client.asset.upsert({
+        where: {
+          sourceAssetId_dataFolderId: {
+            sourceAssetId: sourceAsset.id,
+            dataFolderId: destinationDataFolderId,
+          },
+        },
+        update: {}, // no-op if already exists
+        create: {
+          workbookId,
+          service: destinationService,
+          dataFolderId: destinationDataFolderId,
+          remoteAssetId: tempId,
+          sourceAssetId: sourceAsset.id,
+          filename: sourceAsset.filename,
+          mimeType: sourceAsset.mimeType,
+          size: sourceAsset.size,
+          width: sourceAsset.width,
+          height: sourceAsset.height,
+          altText: sourceAsset.altText,
+          mediaType: sourceAsset.mediaType,
+          rehostedUrl: sourceAsset.rehostedUrl,
+          rehostedAt: sourceAsset.rehostedAt,
+        },
+        select: { remoteAssetId: true },
+      });
+
+      // If the returned remoteAssetId matches our tempId, the create path was taken;
+      // otherwise the existing record was returned (update no-op path).
+      const isNew = destAsset.remoteAssetId === tempId;
+      return { destinationAssetRemoteId: destAsset.remoteAssetId, isNew };
     },
   };
 }
