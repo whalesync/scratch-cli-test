@@ -48,6 +48,33 @@ type TableGroup = {
   }[];
 };
 
+function TableLabel({ table, service }: { table: TablePreview; service: Service }) {
+  const description = service === Service.QUICKBOOKS ? (table.metadata?.description as string | undefined) : undefined;
+  return (
+    <Group gap={6} align="center" wrap="nowrap">
+      <Stack gap={0}>
+        <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
+        {description && <Text12Regular c="dimmed">{description}</Text12Regular>}
+      </Stack>
+      {table.disabled && (
+        <Tooltip label={DISABLED_MESSAGES[service] ?? DEFAULT_DISABLED_MESSAGE} multiline maw={250} position="right">
+          <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
+        </Tooltip>
+      )}
+      {!table.disabled && table.disabledCreates && (
+        <Tooltip
+          label={DISABLED_CREATES_MESSAGES[service] ?? DEFAULT_DISABLED_CREATES_MESSAGE}
+          multiline
+          maw={250}
+          position="right"
+        >
+          <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
+        </Tooltip>
+      )}
+    </Group>
+  );
+}
+
 function getGroupKeys(table: TablePreview, service: Service): { group: string; subGroup: string | null } | null {
   switch (service) {
     case Service.SUPABASE:
@@ -675,36 +702,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                             return (
                               <Checkbox
                                 key={tableKey}
-                                label={
-                                  <Group gap={6} align="center" wrap="nowrap">
-                                    <Text13Regular c={table.disabled ? 'dimmed' : undefined}>
-                                      {table.displayName}
-                                    </Text13Regular>
-                                    {table.disabled && (
-                                      <Tooltip
-                                        label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
-                                        multiline
-                                        maw={250}
-                                        position="right"
-                                      >
-                                        <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
-                                      </Tooltip>
-                                    )}
-                                    {!table.disabled && table.disabledCreates && (
-                                      <Tooltip
-                                        label={
-                                          DISABLED_CREATES_MESSAGES[connectorAccount.service] ??
-                                          DEFAULT_DISABLED_CREATES_MESSAGE
-                                        }
-                                        multiline
-                                        maw={250}
-                                        position="right"
-                                      >
-                                        <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
-                                      </Tooltip>
-                                    )}
-                                  </Group>
-                                }
+                                label={<TableLabel table={table} service={connectorAccount.service} />}
                                 checked={isChecked}
                                 disabled={table.disabled}
                                 onChange={() => handleToggleTable(table)}
@@ -723,33 +721,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                   return (
                     <Checkbox
                       key={tableKey}
-                      label={
-                        <Group gap={6} align="center" wrap="nowrap">
-                          <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
-                          {table.disabled && (
-                            <Tooltip
-                              label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
-                              multiline
-                              maw={250}
-                              position="right"
-                            >
-                              <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
-                            </Tooltip>
-                          )}
-                          {!table.disabled && table.disabledCreates && (
-                            <Tooltip
-                              label={
-                                DISABLED_CREATES_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_CREATES_MESSAGE
-                              }
-                              multiline
-                              maw={250}
-                              position="right"
-                            >
-                              <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
-                            </Tooltip>
-                          )}
-                        </Group>
-                      }
+                      label={<TableLabel table={table} service={connectorAccount.service} />}
                       checked={isChecked}
                       disabled={table.disabled}
                       onChange={() => handleToggleTable(table)}
@@ -844,34 +816,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                     return (
                       <Checkbox
                         key={tableKey}
-                        label={
-                          <Group gap={6} align="center" wrap="nowrap">
-                            <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
-                            {table.disabled && (
-                              <Tooltip
-                                label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
-                                multiline
-                                maw={250}
-                                position="right"
-                              >
-                                <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
-                              </Tooltip>
-                            )}
-                            {!table.disabled && table.disabledCreates && (
-                              <Tooltip
-                                label={
-                                  DISABLED_CREATES_MESSAGES[connectorAccount.service] ??
-                                  DEFAULT_DISABLED_CREATES_MESSAGE
-                                }
-                                multiline
-                                maw={250}
-                                position="right"
-                              >
-                                <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
-                              </Tooltip>
-                            )}
-                          </Group>
-                        }
+                        label={<TableLabel table={table} service={connectorAccount.service} />}
                         checked={isChecked}
                         disabled={table.disabled}
                         onChange={() => handleToggleTable(table)}
@@ -899,33 +844,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                   return (
                     <Checkbox
                       key={tableKey}
-                      label={
-                        <Group gap={6} align="center" wrap="nowrap">
-                          <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
-                          {table.disabled && (
-                            <Tooltip
-                              label={DISABLED_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_MESSAGE}
-                              multiline
-                              maw={250}
-                              position="right"
-                            >
-                              <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
-                            </Tooltip>
-                          )}
-                          {!table.disabled && table.disabledCreates && (
-                            <Tooltip
-                              label={
-                                DISABLED_CREATES_MESSAGES[connectorAccount.service] ?? DEFAULT_DISABLED_CREATES_MESSAGE
-                              }
-                              multiline
-                              maw={250}
-                              position="right"
-                            >
-                              <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
-                            </Tooltip>
-                          )}
-                        </Group>
-                      }
+                      label={<TableLabel table={table} service={connectorAccount.service} />}
                       checked={isChecked}
                       disabled={table.disabled}
                       onChange={() => handleToggleTable(table)}
