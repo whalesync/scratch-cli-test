@@ -7,6 +7,7 @@
  * (Supabase, generic Postgres, etc.).
  */
 import knex, { type Knex } from 'knex';
+import pg from 'pg';
 import {
   type InformationSchemaCatalog,
   type InformationSchemaColumn,
@@ -15,6 +16,13 @@ import {
   type PostgresUserDefinedType,
   type TableName,
 } from './knex-pg-types';
+
+// 🚨🚨 Global impact alert 🚨🚨
+// PG library usually parses 'numeric' as a string to preserve arbitrary precision.
+// We prefer JS numbers for JSON serialization to avoid diffs, and so the schema type matches the JSON data's type.
+// Most of our users aren't using very large numbers.
+// This is a global change that will affect all users of the PG library.
+pg.types.setTypeParser(1700 /* TypeId.NUMERIC */, parseFloat);
 
 // ---------------------------------------------------------------------------
 // Utilities
