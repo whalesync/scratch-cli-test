@@ -32,7 +32,14 @@ export default function FileDetailPage() {
 
   // If the full path matches a folder exactly, show the folder viewer
   if (matchedFolder) {
-    return <FolderViewer workbookId={workbookId} folderId={matchedFolder.id} folderName={matchedFolder.name} />;
+    return (
+      <FolderViewer
+        workbookId={workbookId}
+        folderId={matchedFolder.id}
+        folderName={matchedFolder.name}
+        connectorAccountId={matchedFolder.connectorAccountId ?? undefined}
+      />
+    );
   }
 
   // Don't render FileViewer until folders have loaded — the path segments

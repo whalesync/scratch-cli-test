@@ -13,7 +13,7 @@ import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
-import { workbookApi } from '@/lib/api/workbook';
+import { workbookApi, type GitFile } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -65,7 +65,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import { useCallback, useMemo, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
@@ -270,6 +270,8 @@ export function ConnectionNode({
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
+  const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
+  const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders } = useActiveWorkbook();
   const { getJobsForConnector } = useWorkbookActiveJobs(workbookId);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
@@ -301,6 +303,8 @@ export function ConnectionNode({
   const folderTree = useMemo(() => buildFolderTree(visibleFolders, group.name), [visibleFolders, group.name]);
 
   const hasDirtyFiles = mode !== 'review' || visibleFolders.length > 0;
+
+  const showHidden = connectorAccount ? showHiddenConnections.has(connectorAccount.id) : false;
 
   // Calculate dirty count across all folders in this connection
   const totalDirtyCount = useMemo(() => {
@@ -569,15 +573,20 @@ export function ConnectionNode({
               </Box>
             )
           ) : (
-            <FolderTreeRenderer
-              tree={folderTree}
-              depth={0}
-              groupName={group.name}
-              workbookId={workbookId}
-              mode={mode}
-              dirtyFilePaths={dirtyFilePaths}
-              idPrefix={group.name}
-            />
+            <>
+              <FolderTreeRenderer
+                tree={folderTree}
+                depth={0}
+                groupName={group.name}
+                workbookId={workbookId}
+                mode={mode}
+                dirtyFilePaths={dirtyFilePaths}
+                idPrefix={group.name}
+              />
+              {showHidden && connectorAccount && mode === 'files' && (
+                <ScratchFolderNode workbookId={workbookId} connectorAccountId={connectorAccount.id} />
+              )}
+            </>
           )}
         </Stack>
       </Collapse>
@@ -598,6 +607,18 @@ export function ConnectionNode({
                   connectorAccount.authType === AuthType.OAUTH
                     ? { label: 'Reauthorize', icon: CloudCogIcon, onClick: handleReauthorize }
                     : { label: 'Edit Connection', icon: SettingsIcon, onClick: openUpdateConnectionModal },
+                ]
+              : []),
+            ...(connectorAccount
+              ? [
+                  {
+                    label: showHidden ? 'Hide hidden files' : 'Show hidden files',
+                    icon: showHidden ? EyeOffIcon : EyeIcon,
+                    onClick: () => {
+                      toggleHiddenFiles(connectorAccount.id);
+                      setContextMenu(null);
+                    },
+                  },
                 ]
               : []),
             { type: 'divider' as const },
@@ -762,8 +783,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const pathname = usePathname();
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
-  const hiddenFileFolders = useWorkbookUIStore((state) => state.hiddenFileFolders);
-  const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
+  const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const { pullFolders, pullAssets } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();
 
@@ -780,7 +800,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const urlFolderPath = `/workbook/${workbookId}/${routeBase}/${encodedFolderPath}`;
   const isSelected = pathname === urlFolderPath;
 
-  const showHidden = hiddenFileFolders.has(folder.id);
+  const showHidden = folder.connectorAccountId ? showHiddenConnections.has(folder.connectorAccountId) : false;
   const { files: allFiles, isLoading, refreshFiles } = useFolderFileList(workbookId, folder.id);
   const files = useMemo(
     () => (showHidden ? allFiles : allFiles.filter((f) => !f.name.startsWith('.'))),
@@ -1072,14 +1092,6 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
               icon: FilePlusIcon,
               onClick: () => {
                 openNewFileModal();
-                setContextMenu(null);
-              },
-            },
-            {
-              label: showHidden ? 'Hide hidden files' : 'Show hidden files',
-              icon: showHidden ? EyeOffIcon : EyeIcon,
-              onClick: () => {
-                toggleHiddenFiles(folder.id);
                 setContextMenu(null);
               },
             },
@@ -1713,6 +1725,233 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
         onClose={closeUpdateConnectionModal}
         connectorAccount={connectorAccount}
       />
+    </>
+  );
+}
+
+// ============================================================================
+// ScratchFolderNode — virtual read-only .scratch folder shown per-connection
+// when "Show hidden files" is enabled. Displays schema files from git directly.
+// ============================================================================
+
+interface ScratchFolderNodeProps {
+  workbookId: WorkbookId;
+  connectorAccountId: string;
+}
+
+function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNodeProps) {
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
+  const nodeId = `scratch-folder-${connectorAccountId}`;
+  const isExpanded = expandedNodes.has(nodeId);
+
+  const [entries, setEntries] = useState<GitFile[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    setIsLoading(true);
+    workbookApi
+      .listRepoFiles(workbookId, 'merge_base', '.scratch', connectorAccountId)
+      .then((list) => setEntries(list ?? []))
+      .catch(() => setEntries([]))
+      .finally(() => setIsLoading(false));
+  }, [isExpanded, workbookId, connectorAccountId]);
+
+  return (
+    <>
+      <UnstyledButton
+        onClick={() => toggleNode(nodeId)}
+        px="sm"
+        py={4}
+        style={{ width: '100%', backgroundColor: 'transparent' }}
+        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
+        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
+      >
+        <Group gap={6} wrap="nowrap">
+          <StyledLucideIcon Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-secondary)" />
+          <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-muted)" />
+          <Text12Regular c="var(--fg-muted)" style={{ fontStyle: 'italic' }}>
+            .scratch
+          </Text12Regular>
+        </Group>
+      </UnstyledButton>
+
+      <Collapse in={isExpanded}>
+        <Stack gap={0}>
+          {isLoading && (
+            <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
+              <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
+            </Box>
+          )}
+          {!isLoading && entries.length === 0 && (
+            <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
+              <Text12Regular c="var(--fg-muted)">No schema files</Text12Regular>
+            </Box>
+          )}
+          {entries.map((entry) =>
+            entry.type === 'directory' ? (
+              <ScratchSubdirNode
+                key={entry.path}
+                workbookId={workbookId}
+                connectorAccountId={connectorAccountId}
+                path={entry.path}
+                name={entry.name}
+                depth={1}
+              />
+            ) : (
+              <ScratchFileRow
+                key={entry.path}
+                name={entry.name}
+                path={entry.path}
+                depth={1}
+                workbookId={workbookId}
+                connectorAccountId={connectorAccountId}
+              />
+            ),
+          )}
+        </Stack>
+      </Collapse>
+    </>
+  );
+}
+
+function ScratchFileRow({
+  name,
+  path,
+  depth,
+  workbookId,
+  connectorAccountId,
+}: {
+  name: string;
+  path: string;
+  depth: number;
+  workbookId: WorkbookId;
+  connectorAccountId: string;
+}) {
+  const pathname = usePathname();
+  const encodedPath = path
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  const href = `/workbook/${workbookId}/scratch/${encodedPath}?connectorAccountId=${encodeURIComponent(connectorAccountId)}`;
+  const isSelected = pathname.startsWith(`/workbook/${workbookId}/scratch/${encodedPath}`);
+
+  return (
+    <Link href={href} style={{ textDecoration: 'none' }}>
+      <UnstyledButton
+        px="sm"
+        py={4}
+        style={{
+          marginLeft: INDENT_PX * depth,
+          width: `calc(100% - ${INDENT_PX * depth}px)`,
+          backgroundColor: isSelected ? 'var(--mantine-color-gray-2)' : 'transparent',
+        }}
+        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
+        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
+      >
+        <Group gap={6} wrap="nowrap">
+          <Box style={{ width: 20, flexShrink: 0 }} />
+          <StyledLucideIcon Icon={FileJsonIcon} size="sm" c="var(--fg-muted)" />
+          <TextMono12Regular c="var(--fg-muted)" truncate style={{ fontStyle: 'italic' }}>
+            {name}
+          </TextMono12Regular>
+        </Group>
+      </UnstyledButton>
+    </Link>
+  );
+}
+
+function ScratchSubdirNode({
+  workbookId,
+  connectorAccountId,
+  path,
+  name,
+  depth,
+}: {
+  workbookId: WorkbookId;
+  connectorAccountId: string;
+  path: string;
+  name: string;
+  depth: number;
+}) {
+  const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
+  const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
+  const nodeId = `scratch-subdir-${connectorAccountId}-${path}`;
+  const isExpanded = expandedNodes.has(nodeId);
+
+  const [entries, setEntries] = useState<GitFile[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    setIsLoading(true);
+    workbookApi
+      .listRepoFiles(workbookId, 'merge_base', path, connectorAccountId)
+      .then((list) => setEntries(list ?? []))
+      .catch(() => setEntries([]))
+      .finally(() => setIsLoading(false));
+  }, [isExpanded, workbookId, connectorAccountId, path]);
+
+  return (
+    <>
+      <UnstyledButton
+        onClick={() => toggleNode(nodeId)}
+        px="sm"
+        py={4}
+        style={{
+          marginLeft: INDENT_PX * depth,
+          width: `calc(100% - ${INDENT_PX * depth}px)`,
+          backgroundColor: 'transparent',
+        }}
+        __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
+        styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
+      >
+        <Group gap={6} wrap="nowrap">
+          <Box style={{ display: 'flex', alignItems: 'center', width: 20, height: 20, flexShrink: 0 }}>
+            <StyledLucideIcon
+              Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon}
+              size="sm"
+              c="var(--fg-secondary)"
+            />
+          </Box>
+          <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-muted)" />
+          <Text12Regular c="var(--fg-muted)" truncate style={{ fontStyle: 'italic' }}>
+            {name}
+          </Text12Regular>
+        </Group>
+      </UnstyledButton>
+
+      <Collapse in={isExpanded}>
+        <Stack gap={0}>
+          {isLoading && (
+            <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * (depth + 1) }}>
+              <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
+            </Box>
+          )}
+          {entries.map((entry) =>
+            entry.type === 'directory' ? (
+              <ScratchSubdirNode
+                key={entry.path}
+                workbookId={workbookId}
+                connectorAccountId={connectorAccountId}
+                path={entry.path}
+                name={entry.name}
+                depth={depth + 1}
+              />
+            ) : (
+              <ScratchFileRow
+                key={entry.path}
+                name={entry.name}
+                path={entry.path}
+                depth={depth + 1}
+                workbookId={workbookId}
+                connectorAccountId={connectorAccountId}
+              />
+            ),
+          )}
+        </Stack>
+      </Collapse>
     </>
   );
 }

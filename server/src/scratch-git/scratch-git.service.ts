@@ -21,6 +21,8 @@ export interface RepoFileRef {
 export const MAIN_BRANCH = 'main';
 export const DIRTY_BRANCH = 'dirty';
 export const SCHEMA_JSON_FILENAME = '.schema.json';
+export const SCRATCH_DIR = '.scratch';
+export const SCHEMA_FILENAME = 'schema.json';
 
 export type RepoId = `${string}/${string}/${string}`;
 
@@ -249,21 +251,32 @@ export class ScratchGitService {
   }
 
   /**
-   * Writes a BaseJsonTableSpec as `.schema.json` into the git repo on both branches.
+   * Writes a BaseJsonTableSpec as `schema.json` into `.scratch/{folderPath}/` on both branches.
+   * If a legacy `.schema.json` exists in the old location it is deleted in the same operation.
    * Commits to both main and dirty to keep them in sync without needing a rebase.
    * Non-throwing — failures are logged but do not block callers.
    */
   async writeSchemaToGit(repoId: string, folderPath: string, schema: BaseJsonTableSpec): Promise<void> {
     try {
-      const gitPath = folderPath.replace(/^\//, '') + '/' + SCHEMA_JSON_FILENAME;
-      const file = { path: gitPath, content: JSON.stringify(schema, null, 2) };
-      const message = `Update ${SCHEMA_JSON_FILENAME} for ${folderPath}`;
-      await this.commitFilesToBranch(repoId, MAIN_BRANCH, [file], message);
-      await this.commitFilesToBranch(repoId, DIRTY_BRANCH, [file], message);
+      const normalizedFolder = folderPath.replace(/^\//, '');
+      const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
+      const file = { path: newGitPath, content: JSON.stringify(schema, null, 2) };
+      const message = `Update schema for ${folderPath}`;
+
+      const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
+
+      for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {
+        await this.commitFilesToBranch(repoId, branch, [file], message);
+        // Clean up the legacy .schema.json if it still exists on this branch
+        const legacy = await this.getRepoFile(repoId, branch, legacyGitPath);
+        if (legacy) {
+          await this.deleteFilesFromBranch(repoId, branch, [legacyGitPath], `Remove legacy schema for ${folderPath}`);
+        }
+      }
     } catch (error) {
       WSLogger.error({
         source: 'ScratchGitService.writeSchemaToGit',
-        message: 'Failed to write .schema.json to git',
+        message: 'Failed to write schema to git',
         repoId,
         folderPath,
         error,
@@ -272,19 +285,25 @@ export class ScratchGitService {
   }
 
   /**
-   * Reads `.schema.json` from the git repo on the main branch.
+   * Reads `schema.json` from `.scratch/{folderPath}/` on the main branch.
+   * Falls back to the legacy `.schema.json` location for repos that have not yet migrated.
    * Returns the parsed BaseJsonTableSpec or null if missing/invalid.
    */
   async readSchemaFromGit(repoId: string, folderPath: string): Promise<BaseJsonTableSpec | null> {
     try {
-      const gitPath = folderPath.replace(/^\//, '') + '/' + SCHEMA_JSON_FILENAME;
-      const file = await this.getRepoFile(repoId, MAIN_BRANCH, gitPath);
+      const normalizedFolder = folderPath.replace(/^\//, '');
+      const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
+      const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
+
+      const file =
+        (await this.getRepoFile(repoId, MAIN_BRANCH, newGitPath)) ??
+        (await this.getRepoFile(repoId, MAIN_BRANCH, legacyGitPath));
       if (!file) return null;
       return JSON.parse(file.content) as BaseJsonTableSpec;
     } catch (error) {
       WSLogger.error({
         source: 'ScratchGitService.readSchemaFromGit',
-        message: 'Failed to read .schema.json from git',
+        message: 'Failed to read schema from git',
         repoId,
         folderPath,
         error,

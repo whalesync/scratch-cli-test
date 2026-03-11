@@ -667,6 +667,13 @@ func uploadSingleRepo(repoDir string, creds *config.GlobalCredentials) (*UploadR
 			result.Messages = messages
 		}
 
+		// Strip .scratch/ entries — server-managed, never pushed by the CLI.
+		for p := range mergedMap {
+			if strings.HasPrefix(p, ".scratch/") {
+				delete(mergedMap, p)
+			}
+		}
+
 		if fileMapEqual(mergedMap, remoteMap) {
 			return &UploadResult{Status: "up_to_date", Messages: []string{}}, nil
 		}
@@ -712,6 +719,9 @@ func uploadSingleRepo(repoDir string, creds *config.GlobalCredentials) (*UploadR
 		}
 
 		for relPath := range remoteMap {
+			if strings.HasPrefix(relPath, ".scratch/") {
+				continue // never delete server-managed schema files from disk
+			}
 			if _, inMerged := mergedMap[relPath]; !inMerged {
 				fullPath := filepath.Join(repoDir, filepath.FromSlash(relPath))
 				_ = os.Remove(fullPath)
@@ -1063,11 +1073,24 @@ func diskToFileMap(rootDir string) (merge.FileMap, error) {
 			return err
 		}
 		name := info.Name()
-		if info.IsDir() && name == ".git" {
-			return filepath.SkipDir
+		if info.IsDir() {
+			switch name {
+			case ".git":
+				return filepath.SkipDir
+			case ".scratch":
+				// Descend into .scratch so the merge engine sees server-managed schema
+				// files and does not generate spurious ActionDelete entries for them.
+				return nil
+			default:
+				if strings.HasPrefix(name, ".") {
+					return filepath.SkipDir
+				}
+			}
+			return nil
 		}
-		// Skip dotfiles (e.g. .DS_Store, .schema.json, .scratchmd) to match scratch-git-2 behavior
-		if strings.HasPrefix(name, ".") || info.IsDir() {
+		// Skip individual dotfiles (e.g. .DS_Store, .schema.json, .scratchmd).
+		// Files inside .scratch/ are named schema.json (no dot prefix) so they pass through.
+		if strings.HasPrefix(name, ".") {
 			return nil
 		}
 		rel, err := filepath.Rel(absRoot, path)

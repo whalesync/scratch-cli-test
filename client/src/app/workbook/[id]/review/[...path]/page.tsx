@@ -27,7 +27,13 @@ export default function ReviewFilePage() {
   // If the full path matches a folder exactly, show folder viewer in review mode
   if (matchedFolder) {
     return (
-      <FolderViewer workbookId={workbookId} folderId={matchedFolder.id} folderName={matchedFolder.name} mode="review" />
+      <FolderViewer
+        workbookId={workbookId}
+        folderId={matchedFolder.id}
+        folderName={matchedFolder.name}
+        mode="review"
+        connectorAccountId={matchedFolder.connectorAccountId ?? undefined}
+      />
     );
   }
 

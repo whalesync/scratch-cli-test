@@ -43,6 +43,7 @@ export interface WorkbookUIState {
 
   // Selection state is URL-driven (from route params), not stored here
   expandedNodes: Set<string>;
+  showHiddenConnections: Set<string>;
   hiddenFileFolders: Set<string>;
   sidebarWidth: number;
   tableFilters: Record<string, string>; // folderId -> filter text
@@ -64,7 +65,7 @@ type Actions = {
   collapseNode: (nodeId: string) => void;
   expandAll: (nodeIds: string[]) => void;
   collapseAll: () => void;
-  toggleHiddenFiles: (folderId: string) => void;
+  toggleHiddenFiles: (connectorAccountId: string) => void;
   setSidebarWidth: (width: number) => void;
   setTableFilter: (folderId: string, filter: string) => void;
   clearTableFilter: (folderId: string) => void;
@@ -78,6 +79,7 @@ const INITIAL_STATE: WorkbookUIState = {
   activeModal: null,
   workbookError: null,
   expandedNodes: new Set<string>(),
+  showHiddenConnections: new Set<string>(),
   hiddenFileFolders: new Set<string>(),
   sidebarWidth: 320,
   tableFilters: {},
@@ -196,6 +198,7 @@ export const useWorkbookUIStore = create<WorkbookUIStore>()(
             state: {
               ...parsed.state,
               expandedNodes: new Set(parsed.state.expandedNodes || []),
+              showHiddenConnections: new Set(parsed.state.showHiddenConnections || []),
               hiddenFileFolders: new Set(parsed.state.hiddenFileFolders || []),
             },
           };
@@ -206,6 +209,7 @@ export const useWorkbookUIStore = create<WorkbookUIStore>()(
             state: {
               ...value.state,
               expandedNodes: Array.from(value.state.expandedNodes || []),
+              showHiddenConnections: Array.from(value.state.showHiddenConnections || []),
               hiddenFileFolders: Array.from(value.state.hiddenFileFolders || []),
             },
           };

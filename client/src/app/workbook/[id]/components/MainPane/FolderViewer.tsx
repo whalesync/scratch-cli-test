@@ -19,15 +19,22 @@ interface FolderViewerProps {
   folderId: DataFolderId;
   folderName?: string;
   mode?: 'files' | 'review';
+  connectorAccountId?: string;
 }
 
-export function FolderViewer({ workbookId, folderId, folderName, mode = 'files' }: FolderViewerProps) {
+export function FolderViewer({
+  workbookId,
+  folderId,
+  folderName,
+  mode = 'files',
+  connectorAccountId,
+}: FolderViewerProps) {
   const { files: allFiles, isLoading } = useFolderFileList(workbookId, folderId);
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const setSummary = useReviewToolbarStore((state) => state.setSummary);
-  const hiddenFileFolders = useWorkbookUIStore((state) => state.hiddenFileFolders);
-  const showHidden = hiddenFileFolders.has(folderId);
+  const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
+  const showHidden = connectorAccountId ? showHiddenConnections.has(connectorAccountId) : false;
 
   // Filter hidden files (dotfiles) unless the user opted to show them
   const files = useMemo(
