@@ -252,7 +252,14 @@ export function TransformerConfigModal({
     connectorService: f.connectorService,
   }));
 
-  const assetFolderSelectData = allFolders
+  // Source asset folder - doesn't have to be an asset table
+  const sourceAssetFolderSelectData = allFolders.map((f) => ({
+    value: f.id,
+    label: f.name,
+    connectorService: f.connectorService,
+  }));
+  // Dest asset table: for now, we're enforcing that it has to be an asset table so we know where to upload it on publish
+  const destAssetFolderSelectData = allFolders
     .filter((f) => f.isAssetTable)
     .map((f) => ({
       value: f.id,
@@ -463,7 +470,7 @@ export function TransformerConfigModal({
                   label="Source Asset Folder"
                   description="The asset folder on the source side containing the referenced files"
                   placeholder="Select asset folder"
-                  data={assetFolderSelectData}
+                  data={sourceAssetFolderSelectData}
                   value={step.sourceDataFolderId || null}
                   onChange={(val) => updateStep(index, { sourceDataFolderId: (val || '') as DataFolderId | '' })}
                   renderOption={renderFolderOption}
@@ -473,7 +480,7 @@ export function TransformerConfigModal({
                   label="Destination Asset Folder"
                   description="The asset folder on the destination side where assets will be created"
                   placeholder="Select asset folder"
-                  data={assetFolderSelectData}
+                  data={destAssetFolderSelectData}
                   value={step.destinationDataFolderId || null}
                   onChange={(val) => updateStep(index, { destinationDataFolderId: (val || '') as DataFolderId | '' })}
                   renderOption={renderFolderOption}

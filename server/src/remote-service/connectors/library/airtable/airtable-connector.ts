@@ -1,7 +1,9 @@
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
+import { defaultResolveFieldValue, extractFromAnnotatedSchema } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
 import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
@@ -176,6 +178,13 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
     }
 
     return result;
+  }
+
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    return extractFromAnnotatedSchema(input, {
+      extractUrl: (item) => (typeof item['url'] === 'string' ? item['url'] : undefined),
+      resolveFieldValue: defaultResolveFieldValue,
+    });
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

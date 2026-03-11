@@ -398,7 +398,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
               const content = JSON.parse(f.content) as Record<string, unknown>;
               // eslint-disable-next-line @typescript-eslint/no-base-to-string
               const recordRemoteId = String(content[tableSpec.idColumnRemoteId] || '') || undefined;
-              return this.assetExtractorService.extractAssets({
+              return this.assetExtractorService.extractAssets(connector, {
                 workbookId: dataFolder.workbookId,
                 service: dataFolder.connectorService as Service,
                 dataFolderId: dataFolder.id,

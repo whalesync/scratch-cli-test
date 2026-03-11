@@ -66,6 +66,7 @@ export const TransformerTypes = {
   JSONPath: 'jsonpath',
   SourceAssetToDestAsset: 'source_asset_to_dest_asset',
   EnsureType: 'ensure_type',
+  NotionFileUrl: 'notion_file_url',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -92,6 +93,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.JSONPath, label: 'JSONPath' },
   { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup', devOnly: true },
   { type: TransformerTypes.EnsureType, label: 'Ensure Type' },
+  { type: TransformerTypes.NotionFileUrl, label: 'Notion File URL' },
 ];
 
 /** Get the display label for a transformer type */
@@ -179,7 +181,14 @@ export type TransformerOptions =
   | LookupFieldOptions
   | JSONPathOptions
   | SourceAssetToDestAssetOptions
-  | EnsureTypeOptions;
+  | EnsureTypeOptions
+  | NotionFileUrlOptions;
+
+/** Options for the notion_file_url transformer */
+export interface NotionFileUrlOptions {
+  /** How to handle multiple matched values. Defaults to 'array'. */
+  arrayHandling?: 'first' | 'array';
+}
 
 /** Configuration for a field transformer with strictly typed options */
 export type TransformerConfig =
@@ -196,4 +205,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> }
   | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions }
   | { type: typeof TransformerTypes.SourceAssetToDestAsset; options: SourceAssetToDestAssetOptions }
-  | { type: typeof TransformerTypes.EnsureType; options: EnsureTypeOptions };
+  | { type: typeof TransformerTypes.EnsureType; options: EnsureTypeOptions }
+  | { type: typeof TransformerTypes.NotionFileUrl; options?: NotionFileUrlOptions };

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
-import { ConnectorAssetResult } from 'src/asset/asset.types';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from './types';
@@ -175,6 +175,20 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * @throws Error if there is a problem deleting the records.
    */
   abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>;
+
+  /**
+   * Extract asset metadata from a record's content and schema.
+   * Connectors with asset fields should override this to handle their service-specific
+   * data shapes (e.g. Notion property wrappers, Wix richContent blocks).
+   *
+   * The default implementation returns an empty array (no assets).
+   *
+   * @param input - The record content, schema, and optional record remote ID.
+   * @returns Array of extracted asset results.
+   */
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    return [];
+  }
 
   /**
    * Upload a file to the remote service and return asset metadata.

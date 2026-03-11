@@ -28,6 +28,7 @@ import './implementations/ensure-type.transformer';
 import './implementations/html-to-airmark.transformer';
 import './implementations/jsonpath.transformer';
 import './implementations/lookup-field.transformer';
+import './implementations/notion-file-url.transformer';
 import './implementations/notion-to-html.transformer';
 import './implementations/slugify.transformer';
 import './implementations/source-asset-to-dest-asset.transformer';

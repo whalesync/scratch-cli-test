@@ -3,8 +3,10 @@ import type { DraftPost } from '@wix/auto_sdk_blog_draft-posts';
 import { draftPosts } from '@wix/blog';
 import { members } from '@wix/members';
 import { createClient, OAuthStrategy, TokenRole } from '@wix/sdk';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
+import { defaultResolveFieldValue, extractFromAnnotatedSchema, hashUrl } from '../../../asset-extraction-helpers';
 import { Connector } from '../../../connector';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../../types';
 import { HtmlToWixConverter } from '../rich-content/html-to-ricos';
@@ -155,6 +157,55 @@ export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
         permanent: true,
       });
     }
+  }
+
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    const results: ConnectorAssetResult[] = [];
+
+    // Phase 1: Schema-driven extraction (heroImage)
+    const schemaResults = extractFromAnnotatedSchema(input, {
+      extractUrl: (item) => (typeof item['url'] === 'string' ? item['url'] : undefined),
+      resolveFieldValue: defaultResolveFieldValue,
+    });
+    results.push(...schemaResults);
+
+    // Phase 2: richContent nodes
+    const richContent = input.recordContent['richContent'] as Record<string, unknown> | undefined;
+    const nodes = richContent?.['nodes'] as unknown[] | undefined;
+    if (Array.isArray(nodes)) {
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i] as Record<string, unknown> | undefined;
+        if (!node || typeof node !== 'object') continue;
+        const entry = this.extractFromWixNode(node);
+        if (entry) results.push(entry);
+      }
+    }
+
+    return results;
+  }
+
+  private extractFromWixNode(node: Record<string, unknown>): ConnectorAssetResult | null {
+    const type = node['type'] as string | undefined;
+    if (type !== 'IMAGE') return null;
+
+    const imageData = node['imageData'] as Record<string, unknown> | undefined;
+    if (!imageData) return null;
+
+    const src = imageData['src'] as Record<string, unknown> | undefined;
+    const url = (src?.['url'] as string) || (imageData['src'] as string | undefined);
+
+    if (!url || typeof url !== 'string') return null;
+
+    const id = src?.['id'] as string | undefined;
+
+    return {
+      remoteAssetId: id || hashUrl(url),
+      url,
+      altText: imageData['altText'] as string | undefined,
+      width: typeof imageData['width'] === 'number' ? imageData['width'] : undefined,
+      height: typeof imageData['height'] === 'number' ? imageData['height'] : undefined,
+      mediaType: 'image',
+    };
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

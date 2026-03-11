@@ -1087,7 +1087,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
             { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
-            ...(isDevToolsEnabled && folder.isAssetTable
+            ...(isDevToolsEnabled
               ? [{ label: 'Pull Assets', icon: ImageIcon, onClick: handlePullAssets, devtool: true }]
               : []),
             ...(isDevToolsEnabled

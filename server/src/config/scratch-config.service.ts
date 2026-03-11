@@ -123,6 +123,10 @@ export class ScratchConfigService {
     return this.getOptionalNumberVariable('WORKER_CONCURRENCY', 2);
   }
 
+  getWorkerLockTimeout(): number {
+    return this.getOptionalNumberVariable('WORKER_LOCK_TIMEOUT_MS', 30_000);
+  }
+
   getUseJobs(): boolean {
     return this.getOptionalFlagVariable('USE_JOBS', false);
   }

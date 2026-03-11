@@ -1,8 +1,9 @@
 import { TObject } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
-import { ConnectorAssetResult } from 'src/asset/asset.types';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
+import { extractStandaloneEntity } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
 import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
@@ -264,6 +265,12 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     }
 
     return wpRecord;
+  }
+
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    // WordPress media table is a standalone asset entity
+    const standalone = extractStandaloneEntity(input);
+    return standalone ? [standalone] : [];
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

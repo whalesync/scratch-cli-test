@@ -62,6 +62,13 @@ const ensureTypeOptionsSchema = z
   })
   .strict();
 
+const notionFileUrlOptionsSchema = z
+  .object({
+    arrayHandling: z.enum(['first', 'array']).optional(),
+  })
+  .strict()
+  .optional();
+
 const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.AutoConvert), options: autoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
@@ -83,6 +90,7 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
     options: sourceAssetToDestAssetOptionsSchema,
   }),
   z.object({ type: z.literal(TransformerTypes.EnsureType), options: ensureTypeOptionsSchema }),
+  z.object({ type: z.literal(TransformerTypes.NotionFileUrl), options: notionFileUrlOptionsSchema }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

@@ -3,10 +3,9 @@ import { Service } from '@spinner/shared-types';
 /** High-level media type classification. */
 export type MediaType = 'image' | 'video' | 'audio' | 'document' | 'file' | 'external_video' | 'model_3d';
 
-/** Asset metadata returned by a connector after uploading a file. */
+/** Asset metadata returned by a connector (upload or extraction). */
 export interface ConnectorAssetResult {
   remoteAssetId: string;
-  dataFolderId?: string;
   url?: string;
   filename?: string;
   mimeType?: string;
@@ -22,15 +21,20 @@ export interface ConnectorAssetResult {
 export interface AssetIndexEntry extends ConnectorAssetResult {
   workbookId: string;
   service: Service;
+  dataFolderId?: string;
 }
 
-/** Input for the asset extractor. */
-export interface AssetExtractionInput {
+/** Input for connector-level asset extraction. */
+export interface ConnectorAssetExtractionInput {
+  recordContent: Record<string, unknown>;
+  schema: Record<string, unknown>;
+  recordRemoteId?: string;
+}
+
+/** Input for the asset extractor service (adds workbook/folder context). */
+export interface AssetExtractionInput extends ConnectorAssetExtractionInput {
   workbookId: string;
   service: Service;
   dataFolderId?: string;
   recordFilePath: string;
-  recordRemoteId?: string;
-  recordContent: Record<string, unknown>;
-  schema: Record<string, unknown>;
 }

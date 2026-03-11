@@ -1,13 +1,18 @@
 import { TObject, TSchema } from '@sinclair/typebox';
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
-import { ConnectorAssetResult } from 'src/asset/asset.types';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Webflow, WebflowClient, WebflowError } from 'webflow-api';
 import { TooManyRequestsError } from 'webflow-api/api/errors';
 import { minifyHtml } from '../../../../wrappers/html-minify';
+import {
+  defaultResolveFieldValue,
+  extractFromAnnotatedSchema,
+  extractStandaloneEntity,
+} from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import {
@@ -538,6 +543,18 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
       size: asset.size ?? undefined,
       altText: asset.altText ?? undefined,
     };
+  }
+
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    // Phase 0: Standalone entity (Webflow Assets table)
+    const standalone = extractStandaloneEntity(input);
+    if (standalone) return [standalone];
+
+    // Phase 1: Schema-driven (Image/MultiImage fields)
+    return extractFromAnnotatedSchema(input, {
+      extractUrl: (item) => (typeof item['url'] === 'string' ? item['url'] : undefined),
+      resolveFieldValue: defaultResolveFieldValue,
+    });
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

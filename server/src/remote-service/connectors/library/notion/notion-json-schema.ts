@@ -275,6 +275,16 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
         {
           description,
           [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions,
+          [VIRTUAL_FIELDS]: [
+            {
+              displayLabel: description,
+              type: 'string',
+              suggestedTransformer: {
+                type: TransformerTypes.NotionFileUrl,
+                options: { arrayHandling: 'array' },
+              },
+            },
+          ],
         },
       );
       break;

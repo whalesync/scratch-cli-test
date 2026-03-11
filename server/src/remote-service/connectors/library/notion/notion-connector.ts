@@ -13,7 +13,9 @@ import {
 } from '@notionhq/client/build/src/api-endpoints';
 import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
+import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
 import { ErrorMessageTemplates } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
@@ -39,6 +41,22 @@ interface NotionPullOptions extends ConnectorPullOptions {
 }
 
 const page_size = Number(process.env.NOTION_PAGE_SIZE ?? 100);
+
+/**
+ * Unwrap a Notion property wrapper object.
+ * Notion stores property values as `{id: "...", type: "files", files: [...]}`.
+ * This extracts the inner value (e.g. the files array) using the `type` key.
+ */
+function unwrapNotionProperty(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const obj = value as Record<string, unknown>;
+  const type = obj['type'];
+  if (typeof type === 'string' && 'id' in obj && type in obj) {
+    return obj[type];
+  }
+  return value;
+}
+
 export class NotionConnector extends Connector<typeof Service.NOTION, NotionDownloadProgress> {
   readonly service = Service.NOTION;
   static displayName = 'Notion';
@@ -485,6 +503,132 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
     const executor = new NotionBlockDiffExecutor(this.client);
     const idMappings = new Map<string, string>(diff.idMappings || []);
     await executor.executeOperations(pageId, diff.operations, idMappings);
+  }
+
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    const results: ConnectorAssetResult[] = [];
+
+    // Phase 1: Schema-driven extraction (files property, cover, icon)
+    const notionFileTypes = new Set(['external', 'file']);
+    const schemaResults = extractFromAnnotatedSchema(input, {
+      extractUrl: (item) => {
+        if (typeof item['url'] === 'string') return item['url'];
+        const external = item['external'] as Record<string, unknown> | undefined;
+        if (typeof external?.['url'] === 'string') return external['url'];
+        const file = item['file'] as Record<string, unknown> | undefined;
+        if (typeof file?.['url'] === 'string') return file['url'];
+        return undefined;
+      },
+      resolveFieldValue: (content, fieldName, schema) => {
+        const raw = defaultResolveFieldValue(content, fieldName, schema);
+        return unwrapNotionProperty(raw);
+      },
+      extractMimeType: (item) => {
+        const raw = (item['type'] ?? item['mime_type'] ?? item['contentType']) as string | undefined;
+        return raw && !notionFileTypes.has(raw) ? raw : undefined;
+      },
+      inferMediaType: (item, fieldPath) => {
+        const mime = (item['type'] ?? item['mime_type'] ?? item['contentType'] ?? item['mimeType']) as
+          | string
+          | undefined;
+        if (mime && !notionFileTypes.has(mime)) {
+          if (mime.startsWith('image/')) return 'image';
+          if (mime.startsWith('video/')) return 'video';
+          if (mime.startsWith('audio/')) return 'audio';
+          if (mime === 'application/pdf') return 'document';
+          return 'file';
+        }
+        const filename = (item['filename'] ?? item['name']) as string | undefined;
+        if (filename) {
+          const ext = filename.split('.').pop()?.toLowerCase();
+          if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext ?? '')) return 'image';
+          if (['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext ?? '')) return 'video';
+          if (['mp3', 'wav', 'ogg', 'flac', 'aac'].includes(ext ?? '')) return 'audio';
+          if (ext === 'pdf') return 'document';
+        }
+        if (['cover', 'icon'].includes(fieldPath)) return 'image';
+        return undefined;
+      },
+      inferExpiryDate: (item) => {
+        const file = item['file'] as Record<string, unknown> | undefined;
+        const expiryTime = file?.['expiry_time'] as string | undefined;
+        if (expiryTime) {
+          const d = new Date(expiryTime);
+          if (!isNaN(d.getTime())) return d;
+        }
+        return new Date(Date.now() + 2 * 60 * 60 * 1000);
+      },
+      generateAssetId: (url) => stripQueryParams(url),
+    });
+    results.push(...schemaResults);
+
+    // Phase 2: Content blocks (page_content)
+    const pageContent = input.recordContent['page_content'] as unknown[] | undefined;
+    if (Array.isArray(pageContent)) {
+      for (let i = 0; i < pageContent.length; i++) {
+        const block = pageContent[i] as Record<string, unknown> | undefined;
+        if (!block || typeof block !== 'object') continue;
+        const entry = this.extractFromNotionBlock(block);
+        if (entry) results.push(entry);
+      }
+    }
+
+    return results;
+  }
+
+  private extractFromNotionBlock(block: Record<string, unknown>): ConnectorAssetResult | null {
+    const type = block['type'] as string | undefined;
+    if (!type) return null;
+
+    const mediaTypes: Record<string, MediaType> = {
+      image: 'image',
+      video: 'video',
+      audio: 'audio',
+      file: 'file',
+      pdf: 'document',
+    };
+
+    const mediaType = mediaTypes[type];
+    if (!mediaType) return null;
+
+    const blockData = block[type] as Record<string, unknown> | undefined;
+    if (!blockData) return null;
+
+    const fileType = blockData['type'] as string | undefined;
+    let url: string | undefined;
+    let urlExpires = false;
+
+    if (fileType === 'external') {
+      const external = blockData['external'] as Record<string, unknown> | undefined;
+      url = external?.['url'] as string | undefined;
+    } else if (fileType === 'file') {
+      const file = blockData['file'] as Record<string, unknown> | undefined;
+      url = file?.['url'] as string | undefined;
+      urlExpires = true;
+    }
+
+    if (!url) return null;
+
+    const caption = blockData['caption'] as Array<Record<string, unknown>> | undefined;
+    const altText = caption?.map((c) => c['plain_text']).join('') || undefined;
+
+    let urlExpiresAt: Date | undefined;
+    if (urlExpires) {
+      const file = blockData['file'] as Record<string, unknown> | undefined;
+      const expiryTime = file?.['expiry_time'] as string | undefined;
+      if (expiryTime) {
+        const d = new Date(expiryTime);
+        if (!isNaN(d.getTime())) urlExpiresAt = d;
+      }
+    }
+
+    return {
+      remoteAssetId: stripQueryParams(url),
+      url,
+      altText,
+      mediaType,
+      urlExpiresAt,
+    };
   }
 
   /**
