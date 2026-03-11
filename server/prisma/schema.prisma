@@ -30,11 +30,6 @@ enum TokenType {
   USER // For user API tokens
 }
 
-enum AiAgentCredentialSource {
-  USER
-  SYSTEM
-}
-
 enum Service {
   NOTION
   AIRTABLE
@@ -87,31 +82,29 @@ enum ScheduleAction {
 ///
 
 model User {
-  id                      String                   @id // type: UserId
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-  clerkId                 String?                  @unique
-  name                    String?
-  email                   String?
-  role                    UserRole                 @default(USER)
-  stripeCustomerId        String?                  @unique
-  organizationId          String?
-  organization            Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  settings                Json?                    @default("{}") // UserSettings object
-  lastWorkbookId          String?
-  lastWorkbook            Workbook?                @relation("UserLastWorkbook", fields: [lastWorkbookId], references: [id], onDelete: SetNull)
-  apiTokens               ApiToken[]
-  connectorAccounts       ConnectorAccount[]
-  aiAgentCredentials      AiAgentCredential[]
-  aiAgentTokenUsageEvents AiAgentTokenUsageEvent[]
-  subscriptions           Subscription[]
-  invoiceResults          InvoiceResult[]
-  jobs                    DbJob[]
-  workbooks               Workbook[]
-  publishPlans            PublishPlan[]
-  schedules               Schedule[]
-  workspacePermissions    WorkspacePermission[]
-  workspaceInvites        WorkspaceInvites[]
+  id                   String                @id // type: UserId
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  clerkId              String?               @unique
+  name                 String?
+  email                String?
+  role                 UserRole              @default(USER)
+  stripeCustomerId     String?               @unique
+  organizationId       String?
+  organization         Organization?         @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  settings             Json?                 @default("{}") // UserSettings object
+  lastWorkbookId       String?
+  lastWorkbook         Workbook?             @relation("UserLastWorkbook", fields: [lastWorkbookId], references: [id], onDelete: SetNull)
+  apiTokens            ApiToken[]
+  connectorAccounts    ConnectorAccount[]
+  subscriptions        Subscription[]
+  invoiceResults       InvoiceResult[]
+  jobs                 DbJob[]
+  workbooks            Workbook[]
+  publishPlans         PublishPlan[]
+  schedules            Schedule[]
+  workspacePermissions WorkspacePermission[]
+  workspaceInvites     WorkspaceInvites[]
 }
 
 model ApiToken {
@@ -127,25 +120,6 @@ model ApiToken {
   @@unique([token])
   @@index([userId])
   @@map("APIToken")
-}
-
-// Defines a set of credentials for the AI agent to use instead of the default ones, such as an OpenRouter API key
-model AiAgentCredential {
-  id                     String                  @id // type: AiAgentCredentialId
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId                 String
-  service                String
-  apiKey                 String
-  name                   String? // human readable name for the credential
-  tokenUsageWarningLimit Int? // the token usage warning limit for the credential
-  externalApiKeyId       String? // used to store the external ID or hash for an api key when generated via an SDK
-  source                 AiAgentCredentialSource @default(USER) // where the api key came from user or system generated 
-  default                Boolean                 @default(false)
-  metadata               Json?                   @default("{}") // additional optional metadata for the credential, key-value pairs
-
-  @@index([userId])
 }
 
 ///
@@ -247,24 +221,6 @@ model WorkspaceInvites {
   @@unique([email, workbookId])
   @@index([email])
   @@index([workbookId])
-}
-
-model AiAgentTokenUsageEvent {
-  id             String   @id // type: AiAgentTokenUsageEventId
-  credentialId   String? // type: AiAgentCredentialId
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId         String
-  model          String
-  requests       Int
-  requestTokens  Int
-  responseTokens Int
-  totalTokens    Int
-  context        Json? // additional context for the event
-
-  @@index([userId])
-  @@index([credentialId])
 }
 
 /// A user's subscription with stripe.

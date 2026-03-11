@@ -109,48 +109,6 @@ export function createWorkbookId(): WorkbookId {
   return createId(IdPrefixes.WORKBOOK) as WorkbookId;
 }
 
-// ------- SnapshotRecord -------
-/**
- * @deprecated
- */
-export type SnapshotRecordId = PrefixedId<IdPrefixes.SNAPSHOT_RECORD>;
-
-/**
- * @deprecated
- */
-export function isSnapshotRecordId(id: unknown): id is SnapshotRecordId {
-  return isId(id, IdPrefixes.SNAPSHOT_RECORD);
-}
-
-/**
- * @deprecated
- */
-export function createSnapshotRecordId(): SnapshotRecordId {
-  return createId(IdPrefixes.SNAPSHOT_RECORD) as SnapshotRecordId;
-}
-
-// ------- AiAgentCredential -------
-export type AiAgentCredentialId = PrefixedId<IdPrefixes.AI_AGENT_CREDENTIAL>;
-
-export function isAiAgentCredentialId(id: unknown): id is AiAgentCredentialId {
-  return isId(id, IdPrefixes.AI_AGENT_CREDENTIAL);
-}
-
-export function createAiAgentCredentialId(): AiAgentCredentialId {
-  return createId(IdPrefixes.AI_AGENT_CREDENTIAL) as AiAgentCredentialId;
-}
-
-// ------- AiAgentTokenUsageEvent -------
-export type AiAgentTokenUsageEventId = PrefixedId<IdPrefixes.AI_AGENT_TOKEN_USAGE_EVENT>;
-
-export function isAiAgentTokenUsageEventId(id: unknown): id is AiAgentTokenUsageEventId {
-  return isId(id, IdPrefixes.AI_AGENT_TOKEN_USAGE_EVENT);
-}
-
-export function createAiAgentTokenUsageEventId(): AiAgentTokenUsageEventId {
-  return createId(IdPrefixes.AI_AGENT_TOKEN_USAGE_EVENT) as AiAgentTokenUsageEventId;
-}
-
 // ------- Subscription -------
 export type SubscriptionId = PrefixedId<IdPrefixes.SUBSCRIPTION>;
 

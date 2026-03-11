@@ -37,11 +37,6 @@ export enum TokenType {
   USER = 'USER',
 }
 
-export enum AiAgentCredentialSource {
-  USER = 'USER',
-  SYSTEM = 'SYSTEM',
-}
-
 export enum ConnectorHealthStatus {
   OK = 'OK',
   FAILED = 'FAILED',
