@@ -23,6 +23,7 @@ export { createLookupTools, createNullLookupTools } from './lookup-tools';
 // Implementations - import to register transformers
 import './implementations/airmark-to-html.transformer';
 import './implementations/auto-convert.transformer';
+import './implementations/ensure-type.transformer';
 import './implementations/html-to-airmark.transformer';
 import './implementations/jsonpath.transformer';
 import './implementations/lookup-field.transformer';

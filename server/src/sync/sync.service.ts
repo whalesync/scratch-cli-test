@@ -618,7 +618,10 @@ export class SyncService {
                 sourceRemoteId: sourceId,
                 error: `Source record missing record matching field: ${tableMapping.recordMatching.sourceColumnId}`,
               });
-            } else if (typeof matchKeyValue !== 'string' || matchKeyValue === '') {
+            } else if (
+              (typeof matchKeyValue !== 'string' && typeof matchKeyValue !== 'number') ||
+              String(matchKeyValue).trim() === ''
+            ) {
               result.errors.push({
                 sourceRemoteId: sourceId,
                 error: `Source record has empty or invalid record matching value for field: ${tableMapping.recordMatching.sourceColumnId}`,
@@ -1120,13 +1123,13 @@ export class SyncService {
     const matchKeys = records
       .map((record) => {
         const matchValue = get(record.fields, matchColumnId);
-        if (typeof matchValue !== 'string' || matchValue === '') {
+        if ((typeof matchValue !== 'string' && typeof matchValue !== 'number') || String(matchValue).trim() === '') {
           return null;
         }
         return {
           syncId,
           dataFolderId,
-          matchId: matchValue,
+          matchId: String(matchValue),
           remoteId: record.id,
           filePath: record.filePath,
         };

@@ -53,6 +53,7 @@ export interface ColumnMapping {
 /** Canonical transformer type constants. Add new transformers here. */
 export const TransformerTypes = {
   AutoConvert: 'auto_convert',
+  ArrayAutoConvert: 'array_auto_convert',
   StringToNumber: 'string_to_number',
   SourceFkToDestFk: 'source_fk_to_dest_fk',
   LookupField: 'lookup_field',
@@ -63,6 +64,7 @@ export const TransformerTypes = {
   Slugify: 'slugify',
   JSONPath: 'jsonpath',
   SourceAssetToDestAsset: 'source_asset_to_dest_asset',
+  EnsureType: 'ensure_type',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -76,6 +78,7 @@ export interface TransformerTypeInfo {
 
 export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.AutoConvert, label: 'Auto Convert' },
+  { type: TransformerTypes.ArrayAutoConvert, label: 'Array Auto Convert' },
   { type: TransformerTypes.StringToNumber, label: 'String to Number' },
   { type: TransformerTypes.SourceFkToDestFk, label: 'Foreign Key Lookup' },
   { type: TransformerTypes.LookupField, label: 'Lookup Field' },
@@ -86,6 +89,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.Slugify, label: 'Slugify' },
   { type: TransformerTypes.JSONPath, label: 'JSONPath' },
   { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup', devOnly: true },
+  { type: TransformerTypes.EnsureType, label: 'Ensure Type' },
 ];
 
 /** Get the display label for a transformer type */
@@ -97,6 +101,12 @@ export function getTransformerLabel(type: TransformerType): string {
 export interface AutoConvertOptions {
   /** The target type to convert the source value to */
   targetType: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+}
+
+/** Options for the array_auto_convert transformer */
+export interface ArrayAutoConvertOptions {
+  /** The target element type to convert each array element to */
+  targetType: 'string' | 'number' | 'integer' | 'boolean';
 }
 
 /** Options for the string_to_number transformer */
@@ -148,18 +158,31 @@ export interface SourceAssetToDestAssetOptions {
   outputType?: 'array' | 'single';
 }
 
+/** Options for the ensure_type transformer */
+export interface EnsureTypeOptions {
+  /** The type the value must match to be considered valid */
+  expectedType: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  /** Action to take when validation fails */
+  onFailure: 'null' | 'error' | 'omit' | 'other';
+  /** Value to return when onFailure is 'other' */
+  fallbackValue?: string;
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
+  | ArrayAutoConvertOptions
   | StringToNumberOptions
   | SourceFkToDestFkOptions
   | LookupFieldOptions
   | JSONPathOptions
-  | SourceAssetToDestAssetOptions;
+  | SourceAssetToDestAssetOptions
+  | EnsureTypeOptions;
 
 /** Configuration for a field transformer with strictly typed options */
 export type TransformerConfig =
   | { type: typeof TransformerTypes.AutoConvert; options: AutoConvertOptions }
+  | { type: typeof TransformerTypes.ArrayAutoConvert; options: ArrayAutoConvertOptions }
   | { type: typeof TransformerTypes.StringToNumber; options?: StringToNumberOptions }
   | { type: typeof TransformerTypes.SourceFkToDestFk; options: SourceFkToDestFkOptions }
   | { type: typeof TransformerTypes.LookupField; options: LookupFieldOptions }
@@ -169,4 +192,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.WebflowOption; options?: Record<string, never> }
   | { type: typeof TransformerTypes.Slugify; options?: Record<string, never> }
   | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions }
-  | { type: typeof TransformerTypes.SourceAssetToDestAsset; options: SourceAssetToDestAssetOptions };
+  | { type: typeof TransformerTypes.SourceAssetToDestAsset; options: SourceAssetToDestAssetOptions }
+  | { type: typeof TransformerTypes.EnsureType; options: EnsureTypeOptions };

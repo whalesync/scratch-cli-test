@@ -1,5 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
+import { TransformerConfig, TransformerTypes } from '@spinner/shared-types';
 import {
   ASSET_FIELD,
   AssetFieldOptions,
@@ -8,6 +9,7 @@ import {
   ForeignKeyOptionSchema,
   READONLY_FLAG,
   REMOTE_FIELD_ID,
+  SUGGESTED_TRANSFORMER,
 } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
@@ -208,20 +210,113 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
 
     case AirtableDataType.FORMULA:
     case AirtableDataType.ROLLUP:
-    case AirtableDataType.LOOKUP:
-      // These can return various types, use unknown
-      schema = Type.Unknown({ description });
+    case AirtableDataType.LOOKUP: {
+      const resultType = field.options?.result?.type as AirtableDataType | undefined;
+      schema = formulaResultTypeToSchema(resultType, description);
       break;
+    }
 
     default:
       schema = Type.Unknown({ description });
       break;
   }
 
-  schema[CONNECTOR_DATA_TYPE] = field.type;
+  const connectorDataType = formulaConnectorDataType(field);
+  schema[CONNECTOR_DATA_TYPE] = connectorDataType;
   schema[READONLY_FLAG] = isAirtableColumnReadonly(field) ? true : undefined;
   schema[REMOTE_FIELD_ID] = field.id;
+  schema[SUGGESTED_TRANSFORMER] = formulaSuggestedTransformer(connectorDataType) ?? undefined;
   return schema;
+}
+
+/**
+ * Returns the CONNECTOR_DATA_TYPE value for a field.
+ * For formula/rollup/lookup fields, appends the result type: e.g. "formula-number".
+ */
+function formulaConnectorDataType(field: AirtableFieldsV2): string {
+  const type = field.type as AirtableDataType;
+  if (type === AirtableDataType.FORMULA || type === AirtableDataType.ROLLUP || type === AirtableDataType.LOOKUP) {
+    const resultType = field.options?.result?.type;
+    if (resultType) {
+      return `${field.type}-${resultType}`;
+    }
+  }
+  return field.type;
+}
+
+/** Airtable returns formula errors as an object, e.g. { specialValue: "#ERROR!" } */
+function formulaErrorSchema(): TSchema {
+  return Type.Object({ specialValue: Type.String() });
+}
+
+/**
+ * Maps an Airtable formula result type to a TypeBox schema.
+ * Falls back to Type.Unknown for unrecognised or missing result types.
+ */
+function formulaResultTypeToSchema(resultType: AirtableDataType | undefined, description: string): TSchema {
+  switch (resultType) {
+    case AirtableDataType.SINGLE_LINE_TEXT:
+    case AirtableDataType.MULTILINE_TEXT:
+    case AirtableDataType.EMAIL:
+    case AirtableDataType.URL:
+    case AirtableDataType.PHONE_NUMBER:
+    case AirtableDataType.RICH_TEXT:
+      return Type.String({ description });
+
+    case AirtableDataType.NUMBER:
+    case AirtableDataType.PERCENT:
+    case AirtableDataType.CURRENCY:
+    case AirtableDataType.DURATION:
+    case AirtableDataType.RATING:
+      return Type.Union([Type.Number(), formulaErrorSchema()], { description });
+
+    case AirtableDataType.AUTO_NUMBER:
+    case AirtableDataType.COUNT:
+      return Type.Union([Type.Integer(), formulaErrorSchema()], { description });
+
+    case AirtableDataType.CHECKBOX:
+      return Type.Boolean({ description });
+
+    case AirtableDataType.DATE:
+      return Type.Union([Type.String({ format: 'date' }), formulaErrorSchema()], { description });
+
+    case AirtableDataType.DATE_TIME:
+    case AirtableDataType.CREATED_TIME:
+    case AirtableDataType.LAST_MODIFIED_TIME:
+      return Type.Union([Type.String({ format: 'date-time' }), formulaErrorSchema()], { description });
+
+    default:
+      return Type.Unknown({ description });
+  }
+}
+
+/**
+ * Returns a suggested transformer for a formula field based on its connector data type,
+ * or null if no suggestion applies.
+ */
+function formulaSuggestedTransformer(connectorDataType: string): TransformerConfig | null {
+  if (
+    connectorDataType.endsWith('-number') ||
+    connectorDataType.endsWith('-currency') ||
+    connectorDataType.endsWith('-percent') ||
+    connectorDataType.endsWith('-duration') ||
+    connectorDataType.endsWith('-rating') ||
+    connectorDataType.endsWith('-autoNumber') ||
+    connectorDataType.endsWith('-count')
+  ) {
+    return { type: TransformerTypes.EnsureType, options: { expectedType: 'number', onFailure: 'null' } };
+  }
+  if (
+    connectorDataType.endsWith('-singleLineText') ||
+    connectorDataType.endsWith('-multilineText') ||
+    connectorDataType.endsWith('-email') ||
+    connectorDataType.endsWith('-url') ||
+    connectorDataType.endsWith('-phoneNumber') ||
+    connectorDataType.endsWith('-richText')
+  ) {
+    return { type: TransformerTypes.EnsureType, options: { expectedType: 'string', onFailure: 'null' } };
+  }
+  return null;
 }
 
 function isAirtableColumnReadonly(field: AirtableFieldsV2): boolean {

@@ -48,6 +48,14 @@ const sourceAssetToDestAssetOptionsSchema = z
   })
   .strict();
 
+const ensureTypeOptionsSchema = z
+  .object({
+    expectedType: z.enum(['string', 'number', 'boolean', 'object', 'array']),
+    onFailure: z.enum(['null', 'error', 'omit', 'other']),
+    fallbackValue: z.string().optional(),
+  })
+  .strict();
+
 const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.AutoConvert), options: autoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
@@ -63,6 +71,7 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
     type: z.literal(TransformerTypes.SourceAssetToDestAsset),
     options: sourceAssetToDestAssetOptionsSchema,
   }),
+  z.object({ type: z.literal(TransformerTypes.EnsureType), options: ensureTypeOptionsSchema }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

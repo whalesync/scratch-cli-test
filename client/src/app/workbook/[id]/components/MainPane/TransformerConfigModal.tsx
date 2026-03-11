@@ -22,6 +22,7 @@ import type {
   AutoConvertOptions,
   DataFolder,
   DataFolderId,
+  EnsureTypeOptions,
   JSONPathArrayHandling,
   SourceAssetToDestAssetOptions,
   SourceFkToDestFkOptions,
@@ -64,6 +65,9 @@ interface StepState {
   destinationDataFolderId: DataFolderId | '';
   assetOnUnresolved: NonNullable<SourceAssetToDestAssetOptions['onUnresolved']>;
   assetOutputType: NonNullable<SourceAssetToDestAssetOptions['outputType']>;
+  expectedType: EnsureTypeOptions['expectedType'];
+  onFailure: EnsureTypeOptions['onFailure'];
+  fallbackValue: string;
 }
 
 let stepIdCounter = 0;
@@ -96,6 +100,9 @@ function configToStepState(config: TransformerConfig): StepState {
       config.type === TransformerTypes.SourceAssetToDestAsset ? (config.options.onUnresolved ?? 'fail') : 'fail',
     assetOutputType:
       config.type === TransformerTypes.SourceAssetToDestAsset ? (config.options.outputType ?? 'array') : 'array',
+    expectedType: config.type === TransformerTypes.EnsureType ? config.options.expectedType : 'string',
+    onFailure: config.type === TransformerTypes.EnsureType ? config.options.onFailure : 'error',
+    fallbackValue: config.type === TransformerTypes.EnsureType ? String(config.options.fallbackValue ?? '') : '',
   };
 }
 
@@ -116,6 +123,9 @@ function createEmptyStep(): StepState {
     destinationDataFolderId: '' as DataFolderId | '',
     assetOnUnresolved: 'fail',
     assetOutputType: 'array',
+    expectedType: 'string',
+    onFailure: 'error',
+    fallbackValue: '',
   };
 }
 
@@ -159,6 +169,15 @@ function stepStateToConfig(step: StepState): TransformerConfig | null {
           destinationDataFolderId: step.destinationDataFolderId as DataFolderId,
           ...(step.assetOnUnresolved !== 'fail' ? { onUnresolved: step.assetOnUnresolved } : {}),
           ...(step.assetOutputType !== 'array' ? { outputType: step.assetOutputType } : {}),
+        },
+      };
+    case TransformerTypes.EnsureType:
+      return {
+        type: step.type,
+        options: {
+          expectedType: step.expectedType,
+          onFailure: step.onFailure,
+          ...(step.onFailure === 'other' ? { fallbackValue: step.fallbackValue } : {}),
         },
       };
     default:
@@ -392,6 +411,49 @@ export function TransformerConfigModal({
                   value={step.arrayHandling}
                   onChange={(val) => updateStep(index, { arrayHandling: (val as JSONPathArrayHandling) || 'first' })}
                 />
+              </>
+            )}
+
+            {step.type === TransformerTypes.EnsureType && (
+              <>
+                <Select
+                  label="Expected Type"
+                  description="The runtime type the value must match"
+                  data={[
+                    { value: 'string', label: 'String' },
+                    { value: 'number', label: 'Number' },
+                    { value: 'boolean', label: 'Boolean' },
+                    { value: 'object', label: 'Object' },
+                    { value: 'array', label: 'Array' },
+                  ]}
+                  value={step.expectedType}
+                  onChange={(val) =>
+                    updateStep(index, { expectedType: (val as EnsureTypeOptions['expectedType']) || 'string' })
+                  }
+                />
+                <Select
+                  label="When validation fails"
+                  description="Action to take if the value does not match the expected type"
+                  data={[
+                    { value: 'error', label: 'Throw error' },
+                    { value: 'null', label: 'Return null' },
+                    { value: 'omit', label: 'Omit field' },
+                    { value: 'other', label: 'Use fallback value' },
+                  ]}
+                  value={step.onFailure}
+                  onChange={(val) =>
+                    updateStep(index, { onFailure: (val as EnsureTypeOptions['onFailure']) || 'error' })
+                  }
+                />
+                {step.onFailure === 'other' && (
+                  <TextInput
+                    label="Fallback Value"
+                    description="Value to use when validation fails (saved as string)"
+                    placeholder="e.g. 0, unknown, etc."
+                    value={step.fallbackValue}
+                    onChange={(e) => updateStep(index, { fallbackValue: e.currentTarget.value })}
+                  />
+                )}
               </>
             )}
 
