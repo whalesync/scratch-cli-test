@@ -1,7 +1,7 @@
 'use client';
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { Text12Regular, Text13Regular } from '@/app/components/base/text';
+import { Text13Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
@@ -41,7 +41,6 @@ export function NavTabs() {
     icon: RocketIcon,
     href: `/workbook/${params.id}/review`,
     disabled: false,
-    dot: hasDirty,
   };
 
   const tabs: NavTab[] = [
@@ -85,23 +84,23 @@ export function NavTabs() {
       }}
     >
       <Stack gap={0}>
-        {/* Prominent Review & Publish tab */}
+        {/* Review & Publish tab */}
         <Link href={reviewTab.href} style={{ textDecoration: 'none' }}>
           <UnstyledButton
             px="sm"
-            py={16}
+            py={8}
             style={{
               width: '100%',
               backgroundColor: reviewActive ? 'var(--bg-selected)' : 'transparent',
               display: 'flex',
-              alignItems: 'center',
+              alignItems: 'flex-start',
               gap: 8,
             }}
           >
-            <Box style={{ width: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Box style={{ height: 19, display: 'flex', alignItems: 'center' }}>
               <StyledLucideIcon
                 Icon={RocketIcon}
-                size="md"
+                size="sm"
                 c={reviewActive ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
               />
             </Box>
@@ -109,14 +108,14 @@ export function NavTabs() {
               <Text13Regular c={reviewActive ? 'var(--fg-primary)' : 'var(--fg-secondary)'}>
                 {reviewTab.label}
               </Text13Regular>
-              <Text12Regular c="var(--mantine-color-green-5)" mt={2}>
-                Changes to approve
-              </Text12Regular>
+              {hasDirty && (
+                <Badge size="sm" variant="filled" color="var(--mantine-color-green-7)" radius="sm" mt={4}>
+                  Changes to approve
+                </Badge>
+              )}
             </Box>
           </UnstyledButton>
         </Link>
-
-        <Box style={{ borderBottom: '1px solid var(--fg-divider)' }} />
 
         {/* Regular tabs */}
         {tabs.map((tab) => {
