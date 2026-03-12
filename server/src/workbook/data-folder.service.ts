@@ -863,10 +863,10 @@ export class DataFolderService {
 
   /**
    * Builds the folder path for a DataFolder linked to a connector account.
-   * Path parts: [parentFolderPath] / connectorDisplayName / basePath[0..n] / tableName
+   * Path parts: [parentFolderPath] / basePath[0..n] / tableName (no connection name prefix).
    */
   buildConnectorFolderPath(
-    connectorDisplayName: string,
+    _connectorDisplayName: string,
     tableSpec: BaseJsonTableSpec,
     parentFolderPath?: string,
   ): string {
@@ -884,8 +884,6 @@ export class DataFolderService {
       // parentFolderPath already includes leading slash, strip it for joining
       parts.push(parentFolderPath.replace(/^\//, ''));
     }
-
-    parts.push(escape(connectorDisplayName));
 
     if (tableSpec.basePath && tableSpec.basePath.length > 0) {
       parts.push(...tableSpec.basePath.filter(Boolean).map(escape));

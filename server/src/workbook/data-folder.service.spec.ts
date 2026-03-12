@@ -32,17 +32,17 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
     ...overrides,
   });
 
-  it('should build path from connector display name and table name', () => {
+  it('should build path from table name (no connection prefix)', () => {
     const result = service.buildConnectorFolderPath('My Airtable', makeTableSpec({ name: 'Products' }));
-    expect(result).toBe('/My Airtable/Products');
+    expect(result).toBe('/Products');
   });
 
-  it('should include basePath segments between connector name and table name', () => {
+  it('should include basePath segments before table name', () => {
     const result = service.buildConnectorFolderPath(
       'My Airtable',
       makeTableSpec({ name: 'Products', basePath: ['Base One'] }),
     );
-    expect(result).toBe('/My Airtable/Base One/Products');
+    expect(result).toBe('/Base One/Products');
   });
 
   it('should include multiple basePath segments', () => {
@@ -50,12 +50,12 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
       'Webflow',
       makeTableSpec({ name: 'Blog Posts', basePath: ['My Site', 'CMS'] }),
     );
-    expect(result).toBe('/Webflow/My Site/CMS/Blog Posts');
+    expect(result).toBe('/My Site/CMS/Blog Posts');
   });
 
   it('should prepend parentFolderPath when provided', () => {
     const result = service.buildConnectorFolderPath('My Airtable', makeTableSpec({ name: 'Products' }), '/Parent');
-    expect(result).toBe('/Parent/My Airtable/Products');
+    expect(result).toBe('/Parent/Products');
   });
 
   it('should handle parentFolderPath with basePath', () => {
@@ -64,17 +64,12 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
       makeTableSpec({ name: 'Products', basePath: ['Base One'] }),
       '/Parent/Sub',
     );
-    expect(result).toBe('/Parent/Sub/My Airtable/Base One/Products');
-  });
-
-  it('should replace slashes with spaces in connector display name', () => {
-    const result = service.buildConnectorFolderPath('My/Airtable', makeTableSpec({ name: 'Products' }));
-    expect(result).toBe('/My Airtable/Products');
+    expect(result).toBe('/Parent/Sub/Base One/Products');
   });
 
   it('should replace slashes with spaces in table name', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'Products/Items' }));
-    expect(result).toBe('/Airtable/Products Items');
+    expect(result).toBe('/Products Items');
   });
 
   it('should replace slashes with spaces in basePath segments', () => {
@@ -82,42 +77,42 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
       'Airtable',
       makeTableSpec({ name: 'Table', basePath: ['Base/One'] }),
     );
-    expect(result).toBe('/Airtable/Base One/Table');
+    expect(result).toBe('/Base One/Table');
   });
 
   it('should replace asterisks and question marks with spaces', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'What*is*this?' }));
-    expect(result).toBe('/Airtable/What is this');
+    expect(result).toBe('/What is this');
   });
 
   it('should replace double quotes with spaces and collapse consecutive spaces', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'The "Best" Table' }));
-    expect(result).toBe('/Airtable/The Best Table');
+    expect(result).toBe('/The Best Table');
   });
 
   it('should replace angle brackets and pipes with spaces', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: '<Input|Output>' }));
-    expect(result).toBe('/Airtable/Input Output');
+    expect(result).toBe('/Input Output');
   });
 
   it('should convert tabs to spaces', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'Tab\there' }));
-    expect(result).toBe('/Airtable/Tab here');
+    expect(result).toBe('/Tab here');
   });
 
   it('should collapse multiple consecutive spaces', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'Too   many    spaces' }));
-    expect(result).toBe('/Airtable/Too many spaces');
+    expect(result).toBe('/Too many spaces');
   });
 
   it('should trim leading and trailing whitespace from segments', () => {
     const result = service.buildConnectorFolderPath('  Airtable  ', makeTableSpec({ name: '  Products  ' }));
-    expect(result).toBe('/Airtable/Products');
+    expect(result).toBe('/Products');
   });
 
   it('should trim trailing dots but preserve leading dots', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: '..hidden.' }));
-    expect(result).toBe('/Airtable/..hidden');
+    expect(result).toBe('/..hidden');
   });
 
   it('should filter out falsy basePath entries', () => {
@@ -125,17 +120,17 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
       'Airtable',
       makeTableSpec({ name: 'Table', basePath: ['Base', '', 'Sub'] }),
     );
-    expect(result).toBe('/Airtable/Base/Sub/Table');
+    expect(result).toBe('/Base/Sub/Table');
   });
 
   it('should handle empty basePath array', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'Table', basePath: [] }));
-    expect(result).toBe('/Airtable/Table');
+    expect(result).toBe('/Table');
   });
 
   it('should handle undefined basePath', () => {
     const result = service.buildConnectorFolderPath('Airtable', makeTableSpec({ name: 'Table', basePath: undefined }));
-    expect(result).toBe('/Airtable/Table');
+    expect(result).toBe('/Table');
   });
 });
 

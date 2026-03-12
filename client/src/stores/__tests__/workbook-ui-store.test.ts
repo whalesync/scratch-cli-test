@@ -7,40 +7,40 @@ beforeEach(() => {
 });
 
 describe('toggleHiddenFiles', () => {
-  it('toggles hidden files for a folder', () => {
+  it('toggles show hidden files for a connection', () => {
     const { toggleHiddenFiles } = useWorkbookUIStore.getState();
 
-    toggleHiddenFiles('folder-1');
-    expect(useWorkbookUIStore.getState().hiddenFileFolders.has('folder-1')).toBe(true);
+    toggleHiddenFiles('conn-1');
+    expect(useWorkbookUIStore.getState().showHiddenConnections.has('conn-1')).toBe(true);
 
-    toggleHiddenFiles('folder-1');
-    expect(useWorkbookUIStore.getState().hiddenFileFolders.has('folder-1')).toBe(false);
+    toggleHiddenFiles('conn-1');
+    expect(useWorkbookUIStore.getState().showHiddenConnections.has('conn-1')).toBe(false);
   });
 
-  it('tracks multiple folders independently', () => {
+  it('tracks multiple connections independently', () => {
     const { toggleHiddenFiles } = useWorkbookUIStore.getState();
 
-    toggleHiddenFiles('folder-1');
-    toggleHiddenFiles('folder-2');
+    toggleHiddenFiles('conn-1');
+    toggleHiddenFiles('conn-2');
 
     const state = useWorkbookUIStore.getState();
-    expect(state.hiddenFileFolders.has('folder-1')).toBe(true);
-    expect(state.hiddenFileFolders.has('folder-2')).toBe(true);
+    expect(state.showHiddenConnections.has('conn-1')).toBe(true);
+    expect(state.showHiddenConnections.has('conn-2')).toBe(true);
 
-    toggleHiddenFiles('folder-1');
+    toggleHiddenFiles('conn-1');
     const updated = useWorkbookUIStore.getState();
-    expect(updated.hiddenFileFolders.has('folder-1')).toBe(false);
-    expect(updated.hiddenFileFolders.has('folder-2')).toBe(true);
+    expect(updated.showHiddenConnections.has('conn-1')).toBe(false);
+    expect(updated.showHiddenConnections.has('conn-2')).toBe(true);
   });
 
   it('persists across store recreations via localStorage', () => {
     const { toggleHiddenFiles } = useWorkbookUIStore.getState();
-    toggleHiddenFiles('folder-1');
+    toggleHiddenFiles('conn-1');
 
     // Verify localStorage contains the value
     const stored = localStorage.getItem('workbook-ui-store');
     expect(stored).toBeTruthy();
     const parsed = JSON.parse(stored!);
-    expect(parsed.state.hiddenFileFolders).toContain('folder-1');
+    expect(parsed.state.showHiddenConnections).toContain('conn-1');
   });
 });

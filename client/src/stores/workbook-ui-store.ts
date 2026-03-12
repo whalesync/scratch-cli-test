@@ -152,15 +152,15 @@ export const useWorkbookUIStore = create<WorkbookUIStore>()(
         set({ expandedNodes: new Set() });
       },
 
-      toggleHiddenFiles: (folderId: string) => {
-        const { hiddenFileFolders } = get();
-        const newSet = new Set(hiddenFileFolders);
-        if (newSet.has(folderId)) {
-          newSet.delete(folderId);
+      toggleHiddenFiles: (connectorAccountId: string) => {
+        const { showHiddenConnections } = get();
+        const newSet = new Set(showHiddenConnections);
+        if (newSet.has(connectorAccountId)) {
+          newSet.delete(connectorAccountId);
         } else {
-          newSet.add(folderId);
+          newSet.add(connectorAccountId);
         }
-        set({ hiddenFileFolders: newSet });
+        set({ showHiddenConnections: newSet });
       },
 
       setSidebarWidth: (width: number) => {
