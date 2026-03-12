@@ -4,6 +4,7 @@ import customBordersClasses from '../theme/custom-borders.module.css';
 import { StyledLucideIcon } from './StyledLucideIcon';
 
 const SIZE = {
+  lg: { outer: 72, inner: 36 },
   sm: { outer: 28, inner: 16 },
   xs: { outer: 20, inner: 13 },
 };
@@ -18,7 +19,7 @@ export const DecorativeBoxedIcon = ({
   Icon: LucideIcon;
   c?: string;
   bg?: string;
-  size?: 'sm' | 'xs';
+  size?: 'lg' | 'sm' | 'xs';
 }) => {
   const s = SIZE[size];
   return (

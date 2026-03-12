@@ -5,9 +5,11 @@ import {
   Text12Regular,
   Text13Medium,
   Text13Regular,
+  Text16Regular,
   TextMono12Regular,
 } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
+import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import type { DirtyFile } from '@/hooks/use-dirty-files';
@@ -19,7 +21,7 @@ import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Group, Loader, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import type { DataFolder, FileDiffStatus, Service, WorkbookId } from '@spinner/shared-types';
-import { ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, RotateCcwIcon } from 'lucide-react';
+import { CheckCircle2Icon, ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, RotateCcwIcon } from 'lucide-react';
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -434,9 +436,14 @@ export default function ReviewPage() {
   if (dirtyFiles.length === 0) {
     return (
       <Box p="xl" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <Stack align="center" gap="xs">
-          <Text13Regular c="dimmed">No unpublished changes</Text13Regular>
-          <Text12Regular c="dimmed">Edits you make in Files will appear here for review</Text12Regular>
+        <Stack align="center" gap="md">
+          <StyledLucideIcon Icon={CheckCircle2Icon} size={40} c="var(--mantine-color-green-7)" />
+          <Stack align="center" gap={4}>
+            <Text16Regular c="var(--fg-secondary)">Nothing to review</Text16Regular>
+            <Text13Regular c="dimmed">
+              Push changes from the CLI, run a sync, or edit files to see them here
+            </Text13Regular>
+          </Stack>
         </Stack>
       </Box>
     );

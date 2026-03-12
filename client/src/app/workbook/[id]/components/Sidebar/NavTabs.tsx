@@ -1,13 +1,13 @@
 'use client';
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { Text13Regular } from '@/app/components/base/text';
+import { Text12Regular, Text13Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import { Badge, Box, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
-import { FolderIcon, PencilIcon, RefreshCwIcon, SquareIcon } from 'lucide-react';
+import { FolderIcon, RefreshCwIcon, RocketIcon, SquareIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import useSWR from 'swr';
@@ -35,6 +35,15 @@ export function NavTabs() {
   );
   const hasDirty = dirtyStatus?.dirty ?? false;
 
+  const reviewTab = {
+    id: 'review',
+    label: 'Review & Publish',
+    icon: RocketIcon,
+    href: `/workbook/${params.id}/review`,
+    disabled: false,
+    dot: hasDirty,
+  };
+
   const tabs: NavTab[] = [
     {
       id: 'files',
@@ -42,14 +51,6 @@ export function NavTabs() {
       icon: FolderIcon,
       href: `/workbook/${params.id}/files`,
       disabled: false,
-    },
-    {
-      id: 'review',
-      label: 'Review & Publish',
-      icon: PencilIcon,
-      href: `/workbook/${params.id}/review`,
-      disabled: false,
-      dot: hasDirty,
     },
     {
       id: 'syncs',
@@ -75,14 +76,49 @@ export function NavTabs() {
     return pathname.includes(`/${tab.id}`);
   };
 
+  const reviewActive = isActive(reviewTab);
+
   return (
     <Box
-      py="xs"
       style={{
         borderBottom: '1px solid var(--fg-divider)',
       }}
     >
       <Stack gap={0}>
+        {/* Prominent Review & Publish tab */}
+        <Link href={reviewTab.href} style={{ textDecoration: 'none' }}>
+          <UnstyledButton
+            px="sm"
+            py={16}
+            style={{
+              width: '100%',
+              backgroundColor: reviewActive ? 'var(--bg-selected)' : 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <Box style={{ width: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <StyledLucideIcon
+                Icon={RocketIcon}
+                size="md"
+                c={reviewActive ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
+              />
+            </Box>
+            <Box>
+              <Text13Regular c={reviewActive ? 'var(--fg-primary)' : 'var(--fg-secondary)'}>
+                {reviewTab.label}
+              </Text13Regular>
+              <Text12Regular c="var(--mantine-color-green-5)" mt={2}>
+                Changes to approve
+              </Text12Regular>
+            </Box>
+          </UnstyledButton>
+        </Link>
+
+        <Box style={{ borderBottom: '1px solid var(--fg-divider)' }} />
+
+        {/* Regular tabs */}
         {tabs.map((tab) => {
           const active = isActive(tab);
 

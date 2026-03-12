@@ -1,6 +1,5 @@
 'use client';
 
-import { ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { Text12Regular } from '@/app/components/base/text';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
@@ -8,12 +7,9 @@ import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import type { ConnectorAccount, Workbook, WorkbookId } from '@spinner/shared-types';
-import { PlusIcon, RefreshCwIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChooseTablesModal } from '../shared/ChooseTablesModal';
-import { CreateConnectionModal } from '../shared/CreateConnectionModal';
+import type { ConnectorAccount, Workbook } from '@spinner/shared-types';
+import { RefreshCwIcon } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
 import { ConnectionNode, EmptyConnectionNode } from './TreeNode';
 
 export type FileTreeMode = 'files' | 'review';
@@ -32,21 +28,6 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   const { connectorAccounts } = useConnectorAccounts(workbook.id);
   const expandAll = useWorkbookUIStore((state) => state.expandAll);
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
-
-  // Connection modal for empty state
-  const [connectionModalOpened, { open: openConnectionModal, close: closeConnectionModal }] = useDisclosure(false);
-
-  // Choose tables modal state (opened after creating a connection)
-  const [chooseTablesOpened, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
-  const [newlyCreatedAccount, setNewlyCreatedAccount] = useState<ConnectorAccount | null>(null);
-
-  const handleConnectionCreated = useCallback(
-    (account: ConnectorAccount) => {
-      setNewlyCreatedAccount(account);
-      openChooseTables();
-    },
-    [openChooseTables],
-  );
 
   // In review mode, fetch dirty files immediately
   const { dirtyFiles, isLoading: dirtyFilesLoading } = useDirtyFiles(mode === 'review' ? workbook.id : null);
@@ -105,8 +86,6 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     }
   }, [sortedGroups, emptyConnectorAccounts, expandedNodes.size, expandAll]);
 
-  const hasAnyConnections = sortedGroups.length > 0 || emptyConnectorAccounts.length > 0;
-
   if (isLoading && dataFolderGroups.length === 0) {
     return (
       <Box p="md">
@@ -120,15 +99,7 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   // Determine which content to render
   let content: React.ReactNode;
 
-  if (!hasAnyConnections && mode === 'files') {
-    content = (
-      <Box p="md">
-        <ButtonCompactSecondary leftSection={<PlusIcon size={12} />} onClick={openConnectionModal}>
-          Connect your first service
-        </ButtonCompactSecondary>
-      </Box>
-    );
-  } else if (mode === 'review' && dirtyFilesLoading) {
+  if (mode === 'review' && dirtyFilesLoading) {
     content = (
       <Box p="md" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Loader size={14} />
@@ -140,9 +111,9 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   } else if (mode === 'review' && !dirtyFilesLoading && dirtyFiles.length === 0) {
     content = (
       <Box p="md">
-        <Text size="sm">No changes to review</Text>
+        <Text size="sm">Nothing to review</Text>
         <Text size="sm" c="dimmed">
-          Edits you make in Files will appear here
+          Push changes from the CLI, run a sync, or edit files to see them here
         </Text>
       </Box>
     );
@@ -202,28 +173,5 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     );
   }
 
-  return (
-    <>
-      {content}
-
-      <CreateConnectionModal
-        opened={connectionModalOpened}
-        onClose={closeConnectionModal}
-        workbookId={workbook.id}
-        returnUrl={`/workbook/${workbook.id}/files`}
-        onConnectionCreated={handleConnectionCreated}
-      />
-      {newlyCreatedAccount && (
-        <ChooseTablesModal
-          opened={chooseTablesOpened}
-          onClose={() => {
-            closeChooseTables();
-            setNewlyCreatedAccount(null);
-          }}
-          workbookId={workbook.id as WorkbookId}
-          connectorAccount={newlyCreatedAccount}
-        />
-      )}
-    </>
-  );
+  return <>{content}</>;
 }
