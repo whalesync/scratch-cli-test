@@ -1,6 +1,38 @@
 import { Type } from '@sinclair/typebox';
 import { ColumnMapping } from '@spinner/shared-types';
-import { validateSchemaMapping } from './schema-validator';
+import { isTypeCompatible, validateSchemaMapping } from './schema-validator';
+
+describe('isTypeCompatible', () => {
+  it('matches identical primitives', () => {
+    expect(isTypeCompatible(Type.String(), Type.String())).toBe(true);
+    expect(isTypeCompatible(Type.Number(), Type.Number())).toBe(true);
+    expect(isTypeCompatible(Type.Boolean(), Type.Boolean())).toBe(true);
+  });
+
+  it('rejects mismatched primitives', () => {
+    expect(isTypeCompatible(Type.String(), Type.Number())).toBe(false);
+    expect(isTypeCompatible(Type.Number(), Type.Boolean())).toBe(false);
+    expect(isTypeCompatible(Type.Boolean(), Type.String())).toBe(false);
+  });
+
+  it('matches object to object', () => {
+    expect(isTypeCompatible(Type.Object({}), Type.Object({}))).toBe(true);
+  });
+
+  it('allows source type into anyOf dest that contains it', () => {
+    expect(isTypeCompatible(Type.String(), Type.Union([Type.String(), Type.Null()]))).toBe(true);
+    expect(isTypeCompatible(Type.Number(), Type.Union([Type.Number(), Type.String()]))).toBe(true);
+  });
+
+  it('rejects source type not in anyOf dest', () => {
+    expect(isTypeCompatible(Type.Boolean(), Type.Union([Type.String(), Type.Null()]))).toBe(false);
+  });
+
+  it('handles Optional (which is anyOf with null) on dest', () => {
+    expect(isTypeCompatible(Type.String(), Type.Optional(Type.String()))).toBe(true);
+    expect(isTypeCompatible(Type.Number(), Type.Optional(Type.String()))).toBe(false);
+  });
+});
 
 describe('validateSchemaMapping', () => {
   const sourceSchema = Type.Object({

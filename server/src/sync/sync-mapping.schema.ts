@@ -157,3 +157,14 @@ export const validateMappingBodySchema = z
     columnMappings: z.array(columnMappingSchema).min(1),
   })
   .strict();
+
+/** Body for validate-mapping-type: trace type through one mapping's pipeline (admin only) */
+export const validateMappingTypeBodySchema = z
+  .object({
+    sourceFolderId: z.string().min(1),
+    destFolderId: z.string().min(1),
+    sourceColumnId: z.string().min(1),
+    destinationColumnId: z.string().min(1),
+    transformers: z.array(transformerConfigSchema).default([]),
+  })
+  .strict();

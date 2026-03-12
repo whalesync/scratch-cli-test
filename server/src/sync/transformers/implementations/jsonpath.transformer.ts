@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { JSONPathOptions, TransformerTypes } from '@spinner/shared-types';
 import { JsonValue, query } from 'jsonpath-rfc9535';
 import { registerTransformer } from '../transformer-registry';
@@ -12,6 +13,9 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const jsonpathTransformer: FieldTransformer = {
   type: TransformerTypes.JSONPath,
+
+  paramType: () => Type.Any(),
+  returnType: () => Type.Any(),
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

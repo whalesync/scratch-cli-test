@@ -65,7 +65,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
@@ -217,11 +217,12 @@ function FolderTreeRenderer({
 }: FolderTreeRendererProps) {
   return (
     <>
-      {Array.from(tree.children.entries()).map(([segName, childNode]) => {
+      {Array.from(tree.children.entries()).map(([segName, childNode], childIndex) => {
         const childId = `${idPrefix}/${segName}`;
         const nodeId = `intermediate-${childId}`;
+        const key = childId || `intermediate-${childIndex}`;
         return (
-          <IntermediateFolderNode key={childId} name={segName} nodeId={nodeId} depth={depth}>
+          <IntermediateFolderNode key={key} name={segName} nodeId={nodeId} depth={depth}>
             <FolderTreeRenderer
               tree={childNode}
               depth={depth + 1}
@@ -234,15 +235,16 @@ function FolderTreeRenderer({
           </IntermediateFolderNode>
         );
       })}
-      {tree.folders.map((folder) => (
-        <TableNode
-          key={folder.id}
-          folder={folder}
-          workbookId={workbookId}
-          mode={mode}
-          dirtyFilePaths={dirtyFilePaths}
-          groupName={groupName}
-        />
+      {tree.folders.map((folder, folderIndex) => (
+        <Box key={folder.id ?? `folder-${folderIndex}`} component="span" style={{ display: 'contents' }}>
+          <TableNode
+            folder={folder}
+            workbookId={workbookId}
+            mode={mode}
+            dirtyFilePaths={dirtyFilePaths}
+            groupName={groupName}
+          />
+        </Box>
       ))}
     </>
   );
@@ -1045,9 +1047,9 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
           )}
 
           {/* File list */}
-          {displayedFiles.map((file) => (
+          {displayedFiles.map((file, fileIndex) => (
             <FileNode
-              key={file.path}
+              key={file.path ?? `file-${fileIndex}`}
               file={file}
               mode={mode}
               onSuccess={handleRefreshTable}
@@ -1182,7 +1184,7 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
   const { showSecretButton } = useDevTools();
 
   // Build the file path for the URL - encode each segment but keep slashes
-  const filePath = file.path;
+  const filePath = file.path ?? file.name ?? '';
   const encodedPath = filePath
     .split('/')
     .map((segment) => encodeURIComponent(segment))

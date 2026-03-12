@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { airMarkToHtml } from '../../../remote-service/connectors/library/airtable/conversion/airtable-airmark-to-html-converter';
 import { registerTransformer } from '../transformer-registry';
@@ -5,6 +6,9 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 
 export const airmarkToHtmlTransformer: FieldTransformer = {
   type: TransformerTypes.AirmarkToHtml,
+
+  paramType: () => Type.String(),
+  returnType: () => Type.String(),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue } = ctx;

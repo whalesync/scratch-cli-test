@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import {
   AirmarkConversionError,
@@ -8,6 +9,9 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 
 export const htmlToAirmarkTransformer: FieldTransformer = {
   type: TransformerTypes.HtmlToAirmark,
+
+  paramType: () => Type.String(),
+  returnType: () => Type.String(),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue } = ctx;

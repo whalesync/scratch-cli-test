@@ -1,5 +1,5 @@
 import { DataFolderId } from '../../ids';
-import type { ColumnMapping, SyncMapping, TransformerType } from '../../sync-mapping';
+import type { ColumnMapping, SyncMapping, TransformerConfig, TransformerType } from '../../sync-mapping';
 
 /** POST/PATCH body for creating or updating a sync */
 export interface SaveSyncBody {
@@ -25,6 +25,29 @@ export interface ValidateMappingBody {
   sourceId: string;
   destId: string;
   columnMappings: ColumnMapping[];
+}
+
+/** POST body for validate-mapping-type endpoint (admin only). Traces type through one mapping's pipeline. */
+export interface ValidateMappingTypeBody {
+  sourceFolderId: DataFolderId;
+  destFolderId: DataFolderId;
+  sourceColumnId: string;
+  destinationColumnId: string;
+  transformers: TransformerConfig[];
+}
+
+/** One step in the type pipeline for validate-mapping-type response. Has either type or error. */
+export interface MappingTypeTraceStep {
+  transformerName: string;
+  type?: Record<string, unknown>;
+  error?: string;
+}
+
+/** Response from validate-mapping-type: type trace for a single mapping */
+export interface MappingTypeTraceResponse {
+  sourceType: Record<string, unknown>;
+  steps: MappingTypeTraceStep[];
+  destinationType: Record<string, unknown>;
 }
 
 export interface PreviewFieldResult {

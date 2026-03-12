@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { LookupFieldOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -14,6 +15,9 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const lookupFieldTransformer: FieldTransformer = {
   type: TransformerTypes.LookupField,
+
+  paramType: () => Type.Any(),
+  returnType: () => Type.Any(),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, lookupTools, options } = ctx;

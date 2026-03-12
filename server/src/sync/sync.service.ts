@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TSchema } from '@sinclair/typebox';
 import {
@@ -32,7 +32,11 @@ import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
-import { previewRecordBodySchema, saveSyncBodySchema } from 'src/sync/sync-mapping.schema';
+import {
+  previewRecordBodySchema,
+  saveSyncBodySchema,
+  validateMappingTypeBodySchema,
+} from 'src/sync/sync-mapping.schema';
 import {
   applyTransformerPipeline,
   createLookupTools,
@@ -43,6 +47,7 @@ import {
   SyncPhase,
   SyncRecord,
 } from 'src/sync/transformers';
+import { MappingTypeTrace, traceMappingType } from 'src/sync/transformers/type-validator';
 import { Actor } from 'src/users/types';
 import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
@@ -1741,6 +1746,52 @@ export class SyncService {
     }
 
     return this.validateSchemaMapping(sourceSpec.schema, destSpec.schema, columnMappings);
+  }
+
+  /**
+   * Traces the type through a single mapping's transformer pipeline (admin only).
+   * Returns source type, each transformer step (name + output type), and destination type as JSON Schema fragments.
+   */
+  async traceMappingType(
+    workbookId: WorkbookId,
+    body: {
+      sourceFolderId: DataFolderId;
+      destFolderId: DataFolderId;
+      sourceColumnId: string;
+      destinationColumnId: string;
+      transformers: TransformerConfig[];
+    },
+    actor: Actor,
+  ): Promise<MappingTypeTrace | { error: string }> {
+    if (!actor.isAdmin) {
+      throw new UnauthorizedException('Only admins can run type validation.');
+    }
+
+    const parseResult = validateMappingTypeBodySchema.safeParse(body);
+    if (!parseResult.success) {
+      throw new BadRequestException(`Invalid body: ${parseResult.error.message}`);
+    }
+    const data = parseResult.data;
+
+    const sourceFolderId = data.sourceFolderId as DataFolderId;
+    const destFolderId = data.destFolderId as DataFolderId;
+    const sourceSpec = (await this.dataFolderService.getStoredSchema(
+      sourceFolderId,
+      actor,
+    )) as BaseJsonTableSpec | null;
+    const destSpec = (await this.dataFolderService.getStoredSchema(destFolderId, actor)) as BaseJsonTableSpec | null;
+
+    if (!sourceSpec?.schema || !destSpec?.schema) {
+      return { error: 'Source or destination schema not available.' };
+    }
+
+    const mapping: ColumnMapping = {
+      sourceColumnId: data.sourceColumnId,
+      destinationColumnId: data.destinationColumnId,
+      transformers: data.transformers as TransformerConfig[],
+    };
+
+    return traceMappingType(mapping, sourceSpec.schema, destSpec.schema);
   }
 
   /**

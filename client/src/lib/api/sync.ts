@@ -2,10 +2,12 @@ import {
   AiContextResponse,
   ColumnMapping,
   DataFolderId,
+  MappingTypeTraceResponse,
   PreviewRecordResponse,
   SaveSyncBody,
   Sync,
   SyncId,
+  ValidateMappingTypeBody,
   WhalesyncImportPreviewBody,
   WhalesyncImportPreviewResponse,
   WorkbookId,
@@ -114,6 +116,24 @@ export const syncApi = {
     } catch (error) {
       handleAxiosError(error, 'Failed to delete sync');
       throw error;
+    }
+  },
+
+  /** Admin only: trace type through a single mapping's transformer pipeline. */
+  validateMappingType: async (
+    workbookId: WorkbookId,
+    body: ValidateMappingTypeBody,
+  ): Promise<MappingTypeTraceResponse | { error: string }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<MappingTypeTraceResponse | { error: string }>(
+        `/workbooks/${workbookId}/syncs/validate-mapping-type`,
+        body,
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to validate mapping type');
+      return { error: 'Request failed' };
     }
   },
 };

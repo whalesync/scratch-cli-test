@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { AutoConvertOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -10,6 +11,24 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const autoConvertTransformer: FieldTransformer = {
   type: TransformerTypes.AutoConvert,
+
+  returnType: (_inputType, options) => {
+    const typedOptions = options as AutoConvertOptions;
+    const targetType = typedOptions?.targetType;
+    switch (targetType) {
+      case 'string':
+        return Type.String();
+      case 'number':
+      case 'integer':
+        return Type.Number();
+      case 'boolean':
+        return Type.Boolean();
+      case 'array':
+        return Type.Array(Type.Any());
+      default:
+        return Type.Any();
+    }
+  },
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

@@ -32,12 +32,6 @@ export function validateSchemaMapping(
     const destType = getSchemaType(destFieldSchema);
 
     if (sourceType && destType && sourceType !== destType) {
-      // Allow assigning non-null to null (e.g. string -> string | null)
-      // and null to non-null (e.g. string | null -> string) depending on desired strictness.
-      // For now, we only check if the base types are different.
-      // Ideally we should check if source is assignable to dest.
-      // But based on "return true if each field mapping is between fields of the same type",
-      // we'll stick to simple equality of base types.
       errors.push(
         `Type mismatch for mapping '${sourcePath}' -> '${destPath}': Source type '${sourceType}' cannot be mapped to Destination type '${destType}'`,
       );
@@ -61,14 +55,8 @@ export function getSchemaAtPath(schema: TSchema, path: string): TSchema | undefi
     }
 
     // Unwrap Optional/Union wrapper to get to the object if needed
-    // But usually traversal happens on objects.
-    // If current is Union (e.g. Optional Object), we might need to find the Object part.
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     if (current.type === undefined && (current as any).anyOf) {
-      // Handle TypeBox Union
-      // It's hard to distinguish which union member to follow without data.
-      // But typically for data folders, we have Object or Optional(Object).
-      // Let's try to unwrap default/optional wrapper.
       const unwrapped = unwrapSchema(current);
       if (unwrapped) current = unwrapped;
     }
@@ -90,28 +78,59 @@ export function getSchemaAtPath(schema: TSchema, path: string): TSchema | undefi
  */
 export function getSchemaType(schema: TSchema): string | undefined {
   if (schema.type) {
-    // TypeBox specific types like 'number', 'string', 'object'
     return schema.type as string;
   }
 
-  // Handle TypeBox generic Union or Optional (which is often Union([Type, Null]))
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
   const anyOf = (schema as any).anyOf as TSchema[] | undefined;
   if (anyOf) {
-    // Filter out Null type to find the "real" type
     const realTypes = anyOf.filter((s) => s.type !== 'null');
     if (realTypes.length === 1) {
       return getSchemaType(realTypes[0]);
     }
-    // If multiple real types, it's a complex union, maybe return 'union'?
-    // For now, assume simple Optional case.
     if (realTypes.length > 0) {
-      // Just take the first one? Or maybe we can't determine unique type.
       return getSchemaType(realTypes[0]);
     }
   }
 
   return undefined;
+}
+
+/**
+ * Returns true if a value of `sourceType` can be assigned to a field typed as `destType`.
+ *
+ * Rules:
+ * - Any (Type.Any() / empty schema) on either side is always compatible.
+ * - Primitive equality: string→string, number→number, boolean→boolean, object→object, etc.
+ * - Source is compatible with dest if dest is anyOf(...) and source matches one of the members.
+ */
+export function isTypeCompatible(sourceType: TSchema, destType: TSchema): boolean {
+  // Any on either side is always compatible
+  if (isAnySchema(sourceType) || isAnySchema(destType)) {
+    return true;
+  }
+
+  // Unwrap Optional/nullable on both sides for comparison
+  const source = unwrapSchema(sourceType) ?? sourceType;
+  const dest = unwrapSchema(destType) ?? destType;
+
+  // If dest is a union (anyOf), source is compatible if it matches any member
+  const destAnyOf = (dest as { anyOf?: TSchema[] }).anyOf;
+  if (destAnyOf) {
+    return destAnyOf.some((member) => isTypeCompatible(source, member));
+  }
+
+  // Primitive equality: both have a `type` field and they match
+  if (source.type && dest.type) {
+    return source.type === dest.type;
+  }
+
+  return false;
+}
+
+/** Type.Any() produces an empty schema `{}` with no `type` field and no `anyOf`. */
+function isAnySchema(schema: TSchema): boolean {
+  return !schema.type && !(schema as { anyOf?: unknown }).anyOf;
 }
 
 function unwrapSchema(schema: TSchema): TSchema | undefined {

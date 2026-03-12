@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { NotionFileUrlOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -24,6 +25,9 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const notionFileUrlTransformer: FieldTransformer = {
   type: TransformerTypes.NotionFileUrl,
+
+  paramType: () => Type.Any(),
+  returnType: () => Type.Any(),
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

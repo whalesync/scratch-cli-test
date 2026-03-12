@@ -15,11 +15,13 @@ import {
 import type {
   AiContextResponse,
   DataFolderId,
+  MappingTypeTraceResponse,
   PreviewRecordBody,
   PreviewRecordResponse,
   SaveSyncBody,
   SyncId,
   ValidateMappingBody,
+  ValidateMappingTypeBody,
   WhalesyncImportPreviewBody,
   WhalesyncImportPreviewResponse,
   WorkbookId,
@@ -198,5 +200,18 @@ export class SyncController {
       actor,
     );
     return { valid };
+  }
+
+  /** Admin only: trace type through a single mapping's transformer pipeline. */
+  @Post('validate-mapping-type')
+  async validateMappingType(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Body() body: ValidateMappingTypeBody,
+    @Req() req: RequestWithUser,
+  ): Promise<MappingTypeTraceResponse | { error: string }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const result = await this.syncService.traceMappingType(workbookId, body, actor);
+    return result as MappingTypeTraceResponse | { error: string };
   }
 }

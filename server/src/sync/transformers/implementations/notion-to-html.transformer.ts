@@ -4,6 +4,7 @@ import {
   TableBlockObjectResponse,
   TableRowBlockObjectResponse,
 } from '@notionhq/client/build/src/api-endpoints';
+import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { TransformContext, TransformResult } from '../transformer.types';
@@ -19,6 +20,9 @@ type MediaValue =
 
 export const NotionToHtmlTransformer = {
   type: TransformerTypes.NotionToHtml,
+
+  paramType: () => Type.Array(Type.Any()),
+  returnType: () => Type.String(),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const blocks = await Promise.resolve(ctx.sourceValue as ConvertedNotionBlock[]);

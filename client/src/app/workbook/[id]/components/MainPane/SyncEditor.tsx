@@ -394,7 +394,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const previewFileOptions = useMemo(
     () =>
       previewFiles
-        .filter((f) => f.type === 'file' && f.path.endsWith('.json') && !f.name?.startsWith('.'))
+        .filter((f) => f.type === 'file' && f.path?.endsWith('.json') && !f.name?.startsWith('.'))
         .map((f) => ({ value: f.path, label: f.name || f.path })),
     [previewFiles],
   );
@@ -1340,6 +1340,28 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           }
         }}
         allFolders={allFolders}
+        mappingContext={
+          editingTransformerTarget
+            ? (() => {
+                const pair = folderPairs[editingTransformerTarget.pairIndex];
+                const mapping = pair?.fieldMappings[editingTransformerTarget.mappingIndex];
+                if (!pair || !mapping || !workbookId) return null;
+                const sourceSchema = schemaCache[pair.sourceId] || [];
+                const destSchema = schemaCache[pair.destId] || [];
+                const sourceFieldType = sourceSchema.find((f) => f.path === mapping.sourceField)?.type;
+                const destFieldType = destSchema.find((f) => f.path === mapping.destField)?.type;
+                return {
+                  workbookId,
+                  sourceFolderId: pair.sourceId as DataFolderId,
+                  destFolderId: pair.destId as DataFolderId,
+                  sourceField: mapping.sourceField,
+                  destField: mapping.destField,
+                  sourceFieldType,
+                  destFieldType,
+                };
+              })()
+            : null
+        }
       />
     </Stack>
   );

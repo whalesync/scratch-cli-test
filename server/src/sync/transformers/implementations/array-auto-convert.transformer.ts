@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { ArrayAutoConvertOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -10,6 +11,9 @@ import { autoConvertTransformer } from './auto-convert.transformer';
  */
 export const arrayAutoConvertTransformer: FieldTransformer = {
   type: TransformerTypes.ArrayAutoConvert,
+
+  paramType: () => Type.Array(Type.Any()),
+  returnType: () => Type.Array(Type.Any()),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, options } = ctx;

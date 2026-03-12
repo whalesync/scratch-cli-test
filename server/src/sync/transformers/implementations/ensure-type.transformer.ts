@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { EnsureTypeOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -8,6 +9,24 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const ensureTypeTransformer: FieldTransformer = {
   type: TransformerTypes.EnsureType,
+
+  returnType: (inputType, options) => {
+    const typedOptions = options as EnsureTypeOptions;
+    switch (typedOptions.expectedType) {
+      case 'string':
+        return Type.String();
+      case 'number':
+        return Type.Number();
+      case 'boolean':
+        return Type.Boolean();
+      case 'object':
+        return Type.Object({});
+      case 'array':
+        return Type.Array(Type.Any());
+      default:
+        return inputType;
+    }
+  },
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

@@ -1,6 +1,11 @@
+import { TSchema, Type } from '@sinclair/typebox';
 import { StringToNumberOptions, TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
+
+function getSchemaType(schema: TSchema): string | undefined {
+  return (schema as { type?: string }).type;
+}
 
 /**
  * Transforms a string value to a number.
@@ -11,6 +16,14 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const stringToNumberTransformer: FieldTransformer = {
   type: TransformerTypes.StringToNumber,
+
+  returnType: (inputType: TSchema) => {
+    const t = getSchemaType(inputType);
+    if (t !== 'string' && t !== 'number') {
+      throw new Error(`String to Number expects string or number input, got ${t ?? 'unknown'}`);
+    }
+    return Type.Number();
+  },
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

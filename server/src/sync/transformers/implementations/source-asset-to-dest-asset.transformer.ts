@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { isScratchPendingPublishId, SourceAssetToDestAssetOptions, TransformerTypes } from '@spinner/shared-types';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
@@ -23,6 +24,9 @@ import { AssetMappingResult, FieldTransformer, TransformContext, TransformResult
  */
 export const sourceAssetToDestAssetTransformer: FieldTransformer = {
   type: TransformerTypes.SourceAssetToDestAsset,
+
+  paramType: () => Type.Any(),
+  returnType: () => Type.Any(),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, lookupTools, options, destinationValue } = ctx;

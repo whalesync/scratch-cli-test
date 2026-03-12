@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -15,6 +16,9 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  */
 export const slugifyTransformer: FieldTransformer = {
   type: TransformerTypes.Slugify,
+
+  paramType: () => Type.String(),
+  returnType: () => Type.String(),
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

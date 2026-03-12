@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { z } from 'zod';
 import { getSchemaAtPath } from '../../schema-validator';
@@ -25,6 +26,9 @@ const webflowOptionSchemaShape = z.object({
  */
 export const webflowOptionTransformer: FieldTransformer = {
   type: TransformerTypes.WebflowOption,
+
+  paramType: () => Type.String(),
+  returnType: () => Type.String(),
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

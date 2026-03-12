@@ -133,6 +133,8 @@ export type TransformResult =
   | { success: true; value?: unknown; skip?: boolean; warnings?: string[] }
   | { success: false; error: string; useOriginal?: boolean };
 
+import { TSchema } from '@sinclair/typebox';
+
 /**
  * Interface for field transformers.
  */
@@ -147,4 +149,21 @@ export interface FieldTransformer {
    * @returns The transformation result
    */
   transform(ctx: TransformContext): Promise<TransformResult>;
+
+  /**
+   * Predicts the return (output) schema type based on the input schema type and transformer options.
+   * If not provided, the transformer is assumed to not change the type, or it's unknown.
+   *
+   * @param inputType The JSON schema (TSchema) of the single field being transformed.
+   * @param options The transformer-specific configuration options.
+   */
+  returnType?(inputType: TSchema, options?: TransformerOptions): TSchema;
+
+  /**
+   * Declares the expected parameter (input) schema type this transformer accepts.
+   * If not provided, the transformer accepts any type.
+   *
+   * @param options The transformer-specific configuration options.
+   */
+  paramType?(options?: TransformerOptions): TSchema;
 }

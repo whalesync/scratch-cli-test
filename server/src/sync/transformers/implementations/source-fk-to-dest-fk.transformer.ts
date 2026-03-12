@@ -1,3 +1,4 @@
+import { Type } from '@sinclair/typebox';
 import { isScratchPendingPublishId, SourceFkToDestFkOptions, TransformerTypes } from '@spinner/shared-types';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
@@ -16,6 +17,9 @@ import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } 
  */
 export const sourceFkToDestFkTransformer: FieldTransformer = {
   type: TransformerTypes.SourceFkToDestFk,
+
+  paramType: () => Type.Any(),
+  returnType: () => Type.Any(),
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, lookupTools, options, destinationValue } = ctx;
