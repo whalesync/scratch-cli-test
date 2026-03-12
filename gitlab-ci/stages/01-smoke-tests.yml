@@ -72,4 +72,3 @@ smoke tests:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, smoke-tests]
     - !reference [.rules, on_merge_to_master]
-    - !reference [.rules, on_merge_to_prod]

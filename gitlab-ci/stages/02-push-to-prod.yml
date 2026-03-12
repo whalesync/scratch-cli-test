@@ -2,7 +2,6 @@ include:
   - "/gitlab-ci/stages.yml"
   - "/gitlab-ci/common.yml"
 
-# NOTE: this doesn't work yet
 push master to prod:
   stage: push to prod
   image: alpine:latest
@@ -14,7 +13,7 @@ push master to prod:
     - git remote set-url origin https://oauth2:$CICD_ACCESS_TOKEN@gitlab.com/whalesync/spinner.git
     - git fetch --all --prune
     - git checkout master
-    - git pull
+    - git pull origin master
     - git checkout prod
     - git pull origin prod
     - git merge -m "(Auto) Merge branch 'master' into prod" --no-ff -X theirs master

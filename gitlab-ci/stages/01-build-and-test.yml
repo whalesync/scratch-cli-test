@@ -86,7 +86,6 @@ build and test client:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, client]
     - !reference [.rules, on_merge_to_master]
-    - !reference [.rules, on_merge_to_prod]
 
 .build-client-docker-image-for-test:
   stage: build and test
@@ -192,7 +191,6 @@ build and test server:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, server]
     - !reference [.rules, on_merge_to_master]
-    - !reference [.rules, on_merge_to_prod]
 
 .integration-test-server:
   stage: build and test
@@ -225,7 +223,6 @@ integration test server:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, server]
     - !reference [.rules, on_merge_to_master]
-    - !reference [.rules, on_merge_to_prod]
 
 .build-server-docker-image:
   stage: build and test
@@ -284,7 +281,6 @@ build and test scratch-cli:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, scratch-cli]
     - !reference [.rules, on_merge_to_master]
-    - !reference [.rules, on_merge_to_prod]
 
 # =============================================================================
 # SCRATCH-GIT SUBPROJECT
