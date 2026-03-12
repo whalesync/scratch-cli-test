@@ -64,13 +64,22 @@ describe.each(fixtures)('Pull: $displayName', (fixture) => {
       const job = await pullAndWait(api, workspace.workbookId, [workspace.dataFolderId], 120000);
       expect(job.state).toBe('completed');
 
-      const filesRes = await api.get(`/workbooks/${workspace.workbookId}/files/list/by-folder`, {
-        folderId: workspace.dataFolderId,
-      });
-      expect(filesRes.status).toBe(200);
+      // Paginate through all pages to collect every file
+      const allFiles: any[] = [];
+      let cursor: string | undefined;
+      do {
+        const filesRes = await api.get(`/workbooks/${workspace.workbookId}/files/list/by-folder`, {
+          folderId: workspace.dataFolderId,
+          ...(cursor ? { cursor } : {}),
+        });
+        expect(filesRes.status).toBe(200);
 
-      const files = filesRes.data.items.filter((item: any) => item.type === 'file' && item.name !== '.schema.json');
-      expect(files).toHaveLength(250);
+        const files = filesRes.data.items.filter((item: any) => item.type === 'file' && item.name !== '.schema.json');
+        allFiles.push(...files);
+        cursor = filesRes.data.nextCursor;
+      } while (cursor);
+
+      expect(allFiles).toHaveLength(250);
     });
   });
 
