@@ -62,6 +62,7 @@ export type JobHandlerBuilder<TDefinition extends JobDefinitionBuilder<any, any,
 //       }
 //     : never;
 
+// TODO: create a shared-type for this context
 export interface RunContext extends JsonSafeObject {
   runId: string;
   trigger: 'web' | 'scheduler' | 'cli' | 'job';

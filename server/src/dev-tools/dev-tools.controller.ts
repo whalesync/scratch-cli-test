@@ -322,6 +322,7 @@ export class DevToolsController {
         return {
           dbJobId: job.id,
           bullJobId: entity.bullJobId,
+          runId: entity.runId,
           workbookId: entity.workbookId,
           dataFolderId: entity.dataFolderId,
           userId: job.userId,
@@ -332,6 +333,7 @@ export class DevToolsController {
           finishedOn: job.finishedOn?.toISOString() ?? null,
           createdAt: job.createdAt.toISOString(),
           failedReason: entity.failedReason,
+          runContext: entity.runContext,
         };
       }),
       total,

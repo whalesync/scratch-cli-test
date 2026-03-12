@@ -13,6 +13,7 @@ export type DbJobStatus =
 export interface JobEntity<TPublicProgress = JsonSafeObject> {
   bullJobId?: string | null;
   dbJobId?: string | null;
+  runId?: string | null;
   workbookId?: string | null;
   dataFolderId?: string | null;
   state: DbJobStatus;
@@ -30,6 +31,7 @@ export function dbJobToJobEntity(dbJob: DbJob): JobEntity {
   return {
     dbJobId: dbJob.id,
     bullJobId: dbJob.bullJobId,
+    runId: dbJob.runId,
     workbookId: dbJob.workbookId,
     dataFolderId: dbJob.dataFolderId,
     type: dbJob.type,

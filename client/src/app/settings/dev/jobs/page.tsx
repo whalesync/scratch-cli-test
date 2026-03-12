@@ -8,6 +8,7 @@ import { formatDate, timeAgo } from '@/utils/helpers';
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   Group,
@@ -22,8 +23,22 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { BriefcaseIcon, Check, ChevronLeft, ChevronRight, Circle, Code, Dot, SquareIcon, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { GetAllJobsResponseDto } from '@spinner/shared-types';
+import {
+  BriefcaseIcon,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  Code,
+  CornerDownRight,
+  Dot,
+  SquareIcon,
+  X,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+
+type Job = GetAllJobsResponseDto['jobs'][number];
 
 const CANCELABLE_STATES = new Set(['created', 'active']);
 
@@ -80,6 +95,82 @@ const getStatusColor = (status: string) => {
   }
 };
 
+interface TreeNode {
+  job: Job;
+  children: TreeNode[];
+}
+
+function buildJobTree(jobs: Job[]): TreeNode[] {
+  const jobById = new Map<string, Job>();
+  for (const job of jobs) {
+    if (job.dbJobId) {
+      jobById.set(job.dbJobId, job);
+    }
+  }
+
+  const nodeMap = new Map<string, TreeNode>();
+  for (const job of jobs) {
+    const key = job.dbJobId ?? '';
+    nodeMap.set(key, { job, children: [] });
+  }
+
+  const roots: TreeNode[] = [];
+
+  for (const job of jobs) {
+    const parentId = job.runContext?.parentJobId;
+    const key = job.dbJobId ?? '';
+    const node = nodeMap.get(key)!;
+
+    if (parentId && nodeMap.has(parentId)) {
+      nodeMap.get(parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+interface RunGroup {
+  groupKey: string;
+  runId: string | null;
+  jobs: Job[];
+  tree: TreeNode[];
+  latestCreatedAt: string;
+}
+
+function groupJobsByRunId(jobs: Job[]): RunGroup[] {
+  const groupMap = new Map<string, Job[]>();
+
+  for (const job of jobs) {
+    const key = job.runId ?? job.dbJobId ?? 'unknown';
+    if (!groupMap.has(key)) {
+      groupMap.set(key, []);
+    }
+    groupMap.get(key)!.push(job);
+  }
+
+  const groups: RunGroup[] = [];
+  for (const [groupKey, groupJobs] of groupMap) {
+    const latestCreatedAt = groupJobs.reduce(
+      (latest, j) => (j.createdAt > latest ? j.createdAt : latest),
+      groupJobs[0].createdAt,
+    );
+    groups.push({
+      groupKey,
+      runId: groupJobs[0].runId ?? null,
+      jobs: groupJobs,
+      tree: buildJobTree(groupJobs),
+      latestCreatedAt,
+    });
+  }
+
+  // Sort groups by most recent first
+  groups.sort((a, b) => b.latestCreatedAt.localeCompare(a.latestCreatedAt));
+
+  return groups;
+}
+
 const PAGE_SIZE = 100;
 const ALL_STATUSES = ['created', 'active', 'completed', 'failed', 'canceled'] as const;
 
@@ -96,7 +187,6 @@ export default function JobsDevPage() {
     autoRefresh: true,
   });
   const [cancelingJobIds, setCancelingJobIds] = useState<Set<string>>(new Set());
-
   const toggleStatus = (status: string) => {
     setOffset(0);
     setSelectedStatuses((prev) => (prev.includes(status) ? prev.filter((s) => s !== status) : [...prev, status]));
@@ -116,6 +206,8 @@ export default function JobsDevPage() {
       });
     }
   };
+
+  const runGroups = useMemo(() => groupJobsByRunId(jobs), [jobs]);
 
   if (isUserLoading) {
     return (
@@ -253,9 +345,10 @@ export default function JobsDevPage() {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Job ID</Table.Th>
-                <Table.Th>User ID</Table.Th>
-                <Table.Th>Status</Table.Th>
                 <Table.Th>Type</Table.Th>
+                <Table.Th>Trigger</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>User ID</Table.Th>
                 <Table.Th>Created</Table.Th>
                 <Table.Th>Started</Table.Th>
                 <Table.Th>Duration</Table.Th>
@@ -264,102 +357,16 @@ export default function JobsDevPage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {jobs.map((job) => {
-                let duration: string | null = null;
-                if (job.processedOn && job.finishedOn) {
-                  const diff = new Date(job.finishedOn).getTime() - new Date(job.processedOn).getTime();
-                  const seconds = diff / 1000;
-                  duration = seconds >= 10 ? `${Math.floor(seconds)}s` : `${seconds.toFixed(3)}s`;
-                }
-
-                return (
-                  <Table.Tr key={job.dbJobId}>
-                    <Table.Td>
-                      <Stack gap={2}>
-                        <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
-                          {job.dbJobId || '-'}
-                        </Text>
-                        <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
-                          {job.bullJobId || '-'}
-                        </Text>
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
-                        {job.userId}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap="xs">
-                        {getStatusIcon(job.state)}
-                        <Badge color={getStatusColor(job.state)} size="sm">
-                          {job.state}
-                        </Badge>
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm">{job.type}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Tooltip label={formatDate(job.createdAt)}>
-                        <Text size="sm" c="dimmed">
-                          {timeAgo(job.createdAt)}
-                        </Text>
-                      </Tooltip>
-                    </Table.Td>
-                    <Table.Td>
-                      {job.processedOn ? (
-                        <Tooltip label={formatDate(job.processedOn)}>
-                          <Text size="sm" c="dimmed">
-                            {timeAgo(job.processedOn)}
-                          </Text>
-                        </Tooltip>
-                      ) : (
-                        '-'
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" c="dimmed" style={{ fontFamily: 'monospace' }}>
-                        {duration || '-'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      {job.failedReason ? (
-                        <Text size="sm" c="red" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {job.failedReason}
-                        </Text>
-                      ) : (
-                        '-'
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap="xs" wrap="nowrap">
-                        <Tooltip label="View Raw JSON">
-                          <ActionIcon
-                            variant="subtle"
-                            color="gray"
-                            onClick={() => setViewRawJobId(job.bullJobId || job.dbJobId || null)}
-                          >
-                            <Code size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                        {CANCELABLE_STATES.has(job.state) && job.bullJobId && (
-                          <Tooltip label="Cancel Job">
-                            <ActionIcon
-                              variant="subtle"
-                              color="red"
-                              disabled={cancelingJobIds.has(job.bullJobId)}
-                              onClick={() => handleCancelJob(job.bullJobId!)}
-                            >
-                              <SquareIcon size={16} />
-                            </ActionIcon>
-                          </Tooltip>
-                        )}
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
+              {runGroups.map((group, index) => (
+                <RunGroupRows
+                  key={group.groupKey}
+                  group={group}
+                  isFirst={index === 0}
+                  cancelingJobIds={cancelingJobIds}
+                  onCancelJob={handleCancelJob}
+                  onViewRaw={setViewRawJobId}
+                />
+              ))}
             </Table.Tbody>
           </Table>
         )}
@@ -367,6 +374,172 @@ export default function JobsDevPage() {
 
       <JobRawModal jobId={viewRawJobId} onClose={() => setViewRawJobId(null)} />
     </MainContent>
+  );
+}
+
+function RunGroupRows({
+  group,
+  isFirst,
+  cancelingJobIds,
+  onCancelJob,
+  onViewRaw,
+}: {
+  group: RunGroup;
+  isFirst: boolean;
+  cancelingJobIds: Set<string>;
+  onCancelJob: (bullJobId: string) => void;
+  onViewRaw: (jobId: string | null) => void;
+}) {
+  return (
+    <>
+      {isFirst && (
+        <Table.Tr>
+          <Table.Td colSpan={10} p={0} style={{ borderBottom: '2px solid var(--mantine-color-dark-4)' }} />
+        </Table.Tr>
+      )}
+      {group.tree.map((node) => (
+        <JobTreeRows
+          key={node.job.dbJobId}
+          node={node}
+          depth={0}
+          cancelingJobIds={cancelingJobIds}
+          onCancelJob={onCancelJob}
+          onViewRaw={onViewRaw}
+        />
+      ))}
+    </>
+  );
+}
+
+function JobTreeRows({
+  node,
+  depth,
+  cancelingJobIds,
+  onCancelJob,
+  onViewRaw,
+}: {
+  node: TreeNode;
+  depth: number;
+  cancelingJobIds: Set<string>;
+  onCancelJob: (bullJobId: string) => void;
+  onViewRaw: (jobId: string | null) => void;
+}) {
+  const job = node.job;
+
+  let duration: string | null = null;
+  if (job.processedOn && job.finishedOn) {
+    const diff = new Date(job.finishedOn).getTime() - new Date(job.processedOn).getTime();
+    const seconds = diff / 1000;
+    duration = seconds >= 10 ? `${Math.floor(seconds)}s` : `${seconds.toFixed(3)}s`;
+  }
+
+  return (
+    <>
+      <Table.Tr>
+        <Table.Td style={{ maxWidth: 300 }}>
+          <Group gap={4}>
+            {depth > 0 && (
+              <Box style={{ paddingLeft: (depth - 1) * 20, flexShrink: 0 }}>
+                <CornerDownRight size={14} color="var(--mantine-color-dimmed)" />
+              </Box>
+            )}
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                {job.dbJobId || '-'}
+              </Text>
+              <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                {job.bullJobId || '-'}
+              </Text>
+            </Stack>
+          </Group>
+        </Table.Td>
+        <Table.Td style={{ maxWidth: 120 }}>
+          <Text size="sm" style={{ wordBreak: 'break-all' }}>
+            {job.type}
+          </Text>
+        </Table.Td>
+        <Table.Td>
+          {job.runContext?.trigger ? (
+            <Badge size="xs" variant="light" color="gray">
+              {job.runContext.trigger}
+            </Badge>
+          ) : (
+            '-'
+          )}
+        </Table.Td>
+        <Table.Td>
+          <Tooltip label={job.state}>{getStatusIcon(job.state)}</Tooltip>
+        </Table.Td>
+        <Table.Td>
+          <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+            {job.userId}
+          </Text>
+        </Table.Td>
+        <Table.Td>
+          <Tooltip label={formatDate(job.createdAt)}>
+            <Text size="sm" c="dimmed">
+              {timeAgo(job.createdAt)}
+            </Text>
+          </Tooltip>
+        </Table.Td>
+        <Table.Td>
+          {job.processedOn ? (
+            <Tooltip label={formatDate(job.processedOn)}>
+              <Text size="sm" c="dimmed">
+                {timeAgo(job.processedOn)}
+              </Text>
+            </Tooltip>
+          ) : (
+            '-'
+          )}
+        </Table.Td>
+        <Table.Td>
+          <Text size="sm" c="dimmed" style={{ fontFamily: 'monospace' }}>
+            {duration || '-'}
+          </Text>
+        </Table.Td>
+        <Table.Td>
+          {job.failedReason ? (
+            <Text size="sm" c="red" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {job.failedReason}
+            </Text>
+          ) : (
+            '-'
+          )}
+        </Table.Td>
+        <Table.Td>
+          <Group gap="xs" wrap="nowrap">
+            <Tooltip label="View Raw JSON">
+              <ActionIcon variant="subtle" color="gray" onClick={() => onViewRaw(job.bullJobId || job.dbJobId || null)}>
+                <Code size={16} />
+              </ActionIcon>
+            </Tooltip>
+            {CANCELABLE_STATES.has(job.state) && job.bullJobId && (
+              <Tooltip label="Cancel Job">
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  disabled={cancelingJobIds.has(job.bullJobId)}
+                  onClick={() => onCancelJob(job.bullJobId!)}
+                >
+                  <SquareIcon size={16} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+          </Group>
+        </Table.Td>
+      </Table.Tr>
+      {node.children.map((child) => (
+        <JobTreeRows
+          key={child.job.dbJobId}
+          node={child}
+          depth={depth + 1}
+          cancelingJobIds={cancelingJobIds}
+          onCancelJob={onCancelJob}
+          onViewRaw={onViewRaw}
+        />
+      ))}
+    </>
   );
 }
 
