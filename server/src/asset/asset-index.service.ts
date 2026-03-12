@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createAssetId } from '@spinner/shared-types';
 import { chunk } from 'lodash';
 import { DbService } from '../db/db.service';
 import { AssetIndexEntry } from './asset.types';
@@ -49,6 +50,7 @@ export class AssetIndexService {
               lastSeenAt: now,
             },
             create: {
+              id: createAssetId(),
               workbookId: entry.workbookId,
               service: entry.service,
               remoteAssetId: entry.remoteAssetId,
@@ -100,6 +102,22 @@ export class AssetIndexService {
   async getAssetsForDataFolder(workbookId: string, dataFolderId: string) {
     return this.db.client.asset.findMany({
       where: { workbookId, dataFolderId },
+    });
+  }
+
+  /**
+   * Find destination assets that have been created via sync (sourceAssetId != null)
+   * and rehosted, but not yet uploaded to the destination connector.
+   */
+  async findUnuploadedDestinationAssets(workbookId: string, dataFolderIds: string[]) {
+    return this.db.client.asset.findMany({
+      where: {
+        workbookId,
+        dataFolderId: { in: dataFolderIds },
+        sourceAssetId: { not: null },
+        rehostedUrl: { not: null },
+        uploadedAt: null,
+      },
     });
   }
 

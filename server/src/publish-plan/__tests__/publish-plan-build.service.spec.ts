@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AssetIndexService } from '../../asset/asset-index.service';
+import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
 import { DbService } from '../../db/db.service';
+import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
@@ -26,6 +29,13 @@ function makeDbMock() {
       },
       dataFolder: {
         findMany: jest.fn().mockResolvedValue([]),
+      },
+      connectorAccount: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'ca_test',
+          service: 'AIRTABLE',
+          encryptedCredentials: {},
+        }),
       },
     },
   };
@@ -64,11 +74,25 @@ describe('PublishPlanService', () => {
       stripDeletedRecordRefs: jest.fn().mockImplementation((content) => content),
       // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       stripPseudoRefs: jest.fn().mockImplementation((content) => content),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      stripAssetPseudoRefs: jest.fn().mockImplementation((content) => content),
     } as unknown as jest.Mocked<RefCleanerService>;
 
     schemaService = {
       getDataFolderInfo: jest.fn().mockResolvedValue({ id: 'df_1', spec: { schema: {} } }),
     } as unknown as jest.Mocked<SchemaHelperService>;
+
+    const assetIndexService = {
+      findUnuploadedDestinationAssets: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<AssetIndexService>;
+
+    const connectorsService = {
+      getConnector: jest.fn().mockReturnValue({ supportsFileUpload: false }),
+    } as unknown as jest.Mocked<ConnectorsService>;
+
+    const credentialEncryptionService = {
+      decryptCredentials: jest.fn().mockResolvedValue({}),
+    } as unknown as jest.Mocked<CredentialEncryptionService>;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,6 +103,9 @@ describe('PublishPlanService', () => {
         { provide: FileReferenceService, useValue: fileReferenceService },
         { provide: RefCleanerService, useValue: refCleanerService },
         { provide: SchemaHelperService, useValue: schemaService },
+        { provide: AssetIndexService, useValue: assetIndexService },
+        { provide: ConnectorsService, useValue: connectorsService },
+        { provide: CredentialEncryptionService, useValue: credentialEncryptionService },
       ],
     }).compile();
 

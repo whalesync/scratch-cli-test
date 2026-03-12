@@ -25,6 +25,8 @@ export interface FkMappingResult {
  * Result of resolving a source asset to a destination asset mapping.
  */
 export interface AssetMappingResult {
+  /** The Asset DB id (cuid) of the destination asset */
+  destinationAssetId: string;
   /** The remoteAssetId of the destination asset */
   destinationAssetRemoteId: string;
   /** Whether this destination asset was just created (true) or already existed (false) */

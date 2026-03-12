@@ -464,6 +464,9 @@ describe('Fetch → Edit → Publish Integration', () => {
       fileReferenceService,
       refCleanerService,
       schemaHelperService,
+      mockAssetIndexService,
+      realConnectorsService,
+      credentialEncryptionService,
     );
 
     publishRunService = new PublishPlanRunService(

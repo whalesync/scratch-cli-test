@@ -46,6 +46,32 @@ export class RefCleanerService {
     return result;
   }
 
+  /**
+   * Strip all `@asset/` pseudo-refs from content. Schema-agnostic: walks all string values
+   * recursively. Arrays have matching elements filtered out; scalar strings are set to null.
+   */
+  stripAssetPseudoRefs(content: ParsedContent): ParsedContent {
+    if (!content) return content;
+    return this.walkAndStripAssetRefs(structuredClone(content)) as ParsedContent;
+  }
+
+  private walkAndStripAssetRefs(value: unknown): unknown {
+    if (typeof value === 'string') {
+      return value.startsWith('@asset/') ? null : value;
+    }
+    if (Array.isArray(value)) {
+      return value.filter((item) => !(typeof item === 'string' && item.startsWith('@asset/')));
+    }
+    if (typeof value === 'object' && value !== null) {
+      const result: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(value)) {
+        result[key] = this.walkAndStripAssetRefs(val);
+      }
+      return result;
+    }
+    return value;
+  }
+
   private fkPathsCache = new Map<string, Array<{ path: string[]; targetRemoteTableId: string; map?: string }>>();
 
   /**

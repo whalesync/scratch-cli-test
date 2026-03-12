@@ -14,6 +14,7 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { SchemaHelperService } from 'server/src/publish-plan/schema-helper.service';
+import { AssetIndexService } from 'src/asset/asset-index.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -238,7 +239,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       credentialEncryptionService,
     );
     refCleanerService = new RefCleanerService();
-    publishRefResolverService = new RefResolverService(fileIndexService);
+    publishRefResolverService = new RefResolverService(fileIndexService, dbService);
     fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Instantiate SyncService (real, with mocked deps) ----
@@ -264,6 +265,9 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       fileReferenceService,
       refCleanerService,
       publishSchemaService,
+      {} as AssetIndexService,
+      connectorsService,
+      credentialEncryptionService,
     );
 
     publishRunService = new PublishPlanRunService(
@@ -891,7 +895,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       credentialEncryptionService,
     );
     refCleanerService = new RefCleanerService();
-    publishRefResolverService = new RefResolverService(fileIndexService);
+    publishRefResolverService = new RefResolverService(fileIndexService, dbService);
     fileReferenceService = new FileReferenceService(dbService, refCleanerService, publishSchemaService);
 
     // ---- Instantiate SyncService ----
@@ -917,6 +921,9 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       fileReferenceService,
       refCleanerService,
       publishSchemaService,
+      {} as AssetIndexService,
+      connectorsService,
+      credentialEncryptionService,
     );
 
     publishRunService = new PublishPlanRunService(

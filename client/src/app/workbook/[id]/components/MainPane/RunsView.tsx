@@ -632,6 +632,7 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
             <Table.Th>ID</Table.Th>
             <Table.Th>Connection</Table.Th>
             <Table.Th>Phase</Table.Th>
+            <Table.Th>Assets</Table.Th>
             <Table.Th>Edits</Table.Th>
             <Table.Th>Creates</Table.Th>
             <Table.Th>Deletes</Table.Th>
@@ -690,7 +691,7 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
                 {p.status}
               </Badge>
             </Table.Td>
-            {(['edits', 'creates', 'deletes', 'backfills', 'renameFiles'] as const).map((phaseKey) => {
+            {(['assetUploads', 'edits', 'creates', 'deletes', 'backfills', 'renameFiles'] as const).map((phaseKey) => {
               const executedKey = `${phaseKey}Executed` as keyof Record<string, number>;
               const plannedKey = `${phaseKey}Planned` as keyof Record<string, number>;
               const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;

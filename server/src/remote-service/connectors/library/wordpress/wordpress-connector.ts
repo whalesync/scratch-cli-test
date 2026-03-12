@@ -32,6 +32,7 @@ import {
 export class WordPressConnector extends Connector<typeof Service.WORDPRESS, WordPressDownloadProgress> {
   readonly service = Service.WORDPRESS;
   static readonly displayName = 'WordPress';
+  override supportsFileUpload = true;
 
   private client: WordPressHttpClient;
   private readonly turndownService: TurndownService = new TurndownService({

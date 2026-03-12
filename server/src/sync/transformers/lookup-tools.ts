@@ -1,4 +1,11 @@
-import { createScratchPendingPublishId, DataFolderId, Service, SyncId, WorkbookId } from '@spinner/shared-types';
+import {
+  createAssetId,
+  createScratchPendingPublishId,
+  DataFolderId,
+  Service,
+  SyncId,
+  WorkbookId,
+} from '@spinner/shared-types';
 import get from 'lodash/get';
 import { DbService } from 'src/db/db.service';
 import { AssetMappingResult, FkMappingResult, LookupTools } from './transformer.types';
@@ -125,6 +132,7 @@ export function createLookupTools(
         },
         update: {}, // no-op if already exists
         create: {
+          id: createAssetId(),
           workbookId,
           service: destinationService,
           dataFolderId: destinationDataFolderId,
@@ -140,13 +148,13 @@ export function createLookupTools(
           rehostedUrl: sourceAsset.rehostedUrl,
           rehostedAt: sourceAsset.rehostedAt,
         },
-        select: { remoteAssetId: true },
+        select: { id: true, remoteAssetId: true },
       });
 
       // If the returned remoteAssetId matches our tempId, the create path was taken;
       // otherwise the existing record was returned (update no-op path).
       const isNew = destAsset.remoteAssetId === tempId;
-      return { destinationAssetRemoteId: destAsset.remoteAssetId, isNew };
+      return { destinationAssetId: destAsset.id, destinationAssetRemoteId: destAsset.remoteAssetId, isNew };
     },
   };
 }

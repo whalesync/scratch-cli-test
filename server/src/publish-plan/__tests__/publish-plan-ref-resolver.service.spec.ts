@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { DbService } from '../../db/db.service';
 import { FileIndexService } from '../file-index.service';
 import { RefResolverService } from '../ref-resolver.service';
 
@@ -12,12 +13,24 @@ describe('PublishRefResolverService', () => {
       getRecordIds: jest.fn(),
     } as unknown as jest.Mocked<FileIndexService>;
 
+    const dbService = {
+      client: {
+        asset: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+      },
+    } as unknown as jest.Mocked<DbService>;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RefResolverService,
         {
           provide: FileIndexService,
           useValue: fileIndexService,
+        },
+        {
+          provide: DbService,
+          useValue: dbService,
         },
       ],
     }).compile();

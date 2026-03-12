@@ -14,6 +14,8 @@ export type PublishPublicProgress = {
   status: 'planning' | 'running' | 'completed' | 'failed';
   step?: string;
   currentPhase?: string;
+  assetUploadsExecuted: number;
+  assetUploadsPlanned: number;
   editsExecuted: number;
   createsExecuted: number;
   deletesExecuted: number;
@@ -88,6 +90,8 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     );
 
     const zeroCounts = {
+      assetUploadsExecuted: 0,
+      assetUploadsPlanned: 0,
       editsExecuted: 0,
       createsExecuted: 0,
       deletesExecuted: 0,
@@ -102,6 +106,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     };
 
     const onPlanProgress = async (counts: {
+      assetUploadsPlanned: number;
       editsPlanned: number;
       createsPlanned: number;
       deletesPlanned: number;
@@ -114,6 +119,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           status: 'planning',
           step: counts.step,
           ...zeroCounts,
+          assetUploadsPlanned: counts.assetUploadsPlanned,
           editsPlanned: counts.editsPlanned,
           createsPlanned: counts.createsPlanned,
           deletesPlanned: counts.deletesPlanned,
@@ -128,6 +134,8 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     let latestErrorInfo: { lastSyncError?: string; errorCount: number } = { errorCount: 0 };
 
     const onRunProgress = async (counts: {
+      assetUploadsExecuted: number;
+      assetUploadsPlanned: number;
       editsExecuted: number;
       createsExecuted: number;
       deletesExecuted: number;
@@ -180,6 +188,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       }
 
       const plannedTotals = {
+        assetUploadsPlanned: await getPhaseCount(pipelineId, 'asset-upload'),
         editsPlanned: await getPhaseCount(pipelineId, 'edit'),
         createsPlanned: await getPhaseCount(pipelineId, 'create'),
         deletesPlanned: await getPhaseCount(pipelineId, 'delete'),
@@ -192,6 +201,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         await checkpoint({
           publicProgress: {
             status: 'completed',
+            assetUploadsExecuted: 0,
             editsExecuted: 0,
             createsExecuted: 0,
             deletesExecuted: 0,
@@ -230,6 +240,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         publicProgress: {
           status: 'running',
           currentPhase: 'starting',
+          assetUploadsExecuted: await getSuccessCount('asset-upload'),
           editsExecuted: await getSuccessCount('edit'),
           createsExecuted: await getSuccessCount('create'),
           deletesExecuted: await getSuccessCount('delete'),
@@ -255,6 +266,8 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         publicProgress: {
           status: 'completed',
           currentPhase: 'done',
+          assetUploadsExecuted: runResult.successByPhase?.['asset-upload'] ?? 0,
+          assetUploadsPlanned: runResult.totalByPhase?.['asset-upload'] ?? 0,
           editsExecuted: runResult.successByPhase?.edit ?? 0,
           createsExecuted: runResult.successByPhase?.create ?? 0,
           deletesExecuted: runResult.successByPhase?.delete ?? 0,

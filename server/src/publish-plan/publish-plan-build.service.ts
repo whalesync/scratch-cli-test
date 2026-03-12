@@ -1,13 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { FileDiffStatus, isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
+import { FileDiffStatus, isScratchPendingPublishId, Service, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
+import { AssetIndexService } from 'src/asset/asset-index.service';
 import { ParsedContent, Schema } from 'src/utils/objects';
+import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
+import { Connector } from '../remote-service/connectors/connector';
+import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { EncryptedData } from '../utils/encryption';
 import { computeChangedFields } from './diff-utils';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
@@ -25,6 +30,9 @@ export class PublishPlanBuildService {
     private readonly fileReferenceService: FileReferenceService,
     private readonly refCleanerService: RefCleanerService,
     private readonly schemaService: SchemaHelperService,
+    private readonly assetIndexService: AssetIndexService,
+    private readonly connectorsService: ConnectorsService,
+    private readonly credentialEncryptionService: CredentialEncryptionService,
   ) {}
 
   /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
@@ -126,6 +134,7 @@ export class PublishPlanBuildService {
     folderPath?: string,
     filePath?: string,
     onProgress?: (counts: {
+      assetUploadsPlanned: number;
       editsPlanned: number;
       createsPlanned: number;
       deletesPlanned: number;
@@ -161,6 +170,7 @@ export class PublishPlanBuildService {
     // This mirrors what the pull job does at the start of each pull.
     if (connectorAccountId) {
       await onProgress?.({
+        assetUploadsPlanned: 0,
         editsPlanned: 0,
         createsPlanned: 0,
         deletesPlanned: 0,
@@ -173,6 +183,7 @@ export class PublishPlanBuildService {
 
     // Running counts — updated as each entry is planned and passed to onProgress
     const liveCounts = {
+      assetUploadsPlanned: 0,
       editsPlanned: 0,
       createsPlanned: 0,
       deletesPlanned: 0,
@@ -280,14 +291,7 @@ export class PublishPlanBuildService {
       filesReferringToDeletedFiles.add(ref.sourceFilePath);
     }
 
-    // --- Phase 1: [edit] ---
-    // Process Union of Modified Files and Ref-Clearing Candidate Files
-    const filesToProcessInEditPhase = new Set(modifiedFiles.map((f) => f.path));
-    for (const p of filesReferringToDeletedFiles) filesToProcessInEditPhase.add(p);
-
-    let editCount = 0;
-    const editPhaseTotal = filesToProcessInEditPhase.size;
-    let editPhaseProcessed = 0;
+    // --- Shared operation buffer ---
     const planOperations: Array<{
       filePath: string;
       phase: PublishPlanPhase;
@@ -314,6 +318,54 @@ export class PublishPlanBuildService {
       });
       planOperations.length = 0;
     };
+
+    // --- Phase 0: [asset-upload] ---
+    // Create asset-upload operations for destination assets that need uploading
+    if (connectorAccountId) {
+      await reportProgress('Checking for assets to upload');
+      const connector = await this.resolveConnector(connectorAccountId);
+      if (connector.supportsFileUpload) {
+        const destFolders = await this.db.client.dataFolder.findMany({
+          where: { workbookId: wkbId, connectorAccountId },
+          select: { id: true, tableId: true },
+        });
+        const destFolderIds = destFolders.map((df) => df.id);
+        if (destFolderIds.length > 0) {
+          const unuploadedAssets = await this.assetIndexService.findUnuploadedDestinationAssets(
+            workbookId,
+            destFolderIds,
+          );
+          for (const asset of unuploadedAssets) {
+            planOperations.push({
+              filePath: asset.filename ?? asset.remoteAssetId,
+              phase: 'asset-upload',
+              content: {
+                assetId: asset.id,
+                rehostedUrl: asset.rehostedUrl,
+                filename: asset.filename,
+                mimeType: asset.mimeType,
+              } as ParsedContent,
+              dataFolderId: asset.dataFolderId,
+              status: 'pending',
+            });
+            liveCounts.assetUploadsPlanned++;
+          }
+          if (unuploadedAssets.length > 0) {
+            await reportProgress(`Found ${unuploadedAssets.length} assets to upload`);
+            await savePlanOperations();
+          }
+        }
+      }
+    }
+
+    // --- Phase 1: [edit] ---
+    // Process Union of Modified Files and Ref-Clearing Candidate Files
+    const filesToProcessInEditPhase = new Set(modifiedFiles.map((f) => f.path));
+    for (const p of filesReferringToDeletedFiles) filesToProcessInEditPhase.add(p);
+
+    let editCount = 0;
+    const editPhaseTotal = filesToProcessInEditPhase.size;
+    let editPhaseProcessed = 0;
 
     for (const editBatch of chunk(Array.from(filesToProcessInEditPhase), 100)) {
       // Bulk fetch from dirty; fall back to main for any missing paths
@@ -373,7 +425,7 @@ export class PublishPlanBuildService {
           const schema = info?.spec?.schema as Schema;
           const dataFolderId = info?.id;
 
-          // --- TWO PASS STRIPPING ---
+          // --- THREE PASS STRIPPING ---
 
           // Pass 1: Strip references to DELETED records.
           const pass1ContentObj = this.refCleanerService.stripDeletedRecordRefs(contentObj, schema, deletedRecordIds);
@@ -383,24 +435,29 @@ export class PublishPlanBuildService {
           const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
           const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
 
+          // Pass 3: Strip @asset/ pseudo-refs (schema-agnostic).
+          const pass3ContentObj = this.refCleanerService.stripAssetPseudoRefs(pass2ContentObj);
+          const pass3ContentStr = JSON.stringify(pass3ContentObj, null, 2);
+
           // Determine Edit Operation
           const originalContentStr = JSON.stringify(contentObj, null, 2);
           const isUserModified = modifiedFiles.some((m) => m.path === filePath);
           const isRefCleared = pass1ContentStr !== originalContentStr;
           const isPseudoStripped = pass2ContentStr !== pass1ContentStr;
+          const isAssetStripped = pass3ContentStr !== pass2ContentStr;
 
-          if (isUserModified || isRefCleared || isPseudoStripped) {
+          if (isUserModified || isRefCleared || isPseudoStripped || isAssetStripped) {
             // Compute changedFields by diffing main vs dirty (after stripping)
             const mainRaw = mainMap.get(filePath);
             const mainObj = mainRaw ? (JSON.parse(mainRaw) as Record<string, unknown>) : null;
             const changed = mainObj
-              ? computeChangedFields(mainObj, pass2ContentObj as Record<string, unknown>)
-              : (pass2ContentObj as Record<string, unknown>);
+              ? computeChangedFields(mainObj, pass3ContentObj as Record<string, unknown>)
+              : (pass3ContentObj as Record<string, unknown>);
 
             planOperations.push({
               filePath,
               phase: 'edit',
-              content: pass2ContentObj,
+              content: pass3ContentObj,
               changedFields: changed,
               dataFolderId: dataFolderId || null,
               status: 'pending',
@@ -408,11 +465,11 @@ export class PublishPlanBuildService {
             editCount++;
             liveCounts.editsPlanned++;
 
-            // Backfill Logic
-            if (pass2ContentStr !== pass1ContentStr) {
-              // changedFields for backfill: diff between pseudo-stripped (pass2) and pre-pseudo (pass1)
+            // Backfill Logic — backfill if pseudo-refs or asset-refs were stripped
+            if (pass3ContentStr !== pass1ContentStr) {
+              // changedFields for backfill: diff between fully-stripped (pass3) and pre-pseudo (pass1)
               const backfillChanged = computeChangedFields(
-                pass2ContentObj as Record<string, unknown>,
+                pass3ContentObj as Record<string, unknown>,
                 pass1ContentObj as Record<string, unknown>,
               );
 
@@ -496,12 +553,15 @@ export class PublishPlanBuildService {
 
           // Pass 2: Strip Pseudo
           const pass2ContentObj = this.refCleanerService.stripPseudoRefs(pass1ContentObj, schema);
-          const pass2ContentStr = JSON.stringify(pass2ContentObj, null, 2);
+
+          // Pass 3: Strip @asset/ pseudo-refs
+          const pass3ContentObj = this.refCleanerService.stripAssetPseudoRefs(pass2ContentObj);
+          const pass3ContentStr = JSON.stringify(pass3ContentObj, null, 2);
 
           planOperations.push({
             filePath: add.path,
             phase: 'create',
-            content: pass2ContentObj,
+            content: pass3ContentObj,
             dataFolderId: dataFolderId || null,
             status: 'pending',
           });
@@ -519,7 +579,7 @@ export class PublishPlanBuildService {
             liveCounts.renameFilesPlanned++;
           }
 
-          if (pass2ContentStr !== pass1ContentStr) {
+          if (pass3ContentStr !== pass1ContentStr) {
             planOperations.push({
               filePath: add.path,
               phase: 'backfill',
@@ -584,5 +644,24 @@ export class PublishPlanBuildService {
       createdAt: new Date(),
       status: PublishPlanStatus.Planned,
     };
+  }
+
+  private async resolveConnector(connectorAccountId: string): Promise<Connector<Service, any>> {
+    const account = await this.db.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId },
+    });
+    if (!account) {
+      throw new Error(`ConnectorAccount not found: ${connectorAccountId}`);
+    }
+
+    const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
+      account.encryptedCredentials as EncryptedData,
+    );
+
+    return this.connectorsService.getConnector({
+      service: account.service as Service,
+      connectorAccount: account,
+      decryptedCredentials,
+    });
   }
 }

@@ -38,6 +38,7 @@ const WEBFLOW_RETRY_OPTS: WithRetryOpts = {
 export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   readonly service = Service.WEBFLOW;
   static readonly displayName = 'Webflow';
+  override supportsFileUpload = true;
 
   private readonly client: WebflowClient;
   private readonly schemaParser = new WebflowSchemaParser();

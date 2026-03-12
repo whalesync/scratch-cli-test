@@ -33,6 +33,7 @@ export enum IdPrefixes {
   RUN = 'run_', // Run
   WORKSPACE_PERMISSION = 'wpe_', // Workspace permission
   WORKSPACE_INVITE = 'win_', // Workspace invite
+  ASSET = 'ast_', // Asset
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -275,4 +276,15 @@ export function isWorkspaceInviteId(id: unknown): id is WorkspaceInviteId {
 
 export function createWorkspaceInviteId(): WorkspaceInviteId {
   return createId(IdPrefixes.WORKSPACE_INVITE) as WorkspaceInviteId;
+}
+
+// ------- Asset -------
+export type AssetId = PrefixedId<IdPrefixes.ASSET>;
+
+export function isAssetId(id: unknown): id is AssetId {
+  return isId(id, IdPrefixes.ASSET);
+}
+
+export function createAssetId(): AssetId {
+  return createId(IdPrefixes.ASSET) as AssetId;
 }

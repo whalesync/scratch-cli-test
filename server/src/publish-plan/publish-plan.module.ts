@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AssetModule } from '../asset/asset.module';
 import { CredentialEncryptionModule } from '../credential-encryption/credential-encryption.module';
 import { DbModule } from '../db/db.module';
 import { ConnectorsModule } from '../remote-service/connectors/connectors.module';
@@ -16,7 +17,14 @@ import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
 
 @Module({
-  imports: [DbModule, ScratchGitModule, WorkerEnqueuerModule, ConnectorsModule, CredentialEncryptionModule],
+  imports: [
+    DbModule,
+    ScratchGitModule,
+    WorkerEnqueuerModule,
+    ConnectorsModule,
+    CredentialEncryptionModule,
+    AssetModule,
+  ],
   controllers: [PublishPlanController],
   providers: [
     FileIndexService,

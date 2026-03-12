@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { isScratchPendingPublishId, Service, WorkbookId } from '@spinner/shared-types';
+import axios from 'axios';
 import { WSLogger } from 'src/logger';
 import { ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
@@ -43,6 +44,8 @@ export class PublishPlanRunService {
     executeSinglePhase?: boolean,
     abortSignal?: AbortSignal,
     onProgress?: (counts: {
+      assetUploadsExecuted: number;
+      assetUploadsPlanned: number;
       editsExecuted: number;
       createsExecuted: number;
       deletesExecuted: number;
@@ -77,7 +80,7 @@ export class PublishPlanRunService {
     const dataFolderSpecCache = new Map<string, BaseJsonTableSpec | null>();
 
     try {
-      const allPhases = ['edit', 'create', 'delete', 'backfill', 'rename-files'] as const;
+      const allPhases = ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const;
 
       // Determine starting index based on status.
       // *-running means the phase was interrupted — restart it from the beginning (pending entries only).
@@ -85,23 +88,26 @@ export class PublishPlanRunService {
       const startIndex: number = (() => {
         switch (plan.status as PublishPlanStatus) {
           case PublishPlanStatus.Planned:
-          case PublishPlanStatus.EditsRunning:
+          case PublishPlanStatus.AssetUploadRunning:
             return 0;
+          case PublishPlanStatus.AssetUploadCompleted:
+          case PublishPlanStatus.EditsRunning:
+            return 1;
           case PublishPlanStatus.EditsCompleted:
           case PublishPlanStatus.CreatesRunning:
-            return 1;
+            return 2;
           case PublishPlanStatus.CreatesCompleted:
           case PublishPlanStatus.DeletesRunning:
-            return 2;
+            return 3;
           case PublishPlanStatus.DeletesCompleted:
           case PublishPlanStatus.BackfillRunning:
-            return 3;
+            return 4;
           case PublishPlanStatus.BackfillCompleted:
           case PublishPlanStatus.RenameFilesRunning:
-            return 4;
+            return 5;
           case PublishPlanStatus.Completed:
           case PublishPlanStatus.CompletedWithErrors:
-            return 5; // nothing left to run
+            return 6; // nothing left to run
           default:
             throw new Error(`Cannot run pipeline in status: ${plan.status}`);
         }
@@ -116,16 +122,23 @@ export class PublishPlanRunService {
       let cumulativeErrorCount = 0;
 
       // Pre-count total entries per phase across all statuses (for stable progress denominator)
-      const totalByPhase = { edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
-      for (const p of ['edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
+      const totalByPhase = { 'asset-upload': 0, edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
+      for (const p of ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
         const count = await this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase: p },
         });
         totalByPhase[p] = count;
       }
       // Seed completed counts from DB so previously-executed phases don't drop to 0 on resume
-      const completedByPhase = { edit: 0, create: 0, delete: 0, backfill: 0, 'rename-files': 0 };
-      for (const p of ['edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
+      const completedByPhase = {
+        'asset-upload': 0,
+        edit: 0,
+        create: 0,
+        delete: 0,
+        backfill: 0,
+        'rename-files': 0,
+      };
+      for (const p of ['asset-upload', 'edit', 'create', 'delete', 'backfill', 'rename-files'] as const) {
         completedByPhase[p] = await this.db.client.publishPlanOperation.count({
           where: { planId: pipelineId, phase: p, status: 'success' },
         });
@@ -133,6 +146,8 @@ export class PublishPlanRunService {
 
       const reportRunProgress = async (currentPhase: string) => {
         await onProgress?.({
+          assetUploadsExecuted: completedByPhase['asset-upload'],
+          assetUploadsPlanned: totalByPhase['asset-upload'],
           editsExecuted: completedByPhase.edit,
           createsExecuted: completedByPhase.create,
           deletesExecuted: completedByPhase.delete,
@@ -151,8 +166,9 @@ export class PublishPlanRunService {
         // Check for cancellation before starting each phase
         abortSignal?.throwIfAborted();
 
-        // Set status to {phase}s-running (e.g. "edits-running", "creates-running", "rename-files-running")
-        const phasePrefix = currentPhase === 'rename-files' ? 'rename-files' : currentPhase + 's';
+        // Set status to {phase}-running
+        const phasePrefix =
+          currentPhase === 'rename-files' || currentPhase === 'asset-upload' ? currentPhase : currentPhase + 's';
         await this.db.client.publishPlan.update({
           where: { id: pipelineId },
           data: { status: `${phasePrefix}-running` },
@@ -170,91 +186,115 @@ export class PublishPlanRunService {
           data: { pipelineId },
         });
 
-        // Fetch distinct tables (by dataFolderId) that have pending entries
-        const distinctFolders = await this.db.client.publishPlanOperation.findMany({
-          where: { planId: pipelineId, phase: currentPhase, status: 'pending' },
-          select: { dataFolderId: true },
-          distinct: ['dataFolderId'],
-        });
-
-        WSLogger.info({
-          source: 'PublishRunService.runPipeline',
-          message: `Found ${distinctFolders.length} distinct folders/tables to process in ${currentPhase} phase`,
-          workbookId: plan.workbookId,
-          data: { pipelineId, folders: distinctFolders.map((t) => t.dataFolderId) },
-        });
-
-        for (const { dataFolderId } of distinctFolders) {
-          if (!dataFolderId) continue;
-
-          // Check for cancellation between folders
-          abortSignal?.throwIfAborted();
-
-          // Fetch all entries for this table
-          const entries = await this.db.client.publishPlanOperation.findMany({
-            where: {
-              planId: pipelineId,
-              phase: currentPhase,
-              status: 'pending',
-              dataFolderId,
-            },
-            orderBy: { id: 'asc' }, // Ensure deterministic order
-          });
-
-          if (entries.length === 0) continue;
-
-          // Resolve table spec
-          const tableSpec = await this.schemaService.getTableSpecById(dataFolderId, dataFolderSpecCache);
-          if (!tableSpec) {
-            WSLogger.warn({
-              source: 'PublishRunService.runPipeline',
-              message: `Could not find spec for dataFolderId: ${dataFolderId}`,
-              workbookId: plan.workbookId,
-            });
-            // Mark entries as failed?
-            continue;
-          }
-
-          // Determine batch size (rename-files only renames paths, so we can use large batches)
-          const batchSize =
-            currentPhase === 'rename-files'
-              ? 1000
-              : connector.getBatchSize(
-                  currentPhase === 'delete' ? 'delete' : currentPhase === 'create' ? 'create' : 'update',
-                );
-
-          WSLogger.info({
-            source: 'PublishRunService.runPipeline',
-            message: `Processing table for folder ${dataFolderId} (${entries.length} entries)`,
-            workbookId: plan.workbookId,
-            data: { pipelineId, tableSpecName: tableSpec.name, batchSize },
-          });
-
-          // Chunk entries
-          for (let i = 0; i < entries.length; i += batchSize) {
-            // Check for cancellation between batches
+        // Asset-upload phase: process entries sequentially (batch size 1), no tableSpec needed
+        if (currentPhase === 'asset-upload') {
+          for (const entry of entries) {
             abortSignal?.throwIfAborted();
-
-            const batch = entries.slice(i, i + batchSize);
             const batchHadError = await this.processBatch(
               currentPhase,
-              batch as PublishOperation[],
+              [entry as PublishOperation],
               connector,
-              tableSpec,
+              null as unknown as BaseJsonTableSpec, // TODO: Make tableSpec optional instead
               plan.workbookId,
               plan.id,
               repoId,
             );
             if (batchHadError) {
-              cumulativeErrorCount += batch.length;
+              cumulativeErrorCount += 1;
               onError?.({
-                lastSyncError: `Batch failed in ${currentPhase} phase (${batch.length} entries)`,
+                lastSyncError: `Asset upload failed for ${entry.filePath}`,
                 errorCount: cumulativeErrorCount,
               });
             }
             (completedByPhase as Record<string, number>)[currentPhase] =
-              ((completedByPhase as Record<string, number>)[currentPhase] ?? 0) + batch.length;
+              ((completedByPhase as Record<string, number>)[currentPhase] ?? 0) + 1;
             await reportRunProgress(currentPhase);
+          }
+        } else {
+          // Standard phase processing: group by dataFolderId, resolve tableSpec
+          const distinctFolders = await this.db.client.publishPlanOperation.findMany({
+            where: { planId: pipelineId, phase: currentPhase, status: 'pending' },
+            select: { dataFolderId: true },
+            distinct: ['dataFolderId'],
+          });
+
+          WSLogger.info({
+            source: 'PublishRunService.runPipeline',
+            message: `Found ${distinctFolders.length} distinct folders/tables to process in ${currentPhase} phase`,
+            workbookId: plan.workbookId,
+            data: { pipelineId, folders: distinctFolders.map((t) => t.dataFolderId) },
+          });
+
+          for (const { dataFolderId } of distinctFolders) {
+            if (!dataFolderId) continue;
+
+            // Check for cancellation between folders
+            abortSignal?.throwIfAborted();
+
+            // Fetch all entries for this table
+            const folderEntries = await this.db.client.publishPlanOperation.findMany({
+              where: {
+                planId: pipelineId,
+                phase: currentPhase,
+                status: 'pending',
+                dataFolderId,
+              },
+              orderBy: { id: 'asc' },
+            });
+
+            if (folderEntries.length === 0) continue;
+
+            // Resolve table spec
+            const tableSpec = await this.schemaService.getTableSpecById(dataFolderId, dataFolderSpecCache);
+            if (!tableSpec) {
+              WSLogger.warn({
+                source: 'PublishRunService.runPipeline',
+                message: `Could not find spec for dataFolderId: ${dataFolderId}`,
+                workbookId: plan.workbookId,
+              });
+              continue;
+            }
+
+            // Determine batch size
+            const batchSize =
+              currentPhase === 'rename-files'
+                ? 1000
+                : connector.getBatchSize(
+                    currentPhase === 'delete' ? 'delete' : currentPhase === 'create' ? 'create' : 'update',
+                  );
+
+            WSLogger.info({
+              source: 'PublishRunService.runPipeline',
+              message: `Processing table for folder ${dataFolderId} (${folderEntries.length} entries)`,
+              workbookId: plan.workbookId,
+              data: { pipelineId, tableSpecName: tableSpec.name, batchSize },
+            });
+
+            // Chunk entries
+            for (let i = 0; i < folderEntries.length; i += batchSize) {
+              abortSignal?.throwIfAborted();
+
+              const batch = folderEntries.slice(i, i + batchSize);
+              const batchHadError = await this.processBatch(
+                currentPhase,
+                batch as PublishOperation[],
+                connector,
+                tableSpec,
+                plan.workbookId,
+                plan.id,
+                repoId,
+              );
+              if (batchHadError) {
+                cumulativeErrorCount += batch.length;
+                onError?.({
+                  lastSyncError: `Batch failed in ${currentPhase} phase (${batch.length} entries)`,
+                  errorCount: cumulativeErrorCount,
+                });
+              }
+              (completedByPhase as Record<string, number>)[currentPhase] =
+                ((completedByPhase as Record<string, number>)[currentPhase] ?? 0) + batch.length;
+              await reportRunProgress(currentPhase);
+            }
           }
         }
 
@@ -471,6 +511,9 @@ export class PublishPlanRunService {
   ): Promise<boolean> {
     try {
       switch (phase) {
+        case 'asset-upload':
+          await this.dispatchAssetUploadBatch(entries, connector);
+          break;
         case 'edit':
         case 'backfill':
           await this.dispatchUpdateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
@@ -512,6 +555,58 @@ export class PublishPlanRunService {
         },
       });
       return true;
+    }
+  }
+
+  private async dispatchAssetUploadBatch(
+    entries: PublishOperation[],
+    connector: Connector<Service, any>,
+  ): Promise<void> {
+    for (const entry of entries) {
+      const content = entry.content as Record<string, unknown> | null;
+      if (!content) continue;
+
+      const assetId = content.assetId as string;
+      const rehostedUrl = content.rehostedUrl as string;
+      const filename = (content.filename as string) || 'file';
+      const mimeType = (content.mimeType as string) || 'application/octet-stream';
+
+      // Download file from rehosted URL
+      const response = await axios.get(rehostedUrl, {
+        responseType: 'arraybuffer',
+        timeout: 120_000,
+      });
+      const buffer = Buffer.from(response.data as ArrayBuffer);
+
+      // Build connector-specific metadata
+      let metadata: Record<string, unknown> | undefined;
+      if (entry.dataFolderId) {
+        const dataFolder = await this.db.client.dataFolder.findUnique({
+          where: { id: entry.dataFolderId },
+          select: { tableId: true },
+        });
+        if (dataFolder?.tableId) {
+          metadata = { siteId: dataFolder.tableId[0] };
+        }
+      }
+
+      // Upload to remote service
+      const result = await connector.uploadFile(buffer, filename, mimeType, metadata);
+
+      // Update the Asset record with the real remote ID and upload timestamp
+      await this.db.client.asset.update({
+        where: { id: assetId },
+        data: {
+          remoteAssetId: result.remoteAssetId,
+          url: result.url,
+          filename: result.filename || filename,
+          mimeType: result.mimeType || mimeType,
+          size: result.size,
+          width: result.width,
+          height: result.height,
+          uploadedAt: new Date(),
+        },
+      });
     }
   }
 

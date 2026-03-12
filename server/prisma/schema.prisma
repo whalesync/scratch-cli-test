@@ -710,7 +710,7 @@ model Schedule {
 /// Tracks file/media assets extracted from record files during pull.
 /// Each row represents a unique asset within a workbook.
 model Asset {
-  id        String   @id @default(cuid())
+  id        String   @id
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -735,6 +735,7 @@ model Asset {
   lastSeenAt   DateTime? // Updated each pull; stale = deleted upstream
   rehostedUrl  String? // Permanent GCS URL
   rehostedAt   DateTime? // When rehosted
+  uploadedAt   DateTime? // When uploaded to destination connector
 
   /// Points to the source Asset this was created from during sync (null for pulled assets)
   sourceAsset   Asset?  @relation("AssetSyncLink", fields: [sourceAssetId], references: [id], onDelete: SetNull)

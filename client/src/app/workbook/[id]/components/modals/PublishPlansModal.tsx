@@ -37,6 +37,7 @@ import {
   RepeatIcon,
   RocketIcon,
   Trash2Icon,
+  UploadIcon,
   XIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -306,6 +307,12 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
                   <Table.Th>Phase</Table.Th>
                   <Table.Th>
                     <Group gap={4} wrap="nowrap">
+                      <UploadIcon size={12} />
+                      Uploads
+                    </Group>
+                  </Table.Th>
+                  <Table.Th>
+                    <Group gap={4} wrap="nowrap">
                       <FilePenLineIcon size={12} />
                       Edits
                     </Group>
@@ -447,40 +454,44 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
                             {p.status}
                           </Badge>
                         </Table.Td>
-                        {(['edits', 'creates', 'deletes', 'backfills', 'renameFiles'] as const).map((phaseKey) => {
-                          const executedKey = `${phaseKey}Executed` as
-                            | 'editsExecuted'
-                            | 'createsExecuted'
-                            | 'deletesExecuted'
-                            | 'backfillsExecuted'
-                            | 'renameFilesExecuted';
-                          const plannedKey = `${phaseKey}Planned` as
-                            | 'editsPlanned'
-                            | 'createsPlanned'
-                            | 'deletesPlanned'
-                            | 'backfillsPlanned'
-                            | 'renameFilesPlanned';
-                          const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;
-                          const completed = pub?.publicProgress?.[executedKey] ?? 0;
-                          const total = pub?.publicProgress?.[plannedKey] ?? 0;
-                          return (
-                            <Table.Td key={phaseKey}>
-                              {total > 0 ? (
-                                <Text size="xs" c={completed < total ? 'blue' : completed > 0 ? 'green' : undefined}>
-                                  {formatCount(completed)}/{formatCount(total)}
-                                </Text>
-                              ) : completed > 0 ? (
-                                <Text size="xs" c="green">
-                                  {formatCount(completed)}
-                                </Text>
-                              ) : (
-                                <Text size="xs" c="dimmed">
-                                  —
-                                </Text>
-                              )}
-                            </Table.Td>
-                          );
-                        })}
+                        {(['assetUploads', 'edits', 'creates', 'deletes', 'backfills', 'renameFiles'] as const).map(
+                          (phaseKey) => {
+                            const executedKey = `${phaseKey}Executed` as
+                              | 'assetUploadsExecuted'
+                              | 'editsExecuted'
+                              | 'createsExecuted'
+                              | 'deletesExecuted'
+                              | 'backfillsExecuted'
+                              | 'renameFilesExecuted';
+                            const plannedKey = `${phaseKey}Planned` as
+                              | 'assetUploadsPlanned'
+                              | 'editsPlanned'
+                              | 'createsPlanned'
+                              | 'deletesPlanned'
+                              | 'backfillsPlanned'
+                              | 'renameFilesPlanned';
+                            const pub = p.job?.progress as { publicProgress?: Record<string, number> } | undefined;
+                            const completed = pub?.publicProgress?.[executedKey] ?? 0;
+                            const total = pub?.publicProgress?.[plannedKey] ?? 0;
+                            return (
+                              <Table.Td key={phaseKey}>
+                                {total > 0 ? (
+                                  <Text size="xs" c={completed < total ? 'blue' : completed > 0 ? 'green' : undefined}>
+                                    {formatCount(completed)}/{formatCount(total)}
+                                  </Text>
+                                ) : completed > 0 ? (
+                                  <Text size="xs" c="green">
+                                    {formatCount(completed)}
+                                  </Text>
+                                ) : (
+                                  <Text size="xs" c="dimmed">
+                                    —
+                                  </Text>
+                                )}
+                              </Table.Td>
+                            );
+                          },
+                        )}
                         <Table.Td>
                           <Tooltip label={dayjs(p.createdAt).format('MMMM D, YYYY h:mm A')} withArrow>
                             <Text size="xs" style={{ cursor: 'help' }}>

@@ -107,11 +107,11 @@ export const sourceAssetToDestAssetTransformer: FieldTransformer = {
         throw err;
       }
 
-      // Use @asset/ pseudo-reference for new assets or assets with pending publish IDs,
-      // otherwise use the raw destination remote asset ID.
+      // Use @asset/ pseudo-reference (keyed by Asset DB id) for new assets or assets with
+      // pending publish IDs, otherwise use the raw destination remote asset ID.
       const ref =
         mapping.isNew || isScratchPendingPublishId(mapping.destinationAssetRemoteId)
-          ? `@asset/${mapping.destinationAssetRemoteId}`
+          ? `@asset/${mapping.destinationAssetId}`
           : mapping.destinationAssetRemoteId;
       resolved.push(ref);
 

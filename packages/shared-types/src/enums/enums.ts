@@ -65,6 +65,8 @@ export enum TableDiscoveryMode {
 export enum PublishPlanStatus {
   Planning = 'planning',
   Planned = 'planned',
+  AssetUploadRunning = 'asset-upload-running',
+  AssetUploadCompleted = 'asset-upload-completed',
   EditsRunning = 'edits-running',
   EditsCompleted = 'edits-completed',
   CreatesRunning = 'creates-running',

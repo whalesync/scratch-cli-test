@@ -8,6 +8,7 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 export type PlanPipelinePublicProgress = {
   status: 'planning' | 'completed' | 'failed';
   step?: string;
+  assetUploadsPlanned: number;
   editsPlanned: number;
   createsPlanned: number;
   deletesPlanned: number;
@@ -66,6 +67,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
     await checkpoint({
       publicProgress: {
         status: 'planning',
+        assetUploadsPlanned: 0,
         editsPlanned: 0,
         createsPlanned: 0,
         deletesPlanned: 0,
@@ -77,6 +79,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
     });
 
     const onProgress = async (counts: {
+      assetUploadsPlanned: number;
       editsPlanned: number;
       createsPlanned: number;
       deletesPlanned: number;
@@ -88,6 +91,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
         publicProgress: {
           status: 'planning',
           step: counts.step,
+          assetUploadsPlanned: counts.assetUploadsPlanned,
           editsPlanned: counts.editsPlanned,
           createsPlanned: counts.createsPlanned,
           deletesPlanned: counts.deletesPlanned,
@@ -122,6 +126,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       await checkpoint({
         publicProgress: {
           status: 'completed',
+          assetUploadsPlanned: await getPhaseCount('asset-upload'),
           editsPlanned: await getPhaseCount('edit'),
           createsPlanned: await getPhaseCount('create'),
           deletesPlanned: await getPhaseCount('delete'),
@@ -143,6 +148,7 @@ export class PlanPipelineJobHandler implements JobHandlerBuilder<PlanPipelineJob
       await checkpoint({
         publicProgress: {
           status: 'failed',
+          assetUploadsPlanned: 0,
           editsPlanned: 0,
           createsPlanned: 0,
           deletesPlanned: 0,

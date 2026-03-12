@@ -44,6 +44,12 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
   }
 
   /**
+   * Whether this connector supports uploading files/assets to the remote service.
+   * Connectors that support `uploadFile()` should override this to `true`.
+   */
+  supportsFileUpload = false;
+
+  /**
    * Test the current state of the connection to the Datasource.
    * @throws Error if the connection is not valid.
    */

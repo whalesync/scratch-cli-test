@@ -20,13 +20,21 @@ import {
 } from '@mantine/core';
 import { PublishPlanOperationEntity, WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
-import { AlertTriangleIcon, ChevronLeftIcon, ChevronRightIcon, CodeIcon, ListIcon } from 'lucide-react';
+import {
+  AlertTriangleIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CodeIcon,
+  ExternalLinkIcon,
+  ListIcon,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RecordPlanModal } from './RecordPlanModal';
 
 type PlanOperation = PublishPlanOperationEntity;
 
 const PHASE_COLOR: Record<string, string> = {
+  'asset-upload': 'cyan',
   create: 'green',
   edit: 'blue',
   delete: 'red',
@@ -34,8 +42,14 @@ const PHASE_COLOR: Record<string, string> = {
   'rename-files': 'violet',
 };
 
+const PHASE_LABEL: Record<string, string> = {
+  'asset-upload': 'Upload',
+  'rename-files': 'Rename Files',
+};
+
 const PHASE_OPTIONS = [
   { value: '', label: 'All Phases' },
+  { value: 'asset-upload', label: 'Asset Upload' },
   { value: 'edit', label: 'Edit' },
   { value: 'create', label: 'Create' },
   { value: 'delete', label: 'Delete' },
@@ -70,7 +84,7 @@ function JsonViewerModal({ operation, onClose }: { operation: PlanOperation; onC
           <CodeIcon size={18} />
           <Title order={5}>Operation JSON</Title>
           <Badge color={PHASE_COLOR[operation.phase] ?? 'gray'} size="sm">
-            {operation.phase}
+            {PHASE_LABEL[operation.phase] ?? operation.phase}
           </Badge>
           <Text size="xs" c="dimmed" ff="monospace">
             {operation.filePath}
@@ -191,7 +205,7 @@ export function PlanEntriesModal({
               <Table stickyHeader highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th w={100} style={{ whiteSpace: 'nowrap' }}>
+                    <Table.Th w={120} style={{ whiteSpace: 'nowrap' }}>
                       Phase
                     </Table.Th>
                     <Table.Th>File</Table.Th>
@@ -214,19 +228,35 @@ export function PlanEntriesModal({
                       <Table.Tr key={operation.id}>
                         <Table.Td>
                           <Badge color={PHASE_COLOR[operation.phase] ?? 'gray'} size="sm">
-                            {operation.phase}
+                            {PHASE_LABEL[operation.phase] ?? operation.phase}
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          <Text
-                            size="xs"
-                            ff="monospace"
-                            c="blue"
-                            style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                            onClick={() => setViewingRecordPath(operation.filePath)}
-                          >
-                            {operation.filePath}
-                          </Text>
+                          {operation.phase === 'asset-upload' &&
+                          (operation.content as { rehostedUrl?: string })?.rehostedUrl ? (
+                            <Text
+                              size="xs"
+                              ff="monospace"
+                              c="blue"
+                              component="a"
+                              href={(operation.content as { rehostedUrl: string }).rehostedUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ textDecoration: 'underline' }}
+                            >
+                              {operation.filePath} <ExternalLinkIcon size={10} style={{ display: 'inline' }} />
+                            </Text>
+                          ) : (
+                            <Text
+                              size="xs"
+                              ff="monospace"
+                              c="blue"
+                              style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                              onClick={() => setViewingRecordPath(operation.filePath)}
+                            >
+                              {operation.filePath}
+                            </Text>
+                          )}
                         </Table.Td>
                         <Table.Td>
                           <Badge

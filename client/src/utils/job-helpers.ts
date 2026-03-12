@@ -39,12 +39,14 @@ export const publishPlanStatusBadgeColor = (status: PublishPlanStatus): string =
       return 'grape';
     case PublishPlanStatus.Planned:
       return 'yellow';
+    case PublishPlanStatus.AssetUploadRunning:
     case PublishPlanStatus.EditsRunning:
     case PublishPlanStatus.CreatesRunning:
     case PublishPlanStatus.DeletesRunning:
     case PublishPlanStatus.BackfillRunning:
     case PublishPlanStatus.RenameFilesRunning:
       return 'blue';
+    case PublishPlanStatus.AssetUploadCompleted:
     case PublishPlanStatus.EditsCompleted:
     case PublishPlanStatus.CreatesCompleted:
     case PublishPlanStatus.DeletesCompleted:
