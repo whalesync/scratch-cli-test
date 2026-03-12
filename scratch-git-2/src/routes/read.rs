@@ -304,11 +304,13 @@ pub async fn files(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FilesPaginatedQuery {
     pub branch: Option<String>,
     pub folder: Option<String>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
+    pub metadata_only: Option<bool>,
 }
 
 pub async fn files_paginated(
@@ -323,7 +325,7 @@ pub async fn files_paginated(
             let branch = query.branch.as_deref().unwrap_or(MAIN_BRANCH);
             let folder = query.folder.as_deref().unwrap_or("");
             let folder = folder.strip_prefix('/').unwrap_or(folder);
-            let limit = query.limit.unwrap_or(50);
+            let limit = query.limit.unwrap_or(200);
 
             let git_repo = GitRepo::open(&repos_dir, &id)?;
             let commit_oid = match git_repo.resolve_ref(branch) {
@@ -357,13 +359,23 @@ pub async fn files_paginated(
                 None
             };
 
+            let metadata_only = query.metadata_only.unwrap_or(false);
             let files: Vec<_> = paginated
                 .iter()
                 .map(|(name, oid)| {
-                    let content = git_repo
-                        .read_blob_to_string(*oid)
-                        .unwrap_or_default();
-                    json!({ "name": name, "content": content })
+                    if metadata_only {
+                        let path = if folder.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{}/{}", folder, name)
+                        };
+                        json!({ "name": name, "path": path })
+                    } else {
+                        let content = git_repo
+                            .read_blob_to_string(*oid)
+                            .unwrap_or_default();
+                        json!({ "name": name, "content": content })
+                    }
                 })
                 .collect();
 

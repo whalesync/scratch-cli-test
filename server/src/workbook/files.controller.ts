@@ -54,11 +54,17 @@ export class FilesController {
   async listFilesByFolder(
     @Param('workbookId') workbookId: WorkbookId,
     @Query('folderId') folderId: DataFolderId,
+    @Query('cursor') cursor: string | undefined,
+    @Query('limit') limitStr: string | undefined,
     @Req() req: RequestWithUser,
   ): Promise<ListFilesResponseDto> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return await this.filesService.listByFolderId(workbookId, folderId, actor);
+    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    if (limit !== undefined && (isNaN(limit) || limit < 1)) {
+      return await this.filesService.listByFolderId(workbookId, folderId, actor, { cursor });
+    }
+    return await this.filesService.listByFolderId(workbookId, folderId, actor, { cursor, limit });
   }
 
   /**

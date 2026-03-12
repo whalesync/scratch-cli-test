@@ -47,7 +47,7 @@ describe('FilesService', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockResolvedValue('repo-123'),
-      listRepoFiles: jest.fn().mockResolvedValue([]),
+      listRepoFilesPaginated: jest.fn().mockResolvedValue({ files: [], nextCursor: undefined }),
       getFolderDiff: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<ScratchGitService>;
 
@@ -79,10 +79,16 @@ describe('FilesService', () => {
   });
 
   describe('listByFolderId', () => {
-    it('calls listRepoFiles with correct arguments', async () => {
+    it('calls listRepoFilesPaginated with correct arguments', async () => {
       await service.listByFolderId(WORKBOOK_ID, FOLDER_ID, ACTOR);
 
-      expect(scratchGitService.listRepoFiles).toHaveBeenCalledWith('repo-123', 'dirty', 'my-folder');
+      expect(scratchGitService.listRepoFilesPaginated).toHaveBeenCalledWith(
+        'repo-123',
+        'dirty',
+        'my-folder',
+        200,
+        undefined,
+      );
     });
 
     it('throws NotFoundException when folder is not found', async () => {
@@ -92,11 +98,14 @@ describe('FilesService', () => {
     });
 
     it('includes dotfiles like .schema.json in the file list', async () => {
-      (scratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
-        { name: 'record-1.json', path: 'my-folder/record-1.json', type: 'file' },
-        { name: '.schema.json', path: 'my-folder/.schema.json', type: 'file' },
-        { name: 'record-2.json', path: 'my-folder/record-2.json', type: 'file' },
-      ]);
+      (scratchGitService.listRepoFilesPaginated as jest.Mock).mockResolvedValue({
+        files: [
+          { name: 'record-1.json', path: 'my-folder/record-1.json' },
+          { name: '.schema.json', path: 'my-folder/.schema.json' },
+          { name: 'record-2.json', path: 'my-folder/record-2.json' },
+        ],
+        nextCursor: undefined,
+      });
 
       const result = await service.listByFolderId(WORKBOOK_ID, FOLDER_ID, ACTOR);
 

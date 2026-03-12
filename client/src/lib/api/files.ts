@@ -18,11 +18,18 @@ export const filesApi = {
    * List files and folders at a given path (non-recursive, like `ls`).
    * GET /workbooks/:workbookId/files/list/by-folder?folderId=...
    */
-  listFilesByFolder: async (workbookId: WorkbookId, folderId: DataFolderId): Promise<ListFilesResponseDto> => {
+  listFilesByFolder: async (
+    workbookId: WorkbookId,
+    folderId: DataFolderId,
+    options?: { cursor?: string; limit?: number },
+  ): Promise<ListFilesResponseDto> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
+      const params: Record<string, string | number> = { folderId };
+      if (options?.cursor) params.cursor = options.cursor;
+      if (options?.limit) params.limit = options.limit;
       const res = await axios.get<ListFilesResponseDto>(`/workbooks/${workbookId}/files/list/by-folder`, {
-        params: { folderId },
+        params,
       });
       return res.data;
     } catch (error) {

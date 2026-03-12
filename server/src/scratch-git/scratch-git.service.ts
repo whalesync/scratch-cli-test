@@ -108,6 +108,16 @@ export class ScratchGitService {
     return this.scratchGitClient.getFile(repoId, branch, path);
   }
 
+  async listRepoFilesPaginated(
+    repoId: string,
+    branch: string,
+    folder: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<{ files: Array<{ name: string; path: string }>; nextCursor?: string }> {
+    return this.scratchGitClient.listFilesPaginated(repoId, branch, folder, limit, cursor);
+  }
+
   async getRepoFilesPaginated(
     repoId: string,
     branch: string,

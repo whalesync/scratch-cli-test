@@ -8,7 +8,7 @@ import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { useFolderFileList } from '@/hooks/use-folder-file-list';
+import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
@@ -90,7 +90,7 @@ import { ActiveDataFolderJobIndicator } from './ActiveDataFolderJobIndicator';
 import type { FileTreeMode } from './FileTree';
 
 const SCRATCH_GROUP_NAME = 'Scratch';
-const FILE_LIMIT = 100;
+const FILE_LIMIT = 200;
 const INDENT_PX = 10;
 
 // ============================================================================
@@ -801,7 +801,15 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const isSelected = pathname === urlFolderPath;
 
   const showHidden = folder.connectorAccountId ? showHiddenConnections.has(folder.connectorAccountId) : false;
-  const { files: allFiles, isLoading, refreshFiles } = useFolderFileList(workbookId, folder.id);
+  const {
+    files: allFiles,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    loadMore,
+    refreshFiles,
+    dirtyCount: serverDirtyCount,
+  } = useFolderFileListPaginated(workbookId, folder.id, FILE_LIMIT);
   const files = useMemo(
     () => (showHidden ? allFiles : allFiles.filter((f) => !f.name.startsWith('.'))),
     [allFiles, showHidden],
@@ -858,7 +866,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   };
 
   // Limit files for display
-  const { displayedFiles, hiddenCount, dirtyCount, hasAnyDirtyFiles } = useMemo(() => {
+  const { displayedFiles, dirtyCount, hasAnyDirtyFiles } = useMemo(() => {
     let fileItems = files.filter((f): f is FileRefEntity => f.type === 'file');
 
     // In review mode, only show dirty files
@@ -889,19 +897,17 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
       fileItems.sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    const dirty = fileItems.filter(
-      (f) => f.status === 'modified' || f.status === 'added' || f.status === 'deleted',
-    ).length;
-    const limited = fileItems.slice(0, FILE_LIMIT);
-    const hidden = Math.max(0, fileItems.length - FILE_LIMIT);
-
+    // Use server-provided counts when not in review mode (pagination means we don't have all files loaded)
+    const dirty =
+      mode === 'review'
+        ? fileItems.filter((f) => f.status === 'modified' || f.status === 'added' || f.status === 'deleted').length
+        : serverDirtyCount;
     return {
-      displayedFiles: limited,
-      hiddenCount: hidden,
+      displayedFiles: fileItems,
       dirtyCount: dirty,
-      hasAnyDirtyFiles: fileItems.length > 0,
+      hasAnyDirtyFiles: mode === 'review' ? fileItems.length > 0 : serverDirtyCount > 0,
     };
-  }, [files, mode, dirtyFilePaths, folder.id, folder.path]);
+  }, [files, mode, dirtyFilePaths, folder.id, folder.path, serverDirtyCount]);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
@@ -1049,19 +1055,21 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             />
           ))}
 
-          {/* Hidden count indicator - links to folder view */}
-          {hiddenCount > 0 && (
+          {/* Load more indicator */}
+          {hasMore && (
             <Box py={4} px="sm" style={{ marginLeft: INDENT_PX }}>
               <Group gap={6} wrap="nowrap">
                 <Box style={{ width: 6, flexShrink: 0 }} />
-                <Link
-                  href={`/workbook/${workbookId}/${mode === 'review' ? 'review' : 'files'}/${encodedFolderPath}`}
-                  style={{ textDecoration: 'none' }}
+                <Text12Regular
+                  c="var(--mantine-color-blue-6)"
+                  style={{ cursor: isLoadingMore ? 'default' : 'pointer' }}
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    if (!isLoadingMore) loadMore();
+                  }}
                 >
-                  <Text12Regular c="var(--mantine-color-blue-6)" style={{ cursor: 'pointer' }}>
-                    {hiddenCount} more...
-                  </Text12Regular>
-                </Link>
+                  {isLoadingMore ? 'Loading...' : 'Load more...'}
+                </Text12Regular>
               </Group>
             </Box>
           )}

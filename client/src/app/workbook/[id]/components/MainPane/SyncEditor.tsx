@@ -4,7 +4,7 @@ import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { useFolderFileList } from '@/hooks/use-folder-file-list';
+import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { scheduleApi } from '@/lib/api/schedule';
 import { syncApi } from '@/lib/api/sync';
@@ -384,8 +384,12 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const activePairIndex = Math.min(selectedPairIndex, folderPairs.length - 1);
   const activePair = folderPairs[activePairIndex];
 
-  // Preview: folder file list
-  const { files: previewFiles } = useFolderFileList(workbookId, (activePair?.sourceId || null) as DataFolderId | null);
+  // Preview: folder file list (paginated)
+  const {
+    files: previewFiles,
+    hasMore: hasMorePreviewFiles,
+    loadMore: loadMorePreviewFiles,
+  } = useFolderFileListPaginated(workbookId, (activePair?.sourceId || null) as DataFolderId | null, 200);
 
   const previewFileOptions = useMemo(
     () =>
@@ -1003,9 +1007,19 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                           <Select
                             size="xs"
                             placeholder="Select file"
-                            data={previewFileOptions}
+                            data={
+                              hasMorePreviewFiles
+                                ? [...previewFileOptions, { value: '__load_more__', label: 'Load more files...' }]
+                                : previewFileOptions
+                            }
                             value={selectedPreviewFile}
-                            onChange={setSelectedPreviewFile}
+                            onChange={(value) => {
+                              if (value === '__load_more__') {
+                                loadMorePreviewFiles();
+                                return;
+                              }
+                              setSelectedPreviewFile(value);
+                            }}
                             searchable
                             allowDeselect={false}
                             nothingFoundMessage="No JSON files"

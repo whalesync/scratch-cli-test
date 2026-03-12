@@ -209,6 +209,23 @@ export class ScratchGitClient {
     }>;
   }
 
+  async listFilesPaginated(
+    repoId: string,
+    branch: string,
+    folder: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<{ files: Array<{ name: string; path: string }>; nextCursor?: string }> {
+    let url = `/api/repo/read/${this.encodeRepoId(repoId)}/files-paginated?branch=${branch}&folder=${encodeURIComponent(folder)}&limit=${limit}&metadataOnly=true`;
+    if (cursor) {
+      url += `&cursor=${encodeURIComponent(cursor)}`;
+    }
+    return this.callGitApi(url, 'GET') as Promise<{
+      files: Array<{ name: string; path: string }>;
+      nextCursor?: string;
+    }>;
+  }
+
   async readBlobsByOid(repoId: string, oids: string[]): Promise<Array<{ oid: string; content: string | null }>> {
     return this.callGitApi(`/api/repo/read/${this.encodeRepoId(repoId)}/blobs-by-oid`, 'POST', { oids }) as Promise<
       Array<{ oid: string; content: string | null }>

@@ -9,13 +9,13 @@ export interface UseFolderFileListReturn {
   files: FileOrFolderRefEntity[];
   isLoading: boolean;
   error: Error | undefined;
+  dirtyCount: number;
   refreshFiles: () => Promise<void>;
 }
 
 /**
- * Hook for getting all the file contents for a folder
- * @param workbookId - The workbook ID to scope the file operations to
- * @param path - path of the root folder to get files from
+ * Hook for getting all the file contents for a folder (non-paginated).
+ * Use useFolderFileListPaginated for large folders.
  */
 export const useFolderFileList = (
   workbookId: WorkbookId | null,
@@ -41,6 +41,7 @@ export const useFolderFileList = (
     files: data?.items ?? [],
     isLoading,
     error: displayError,
+    dirtyCount: data?.dirtyCount ?? 0,
     refreshFiles: async () => {
       await mutate();
     },

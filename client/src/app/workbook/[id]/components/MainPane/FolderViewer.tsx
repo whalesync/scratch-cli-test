@@ -2,7 +2,7 @@
 
 import { ButtonCompactSecondary } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Regular, TextMono12Regular } from '@/app/components/base/text';
-import { useFolderFileList } from '@/hooks/use-folder-file-list';
+import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Group, SimpleGrid, Stack, TextInput, UnstyledButton } from '@mantine/core';
@@ -11,7 +11,7 @@ import { FileIcon, SearchIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
-const INITIAL_LIMIT = 300;
+const PAGE_SIZE = 200;
 const COLUMN_COUNT = 3;
 
 interface FolderViewerProps {
@@ -29,8 +29,13 @@ export function FolderViewer({
   mode = 'files',
   connectorAccountId,
 }: FolderViewerProps) {
-  const { files: allFiles, isLoading } = useFolderFileList(workbookId, folderId);
-  const [showAll, setShowAll] = useState(false);
+  const {
+    files: allFiles,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    loadMore,
+  } = useFolderFileListPaginated(workbookId, folderId, PAGE_SIZE);
   const [searchQuery, setSearchQuery] = useState('');
   const setSummary = useReviewToolbarStore((state) => state.setSummary);
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
@@ -42,8 +47,8 @@ export function FolderViewer({
     [allFiles, showHidden],
   );
 
-  // Filter to only files, optionally filter to dirty only in review mode, apply search, and apply limit
-  const { displayedFiles, totalCount, hasMore } = useMemo(() => {
+  // Filter to only files, optionally filter to dirty only in review mode, apply search
+  const displayedFiles = useMemo(() => {
     let fileItems = files.filter((f): f is FileRefEntity => f.type === 'file');
 
     // In review mode, only show dirty files
@@ -51,30 +56,26 @@ export function FolderViewer({
       fileItems = fileItems.filter((f) => f.status === 'modified' || f.status === 'added');
     }
 
-    const total = fileItems.length;
-
     // Apply search filter
     if (searchQuery.trim()) {
       const query = searchQuery.trim().toLowerCase();
       fileItems = fileItems.filter((f) => f.name.toLowerCase().includes(query));
     }
 
-    const limited = showAll ? fileItems : fileItems.slice(0, INITIAL_LIMIT);
-    return {
-      displayedFiles: limited,
-      totalCount: total,
-      hasMore: total > INITIAL_LIMIT && !showAll,
-    };
-  }, [files, showAll, mode, searchQuery]);
+    return fileItems;
+  }, [files, mode, searchQuery]);
 
   // In review mode, push the summary into the toolbar store
   useEffect(() => {
     if (mode === 'review') {
-      const summary = folderName ? `${folderName} - ${totalCount} ${totalCount === 1 ? 'file' : 'files'}` : null;
+      const count = files.length;
+      const summary = folderName
+        ? `${folderName} - ${count}${hasMore ? '+' : ''} ${count === 1 && !hasMore ? 'file' : 'files'}`
+        : null;
       setSummary(summary);
       return () => setSummary(null);
     }
-  }, [mode, folderName, totalCount, setSummary]);
+  }, [mode, folderName, files.length, hasMore, setSummary]);
 
   if (isLoading && files.length === 0) {
     return (
@@ -108,11 +109,12 @@ export function FolderViewer({
         >
           <Text12Regular c="var(--fg-muted)">
             {folderName ? `${folderName} - ` : ''}
-            {totalCount} {totalCount === 1 ? 'file' : 'files'}
+            {files.length}
+            {hasMore ? '+' : ''} {files.length === 1 && !hasMore ? 'file' : 'files'}
           </Text12Regular>
           {hasMore && (
-            <ButtonCompactSecondary onClick={() => setShowAll(true)}>
-              Load all ({totalCount - INITIAL_LIMIT} more)
+            <ButtonCompactSecondary onClick={loadMore} disabled={isLoadingMore}>
+              {isLoadingMore ? 'Loading...' : 'Load more'}
             </ButtonCompactSecondary>
           )}
         </Group>

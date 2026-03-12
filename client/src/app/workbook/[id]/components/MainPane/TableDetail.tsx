@@ -6,7 +6,6 @@ import { useFolderFileList } from '@/hooks/use-folder-file-list';
 import { Box, Group, Stack } from '@mantine/core';
 import type { DataFolder, WorkbookId } from '@spinner/shared-types';
 import { FolderIcon } from 'lucide-react';
-import { useMemo } from 'react';
 
 interface TableDetailProps {
   folder: DataFolder;
@@ -14,17 +13,7 @@ interface TableDetailProps {
 }
 
 export function TableDetail({ folder, workbookId }: TableDetailProps) {
-  const { files, isLoading } = useFolderFileList(workbookId, folder.id);
-
-  const stats = useMemo(() => {
-    const fileItems = files.filter((f) => f.type === 'file');
-    const dirtyCount = fileItems.filter((f) => f.status === 'modified' || f.status === 'added').length;
-
-    return {
-      totalFiles: fileItems.length,
-      dirtyCount,
-    };
-  }, [files]);
+  const { isLoading, files, dirtyCount } = useFolderFileList(workbookId, folder.id);
 
   return (
     <Box p="lg">
@@ -55,13 +44,13 @@ export function TableDetail({ folder, workbookId }: TableDetailProps) {
         <Stack gap="sm">
           <Group justify="space-between">
             <Text13Regular c="var(--fg-secondary)">Records</Text13Regular>
-            <TextMono12Regular>{isLoading ? '...' : stats.totalFiles}</TextMono12Regular>
+            <TextMono12Regular>{isLoading ? '...' : files.length}</TextMono12Regular>
           </Group>
 
           <Group justify="space-between">
             <Text13Regular c="var(--fg-secondary)">Changed</Text13Regular>
-            <TextMono12Regular c={stats.dirtyCount > 0 ? 'var(--mantine-color-orange-6)' : undefined}>
-              {isLoading ? '...' : stats.dirtyCount}
+            <TextMono12Regular c={dirtyCount > 0 ? 'var(--mantine-color-orange-6)' : undefined}>
+              {isLoading ? '...' : dirtyCount}
             </TextMono12Regular>
           </Group>
         </Stack>

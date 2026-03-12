@@ -1,5 +1,5 @@
 import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import type { DataFolderId, FileDiffStatus, FileRefEntity, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import {
   FileDetailsResponseDto,
   ListFilesResponseDto,
@@ -11,7 +11,7 @@ import { DbService } from '../db/db.service';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { RefCleanerService } from '../publish-plan/ref-cleaner.service';
 import { SchemaHelperService } from '../publish-plan/schema-helper.service';
-import { DIRTY_BRANCH, MAIN_BRANCH, RepoFileRef, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { Actor } from '../users/types';
 import { extractFilenameFromPath } from './util';
 import { WorkbookEventService } from './workbook-event.service';
@@ -85,7 +85,12 @@ export class FilesService {
     };
   }
 
-  async listByFolderId(workbookId: WorkbookId, folderId: DataFolderId, actor: Actor): Promise<ListFilesResponseDto> {
+  async listByFolderId(
+    workbookId: WorkbookId,
+    folderId: DataFolderId,
+    actor: Actor,
+    options?: { cursor?: string; limit?: number },
+  ): Promise<ListFilesResponseDto> {
     await this.workbookService.findOneOrThrow(workbookId, actor);
 
     const folder = await this.db.client.dataFolder.findUnique({
@@ -102,31 +107,33 @@ export class FilesService {
 
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
     const folderPath = folder.path.replace(/^\//, ''); // remove preceding / for git paths
-    const repoFiles = (await this.scratchGitService.listRepoFiles(repoId, DIRTY_BRANCH, folderPath)) as RepoFileRef[];
+
+    // Paginate at the git level — sorting, cursor, and limit are handled by scratch-git
+    const limit = options?.limit ?? 200;
+    const page = await this.scratchGitService.listRepoFilesPaginated(
+      repoId,
+      DIRTY_BRANCH,
+      folderPath,
+      limit,
+      options?.cursor,
+    );
 
     // TODO: this solution is too simplistic.
     // We need to do a more active diff between main and dirty to show pending deletes
     const diffs = await this.scratchGitService.getFolderDiff(repoId, folderPath);
+    const diffMap = new Map(diffs.map((d) => [d.path, d.status]));
+    const dirtyCount = diffs.length;
 
-    const checkDirty = (path: string): boolean => {
-      return diffs.some((d) => d.path === path);
-    };
-
-    const modifiedStatus = (path: string): FileDiffStatus | undefined => {
-      return diffs.find((d) => d.path === path)?.status;
-    };
-
-    // Convert files to FileRefEntity
-    const fileEntities: FileRefEntity[] = repoFiles.map((f) => ({
+    const fileEntities: FileRefEntity[] = page.files.map((f) => ({
       type: 'file',
       name: f.name,
       parentFolderId: null,
       path: f.path,
-      dirty: checkDirty(f.path),
-      status: modifiedStatus(f.path),
+      dirty: diffMap.has(f.path),
+      status: diffMap.get(f.path),
     }));
 
-    return { items: fileEntities };
+    return { items: fileEntities, nextCursor: page.nextCursor, dirtyCount };
   }
 
   /**
