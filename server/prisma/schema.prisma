@@ -569,9 +569,6 @@ model Sync {
   /// Whether to automatically trigger a publish after a successful sync.
   publishAfterSync Boolean @default(false)
 
-  /// History of AI prompt interactions for this sync. Each entry: {prompt, output?, error?}
-  aiPromptHistory Json[] @default([])
-
   syncTablePairs    SyncTablePair[]
   foreignKeyRecords SyncForeignKeyRecord[]
   remoteIdMappings  SyncRemoteIdMapping[]

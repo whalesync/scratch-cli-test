@@ -6,7 +6,6 @@ import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
-import { AiSyncBuilderService } from '../ai-sync-builder.service';
 import { SyncController } from '../sync.controller';
 import { SyncService } from '../sync.service';
 import { WhalesyncImportApiService } from '../whalesync-import';
@@ -40,7 +39,6 @@ function makeReqWithUser(overrides?: Partial<{ organizationId: string | null }>)
 describe('SyncController', () => {
   let controller: SyncController;
   let syncService: jest.Mocked<SyncService>;
-  let aiSyncBuilderService: jest.Mocked<AiSyncBuilderService>;
   let whalesyncImportApiService: jest.Mocked<WhalesyncImportApiService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let dbService: jest.Mocked<DbService>;
@@ -55,16 +53,12 @@ describe('SyncController', () => {
       deleteSync: jest.fn(),
       previewRecord: jest.fn(),
       validateFolderMapping: jest.fn(),
+      generateAiContext: jest.fn(),
     } as unknown as jest.Mocked<SyncService>;
 
     bullEnqueuerService = {
       enqueueSyncDataFoldersJob: jest.fn(),
     } as unknown as jest.Mocked<BullEnqueuerService>;
-
-    aiSyncBuilderService = {
-      generateSyncFromPrompt: jest.fn(),
-      editSyncWithPrompt: jest.fn(),
-    } as unknown as jest.Mocked<AiSyncBuilderService>;
 
     dbService = {
       client: {
@@ -83,7 +77,6 @@ describe('SyncController', () => {
 
     controller = new SyncController(
       syncService,
-      aiSyncBuilderService,
       whalesyncImportApiService,
       bullEnqueuerService,
       dbService,
@@ -101,6 +94,7 @@ describe('SyncController', () => {
   describe('createSync', () => {
     const body = {
       displayName: 'My Sync',
+      validateMappings: true,
       mappings: {
         version: 1 as const,
         tableMappings: [
@@ -144,6 +138,7 @@ describe('SyncController', () => {
   describe('updateSync', () => {
     const body = {
       displayName: 'Updated Sync',
+      validateMappings: true,
       mappings: {
         version: 1 as const,
         tableMappings: [

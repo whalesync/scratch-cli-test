@@ -1,4 +1,3 @@
-import type { Sync } from '../../db/sync';
 import { DataFolderId } from '../../ids';
 import type { ColumnMapping, SyncMapping, TransformerType } from '../../sync-mapping';
 
@@ -42,36 +41,7 @@ export interface PreviewRecordResponse {
   fields: PreviewFieldResult[];
 }
 
-/** Response from the AI context endpoint */
+/** Response from the AI context endpoint (for external agents) */
 export interface AiContextResponse {
   markdown: string;
-}
-
-/** POST body for AI sync generation */
-export interface AiGenerateSyncBody {
-  prompt: string;
-  model?: string;
-}
-
-/** POST body for AI sync edit (re-prompts using existing prompt history) */
-export interface AiEditSyncBody {
-  prompt: string;
-  model?: string;
-}
-
-export interface AiGenerateSyncTablePairing {
-  sourceFolderId: DataFolderId;
-  sourceFolderName: string;
-  sourceConnectorService: string | null;
-  destFolderId: DataFolderId;
-  destFolderName: string;
-  destConnectorService: string | null;
-}
-
-export interface AiGenerateSyncResponse {
-  sync: Sync;
-  tablePairings: AiGenerateSyncTablePairing[];
-  history?: string;
-  summary?: string;
-  result?: 'success' | 'message';
 }

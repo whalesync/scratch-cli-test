@@ -365,6 +365,279 @@ export class SyncService {
   }
 
   /**
+   * Generates structured Markdown context for an external AI agent to build sync definitions.
+   * Includes all linked folders, their schemas, available transformers, and examples.
+   */
+  async generateAiContext(workbookId: WorkbookId, actor: Actor): Promise<AiContextResponse> {
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    const dataFolders = await this.db.client.dataFolder.findMany({
+      where: { workbookId },
+      include: { connectorAccount: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const linkedGroups: Array<{
+      groupName: string;
+      service: Service | null;
+      folders: Array<{
+        id: string;
+        name: string;
+        fields: SchemaField[];
+      }>;
+    }> = [];
+
+    const allServices = new Set<Service>();
+    const connectorAccountGroups = new Map<
+      string,
+      {
+        name: string;
+        service: Service | null;
+        folders: (typeof linkedGroups)[0]['folders'];
+      }
+    >();
+
+    for (const folder of dataFolders) {
+      if (!folder.connectorAccountId || !folder.connectorAccount) continue;
+
+      const service = folder.connectorService ? (folder.connectorService as Service) : null;
+      if (service) allServices.add(service);
+
+      const schemaJson = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
+      const fields = schemaJson?.schema ? extractSchemaFields(schemaJson.schema) : [];
+
+      const accountId = folder.connectorAccountId;
+      if (!connectorAccountGroups.has(accountId)) {
+        connectorAccountGroups.set(accountId, {
+          name: folder.connectorAccount.displayName,
+          service,
+          folders: [],
+        });
+      }
+      connectorAccountGroups.get(accountId)!.folders.push({
+        id: folder.id,
+        name: folder.name,
+        fields,
+      });
+    }
+
+    for (const [, group] of connectorAccountGroups) {
+      linkedGroups.push({
+        groupName: group.name,
+        service: group.service,
+        folders: group.folders,
+      });
+    }
+
+    const existingSyncs = (await this.findAllForWorkbook(workbookId, actor)) as Array<{
+      mappings: SyncMapping | null;
+    }>;
+    const syncWithMappings = existingSyncs.find((s) => s.mappings?.tableMappings?.length);
+    const allLinkedFolders = linkedGroups.flatMap((g) => g.folders);
+
+    const lines: string[] = [];
+    lines.push('# Scratch Sync — AI Agent Context');
+    lines.push('');
+    lines.push(
+      'You are helping a user build a sync definition for Scratch, a content management system that syncs data between connected services.',
+    );
+    lines.push('');
+    lines.push('## Your Task');
+    lines.push('');
+    lines.push('Generate a JSON object with this exact structure (a `SyncMapping`):');
+    lines.push('');
+    lines.push('```json');
+    lines.push('{');
+    lines.push('  "version": 1,');
+    lines.push('  "tableMappings": [');
+    lines.push('    {');
+    lines.push('      "sourceDataFolderId": "<source folder ID>",');
+    lines.push('      "destinationDataFolderId": "<destination folder ID>",');
+    lines.push('      "columnMappings": [');
+    lines.push('        {');
+    lines.push('          "sourceColumnId": "<field path in source>",');
+    lines.push('          "destinationColumnId": "<field path in destination>",');
+    lines.push('          "transformer": { "type": "...", "options": { ... } }');
+    lines.push('        }');
+    lines.push('      ],');
+    lines.push('      "recordMatching": {');
+    lines.push('        "sourceColumnId": "<field path>",');
+    lines.push('        "destinationColumnId": "<field path>"');
+    lines.push('      }');
+    lines.push('    }');
+    lines.push('  ]');
+    lines.push('}');
+    lines.push('```');
+    lines.push('');
+    lines.push('## Key Concepts');
+    lines.push('');
+    lines.push('- A **sync** copies data from source folders to destination folders');
+    lines.push(
+      '- **Column mappings** map source fields to destination fields using JSON path notation (e.g., `company.name`, `tags[0]`)',
+    );
+    lines.push(
+      '- **Record matching** (optional) matches existing destination records by a field value so they get updated instead of duplicated. If omitted, all source records are created as new records in the destination.',
+    );
+    lines.push('- **Transformers** (optional) transform field values during sync');
+    lines.push('- Fields marked as **readonly** can only be used as source fields, not destinations');
+    lines.push('');
+    lines.push('## Available Folders');
+    lines.push('');
+
+    const folderNameById = new Map<string, string>();
+    for (const group of linkedGroups) {
+      for (const folder of group.folders) {
+        folderNameById.set(folder.id, folder.name);
+      }
+    }
+
+    for (const group of linkedGroups) {
+      const serviceLabel = group.service ? ` (${group.service})` : '';
+      lines.push(`### ${group.groupName}${serviceLabel}`);
+      lines.push('');
+
+      for (const folder of group.folders) {
+        lines.push(`#### ${folder.name}`);
+        lines.push(`- **ID**: \`${folder.id}\``);
+
+        if (folder.fields.length > 0) {
+          lines.push('- **Fields**:');
+          lines.push('  | Field Path | Type | Notes |');
+          lines.push('  |---|---|---|');
+
+          for (const field of folder.fields) {
+            const notes: string[] = [];
+            if (field.suggestedTransformer) {
+              notes.push(`suggested transformer: ${field.suggestedTransformer.type}`);
+            }
+            if (field.readonly) {
+              notes.push('readonly');
+            }
+            if (field.foreignKey) {
+              const linkedName = folderNameById.get(field.foreignKey.linkedTableId);
+              notes.push(`foreign key${linkedName ? ` to ${linkedName}` : ''}`);
+            }
+            lines.push(`  | ${field.path} | ${field.type} | ${notes.join(', ')} |`);
+          }
+        } else {
+          lines.push('- **Fields**: (no schema available)');
+        }
+        lines.push('');
+      }
+    }
+
+    lines.push('## Available Transformers');
+    lines.push('');
+    lines.push('### `string_to_number`');
+    lines.push('Converts string values to numbers.');
+    lines.push('- **Options** (all optional):');
+    lines.push('  - `stripCurrency` (boolean): Remove currency symbols before parsing');
+    lines.push('  - `parseInteger` (boolean): Truncate to integer instead of float');
+    lines.push('');
+    lines.push('### `source_fk_to_dest_fk`');
+    lines.push(
+      'Maps foreign key IDs from source records to their corresponding destination IDs. Use this when both source and destination have linked/related records that are also being synced.',
+    );
+    lines.push('- **Options** (required):');
+    lines.push('  - `referencedDataFolderId` (string): The folder ID containing the referenced records');
+    lines.push('');
+    lines.push('### `lookup_field`');
+    lines.push(
+      'Extracts a field value from a related record via foreign key. Use this to denormalize data (e.g., get a category name from a category ID).',
+    );
+    lines.push('- **Options** (required):');
+    lines.push('  - `referencedDataFolderId` (string): The folder ID containing the referenced records');
+    lines.push('  - `referencedFieldPath` (string): The field path to extract (e.g., `name` or `company.displayName`)');
+    lines.push('');
+    lines.push('### `notion_to_html`');
+    lines.push(
+      'Converts Notion rich text blocks to HTML. Use this when the source is a Notion folder with rich text content.',
+    );
+    lines.push('- **Options**: None');
+    lines.push('');
+
+    const tipSections: Array<{ service: Service; tip: string }> = [
+      {
+        service: Service.NOTION,
+        tip: [
+          '### Notion',
+          '- Rich text fields contain Notion block objects. Use the `notion_to_html` transformer to convert them to HTML.',
+          "- Relation/rollup fields are foreign keys. Use `source_fk_to_dest_fk` if you're syncing the related table too.",
+        ].join('\n'),
+      },
+      {
+        service: Service.AIRTABLE,
+        tip: [
+          '### Airtable',
+          "- Linked record fields are foreign keys. Use `source_fk_to_dest_fk` if you're syncing the related table too.",
+          '- Formula and lookup fields are readonly.',
+        ].join('\n'),
+      },
+      {
+        service: Service.POSTGRES,
+        tip: ['### Postgres', '- Field paths correspond directly to column names.'].join('\n'),
+      },
+      {
+        service: Service.SUPABASE,
+        tip: ['### Supabase', '- Field paths correspond directly to column names.'].join('\n'),
+      },
+      {
+        service: Service.WEBFLOW,
+        tip: ['### Webflow', "- CMS fields use Webflow's internal field slugs."].join('\n'),
+      },
+    ];
+
+    const relevantTips = tipSections.filter((t) => allServices.has(t.service));
+    if (relevantTips.length > 0) {
+      lines.push('## Connector Tips');
+      lines.push('');
+      for (const tip of relevantTips) {
+        lines.push(tip.tip);
+        lines.push('');
+      }
+    }
+
+    if (syncWithMappings?.mappings) {
+      lines.push('## Example Sync (from this workbook)');
+      lines.push('');
+      lines.push("Here's an existing sync in this workbook for reference:");
+      lines.push('');
+      lines.push('```json');
+      lines.push(JSON.stringify(syncWithMappings.mappings, null, 2));
+      lines.push('```');
+    } else if (allLinkedFolders.length >= 2) {
+      lines.push('## Example Sync');
+      lines.push('');
+      const src = allLinkedFolders[0];
+      const dest = allLinkedFolders[1];
+      const srcField = src.fields[0]?.path ?? 'fieldName';
+      const destField = dest.fields[0]?.path ?? 'fieldName';
+
+      const example: SyncMapping = {
+        version: 1,
+        tableMappings: [
+          {
+            sourceDataFolderId: src.id as DataFolderId,
+            destinationDataFolderId: dest.id as DataFolderId,
+            columnMappings: [{ sourceColumnId: srcField, destinationColumnId: destField }],
+          },
+        ],
+      };
+      lines.push('```json');
+      lines.push(JSON.stringify(example, null, 2));
+      lines.push('```');
+      lines.push('');
+      lines.push('Note: This is a minimal example using real folder IDs and field names from your workbook.');
+    }
+    lines.push('');
+
+    return { markdown: lines.join('\n') };
+  }
+
+  /**
    * Extracts the idColumnRemoteId from a DataFolder's schema.
    * Falls back to 'id' if the schema doesn't specify an idColumnRemoteId.
    */
@@ -1441,312 +1714,6 @@ export class SyncService {
     }
 
     return { recordId: record.id, fields };
-  }
-
-  /**
-   * Generates structured Markdown context for an AI agent to build sync definitions.
-   * Includes all linked folders, their schemas, available transformers, and examples.
-   */
-  async generateAiContext(workbookId: WorkbookId, actor: Actor): Promise<AiContextResponse> {
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    // Fetch all folders with their cached schemas directly from the DB (no external API calls)
-    const dataFolders = await this.db.client.dataFolder.findMany({
-      where: { workbookId },
-      include: { connectorAccount: true },
-      orderBy: { name: 'asc' },
-    });
-
-    // Group linked folders by connector account
-    const linkedGroups: Array<{
-      groupName: string;
-      service: Service | null;
-      folders: Array<{
-        id: string;
-        name: string;
-        fields: SchemaField[];
-      }>;
-    }> = [];
-
-    const allServices = new Set<Service>();
-    const connectorAccountGroups = new Map<
-      string,
-      {
-        name: string;
-        service: Service | null;
-        folders: (typeof linkedGroups)[0]['folders'];
-      }
-    >();
-
-    for (const folder of dataFolders) {
-      if (!folder.connectorAccountId || !folder.connectorAccount) continue;
-
-      const service = folder.connectorService ? (folder.connectorService as Service) : null;
-      if (service) allServices.add(service);
-
-      // Read schema from git first, fall back to DB
-      const schemaJson = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);
-      const fields = schemaJson?.schema ? extractSchemaFields(schemaJson.schema) : [];
-
-      const accountId = folder.connectorAccountId;
-      if (!connectorAccountGroups.has(accountId)) {
-        connectorAccountGroups.set(accountId, {
-          name: folder.connectorAccount.displayName,
-          service,
-          folders: [],
-        });
-      }
-      connectorAccountGroups.get(accountId)!.folders.push({
-        id: folder.id,
-        name: folder.name,
-        fields,
-      });
-    }
-
-    for (const [, group] of connectorAccountGroups) {
-      linkedGroups.push({
-        groupName: group.name,
-        service: group.service,
-        folders: group.folders,
-      });
-    }
-
-    // Fetch existing syncs for examples
-    const existingSyncs = (await this.findAllForWorkbook(workbookId, actor)) as Array<{
-      mappings: SyncMapping | null;
-    }>;
-    const syncWithMappings = existingSyncs.find((s) => s.mappings?.tableMappings?.length);
-
-    // Build all linked folder IDs for the example
-    const allLinkedFolders = linkedGroups.flatMap((g) => g.folders);
-
-    // Assemble Markdown
-    const lines: string[] = [];
-    lines.push('# Scratch Sync — AI Agent Context');
-    lines.push('');
-    lines.push(
-      'You are helping a user build a sync definition for Scratch, a content management system that syncs data between connected services.',
-    );
-    lines.push('');
-
-    // Task section
-    lines.push('## Your Task');
-    lines.push('');
-    lines.push('Generate a JSON object with this exact structure (a `SyncMapping`):');
-    lines.push('');
-    lines.push('```json');
-    lines.push('{');
-    lines.push('  "version": 1,');
-    lines.push('  "tableMappings": [');
-    lines.push('    {');
-    lines.push('      "sourceDataFolderId": "<source folder ID>",');
-    lines.push('      "destinationDataFolderId": "<destination folder ID>",');
-    lines.push('      "columnMappings": [');
-    lines.push('        {');
-    lines.push('          "sourceColumnId": "<field path in source>",');
-    lines.push('          "destinationColumnId": "<field path in destination>",');
-    lines.push('          "transformer": { "type": "...", "options": { ... } }');
-    lines.push('        }');
-    lines.push('      ],');
-    lines.push('      "recordMatching": {');
-    lines.push('        "sourceColumnId": "<field path>",');
-    lines.push('        "destinationColumnId": "<field path>"');
-    lines.push('      }');
-    lines.push('    }');
-    lines.push('  ]');
-    lines.push('}');
-    lines.push('```');
-    lines.push('');
-
-    // Key Concepts
-    lines.push('## Key Concepts');
-    lines.push('');
-    lines.push('- A **sync** copies data from source folders to destination folders');
-    lines.push(
-      '- **Column mappings** map source fields to destination fields using JSON path notation (e.g., `company.name`, `tags[0]`)',
-    );
-    lines.push(
-      '- **Record matching** (optional) matches existing destination records by a field value so they get updated instead of duplicated. If omitted, all source records are created as new records in the destination.',
-    );
-    lines.push('- **Transformers** (optional) transform field values during sync');
-    lines.push('- Fields marked as **readonly** can only be used as source fields, not destinations');
-    lines.push('');
-
-    // Available Folders
-    lines.push('## Available Folders');
-    lines.push('');
-
-    // Build a lookup of folder ID -> name for foreign key annotations
-    const folderNameById = new Map<string, string>();
-    for (const group of linkedGroups) {
-      for (const folder of group.folders) {
-        folderNameById.set(folder.id, folder.name);
-      }
-    }
-
-    for (const group of linkedGroups) {
-      const serviceLabel = group.service ? ` (${group.service})` : '';
-      lines.push(`### ${group.groupName}${serviceLabel}`);
-      lines.push('');
-
-      for (const folder of group.folders) {
-        lines.push(`#### ${folder.name}`);
-        lines.push(`- **ID**: \`${folder.id}\``);
-
-        if (folder.fields.length > 0) {
-          lines.push('- **Fields**:');
-          lines.push('  | Field Path | Type | Notes |');
-          lines.push('  |---|---|---|');
-
-          for (const field of folder.fields) {
-            const notes: string[] = [];
-            if (field.suggestedTransformer) {
-              notes.push(`suggested transformer: ${field.suggestedTransformer.type}`);
-            }
-            if (field.readonly) {
-              notes.push('readonly');
-            }
-            if (field.foreignKey) {
-              const linkedName = folderNameById.get(field.foreignKey.linkedTableId);
-              notes.push(`foreign key${linkedName ? ` to ${linkedName}` : ''}`);
-            }
-            lines.push(`  | ${field.path} | ${field.type} | ${notes.join(', ')} |`);
-          }
-        } else {
-          lines.push('- **Fields**: (no schema available)');
-        }
-        lines.push('');
-      }
-    }
-
-    // Available Transformers
-    lines.push('## Available Transformers');
-    lines.push('');
-
-    lines.push('### `string_to_number`');
-    lines.push('Converts string values to numbers.');
-    lines.push('- **Options** (all optional):');
-    lines.push('  - `stripCurrency` (boolean): Remove currency symbols before parsing');
-    lines.push('  - `parseInteger` (boolean): Truncate to integer instead of float');
-    lines.push('');
-
-    lines.push('### `source_fk_to_dest_fk`');
-    lines.push(
-      'Maps foreign key IDs from source records to their corresponding destination IDs. Use this when both source and destination have linked/related records that are also being synced.',
-    );
-    lines.push('- **Options** (required):');
-    lines.push('  - `referencedDataFolderId` (string): The folder ID containing the referenced records');
-    lines.push('');
-
-    lines.push('### `lookup_field`');
-    lines.push(
-      'Extracts a field value from a related record via foreign key. Use this to denormalize data (e.g., get a category name from a category ID).',
-    );
-    lines.push('- **Options** (required):');
-    lines.push('  - `referencedDataFolderId` (string): The folder ID containing the referenced records');
-    lines.push('  - `referencedFieldPath` (string): The field path to extract (e.g., `name` or `company.displayName`)');
-    lines.push('');
-
-    lines.push('### `notion_to_html`');
-    lines.push(
-      'Converts Notion rich text blocks to HTML. Use this when the source is a Notion folder with rich text content.',
-    );
-    lines.push('- **Options**: None');
-    lines.push('');
-
-    // Connector Tips — only for services present
-    const tipSections: Array<{ service: Service; tip: string }> = [
-      {
-        service: Service.NOTION,
-        tip: [
-          '### Notion',
-          '- Rich text fields contain Notion block objects. Use the `notion_to_html` transformer to convert them to HTML.',
-          "- Relation/rollup fields are foreign keys. Use `source_fk_to_dest_fk` if you're syncing the related table too.",
-        ].join('\n'),
-      },
-      {
-        service: Service.AIRTABLE,
-        tip: [
-          '### Airtable',
-          "- Linked record fields are foreign keys. Use `source_fk_to_dest_fk` if you're syncing the related table too.",
-          '- Formula and lookup fields are readonly.',
-        ].join('\n'),
-      },
-      {
-        service: Service.POSTGRES,
-        tip: ['### Postgres', '- Field paths correspond directly to column names.'].join('\n'),
-      },
-      {
-        service: Service.SUPABASE,
-        tip: ['### Supabase', '- Field paths correspond directly to column names.'].join('\n'),
-      },
-      {
-        service: Service.WEBFLOW,
-        tip: ['### Webflow', "- CMS fields use Webflow's internal field slugs."].join('\n'),
-      },
-    ];
-
-    const relevantTips = tipSections.filter((t) => allServices.has(t.service));
-    if (relevantTips.length > 0) {
-      lines.push('## Connector Tips');
-      lines.push('');
-      for (const tip of relevantTips) {
-        lines.push(tip.tip);
-        lines.push('');
-      }
-    }
-
-    // Example Sync
-    if (syncWithMappings?.mappings) {
-      lines.push('## Example Sync (from this workbook)');
-      lines.push('');
-      lines.push("Here's an existing sync in this workbook for reference:");
-      lines.push('');
-      lines.push('```json');
-      lines.push(JSON.stringify(syncWithMappings.mappings, null, 2));
-      lines.push('```');
-    } else if (allLinkedFolders.length >= 2) {
-      lines.push('## Example Sync');
-      lines.push('');
-      const src = allLinkedFolders[0];
-      const dest = allLinkedFolders[1];
-      const srcField = src.fields[0]?.path ?? 'fieldName';
-      const destField = dest.fields[0]?.path ?? 'fieldName';
-
-      const example: SyncMapping = {
-        version: 1,
-        tableMappings: [
-          {
-            sourceDataFolderId: src.id as DataFolderId,
-            destinationDataFolderId: dest.id as DataFolderId,
-            columnMappings: [{ sourceColumnId: srcField, destinationColumnId: destField }],
-          },
-        ],
-      };
-      lines.push('```json');
-      lines.push(JSON.stringify(example, null, 2));
-      lines.push('```');
-      lines.push('');
-      lines.push('Note: This is a minimal example using real folder IDs and field names from your workbook.');
-    }
-    lines.push('');
-
-    return { markdown: lines.join('\n') };
-  }
-
-  /**
-   * Appends output instructions for external agents: respond with only the raw SyncMapping JSON.
-   */
-  async generateExternalAgentContext(workbookId: WorkbookId, actor: Actor): Promise<string> {
-    const { markdown } = await this.generateAiContext(workbookId, actor);
-    const lines: string[] = [markdown, '## Output', ''];
-    lines.push('Respond with ONLY the raw `SyncMapping` JSON object — no envelope, no prose, no markdown fences.');
-    lines.push('The response must be valid JSON that can be parsed directly as a SyncMapping.');
-    lines.push('');
-    return lines.join('\n');
   }
 
   /**
