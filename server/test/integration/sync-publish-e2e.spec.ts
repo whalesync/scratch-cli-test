@@ -1,18 +1,22 @@
 import { PrismaClient } from '@prisma/client';
 import {
   ColumnMapping,
+  createAssetId,
   createConnectorAccountId,
   createDataFolderId,
   createOrganizationId,
   createSyncId,
+  createSyncTablePairId,
   createUserId,
   createWorkbookId,
   DataFolderId,
   Service,
   SyncId,
+  SyncMapping,
   TableMapping,
   WorkbookId,
 } from '@spinner/shared-types';
+import axios from 'axios';
 import { SchemaHelperService } from 'server/src/publish-plan/schema-helper.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
@@ -31,7 +35,10 @@ import { DIRTY_BRANCH, getDefaultRepoPath, MAIN_BRANCH, ScratchGitService } from
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { SyncDataFoldersJobHandler } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
 
 type ParsedRecord = Record<string, unknown>;
 
@@ -60,10 +67,12 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
   let connectorsService: ConnectorsService;
   let credentialEncryptionService: CredentialEncryptionService;
   let mockConnector: {
+    supportsFileUpload: boolean;
     getBatchSize: jest.Mock;
     createRecords: jest.Mock;
     updateRecords: jest.Mock;
     deleteRecords: jest.Mock;
+    uploadFile: jest.Mock;
   };
 
   // Entity IDs
@@ -138,6 +147,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         vfs.rebaseDirty();
         return Promise.resolve();
       }),
+      runGitGc: jest.fn().mockResolvedValue(undefined),
     } as unknown as ScratchGitService;
 
     // ---- Mock: DataFolderService ----
@@ -220,6 +230,8 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
           },
         ),
       deleteRecords: jest.fn().mockResolvedValue(undefined),
+      supportsFileUpload: true,
+      uploadFile: jest.fn(),
     };
 
     connectorsService = {
@@ -265,7 +277,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       fileReferenceService,
       refCleanerService,
       publishSchemaService,
-      {} as AssetIndexService,
+      new AssetIndexService(dbService),
       connectorsService,
       credentialEncryptionService,
     );
@@ -688,6 +700,431 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(scratchGitService.rebaseDirty).toHaveBeenCalled();
   }, 60_000); // 60s timeout for integration test
+
+  it('should sync records with source_asset_to_dest_asset transformer and resolve asset references', async () => {
+    // =====================================================================
+    // Setup: Source folder needs connectorService for asset lookup.
+    // We'll use source-posts (Airtable) → dest-posts (WordPress) with an
+    // "images" field that uses the asset transformer.
+    // =====================================================================
+
+    // Update folders to have connectorService so asset lookups work
+    await prisma.dataFolder.update({
+      where: { id: sourcePostsFolderId },
+      data: { connectorService: Service.AIRTABLE },
+    });
+    await prisma.dataFolder.update({
+      where: { id: destPostsFolderId },
+      data: { connectorService: Service.WORDPRESS },
+    });
+
+    // Create source assets in the DB (simulating a completed pull with rehosted assets)
+    const sourceAssetA = createAssetId(); // will need creation during sync
+    const sourceAssetB = createAssetId(); // already has a destination asset
+    const sourceAssetC = createAssetId(); // another asset needing creation
+
+    await prisma.asset.createMany({
+      data: [
+        {
+          id: sourceAssetA,
+          workbookId,
+          dataFolderId: sourcePostsFolderId,
+          service: Service.AIRTABLE,
+          remoteAssetId: 'att_img_alpha',
+          filename: 'alpha.png',
+          mimeType: 'image/png',
+          rehostedUrl: 'https://storage.example.com/alpha.png',
+          rehostedAt: new Date(),
+        },
+        {
+          id: sourceAssetB,
+          workbookId,
+          dataFolderId: sourcePostsFolderId,
+          service: Service.AIRTABLE,
+          remoteAssetId: 'att_img_beta',
+          filename: 'beta.jpg',
+          mimeType: 'image/jpeg',
+          rehostedUrl: 'https://storage.example.com/beta.jpg',
+          rehostedAt: new Date(),
+        },
+        {
+          id: sourceAssetC,
+          workbookId,
+          dataFolderId: sourcePostsFolderId,
+          service: Service.AIRTABLE,
+          remoteAssetId: 'att_img_gamma',
+          filename: 'gamma.webp',
+          mimeType: 'image/webp',
+          rehostedUrl: 'https://storage.example.com/gamma.webp',
+          rehostedAt: new Date(),
+        },
+      ],
+    });
+
+    // Pre-create a destination asset for sourceAssetB (simulating a previous sync/publish cycle)
+    const existingDestAssetId = createAssetId();
+    const existingDestRemoteId = 'wp_img_42'; // already uploaded to WordPress
+    await prisma.asset.create({
+      data: {
+        id: existingDestAssetId,
+        workbookId,
+        dataFolderId: destPostsFolderId,
+        service: Service.WORDPRESS,
+        remoteAssetId: existingDestRemoteId,
+        sourceAssetId: sourceAssetB,
+        filename: 'beta.jpg',
+        mimeType: 'image/jpeg',
+        rehostedUrl: 'https://storage.example.com/beta.jpg',
+        rehostedAt: new Date(),
+        uploadedAt: new Date(), // already uploaded
+      },
+    });
+
+    // =====================================================================
+    // Seed VFS with source/dest post files that reference assets
+    // =====================================================================
+
+    // Source posts with varying asset references:
+    // post-0: multiple assets (alpha + beta) — one needs creation, one exists
+    // post-1: single asset (gamma) — needs creation
+    // post-2: no assets (empty array)
+    // post-3: multiple assets (beta + gamma) — one exists, one needs creation
+    const sourcePostsWithAssets = [
+      {
+        path: 'src-posts/rec_asset_post_0.json',
+        content: JSON.stringify({
+          id: 'rec_asset_post_0',
+          fields: {
+            Title: 'Post With Multiple Assets',
+            Slug: 'post-asset-0',
+            Images: ['att_img_alpha', 'att_img_beta'],
+          },
+        }),
+      },
+      {
+        path: 'src-posts/rec_asset_post_1.json',
+        content: JSON.stringify({
+          id: 'rec_asset_post_1',
+          fields: { Title: 'Post With New Asset', Slug: 'post-asset-1', Images: ['att_img_gamma'] },
+        }),
+      },
+      {
+        path: 'src-posts/rec_asset_post_2.json',
+        content: JSON.stringify({
+          id: 'rec_asset_post_2',
+          fields: { Title: 'Post With No Assets', Slug: 'post-asset-2', Images: [] },
+        }),
+      },
+      {
+        path: 'src-posts/rec_asset_post_3.json',
+        content: JSON.stringify({
+          id: 'rec_asset_post_3',
+          fields: {
+            Title: 'Post With Mixed Assets',
+            Slug: 'post-asset-3',
+            Images: ['att_img_beta', 'att_img_gamma'],
+          },
+        }),
+      },
+    ];
+
+    // Dest posts — all new (no matching slugs), so sync creates them
+    vfs.seed(DIRTY_BRANCH, sourcePostsWithAssets);
+
+    // =====================================================================
+    // Store table mapping in the Sync record and create SyncTablePair
+    // =====================================================================
+
+    const assetPostsMapping: TableMapping = {
+      sourceDataFolderId: sourcePostsFolderId,
+      destinationDataFolderId: destPostsFolderId,
+      columnMappings: [
+        { sourceColumnId: 'fields.Title', destinationColumnId: 'title' },
+        { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+        {
+          sourceColumnId: 'fields.Images',
+          destinationColumnId: 'images',
+          transformer: {
+            type: 'source_asset_to_dest_asset' as const,
+            options: {
+              sourceDataFolderId: sourcePostsFolderId,
+              destinationDataFolderId: destPostsFolderId,
+            },
+          },
+        },
+      ] as ColumnMapping[],
+      recordMatching: {
+        sourceColumnId: 'fields.Slug',
+        destinationColumnId: 'slug',
+      },
+    };
+
+    const syncMappings: SyncMapping = {
+      version: 1,
+      tableMappings: [assetPostsMapping],
+    };
+
+    await prisma.sync.update({
+      where: { id: syncId },
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      data: { mappings: JSON.parse(JSON.stringify(syncMappings)) },
+    });
+
+    await prisma.syncTablePair.create({
+      data: {
+        id: createSyncTablePairId(),
+        syncId,
+        sourceDataFolderId: sourcePostsFolderId,
+        destinationDataFolderId: destPostsFolderId,
+      },
+    });
+
+    // =====================================================================
+    // Run sync via SyncDataFoldersJobHandler (handles both DATA and FK phases)
+    // =====================================================================
+
+    const workbookEventService = {
+      sendWorkbookEvent: jest.fn(),
+    } as unknown as WorkbookEventService;
+
+    const jobHandler = new SyncDataFoldersJobHandler(
+      prisma,
+      syncService,
+      workbookEventService,
+      scratchGitService,
+      {} as BullEnqueuerService,
+      publishPlanService,
+      { trackSyncCompleted: jest.fn() } as unknown as PostHogService,
+    );
+
+    const noopCheckpoint = jest.fn().mockResolvedValue(undefined);
+    const noopProgress = { publicProgress: { totalFilesSynced: 0, tables: [] }, jobProgress: {} };
+
+    await jobHandler.run({
+      jobId: 'test-asset-sync-job',
+      data: {
+        type: 'sync-data-folders' as const,
+        workbookId,
+        syncId,
+        organizationId: orgId,
+        userId,
+        trigger: 'web',
+      },
+      progress: noopProgress as never,
+      abortSignal: new AbortController().signal,
+      checkpoint: noopCheckpoint,
+    });
+
+    // =====================================================================
+    // Verify asset references in each synced file
+    // =====================================================================
+
+    // post-asset-0: [alpha (new → @asset/), beta (existing → wp_img_42)]
+    const post0Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-0.json');
+    expect(post0Content).toBeDefined();
+    const post0 = JSON.parse(post0Content!) as Record<string, unknown>;
+    const post0Images = post0.images as string[];
+    expect(post0Images).toHaveLength(2);
+    expect(post0Images[0]).toMatch(/^@asset\//); // alpha — new, gets @asset/ ref
+    expect(post0Images[1]).toBe(existingDestRemoteId); // beta — existing, gets raw ID
+
+    // post-asset-1: [gamma (new → @asset/)]
+    const post1Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-1.json');
+    expect(post1Content).toBeDefined();
+    const post1 = JSON.parse(post1Content!) as Record<string, unknown>;
+    const post1Images = post1.images as string[];
+    expect(post1Images).toHaveLength(1);
+    expect(post1Images[0]).toMatch(/^@asset\//); // gamma — new
+
+    // post-asset-2: [] (empty array preserved)
+    const post2Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-2.json');
+    expect(post2Content).toBeDefined();
+    const post2 = JSON.parse(post2Content!) as Record<string, unknown>;
+    const post2Images = post2.images as unknown[];
+    expect(post2Images).toEqual([]);
+
+    // post-asset-3: [beta (existing → wp_img_42), gamma (new → @asset/)]
+    const post3Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-3.json');
+    expect(post3Content).toBeDefined();
+    const post3 = JSON.parse(post3Content!) as Record<string, unknown>;
+    const post3Images = post3.images as string[];
+    expect(post3Images).toHaveLength(2);
+    expect(post3Images[0]).toBe(existingDestRemoteId); // beta — existing
+    expect(post3Images[1]).toMatch(/^@asset\//); // gamma — new
+
+    // =====================================================================
+    // Verify: @asset/ refs for alpha and gamma point to the same dest asset
+    // across posts (idempotent upsert)
+    // =====================================================================
+
+    // Alpha's @asset/ ref should be the same in post-0
+    const alphaRef = post0Images[0];
+
+    // Gamma's @asset/ ref should be the same in post-1 and post-3
+    const gammaRefInPost1 = post1Images[0];
+    const gammaRefInPost3 = post3Images[1];
+    expect(gammaRefInPost1).toBe(gammaRefInPost3);
+
+    // All @asset/ refs should point to distinct destination asset IDs
+    const allAssetRefs = [alphaRef, gammaRefInPost1];
+    const uniqueRefs = new Set(allAssetRefs);
+    expect(uniqueRefs.size).toBe(2); // alpha and gamma are distinct assets
+
+    // =====================================================================
+    // Verify: destination Asset records were created in DB
+    // =====================================================================
+
+    // Alpha should have a new destination asset
+    const alphaDestAssets = await prisma.asset.findMany({
+      where: { sourceAssetId: sourceAssetA, dataFolderId: destPostsFolderId },
+    });
+    expect(alphaDestAssets).toHaveLength(1);
+    expect(alphaDestAssets[0].remoteAssetId).toMatch(/^scratch_pending_publish_/);
+    expect(alphaDestAssets[0].rehostedUrl).toBe('https://storage.example.com/alpha.png');
+
+    // Beta's existing destination asset should be unchanged
+    const betaDestAssets = await prisma.asset.findMany({
+      where: { sourceAssetId: sourceAssetB, dataFolderId: destPostsFolderId },
+    });
+    expect(betaDestAssets).toHaveLength(1);
+    expect(betaDestAssets[0].id).toBe(existingDestAssetId);
+    expect(betaDestAssets[0].remoteAssetId).toBe(existingDestRemoteId);
+
+    // Gamma should have a new destination asset
+    const gammaDestAssets = await prisma.asset.findMany({
+      where: { sourceAssetId: sourceAssetC, dataFolderId: destPostsFolderId },
+    });
+    expect(gammaDestAssets).toHaveLength(1);
+    expect(gammaDestAssets[0].remoteAssetId).toMatch(/^scratch_pending_publish_/);
+    expect(gammaDestAssets[0].rehostedUrl).toBe('https://storage.example.com/gamma.webp');
+
+    // =====================================================================
+    // Phase E: Build Publish Pipeline
+    // =====================================================================
+
+    const buildResult = await publishPlanService.buildPipeline(workbookId, userId, connectorAccountId);
+    expect(buildResult.status).toBe('planned');
+
+    const planEntries = await prisma.publishPlanOperation.findMany({
+      where: { planId: buildResult.pipelineId },
+    });
+    expect(planEntries.length).toBeGreaterThan(0);
+
+    const assetUploadEntries = planEntries.filter((e) => e.phase === 'asset-upload');
+    const createEntries = planEntries.filter((e) => e.phase === 'create');
+    const backfillEntries = planEntries.filter((e) => e.phase === 'backfill');
+
+    // 2 new assets to upload (alpha + gamma; beta already uploaded)
+    expect(assetUploadEntries).toHaveLength(2);
+
+    // 4 new posts to create
+    expect(createEntries).toHaveLength(4);
+
+    // Backfill entries for posts whose @asset/ refs were stripped during build
+    // post-0 had @asset/ for alpha, post-1 had @asset/ for gamma, post-3 had @asset/ for gamma
+    expect(backfillEntries.length).toBeGreaterThan(0);
+    for (const entry of backfillEntries) {
+      expect(entry.filePath).toMatch(/^dest-posts\//);
+    }
+
+    // =====================================================================
+    // Phase F: Run Publish Pipeline
+    // =====================================================================
+
+    // Mock axios.get for asset downloads from rehosted URLs
+    const axiosGetSpy = jest.spyOn(axios, 'get').mockResolvedValue({
+      data: Buffer.from('fake-image-data'),
+    } as never);
+
+    // Mock uploadFile to return real remote asset IDs
+    let nextUploadedAssetId = 5001;
+    mockConnector.uploadFile.mockImplementation((_buffer: Buffer, filename: string) => {
+      const remoteId = `wp_uploaded_${nextUploadedAssetId++}`;
+      return Promise.resolve({
+        remoteAssetId: remoteId,
+        url: `https://wordpress.example.com/assets/${remoteId}`,
+        filename,
+      });
+    });
+
+    const runResult = await publishRunService.runPipeline(buildResult.pipelineId);
+    expect(runResult.status).toBe('completed');
+
+    // Restore axios
+    axiosGetSpy.mockRestore();
+
+    // =====================================================================
+    // Verify publish results
+    // =====================================================================
+
+    // All plan operations should succeed
+    const finalEntries = await prisma.publishPlanOperation.findMany({
+      where: { planId: buildResult.pipelineId },
+    });
+    for (const entry of finalEntries) {
+      expect(entry.status).toBe('success');
+    }
+
+    // uploadFile should have been called for alpha and gamma (not beta — already uploaded)
+    expect(mockConnector.uploadFile).toHaveBeenCalledTimes(2);
+
+    // createRecords should have been called for the 4 posts
+    expect(mockConnector.createRecords).toHaveBeenCalled();
+
+    // Asset records should now have real remote IDs (no more scratch_pending_publish_)
+    const alphaDestAfterPublish = await prisma.asset.findFirst({
+      where: { sourceAssetId: sourceAssetA, dataFolderId: destPostsFolderId },
+    });
+    expect(alphaDestAfterPublish).not.toBeNull();
+    expect(alphaDestAfterPublish!.remoteAssetId).toMatch(/^wp_uploaded_/);
+    expect(alphaDestAfterPublish!.uploadedAt).not.toBeNull();
+
+    const gammaDestAfterPublish = await prisma.asset.findFirst({
+      where: { sourceAssetId: sourceAssetC, dataFolderId: destPostsFolderId },
+    });
+    expect(gammaDestAfterPublish).not.toBeNull();
+    expect(gammaDestAfterPublish!.remoteAssetId).toMatch(/^wp_uploaded_/);
+    expect(gammaDestAfterPublish!.uploadedAt).not.toBeNull();
+
+    // Beta should still have its original remote ID (was already uploaded)
+    const betaDestAfterPublish = await prisma.asset.findFirst({
+      where: { sourceAssetId: sourceAssetB, dataFolderId: destPostsFolderId },
+    });
+    expect(betaDestAfterPublish).not.toBeNull();
+    expect(betaDestAfterPublish!.remoteAssetId).toBe(existingDestRemoteId);
+
+    // Main branch files: images arrays should contain real remote IDs
+    // (no @asset/ pseudo-refs and no scratch_pending_publish_ temp IDs)
+    const mainBranchPostFiles = vfs.getFilesByFolder(MAIN_BRANCH, 'dest-posts');
+    for (const postFile of mainBranchPostFiles) {
+      const parsed = JSON.parse(postFile.content) as ParsedRecord;
+      const images = parsed.images;
+      if (images && Array.isArray(images)) {
+        for (const imageValue of images as string[]) {
+          expect(imageValue).not.toMatch(/^@asset\//); // No pseudo-refs remaining
+          expect(imageValue).not.toMatch(/^scratch_pending_publish_/); // No temp IDs leaked
+        }
+      }
+    }
+
+    // Verify specific post files have correct resolved asset IDs
+    const mainPost0 = vfs.getAllFiles(MAIN_BRANCH).get('dest-posts/post-asset-0.json');
+    expect(mainPost0).toBeDefined();
+    const mainPost0Parsed = JSON.parse(mainPost0!) as ParsedRecord;
+    const mainPost0Images = mainPost0Parsed.images as string[];
+    expect(mainPost0Images).toHaveLength(2);
+    // Alpha was uploaded → real wp_uploaded_ ID; beta was already wp_img_42
+    expect(mainPost0Images[0]).toMatch(/^wp_uploaded_/);
+    expect(mainPost0Images[1]).toBe(existingDestRemoteId);
+
+    // rebaseDirty should have been called
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(scratchGitService.rebaseDirty).toHaveBeenCalled();
+
+    // Clean up assets and sync table pairs (afterEach doesn't handle these)
+    await prisma.asset.deleteMany({ where: { workbookId } });
+    await prisma.syncTablePair.deleteMany({ where: { syncId } });
+  }, 60_000);
 });
 
 describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', () => {
@@ -711,10 +1148,12 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
   let connectorsService: ConnectorsService;
   let credentialEncryptionService: CredentialEncryptionService;
   let mockConnector: {
+    supportsFileUpload: boolean;
     getBatchSize: jest.Mock;
     createRecords: jest.Mock;
     updateRecords: jest.Mock;
     deleteRecords: jest.Mock;
+    uploadFile: jest.Mock;
   };
 
   // Entity IDs
@@ -794,6 +1233,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         vfs.rebaseDirty();
         return Promise.resolve();
       }),
+      runGitGc: jest.fn().mockResolvedValue(undefined),
     } as unknown as ScratchGitService;
 
     // ---- Mock: DataFolderService ----
@@ -876,6 +1316,8 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
           },
         ),
       deleteRecords: jest.fn().mockResolvedValue(undefined),
+      supportsFileUpload: true,
+      uploadFile: jest.fn(),
     };
 
     connectorsService = {
@@ -921,7 +1363,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       fileReferenceService,
       refCleanerService,
       publishSchemaService,
-      {} as AssetIndexService,
+      new AssetIndexService(dbService),
       connectorsService,
       credentialEncryptionService,
     );

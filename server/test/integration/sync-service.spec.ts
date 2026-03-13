@@ -1541,7 +1541,13 @@ describe('SyncService - syncTableMapping', () => {
       return Promise.resolve([]);
     });
 
+    // Decoy mapping: same sourceColumnId as the match column but different destinationColumnId
+    // and no transformer. Placed first to verify that insertSourceMatchKeys selects the column
+    // mapping matching both source AND destination (not just the first source match).
+    // Without the fix, the code picks this decoy (no jsonpath transformer), so the raw rich-text
+    // object is used as the match key, and John fails to match his destination record.
     const columnMappings: ColumnMapping[] = [
+      { sourceColumnId: 'title', destinationColumnId: 'raw_title' },
       {
         sourceColumnId: 'title',
         destinationColumnId: 'slug',

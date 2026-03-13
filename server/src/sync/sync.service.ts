@@ -1458,7 +1458,10 @@ export class SyncService {
     // Check if the source match column has DATA-phase transformers configured
     if (transformContext) {
       const matchColumnId = tableMapping.recordMatching.sourceColumnId;
-      const matchMapping = tableMapping.columnMappings?.find((m) => m.sourceColumnId === matchColumnId);
+      const matchDestColumnId = tableMapping.recordMatching.destinationColumnId;
+      const matchMapping = tableMapping.columnMappings?.find(
+        (m) => m.sourceColumnId === matchColumnId && m.destinationColumnId === matchDestColumnId,
+      );
       if (matchMapping) {
         const allConfigs = getTransformerConfigs(matchMapping);
         const dataConfigs = allConfigs.filter((c) => {
