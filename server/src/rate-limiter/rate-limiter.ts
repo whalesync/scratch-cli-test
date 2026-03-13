@@ -13,6 +13,7 @@ export interface WithRetryOpts {
   /** Extract retry-after seconds from the error, or undefined to use backoff. */
   getRetryAfterS?: (error: unknown) => number | undefined;
   maxRetries?: number;
+  initialRetryDelayMs?: number;
   maxRetryDelayMs?: number;
 }
 
@@ -92,7 +93,7 @@ export class RateLimiter {
   async withRetry<T>(fn: () => Promise<T>, opts: WithRetryOpts): Promise<T> {
     const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
     const maxRetryDelayMs = opts.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
-    let retryDelay = DEFAULT_INITIAL_RETRY_DELAY_MS;
+    let retryDelay = opts.initialRetryDelayMs ?? DEFAULT_INITIAL_RETRY_DELAY_MS;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       await this.waitForQuota();
@@ -132,7 +133,7 @@ export class RateLimiter {
 export async function withRetry<T>(fn: () => Promise<T>, opts: WithRetryOpts): Promise<T> {
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const maxRetryDelayMs = opts.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
-  let retryDelay = DEFAULT_INITIAL_RETRY_DELAY_MS;
+  let retryDelay = opts.initialRetryDelayMs ?? DEFAULT_INITIAL_RETRY_DELAY_MS;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {

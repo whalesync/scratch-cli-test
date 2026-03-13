@@ -44,7 +44,9 @@ const TEST_ENTITY_ID: EntityId = {
 };
 
 function createConnector(): AirtableConnector {
-  return new AirtableConnector('fake-test-api-key');
+  return new AirtableConnector('fake-test-api-key', {
+    retryOverrides: { initialRetryDelayMs: 1, maxRetryDelayMs: 1 },
+  });
 }
 
 async function seedTestData() {
@@ -366,7 +368,7 @@ describe('AirtableConnector with fake API', () => {
       store.queueRateLimit(2, 0);
       const files = await collectPulledFiles(connector, spec);
       expect(files).toHaveLength(1);
-    }, 15000);
+    });
 
     it('surfaces auth errors via extractConnectorErrorDetails', async () => {
       const connector = createConnector();

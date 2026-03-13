@@ -1,7 +1,7 @@
 import { ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
-import { RateLimiter } from 'src/rate-limiter/rate-limiter';
+import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
@@ -24,9 +24,12 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
   private readonly client: AirtableApiClient;
   private readonly schemaParser = new AirtableSchemaParser();
 
-  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter; retryOverrides?: Partial<WithRetryOpts> }) {
     super();
-    this.client = new AirtableApiClient(apiKey, { rateLimiter: opts?.rateLimiter });
+    this.client = new AirtableApiClient(apiKey, {
+      rateLimiter: opts?.rateLimiter,
+      retryOverrides: opts?.retryOverrides,
+    });
   }
 
   public async testConnection(): Promise<void> {

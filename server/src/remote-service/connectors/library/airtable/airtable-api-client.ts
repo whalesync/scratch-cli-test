@@ -26,8 +26,9 @@ const AIRTABLE_RETRY_OPTS: WithRetryOpts = {
 export class AirtableApiClient {
   private readonly client: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
+  private readonly retryOpts: WithRetryOpts;
 
-  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter; retryOverrides?: Partial<WithRetryOpts> }) {
     this.client = createApiClient({
       baseURL: AIRTABLE_API_BASE_URL,
       headers: {
@@ -36,13 +37,14 @@ export class AirtableApiClient {
       },
     });
     this.rateLimiter = opts?.rateLimiter;
+    this.retryOpts = opts?.retryOverrides ? { ...AIRTABLE_RETRY_OPTS, ...opts.retryOverrides } : AIRTABLE_RETRY_OPTS;
   }
 
   private async retryableRequest<T>(fn: () => Promise<T>): Promise<T> {
     if (this.rateLimiter) {
-      return this.rateLimiter.withRetry(fn, AIRTABLE_RETRY_OPTS);
+      return this.rateLimiter.withRetry(fn, this.retryOpts);
     }
-    return standaloneWithRetry(fn, AIRTABLE_RETRY_OPTS);
+    return standaloneWithRetry(fn, this.retryOpts);
   }
 
   /**
