@@ -5,7 +5,9 @@ import type { NextConfig } from 'next';
 let nextConfig: NextConfig = {
   output: 'standalone',
   productionBrowserSourceMaps: true,
-  turbopack: {},
+  turbopack: {
+    root: '..',
+  },
   devIndicators: {
     position: 'bottom-right',
   },
