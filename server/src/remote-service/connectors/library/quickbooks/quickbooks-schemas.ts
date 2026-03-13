@@ -7,13 +7,13 @@
  * Source: Airbyte QuickBooks connector (MIT license)
  * https://raw.githubusercontent.com/airbytehq/airbyte/master/airbyte-integrations/connectors/source-quickbooks/manifest.yaml
  *
- * Generated at: 2026-03-10T02:42:41.491Z
+ * Generated at: 2026-03-13T14:08:57.636Z
  *
  * All fields are marked readonly (read-only connector).
  * All schemas have additionalProperties: true to handle undocumented fields.
  */
 import { type TSchema, Type } from '@sinclair/typebox';
-import { CONNECTOR_DATA_TYPE, READONLY_FLAG } from '../../json-schema';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
 import { QuickBooksEntityType } from './quickbooks-types';
 
 const AccountSchema = Type.Object(
@@ -51,12 +51,15 @@ const AccountSchema = Type.Object(
     ),
     Name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ParentRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     SubAccount: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -69,13 +72,16 @@ const AccountSchema = Type.Object(
 const BillSchema = Type.Object(
   {
     APAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     Balance: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     CurrencyRef: Type.Optional(
@@ -109,13 +115,16 @@ const BillSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     AccountRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                      ),
                     ),
                     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                     ClassRef: Type.Optional(
@@ -128,21 +137,27 @@ const BillSchema = Type.Object(
                       ]),
                     ),
                     CustomerRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+                      ),
                     ),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                   }),
                   Type.Null(),
@@ -157,22 +172,28 @@ const BillSchema = Type.Object(
                   Type.Object({
                     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -216,25 +237,31 @@ const BillSchema = Type.Object(
     ),
     PrivateNote: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SalesTermRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+      ),
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     VendorRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
+      ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -246,25 +273,31 @@ const BillSchema = Type.Object(
 const BillPaymentSchema = Type.Object(
   {
     APAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     CheckPayment: Type.Optional(
       Type.Union([
         Type.Object({
           BankAccountRef: Type.Optional(
-            Type.Union([
-              Type.Object({
-                name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
+            Type.Union(
+              [
+                Type.Object({
+                  name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                }),
+                Type.Null(),
+              ],
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+            ),
           ),
           PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
@@ -275,13 +308,16 @@ const BillPaymentSchema = Type.Object(
       Type.Union([
         Type.Object({
           CCAccountRef: Type.Optional(
-            Type.Union([
-              Type.Object({
-                name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
+            Type.Union(
+              [
+                Type.Object({
+                  name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                }),
+                Type.Null(),
+              ],
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+            ),
           ),
         }),
         Type.Null(),
@@ -353,13 +389,16 @@ const BillPaymentSchema = Type.Object(
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     VendorRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
+      ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -473,13 +512,16 @@ const CreditMemoSchema = Type.Object(
       ]),
     ),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -500,22 +542,28 @@ const CreditMemoSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -546,13 +594,16 @@ const CreditMemoSchema = Type.Object(
     PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     RemainingCredit: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     SalesTermRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+      ),
     ),
     ShipAddr: Type.Optional(
       Type.Union([
@@ -618,13 +669,16 @@ const CustomerSchema = Type.Object(
       ]),
     ),
     DefaultTaxCodeRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+      ),
     ),
     DisplayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     FamilyName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -664,21 +718,27 @@ const CustomerSchema = Type.Object(
       ]),
     ),
     ParentRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     PaymentMethodRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+      ),
     ),
     PreferredDeliveryMethod: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     PrimaryEmailAddr: Type.Optional(
@@ -700,13 +760,16 @@ const CustomerSchema = Type.Object(
     PrintOnCheckName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ResaleNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SalesTermRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+      ),
     ),
     ShipAddr: Type.Optional(
       Type.Union([
@@ -748,13 +811,16 @@ const DepositSchema = Type.Object(
       Type.Union([
         Type.Object({
           AccountRef: Type.Optional(
-            Type.Union([
-              Type.Object({
-                name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
+            Type.Union(
+              [
+                Type.Object({
+                  name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                }),
+                Type.Null(),
+              ],
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+            ),
           ),
           Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           Memo: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -781,13 +847,16 @@ const DepositSchema = Type.Object(
       ]),
     ),
     DepositToAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     Id: Type.String({ [READONLY_FLAG]: true }),
@@ -801,13 +870,16 @@ const DepositSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     AccountRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                      ),
                     ),
                     CheckNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                     Entity: Type.Optional(
@@ -821,12 +893,15 @@ const DepositSchema = Type.Object(
                       ]),
                     ),
                     PaymentMethodRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+                      ),
                     ),
                   }),
                   Type.Null(),
@@ -994,13 +1069,16 @@ const EstimateSchema = Type.Object(
       ]),
     ),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     DeliveryInfo: Type.Optional(
       Type.Union([
@@ -1029,22 +1107,28 @@ const EstimateSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -1122,12 +1206,15 @@ const EstimateSchema = Type.Object(
                           PercentBased: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
                           TaxPercent: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                           TaxRateRef: Type.Optional(
-                            Type.Union([
-                              Type.Object({
-                                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                              }),
-                              Type.Null(),
-                            ]),
+                            Type.Union(
+                              [
+                                Type.Object({
+                                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                                }),
+                                Type.Null(),
+                              ],
+                              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                            ),
                           ),
                         }),
                         Type.Null(),
@@ -1142,12 +1229,15 @@ const EstimateSchema = Type.Object(
           ),
           TotalTax: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           TxnTaxCodeRef: Type.Optional(
-            Type.Union([
-              Type.Object({
-                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
+            Type.Union(
+              [
+                Type.Object({
+                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                }),
+                Type.Null(),
+              ],
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+            ),
           ),
         }),
         Type.Null(),
@@ -1227,13 +1317,16 @@ const InvoiceSchema = Type.Object(
       ]),
     ),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     DeliveryInfo: Type.Optional(
       Type.Union([
@@ -1261,13 +1354,16 @@ const InvoiceSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     DiscountAccountRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                      ),
                     ),
                     DiscountPercent: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     PercentBased: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -1304,25 +1400,31 @@ const InvoiceSchema = Type.Object(
                       ]),
                     ),
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                     ServiceDate: Type.Optional(
                       Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
                     ),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -1367,13 +1469,16 @@ const InvoiceSchema = Type.Object(
     PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     PrivateNote: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SalesTermRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+      ),
     ),
     ShipAddr: Type.Optional(
       Type.Union([
@@ -1409,12 +1514,15 @@ const InvoiceSchema = Type.Object(
                           PercentBased: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
                           TaxPercent: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                           TaxRateRef: Type.Optional(
-                            Type.Union([
-                              Type.Object({
-                                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                              }),
-                              Type.Null(),
-                            ]),
+                            Type.Union(
+                              [
+                                Type.Object({
+                                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                                }),
+                                Type.Null(),
+                              ],
+                              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                            ),
                           ),
                         }),
                         Type.Null(),
@@ -1429,12 +1537,15 @@ const InvoiceSchema = Type.Object(
           ),
           TotalTax: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           TxnTaxCodeRef: Type.Optional(
-            Type.Union([
-              Type.Object({
-                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
+            Type.Union(
+              [
+                Type.Object({
+                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                }),
+                Type.Null(),
+              ],
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+            ),
           ),
         }),
         Type.Null(),
@@ -1452,34 +1563,43 @@ const ItemSchema = Type.Object(
   {
     Active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     AssetAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExpenseAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     FullyQualifiedName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Id: Type.String({ [READONLY_FLAG]: true }),
     IncomeAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     InvStartDate: Type.Optional(
       Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
@@ -1540,13 +1660,16 @@ const JournalEntrySchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     AccountRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                      ),
                     ),
                     ClassRef: Type.Optional(
                       Type.Union([
@@ -1602,13 +1725,16 @@ const JournalEntrySchema = Type.Object(
     PrivateNote: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TaxRateRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+      ),
     ),
     TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(
@@ -1630,13 +1756,16 @@ const JournalEntrySchema = Type.Object(
                           TaxInclusiveAmount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                           TaxPercent: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                           TaxRateRef: Type.Optional(
-                            Type.Union([
-                              Type.Object({
-                                name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                              }),
-                              Type.Null(),
-                            ]),
+                            Type.Union(
+                              [
+                                Type.Object({
+                                  name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                                }),
+                                Type.Null(),
+                              ],
+                              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                            ),
                           ),
                         }),
                         Type.Null(),
@@ -1651,13 +1780,16 @@ const JournalEntrySchema = Type.Object(
           ),
           TotalTax: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           TxnTaxCodeRef: Type.Optional(
-            Type.Union([
-              Type.Object({
-                name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              }),
-              Type.Null(),
-            ]),
+            Type.Union(
+              [
+                Type.Object({
+                  name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                  value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                }),
+                Type.Null(),
+              ],
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+            ),
           ),
         }),
         Type.Null(),
@@ -1691,21 +1823,27 @@ const PaymentSchema = Type.Object(
       ]),
     ),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     DepositToAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     Id: Type.String({ [READONLY_FLAG]: true }),
@@ -1798,12 +1936,15 @@ const PaymentSchema = Type.Object(
       ]),
     ),
     PaymentMethodRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+      ),
     ),
     PaymentRefNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     PrivateNote: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1847,13 +1988,16 @@ const PaymentMethodSchema = Type.Object(
 const PurchaseSchema = Type.Object(
   {
     AccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     Credit: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     CurrencyRef: Type.Optional(
@@ -1887,13 +2031,16 @@ const PurchaseSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     AccountRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                      ),
                     ),
                     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                     ClassRef: Type.Optional(
@@ -1906,21 +2053,27 @@ const PurchaseSchema = Type.Object(
                       ]),
                     ),
                     CustomerRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+                      ),
                     ),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                   }),
                   Type.Null(),
@@ -1935,22 +2088,28 @@ const PurchaseSchema = Type.Object(
                   Type.Object({
                     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -2040,13 +2199,16 @@ const PurchaseSchema = Type.Object(
 const PurchaseOrderSchema = Type.Object(
   {
     APAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     ClassRef: Type.Optional(
       Type.Union([
@@ -2118,31 +2280,40 @@ const PurchaseOrderSchema = Type.Object(
                       ]),
                     ),
                     CustomerRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+                      ),
                     ),
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -2188,13 +2359,16 @@ const PurchaseOrderSchema = Type.Object(
     POStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     PrivateNote: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SalesTermRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+      ),
     ),
     ShipAddr: Type.Optional(
       Type.Union([
@@ -2239,13 +2413,16 @@ const PurchaseOrderSchema = Type.Object(
       ]),
     ),
     VendorRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
+      ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -2312,22 +2489,28 @@ const RefundReceiptSchema = Type.Object(
       ]),
     ),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     DepositToAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2347,22 +2530,28 @@ const RefundReceiptSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -2391,13 +2580,16 @@ const RefundReceiptSchema = Type.Object(
       ]),
     ),
     PaymentMethodRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+      ),
     ),
     PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2477,22 +2669,28 @@ const SalesReceiptSchema = Type.Object(
       ]),
     ),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     DepositToAccountRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+      ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2511,13 +2709,16 @@ const SalesReceiptSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     DiscountAccountRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                      ),
                     ),
                     DiscountPercent: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     PercentBased: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -2531,22 +2732,28 @@ const SalesReceiptSchema = Type.Object(
                 Type.Union([
                   Type.Object({
                     ItemRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                      ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                     TaxCodeRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                      ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                   }),
@@ -2589,13 +2796,16 @@ const SalesReceiptSchema = Type.Object(
       ]),
     ),
     PaymentMethodRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+      ),
     ),
     PaymentRefNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2664,13 +2874,16 @@ const TaxCodeSchema = Type.Object(
                   Type.Object({
                     TaxOrder: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
                     TaxRateRef: Type.Optional(
-                      Type.Union([
-                        Type.Object({
-                          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                        }),
-                        Type.Null(),
-                      ]),
+                      Type.Union(
+                        [
+                          Type.Object({
+                            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                          }),
+                          Type.Null(),
+                        ],
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                      ),
                     ),
                     TaxTypeApplicable: Type.Optional(Type.Union([Type.String(), Type.Null()])),
                   }),
@@ -2768,35 +2981,44 @@ const TimeActivitySchema = Type.Object(
   {
     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     CustomerRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+      ),
     ),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EmployeeRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'employee' } },
+      ),
     ),
     HourlyRate: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
     Hours: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
     Id: Type.String({ [READONLY_FLAG]: true }),
     ItemRef: Type.Optional(
-      Type.Union([
-        Type.Object({
-          name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        Type.Null(),
-      ]),
+      Type.Union(
+        [
+          Type.Object({
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ],
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+      ),
     ),
     MetaData: Type.Optional(
       Type.Union([

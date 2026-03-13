@@ -118,6 +118,67 @@ const SUPPLEMENTARY_FIELDS: Record<string, Record<string, JsonSchemaProperty>> =
   },
 };
 
+// ============= Foreign Key Resolution =============
+
+/**
+ * Maps QuickBooks *Ref field names to their target table slugs.
+ * Only includes Refs that point to entities we support in our connector.
+ * Fields referencing unsupported entities (Currency, Department, Class) are omitted.
+ */
+const REF_FIELD_TO_TABLE: Record<string, string> = {
+  // Direct entity refs
+  VendorRef: 'vendor',
+  CustomerRef: 'customer',
+  ItemRef: 'item',
+  PaymentMethodRef: 'paymentmethod',
+  TaxCodeRef: 'taxcode',
+  TaxRateRef: 'taxrate',
+  EmployeeRef: 'employee',
+  // Account-type refs (all point to Account entity)
+  AccountRef: 'account',
+  APAccountRef: 'account',
+  BankAccountRef: 'account',
+  CCAccountRef: 'account',
+  AssetAccountRef: 'account',
+  ExpenseAccountRef: 'account',
+  IncomeAccountRef: 'account',
+  DiscountAccountRef: 'account',
+  DepositToAccountRef: 'account',
+  // Term refs
+  SalesTermRef: 'term',
+  // Tax code variants
+  DefaultTaxCodeRef: 'taxcode',
+  TxnTaxCodeRef: 'taxcode',
+};
+
+/**
+ * Entities where ParentRef is a self-reference to the same table.
+ */
+const SELF_REF_ENTITIES = new Set(['Account', 'Customer', 'Item']);
+
+/**
+ * Resolve the FK target table slug for a Ref field, or null if not a known FK.
+ */
+function resolveRefTarget(fieldName: string, entityName: string): string | null {
+  if (fieldName === 'ParentRef' && SELF_REF_ENTITIES.has(entityName)) {
+    return entityName.toLowerCase();
+  }
+  return REF_FIELD_TO_TABLE[fieldName] ?? null;
+}
+
+/**
+ * Inject FOREIGN_KEY_OPTIONS into a nullable TypeBox expression.
+ * Expects the expression to end with `])` from a Type.Union([..., Type.Null()]) wrapper.
+ */
+function addForeignKeyAnnotation(typeExpr: string, linkedTableId: string): string {
+  const fkOpts = `{ [FOREIGN_KEY_OPTIONS]: { linkedTableId: '${linkedTableId}' } }`;
+  const closingIdx = typeExpr.lastIndexOf('])');
+  if (closingIdx !== -1) {
+    return `${typeExpr.slice(0, closingIdx + 1)}, ${fkOpts})`;
+  }
+  return typeExpr;
+}
+
 // ============= Types =============
 
 interface JsonSchemaProperty {
@@ -178,20 +239,20 @@ function extractSchemaForStream(stream: AirbyteStream): JsonSchema | null {
 /**
  * Convert a JSON Schema property into a TypeBox expression string.
  */
-function jsonSchemaToTypebox(prop: JsonSchemaProperty, depth: number = 0): string {
+function jsonSchemaToTypebox(prop: JsonSchemaProperty, depth: number = 0, entityName: string = ''): string {
   // Handle nullable type arrays like ["null", "string"]
   const types = Array.isArray(prop.type) ? prop.type.filter((t) => t !== 'null') : prop.type ? [prop.type] : [];
   const isNullable = Array.isArray(prop.type) && prop.type.includes('null');
 
   // Nested object
   if (types.includes('object') && prop.properties && Object.keys(prop.properties).length > 0) {
-    const inner = objectPropertiesToTypebox(prop.properties, depth + 1);
+    const inner = objectPropertiesToTypebox(prop.properties, depth + 1, entityName);
     return wrapNullable(`Type.Object({${inner}})`, isNullable);
   }
 
   // Array
   if (types.includes('array') && prop.items) {
-    const itemExpr = jsonSchemaToTypebox(prop.items, depth + 1);
+    const itemExpr = jsonSchemaToTypebox(prop.items, depth + 1, entityName);
     return wrapNullable(`Type.Array(${itemExpr})`, isNullable);
   }
 
@@ -237,12 +298,23 @@ function wrapNullable(expr: string, nullable: boolean): string {
   return expr;
 }
 
-function objectPropertiesToTypebox(properties: Record<string, JsonSchemaProperty>, depth: number): string {
+function objectPropertiesToTypebox(
+  properties: Record<string, JsonSchemaProperty>,
+  depth: number,
+  entityName: string = '',
+): string {
   const entries = Object.entries(properties)
     // Skip Airbyte-internal fields
     .filter(([key]) => key !== 'airbyte_cursor')
     .map(([key, prop]) => {
-      const typeExpr = jsonSchemaToTypebox(prop, depth);
+      let typeExpr = jsonSchemaToTypebox(prop, depth, entityName);
+
+      // Add FK metadata for known Ref fields
+      const fkTarget = resolveRefTarget(key, entityName);
+      if (fkTarget) {
+        typeExpr = addForeignKeyAnnotation(typeExpr, fkTarget);
+      }
+
       // All fields except Id are Optional + readonly
       if (key === 'Id') {
         return `\n${'  '.repeat(depth + 2)}${key}: Type.String({ [READONLY_FLAG]: true }),`;
@@ -256,7 +328,7 @@ function objectPropertiesToTypebox(properties: Record<string, JsonSchemaProperty
  * Generate the full TypeBox schema variable for an entity.
  */
 function generateEntitySchema(entityName: string, schema: JsonSchema): string {
-  const props = objectPropertiesToTypebox(schema.properties, 0);
+  const props = objectPropertiesToTypebox(schema.properties, 0, entityName);
   return `const ${entityName}Schema = Type.Object(\n  {${props}\n  },\n  { $id: 'quickbooks/${entityName}', additionalProperties: true },\n);`;
 }
 
@@ -314,7 +386,7 @@ function generateOutputFile(
  * All schemas have additionalProperties: true to handle undocumented fields.
  */
 import { type TSchema, Type } from '@sinclair/typebox';
-import { CONNECTOR_DATA_TYPE, READONLY_FLAG } from '../../json-schema';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
 import { QuickBooksEntityType } from './quickbooks-types';
 `;
 
