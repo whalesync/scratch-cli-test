@@ -4,7 +4,8 @@ import { workbookApi } from '@/lib/api/workbook';
 import { Anchor, Badge, Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { ImageIcon } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import useSWR from 'swr';
 
 interface AssetEntry {
   id: string;
@@ -59,21 +60,13 @@ function isExpired(urlExpiresAt: string | null): boolean {
 }
 
 export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: AssetIndexModalProps) {
-  const [rows, setRows] = useState<AssetEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const { data: rows, isLoading } = useSWR(
+    opened ? ['asset-index', workbookId, dataFolderId] : null,
+    () => workbookApi.listAssetIndex(workbookId, dataFolderId) as Promise<AssetEntry[]>,
+  );
 
-  useEffect(() => {
-    if (!opened) return;
-    setIsLoading(true);
-    workbookApi
-      .listAssetIndex(workbookId, dataFolderId)
-      .then((data) => setRows(data as AssetEntry[]))
-      .catch(console.error)
-      .finally(() => setIsLoading(false));
-  }, [opened, workbookId, dataFolderId]);
-
-  const expiredCount = useMemo(() => rows.filter((r) => isExpired(r.urlExpiresAt)).length, [rows]);
-  const rehostedCount = useMemo(() => rows.filter((r) => r.rehostedUrl != null).length, [rows]);
+  const expiredCount = useMemo(() => rows?.filter((r) => isExpired(r.urlExpiresAt)).length ?? 0, [rows]);
+  const rehostedCount = useMemo(() => rows?.filter((r) => r.rehostedUrl != null).length ?? 0, [rows]);
 
   return (
     <Modal
@@ -84,7 +77,7 @@ export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: A
           <ImageIcon size={18} />
           <Title order={4}>Asset Index</Title>
           <Text size="sm" c="dimmed">
-            ({rows.length} entries)
+            ({rows?.length} entries)
           </Text>
           {rehostedCount > 0 && (
             <Badge color="teal" size="sm">
@@ -104,7 +97,7 @@ export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: A
         <Text size="sm" c="dimmed" ta="center" py="md">
           Loading...
         </Text>
-      ) : rows.length === 0 ? (
+      ) : rows?.length === 0 ? (
         <Text size="sm" c="dimmed" ta="center" py="md">
           No assets.
         </Text>
@@ -125,7 +118,7 @@ export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: A
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {rows.map((r) => {
+              {rows?.map((r) => {
                 const expired = isExpired(r.urlExpiresAt);
                 return (
                   <Table.Tr key={r.id} bg={expired ? 'var(--mantine-color-red-0)' : undefined}>

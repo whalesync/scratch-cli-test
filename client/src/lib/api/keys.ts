@@ -43,11 +43,14 @@ export const SWR_KEYS = {
       Array.isArray(key) && key[0] === 'files' && key[2] === workbookId,
     resolveReferences: (workbookId: WorkbookId, path: string, branch: string) =>
       ['files', 'resolve-references', workbookId, path, branch] as const,
+    repoFile: (workbookId: WorkbookId, filePath: string, connectorAccountId?: string) =>
+      ['files', 'repo-file', workbookId, filePath, connectorAccountId] as const,
   },
   jobs: {
     activeByWorkbook: (workbookId: WorkbookId) => ['jobs', 'active-by-workbook', workbookId] as const,
     allJobs: (limit?: number, offset?: number, statuses?: string[], userId?: string) =>
       ['jobs', 'all', limit, offset, statuses?.join(',') ?? 'all', userId ?? 'all'] as const,
+    raw: (jobId: string) => ['jobs', 'raw', jobId] as const,
   },
   dirtyFiles: {
     list: (workbookId: WorkbookId) => ['dirty-files', 'list', workbookId] as const,
@@ -60,5 +63,7 @@ export const SWR_KEYS = {
     files: (dataFolderId: DataFolderId, limit?: number, offset?: number) =>
       ['data-folders', 'files', dataFolderId, limit, offset] as const,
     publishStatus: (workbookId: WorkbookId) => ['data-folders', 'publish-status', workbookId] as const,
+    schema: (dataFolderId: DataFolderId, mode: 'view' | 'refresh') =>
+      ['data-folders', 'schema', dataFolderId, mode] as const,
   },
 };

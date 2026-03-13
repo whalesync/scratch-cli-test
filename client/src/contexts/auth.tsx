@@ -75,6 +75,7 @@ export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.El
   // Check session validity when auth state changes
   useEffect(() => {
     if (isLoaded && isSignedIn) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async Clerk session check; setState happens in callback after await
       loadToken().catch(console.error);
     }
   }, [isLoaded, isSignedIn, loadToken]);

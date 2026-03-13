@@ -4,7 +4,7 @@ import { workbookApi } from '@/lib/api/workbook';
 import { Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { WorkbookId } from '@spinner/shared-types';
 import { DatabaseIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import useSWR from 'swr';
 
 interface FileIndexEntry {
   id: string;
@@ -22,18 +22,10 @@ interface FileIndexModalProps {
 }
 
 export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalProps) {
-  const [rows, setRows] = useState<FileIndexEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!opened) return;
-    setIsLoading(true);
-    workbookApi
-      .listFileIndex(workbookId)
-      .then((data) => setRows(data as FileIndexEntry[]))
-      .catch(console.error)
-      .finally(() => setIsLoading(false));
-  }, [opened, workbookId]);
+  const { data: rows, isLoading } = useSWR(
+    opened ? ['file-index', workbookId] : null,
+    () => workbookApi.listFileIndex(workbookId) as Promise<FileIndexEntry[]>,
+  );
 
   return (
     <Modal
@@ -44,7 +36,7 @@ export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalPr
           <DatabaseIcon size={18} />
           <Title order={4}>File Index</Title>
           <Text size="sm" c="dimmed">
-            ({rows.length} entries)
+            ({rows?.length ?? 0} entries)
           </Text>
         </Group>
       }
@@ -66,7 +58,7 @@ export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalPr
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {rows.length === 0 ? (
+              {!rows?.length ? (
                 <Table.Tr>
                   <Table.Td colSpan={4}>
                     <Text size="sm" c="dimmed" ta="center" py="md">

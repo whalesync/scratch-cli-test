@@ -5,7 +5,7 @@ import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import type { ComboboxItem } from '@mantine/core';
 import { Group, Modal, Select, Stack, Text } from '@mantine/core';
 import { ArrowRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 interface FolderOption {
   id: string;
@@ -60,13 +60,15 @@ const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorServ
 export function AddFolderMappingModal({ opened, onClose, onConfirm, allFolders }: AddFolderMappingModalProps) {
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [destId, setDestId] = useState<string | null>(null);
+  const [prevOpened, setPrevOpened] = useState(opened);
 
-  useEffect(() => {
-    if (opened) {
-      setSourceId(null);
-      setDestId(null);
-    }
-  }, [opened]);
+  if (opened && !prevOpened) {
+    setSourceId(null);
+    setDestId(null);
+  }
+  if (opened !== prevOpened) {
+    setPrevOpened(opened);
+  }
 
   const getConnectorService = (id: string | null) => allFolders.find((f) => f.id === id)?.connectorService ?? null;
 

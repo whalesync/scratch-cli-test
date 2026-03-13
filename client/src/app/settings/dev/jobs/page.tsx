@@ -4,6 +4,7 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { useJobsDevTools } from '@/hooks/use-jobs-dev-tools';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { jobApi } from '@/lib/api/job';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { formatDate, timeAgo } from '@/utils/helpers';
 import {
   ActionIcon,
@@ -36,7 +37,8 @@ import {
   SquareIcon,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import useSWR from 'swr';
 
 type Job = GetAllJobsResponseDto['jobs'][number];
 
@@ -544,33 +546,16 @@ function JobTreeRows({
 }
 
 function JobRawModal({ jobId, onClose }: { jobId: string | null; onClose: () => void }) {
-  const [data, setData] = useState<object | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (jobId) {
-      setLoading(true);
-      jobApi
-        .getJobRaw(jobId)
-        .then(setData)
-        .catch((err) => {
-          console.debug(err);
-          setData({ error: 'Failed to fetch' });
-        })
-        .finally(() => setLoading(false));
-    } else {
-      setData(null);
-    }
-  }, [jobId]);
+  const { data, isLoading } = useSWR(jobId ? SWR_KEYS.jobs.raw(jobId) : null, () => jobApi.getJobRaw(jobId!));
 
   return (
     <Modal opened={!!jobId} onClose={onClose} title="Raw Job Data" size="xl">
-      {loading ? (
+      {isLoading ? (
         <Center p="xl">
           <Loader />
         </Center>
       ) : (
-        <JsonInput value={JSON.stringify(data, null, 2)} formatOnBlur autosize minRows={10} readOnly />
+        <JsonInput value={JSON.stringify(data ?? null, null, 2)} formatOnBlur autosize minRows={10} readOnly />
       )}
     </Modal>
   );

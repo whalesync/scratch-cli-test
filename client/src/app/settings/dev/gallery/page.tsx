@@ -71,7 +71,6 @@ import {
   Popover,
   Stack,
   Tooltip,
-  useComputedColorScheme,
 } from '@mantine/core';
 import { Service } from '@spinner/shared-types';
 import {
@@ -93,7 +92,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import Image from 'next/image';
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 export default function DevComponentGalleryPage() {
   return (
@@ -1048,14 +1047,10 @@ function ColorChip({
   figmaName?: string;
   modeAware?: boolean;
 }): ReactNode {
-  const [colorValue, setColorValue] = useState('');
-  const colorScheme = useComputedColorScheme();
-
-  useEffect(() => {
-    // Get the computed value of a CSS variable
-    const value = getComputedStyle(document.documentElement).getPropertyValue(cssName);
-    setColorValue(value.trim());
-  }, [cssName, colorScheme]);
+  const colorValue = useMemo(() => {
+    if (typeof document === 'undefined') return '';
+    return getComputedStyle(document.documentElement).getPropertyValue(cssName).trim();
+  }, [cssName]);
 
   return (
     <Stack>

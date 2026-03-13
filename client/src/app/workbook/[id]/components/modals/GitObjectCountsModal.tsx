@@ -3,6 +3,7 @@
 import { Text12Regular } from '@/app/components/base/text';
 import { Badge, Button, Group, Modal, Stack } from '@mantine/core';
 import { GitObjectCountsResponse } from '@spinner/shared-types';
+import { useState } from 'react';
 import { GitStatsViewer } from './GitStatsViewer';
 
 interface GitObjectCountsModalProps {
@@ -13,11 +14,13 @@ interface GitObjectCountsModalProps {
 }
 
 export function GitObjectCountsModal({ opened, onClose, data, repoPath }: GitObjectCountsModalProps) {
+  const [now] = useState(() => Date.now());
+
   if (!data) return null;
 
   let gcStatusBadge = <Badge color="gray">GC Not running</Badge>;
   if (data.gcInProgress) {
-    const mins = Math.max(0, Math.round((Date.now() - data.gcInProgress) / 60000));
+    const mins = Math.max(0, Math.round((now - data.gcInProgress) / 60000));
     gcStatusBadge = (
       <Badge color="blue" variant="light">
         GC running since: {mins} min{mins !== 1 ? 's' : ''} ago

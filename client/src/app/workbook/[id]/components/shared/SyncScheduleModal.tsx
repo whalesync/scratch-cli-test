@@ -5,7 +5,7 @@ import { Text13Book } from '@/app/components/base/text';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { Select } from '@mantine/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 interface SyncScheduleModalProps {
   opened: boolean;
@@ -29,18 +29,20 @@ const DEV_ONLY_OPTION = { value: EVERY_MINUTE, label: 'Every minute (internal us
 
 export function SyncScheduleModal({ opened, onClose, currentSchedule, onSave }: SyncScheduleModalProps) {
   const { isDevToolsEnabled } = useDevTools();
-  const [selectedValue, setSelectedValue] = useState<string>(MANUAL_ONLY);
+  const [selectedValue, setSelectedValue] = useState<string>(currentSchedule);
+  const [prevOpened, setPrevOpened] = useState(opened);
+
+  if (opened && !prevOpened) {
+    setSelectedValue(currentSchedule);
+  }
+  if (opened !== prevOpened) {
+    setPrevOpened(opened);
+  }
 
   const scheduleOptions = useMemo(
     () => (isDevToolsEnabled ? [...SCHEDULE_OPTIONS, DEV_ONLY_OPTION] : SCHEDULE_OPTIONS),
     [isDevToolsEnabled],
   );
-
-  useEffect(() => {
-    if (opened) {
-      setSelectedValue(currentSchedule);
-    }
-  }, [opened, currentSchedule]);
 
   const handleSave = () => {
     onSave(selectedValue);

@@ -97,17 +97,10 @@ export function SyncToolbar({
     null,
   );
 
-  // Inline title editing
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  // Inline title editing — new syncs start in edit mode
+  const [isEditingTitle, setIsEditingTitle] = useState(isNew);
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // New syncs start in edit mode
-  useEffect(() => {
-    if (isNew) {
-      setIsEditingTitle(true);
-    }
-  }, [isNew]);
 
   const startEditing = () => {
     setEditValue(syncName);

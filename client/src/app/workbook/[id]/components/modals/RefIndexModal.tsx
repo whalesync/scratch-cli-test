@@ -4,7 +4,7 @@ import { workbookApi } from '@/lib/api/workbook';
 import { Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { WorkbookId } from '@spinner/shared-types';
 import { LinkIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import useSWR from 'swr';
 
 interface RefIndexEntry {
   id: string;
@@ -22,18 +22,10 @@ interface RefIndexModalProps {
 }
 
 export function RefIndexModal({ opened, onClose, workbookId }: RefIndexModalProps) {
-  const [rows, setRows] = useState<RefIndexEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!opened) return;
-    setIsLoading(true);
-    workbookApi
-      .listRefIndex(workbookId)
-      .then((data) => setRows(data as RefIndexEntry[]))
-      .catch(console.error)
-      .finally(() => setIsLoading(false));
-  }, [opened, workbookId]);
+  const { data: rows, isLoading } = useSWR(
+    opened ? ['ref-index', workbookId] : null,
+    () => workbookApi.listRefIndex(workbookId) as Promise<RefIndexEntry[]>,
+  );
 
   return (
     <Modal
@@ -44,7 +36,7 @@ export function RefIndexModal({ opened, onClose, workbookId }: RefIndexModalProp
           <LinkIcon size={18} />
           <Title order={4}>Ref Index</Title>
           <Text size="sm" c="dimmed">
-            ({rows.length} entries)
+            ({rows?.length ?? 0} entries)
           </Text>
         </Group>
       }
@@ -66,7 +58,7 @@ export function RefIndexModal({ opened, onClose, workbookId }: RefIndexModalProp
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {rows.length === 0 ? (
+              {!rows?.length ? (
                 <Table.Tr>
                   <Table.Td colSpan={4}>
                     <Text size="sm" c="dimmed" ta="center" py="md">

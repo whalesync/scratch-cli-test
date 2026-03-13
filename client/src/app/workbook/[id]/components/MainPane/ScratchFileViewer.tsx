@@ -1,6 +1,7 @@
 'use client';
 
 import { Text13Regular, TextMono12Regular } from '@/app/components/base/text';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import { json } from '@codemirror/lang-json';
 import { EditorState } from '@codemirror/state';
@@ -8,7 +9,8 @@ import { EditorView } from '@codemirror/view';
 import { Badge, Box, Group, Stack, useMantineColorScheme } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import useSWR from 'swr';
 
 interface ScratchFileViewerProps {
   workbookId: WorkbookId;
@@ -20,27 +22,13 @@ interface ScratchFileViewerProps {
 
 export function ScratchFileViewer({ workbookId, filePath, connectorAccountId }: ScratchFileViewerProps) {
   const { colorScheme } = useMantineColorScheme();
-  const [content, setContent] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setIsLoading(true);
-    setContent(null);
-    setError(null);
-
-    workbookApi
-      .getRepoFile(workbookId, filePath, 'merge_base', connectorAccountId)
-      .then((result) => {
-        setContent(result?.content ?? '');
-      })
-      .catch(() => {
-        setError('Failed to load file');
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
-  }, [workbookId, filePath, connectorAccountId]);
+  const {
+    data: content,
+    isLoading,
+    error,
+  } = useSWR(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId), () =>
+    workbookApi.getRepoFile(workbookId, filePath, 'merge_base', connectorAccountId).then((r) => r?.content ?? ''),
+  );
 
   const fileName = useMemo(() => {
     const parts = filePath.split('/');
@@ -60,10 +48,10 @@ export function ScratchFileViewer({ workbookId, filePath, connectorAccountId }: 
     );
   }
 
-  if (error || content === null) {
+  if (error || content === undefined) {
     return (
       <Box p="xl" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <Text13Regular c="dimmed">{error ?? 'File not found'}</Text13Regular>
+        <Text13Regular c="dimmed">{error ? 'Failed to load file' : 'File not found'}</Text13Regular>
       </Box>
     );
   }

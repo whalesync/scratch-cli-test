@@ -44,16 +44,20 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
   const [newlyCreatedAccount, setNewlyCreatedAccount] = useState<ConnectorAccount | null>(null);
 
   // Open table picker after OAuth connection redirect
+  if (oauthAccount && !hasOpenedOAuthModal.current) {
+    hasOpenedOAuthModal.current = true;
+    setNewlyCreatedAccount(oauthAccount);
+  }
+
   useEffect(() => {
-    if (oauthAccount && !hasOpenedOAuthModal.current) {
-      hasOpenedOAuthModal.current = true;
-      setNewlyCreatedAccount(oauthAccount);
+    if (hasOpenedOAuthModal.current && oauthAccount) {
       openChooseTables();
       const url = new URL(window.location.href);
       url.searchParams.delete('newConnectionId');
       router.replace(url.pathname + url.search);
     }
-  }, [oauthAccount, openChooseTables, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once when oauthAccount first resolves
+  }, [oauthAccount]);
 
   const [isPulling, setIsPulling] = useState(false);
 

@@ -45,6 +45,7 @@ export const useSSE = <T = unknown>({
     // Do not connect if the URL or token is not provided.
     // This is useful for conditional connections.
     if (!url || !authToken) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- guard clause resets connection state when preconditions are absent
       setIsConnected(false);
       return;
     }

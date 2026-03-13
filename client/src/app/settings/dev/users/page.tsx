@@ -10,23 +10,25 @@ import { getBuildFlavor } from '@/utils/build';
 import { ActionIcon, Alert, Anchor, CopyButton, Group, Stack, Table, TextInput, Tooltip } from '@mantine/core';
 import { AlertCircleIcon, CheckIcon, CopyIcon, HatGlassesIcon, PiggyBankIcon, Search, UsersIcon } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { UserDetailsCard } from './components/UserDetails';
 import { clerkUserUrl, posthogPersonUrl } from './utils';
 
 export default function UsersDevPage() {
   const searchParams = useSearchParams();
   const qParam = searchParams.get('q') || '';
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(qParam.trim());
+  const [prevQParam, setPrevQParam] = useState(qParam);
   const { users, isLoading, error, search, retrieveUserDetails, currentUserDetails, clearCurrentUserDetails } =
     useUserDevTools();
 
-  useEffect(() => {
+  if (qParam !== prevQParam) {
+    setPrevQParam(qParam);
     if (qParam.trim() && qParam.trim() !== searchQuery) {
       setSearchQuery(qParam.trim());
       search(qParam.trim());
     }
-  }, [qParam, search, searchQuery]);
+  }
 
   const handleSearch = () => {
     if (searchQuery.trim()) {

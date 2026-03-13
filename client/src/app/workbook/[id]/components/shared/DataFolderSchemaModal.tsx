@@ -1,13 +1,15 @@
 'use client';
 
 import { dataFolderApi } from '@/lib/api/data-folder';
+import { SWR_KEYS } from '@/lib/api/keys';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import { ActionIcon, Box, Loader, Modal, Text, Tooltip, useMantineColorScheme } from '@mantine/core';
 import type { DataFolder } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { CheckIcon, CopyIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import useSWR from 'swr';
 
 interface DataFolderSchemaModalProps {
   opened: boolean;
@@ -17,32 +19,18 @@ interface DataFolderSchemaModalProps {
 }
 
 export function DataFolderSchemaModal({ opened, onClose, folder, mode = 'view' }: DataFolderSchemaModalProps) {
-  const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const { colorScheme } = useMantineColorScheme();
 
-  useEffect(() => {
-    if (!opened) return;
+  const fetchFn = mode === 'refresh' ? dataFolderApi.refreshSchema : dataFolderApi.getSchema;
+  const {
+    data: schema,
+    isLoading: loading,
+    error: swrError,
+  } = useSWR(opened ? SWR_KEYS.dataFolders.schema(folder.id, mode) : null, () => fetchFn(folder.id));
 
-    setLoading(true);
-    setError(null);
-    setSchema(null);
-    setRefreshedAt(null);
+  const error = swrError ? (swrError instanceof Error ? swrError.message : 'Failed to load schema') : null;
 
-    const fetchFn = mode === 'refresh' ? dataFolderApi.refreshSchema : dataFolderApi.getSchema;
-
-    fetchFn(folder.id)
-      .then((data) => {
-        setSchema(data);
-        setRefreshedAt(mode === 'refresh' ? new Date().toISOString() : null);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load schema'))
-      .finally(() => setLoading(false));
-  }, [opened, folder.id, mode]);
-
-  const lastUpdated = refreshedAt ?? folder.lastSchemaRefreshAt;
+  const lastUpdated = mode === 'refresh' && schema ? new Date().toISOString() : folder.lastSchemaRefreshAt;
   const lastUpdatedLabel = lastUpdated ? `Last updated ${new Date(lastUpdated).toLocaleString()}` : null;
 
   const extensions = useMemo(() => [json(), EditorView.lineWrapping], []);

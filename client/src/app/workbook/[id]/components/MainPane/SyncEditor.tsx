@@ -236,6 +236,7 @@ function PreviewValueBox({
   useEffect(() => {
     const sourceOverflows = (sourceRef.current?.scrollHeight ?? 0) > MAX_COLLAPSED_HEIGHT;
     const destOverflows = (destRef.current?.scrollHeight ?? 0) > MAX_COLLAPSED_HEIGHT;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- DOM measurement requires post-render effect
     setIsOverflowing(sourceOverflows || destOverflows);
   }, [sourceValue, transformedValue]);
 

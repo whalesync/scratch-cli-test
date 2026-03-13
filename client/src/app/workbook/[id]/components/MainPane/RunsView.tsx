@@ -40,7 +40,6 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
-import { PublishPlanEntity } from '@spinner/shared-types';
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -55,7 +54,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import useSWR from 'swr';
 import { PlanEntriesModal } from '../modals/PlanEntriesModal';
 
 const ACTIVE_STATES = new Set(['active', 'waiting', 'pending', 'delayed']);
@@ -585,26 +585,12 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
   const { isAdmin } = useScratchPadUser();
   const params = useParams<{ id: string }>();
   const workbookId = params.id as WorkbookId;
-  const [publishPlan, setPublishPlan] = useState<PublishPlanEntity | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: publishPlan, isLoading: loading } = useSWR(
+    job.bullJobId ? ['publish-plan', workbookId, job.bullJobId] : null,
+    () => workbookApi.getPublishPlanByJobId(workbookId, job.bullJobId!),
+  );
   const [operationsModalPublishPlanId, setOperationsModalPublishPlanId] = useState<string | null>(null);
   const [operationsModalHasErrorFilter, setOperationsModalHasErrorFilter] = useState(false);
-
-  useEffect(() => {
-    if (!job.bullJobId) {
-      setLoading(false);
-      return;
-    }
-    workbookApi
-      .getPublishPlanByJobId(workbookId, job.bullJobId)
-      .then((res) => {
-        setPublishPlan(res);
-      })
-      .catch((err) => {
-        console.error('Failed to load publish plan', err);
-      })
-      .finally(() => setLoading(false));
-  }, [workbookId, job.bullJobId]);
 
   if (loading) {
     return (

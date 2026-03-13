@@ -13,7 +13,7 @@ import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
-import { workbookApi, type GitFile } from '@/lib/api/workbook';
+import { workbookApi } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -65,7 +65,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
-import React, { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import React, { useCallback, useMemo, useState, type MouseEvent } from 'react';
+import useSWR from 'swr';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
@@ -1753,18 +1754,10 @@ function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNode
   const nodeId = `scratch-folder-${connectorAccountId}`;
   const isExpanded = expandedNodes.has(nodeId);
 
-  const [entries, setEntries] = useState<GitFile[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isExpanded) return;
-    setIsLoading(true);
-    workbookApi
-      .listRepoFiles(workbookId, 'merge_base', '.scratch', connectorAccountId)
-      .then((list) => setEntries(list ?? []))
-      .catch(() => setEntries([]))
-      .finally(() => setIsLoading(false));
-  }, [isExpanded, workbookId, connectorAccountId]);
+  const { data: entries, isLoading } = useSWR(
+    isExpanded ? ['repo-files', workbookId, '.scratch', connectorAccountId] : null,
+    () => workbookApi.listRepoFiles(workbookId, 'merge_base', '.scratch', connectorAccountId),
+  );
 
   return (
     <>
@@ -1792,12 +1785,12 @@ function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNode
               <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
             </Box>
           )}
-          {!isLoading && entries.length === 0 && (
+          {!isLoading && entries?.length === 0 && (
             <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
               <Text12Regular c="var(--fg-muted)">No schema files</Text12Regular>
             </Box>
           )}
-          {entries.map((entry) =>
+          {entries?.map((entry) =>
             entry.type === 'directory' ? (
               <ScratchSubdirNode
                 key={entry.path}
@@ -1888,18 +1881,10 @@ function ScratchSubdirNode({
   const nodeId = `scratch-subdir-${connectorAccountId}-${path}`;
   const isExpanded = expandedNodes.has(nodeId);
 
-  const [entries, setEntries] = useState<GitFile[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isExpanded) return;
-    setIsLoading(true);
-    workbookApi
-      .listRepoFiles(workbookId, 'merge_base', path, connectorAccountId)
-      .then((list) => setEntries(list ?? []))
-      .catch(() => setEntries([]))
-      .finally(() => setIsLoading(false));
-  }, [isExpanded, workbookId, connectorAccountId, path]);
+  const { data: entries, isLoading } = useSWR(
+    isExpanded ? ['repo-files', workbookId, path, connectorAccountId] : null,
+    () => workbookApi.listRepoFiles(workbookId, 'merge_base', path, connectorAccountId),
+  );
 
   return (
     <>
@@ -1937,7 +1922,7 @@ function ScratchSubdirNode({
               <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
             </Box>
           )}
-          {entries.map((entry) =>
+          {entries?.map((entry) =>
             entry.type === 'directory' ? (
               <ScratchSubdirNode
                 key={entry.path}
