@@ -108,18 +108,12 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/packages/shared-types/dist /app/packages/shared-types/dist
 COPY --from=builder /app/packages/shared-types/package.json /app/packages/shared-types/package.json
 
-# You only need to copy next.config.js if you are NOT using the default configuration
-COPY --from=builder /app/client/next.config.ts ./
-COPY --from=builder /app/client/public /app/public
-COPY --from=builder /app/client/package.json /app/package.json
-
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
-# Note: standalone output includes full monorepo structure, so copying to /app/ places files correctly
+# Note: standalone output mirrors monorepo structure (server.js at /app/client/server.js)
 COPY --from=builder --chown=nextjs:nodejs /app/client/.next/standalone /app/
-COPY --from=builder --chown=nextjs:nodejs /app/client/.next/static /app/.next/static
-# Copy node_modules - in monorepo, deps are hoisted to root /app/node_modules
-COPY --from=deps --chown=nextjs:nodejs /app/node_modules /app/node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/client/.next/static /app/client/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/client/public /app/client/public
 
 USER nextjs
 
@@ -129,6 +123,7 @@ ENV PORT=3000
 ENV RUNNING_IN_CLOUD=false
 ENV APP_ENV=test
 
-# server.js is at /app/server.js (standalone output places it at root)
-WORKDIR /app
+# In a monorepo, standalone output mirrors the directory structure:
+# server.js is at /app/client/server.js
+WORKDIR /app/client
 CMD ["node", "server.js"]
