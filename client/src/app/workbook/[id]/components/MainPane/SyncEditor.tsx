@@ -249,6 +249,13 @@ function PreviewValueBox({
         overflow: 'hidden',
       }}
     >
+      {warning && (
+        <Box style={{ padding: '4px 10px', borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+          <Text fz={10} c="var(--mantine-color-orange-6)">
+            ⚠ {warning}
+          </Text>
+        </Box>
+      )}
       <Box
         ref={sourceRef}
         style={{
@@ -297,11 +304,6 @@ function PreviewValueBox({
             </Text>
           )}
         </Group>
-        {warning && (
-          <Text fz={10} c="var(--mantine-color-orange-6)" mt={2}>
-            ⚠ {warning}
-          </Text>
-        )}
       </Box>
       {isOverflowing && (
         <>
@@ -363,6 +365,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [previewRecordId, setPreviewRecordId] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [recordMatchingWarning, setRecordMatchingWarning] = useState<string | null>(null);
 
   // JSON editor mode
   type EditorMode = 'visual' | 'json';
@@ -551,6 +554,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     setPreviewResults(null);
     setPreviewRecordId(null);
     setPreviewError(null);
+    setRecordMatchingWarning(null);
   }, [activePair?.id]);
 
   // Preview: auto-select first file
@@ -589,16 +593,25 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
             destinationColumnId: m.destField,
             ...(m.transformers?.length > 0 ? { transformers: m.transformers } : {}),
           }));
+        const recordMatching =
+          activePair.matchingSourceField && activePair.matchingDestinationField
+            ? {
+                sourceColumnId: activePair.matchingSourceField,
+                destinationColumnId: activePair.matchingDestinationField,
+              }
+            : undefined;
         const response = await syncApi.previewRecord(
           workbookId,
           activePair.sourceId as DataFolderId,
           activePair.destId as DataFolderId,
           selectedPreviewFile!,
           columnMappings,
+          recordMatching,
         );
         if (abortController.signal.aborted) return;
         setPreviewResults(response.fields);
         setPreviewRecordId(response.recordId);
+        setRecordMatchingWarning(response.recordMatchingWarning ?? null);
       } catch (err) {
         if (abortController.signal.aborted) return;
         setPreviewError(getHumanReadableErrorMessage(err));
@@ -611,7 +624,15 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       abortController.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canPreview, previewMappingsFingerprint, selectedPreviewFile, activePair?.sourceId, workbookId]);
+  }, [
+    canPreview,
+    previewMappingsFingerprint,
+    selectedPreviewFile,
+    activePair?.sourceId,
+    activePair?.matchingSourceField,
+    activePair?.matchingDestinationField,
+    workbookId,
+  ]);
 
   // Preview helpers
   const getPreviewForMapping = (mapping: FieldMapping): PreviewFieldResult | null =>
@@ -1258,6 +1279,11 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                               searchable
                               clearable
                             />
+                            {recordMatchingWarning && (
+                              <Alert color="orange" variant="light" icon={<AlertCircle size={16} />} mt="xs">
+                                {recordMatchingWarning}
+                              </Alert>
+                            )}
                           </Box>
                         </Stack>
                       </Box>

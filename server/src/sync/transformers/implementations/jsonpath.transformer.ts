@@ -9,7 +9,7 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
  * using RFC 9535 JSONPath expressions.
  *
  * If the source value is a string, it attempts to JSON.parse it first.
- * Returns the matched value (unwrapped if single), or the full array for multiple matches.
+ * The arrayHandling option exclusively determines how the result array is processed.
  */
 export const jsonpathTransformer: FieldTransformer = {
   type: TransformerTypes.JSONPath,
@@ -49,27 +49,22 @@ export const jsonpathTransformer: FieldTransformer = {
     try {
       const results = query(document, expression);
 
-      if (results.length === 0) {
-        return {
-          success: false,
-          error: `JSONPath expression "${expression}" matched no values`,
-          useOriginal: false,
-        };
-      }
-
-      if (results.length === 1) {
-        return { success: true, value: results[0] };
-      }
-
       switch (arrayHandling) {
         case 'array':
           return { success: true, value: results };
         case 'join_space':
-          return { success: true, value: results.map(String).join(' ') };
         case 'join_comma':
-          return { success: true, value: results.map(String).join(', ') };
-        case 'concat':
-          return { success: true, value: results.map(String).join('') };
+        case 'concat': {
+          if (results.some((r) => typeof r === 'object' && r !== null)) {
+            return {
+              success: false,
+              error: `JSONPath results contain objects that cannot be joined into a string`,
+              useOriginal: false,
+            };
+          }
+          const delimiter = arrayHandling === 'join_space' ? ' ' : arrayHandling === 'join_comma' ? ', ' : '';
+          return { success: true, value: results.map(String).join(delimiter) };
+        }
         case 'first':
         default:
           return { success: true, value: results[0] };

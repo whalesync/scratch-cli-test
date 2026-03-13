@@ -91,7 +91,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.WebflowOptionIdToValue, label: 'Webflow Option ID to Value' },
   { type: TransformerTypes.Slugify, label: 'Slugify' },
   { type: TransformerTypes.JSONPath, label: 'JSONPath' },
-  { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup', devOnly: true },
+  { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup' },
   { type: TransformerTypes.EnsureType, label: 'Ensure Type' },
   { type: TransformerTypes.NotionFileUrl, label: 'Notion File URL' },
 ];

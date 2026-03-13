@@ -1109,9 +1109,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
             { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
-            ...(isDevToolsEnabled
-              ? [{ label: 'Pull Assets', icon: ImageIcon, onClick: handlePullAssets, devtool: true }]
-              : []),
+            { label: 'Pull Assets', icon: ImageIcon, onClick: handlePullAssets },
             ...(isDevToolsEnabled
               ? [{ label: 'Asset Index', icon: ImageIcon, onClick: openAssetIndex, devtool: true }]
               : []),

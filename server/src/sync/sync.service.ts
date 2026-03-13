@@ -1772,7 +1772,21 @@ export class SyncService {
       });
     }
 
-    return { recordId: record.id, fields };
+    // Validate record matching field if configured — use the transformed value to match sync behaviour
+    let recordMatchingWarning: string | undefined;
+    if (body.recordMatching) {
+      const matchField = fields.find(
+        (f) =>
+          f.sourceField === body.recordMatching!.sourceColumnId &&
+          f.destinationField === body.recordMatching!.destinationColumnId,
+      );
+      const sourceMatchValue = matchField
+        ? matchField.transformedValue
+        : get(record.fields, body.recordMatching.sourceColumnId);
+      recordMatchingWarning = validateMatchFieldValue(sourceMatchValue, body.recordMatching.sourceColumnId, 'source');
+    }
+
+    return { recordId: record.id, fields, recordMatchingWarning };
   }
 
   /**
@@ -2014,4 +2028,23 @@ export async function transformRecordAsync(
  */
 function serializeRecord(fields: Record<string, unknown>): string {
   return formatJsonWithPrettier(fields);
+}
+
+/**
+ * Validates that a match field value is suitable for record matching.
+ * Returns a warning string if the value is invalid, or undefined if it's valid.
+ */
+function validateMatchFieldValue(
+  value: unknown,
+  fieldPath: string,
+  side: 'source' | 'destination',
+): string | undefined {
+  if (value === undefined || value === null) {
+    return `${side === 'source' ? 'Source' : 'Destination'} record is missing the record matching field "${fieldPath}". This record will not be matched during sync.`;
+  }
+  if ((typeof value !== 'string' && typeof value !== 'number') || String(value).trim() === '') {
+    const typeDesc = typeof value === 'string' ? 'empty' : `of type ${typeof value}`;
+    return `${side === 'source' ? 'Source' : 'Destination'} record has an invalid value (${typeDesc}) for the record matching field "${fieldPath}". This record will not be matched during sync.`;
+  }
+  return undefined;
 }

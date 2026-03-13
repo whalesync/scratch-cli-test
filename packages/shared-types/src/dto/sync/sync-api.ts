@@ -18,6 +18,11 @@ export interface PreviewRecordBody {
   destFolderId: DataFolderId;
   filePath: string;
   columnMappings: ColumnMapping[];
+  /** Optional record matching config. When provided, the preview validates the match field value. */
+  recordMatching?: {
+    sourceColumnId: string;
+    destinationColumnId: string;
+  };
 }
 
 /** POST body for validate-mapping endpoint */
@@ -62,6 +67,8 @@ export interface PreviewFieldResult {
 export interface PreviewRecordResponse {
   recordId: string;
   fields: PreviewFieldResult[];
+  /** Warning about the record matching field value (e.g. missing, invalid type, empty). */
+  recordMatchingWarning?: string;
 }
 
 /** Response from the AI context endpoint (for external agents) */

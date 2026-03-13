@@ -68,6 +68,7 @@ export const syncApi = {
     destFolderId: DataFolderId,
     filePath: string,
     columnMappings: ColumnMapping[],
+    recordMatching?: { sourceColumnId: string; destinationColumnId: string },
   ): Promise<PreviewRecordResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
@@ -76,6 +77,7 @@ export const syncApi = {
         destFolderId,
         filePath,
         columnMappings,
+        ...(recordMatching ? { recordMatching } : {}),
       });
       return res.data;
     } catch (error) {

@@ -147,6 +147,13 @@ export const previewRecordBodySchema = z
     destFolderId: z.string().min(1),
     filePath: z.string().min(1),
     columnMappings: z.array(columnMappingSchema).min(1),
+    recordMatching: z
+      .object({
+        sourceColumnId: z.string().min(1),
+        destinationColumnId: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

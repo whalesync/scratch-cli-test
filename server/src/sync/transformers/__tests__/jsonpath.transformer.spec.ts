@@ -64,13 +64,9 @@ describe('jsonpathTransformer', () => {
       expect(result).toEqual({ success: true, value: 'a' });
     });
 
-    it('should return error with useOriginal=false when no match', async () => {
+    it('should return undefined when no match with default arrayHandling', async () => {
       const result = await jsonpathTransformer.transform(createContext({ name: 'Alice' }, { expression: '$.missing' }));
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain('matched no values');
-        expect(result.useOriginal).toBe(false);
-      }
+      expect(result).toEqual({ success: true, value: undefined });
     });
   });
 
@@ -128,11 +124,115 @@ describe('jsonpathTransformer', () => {
       expect(result).toEqual({ success: true, value: 'abc' });
     });
 
-    it('should still unwrap single results regardless of arrayHandling', async () => {
+    it('should wrap single result in array with arrayHandling=array', async () => {
       const result = await jsonpathTransformer.transform(
         createContext(data, { expression: '$.items[0]', arrayHandling: 'array' }),
       );
-      expect(result).toEqual({ success: true, value: 'a' });
+      expect(result).toEqual({ success: true, value: ['a'] });
+    });
+
+    it('should return empty array for no match with arrayHandling=array', async () => {
+      const result = await jsonpathTransformer.transform(
+        createContext(data, { expression: '$.missing', arrayHandling: 'array' }),
+      );
+      expect(result).toEqual({ success: true, value: [] });
+    });
+
+    it('should return empty string for no match with arrayHandling=join_space', async () => {
+      const result = await jsonpathTransformer.transform(
+        createContext(data, { expression: '$.missing', arrayHandling: 'join_space' }),
+      );
+      expect(result).toEqual({ success: true, value: '' });
+    });
+
+    it('should return empty string for no match with arrayHandling=join_comma', async () => {
+      const result = await jsonpathTransformer.transform(
+        createContext(data, { expression: '$.missing', arrayHandling: 'join_comma' }),
+      );
+      expect(result).toEqual({ success: true, value: '' });
+    });
+
+    it('should return empty string for no match with arrayHandling=concat', async () => {
+      const result = await jsonpathTransformer.transform(
+        createContext(data, { expression: '$.missing', arrayHandling: 'concat' }),
+      );
+      expect(result).toEqual({ success: true, value: '' });
+    });
+
+    it('should return undefined for no match with arrayHandling=first', async () => {
+      const result = await jsonpathTransformer.transform(
+        createContext(data, { expression: '$.missing', arrayHandling: 'first' }),
+      );
+      expect(result).toEqual({ success: true, value: undefined });
+    });
+
+    describe('object results that cannot be meaningfully stringified', () => {
+      const objectData = { items: [{ id: 1 }, { id: 2 }] };
+
+      it('should return error when join_space encounters object results', async () => {
+        const result = await jsonpathTransformer.transform(
+          createContext(objectData, { expression: '$.items[*]', arrayHandling: 'join_space' }),
+        );
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('cannot be joined');
+          expect(result.useOriginal).toBe(false);
+        }
+      });
+
+      it('should return error when join_comma encounters object results', async () => {
+        const result = await jsonpathTransformer.transform(
+          createContext(objectData, { expression: '$.items[*]', arrayHandling: 'join_comma' }),
+        );
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('cannot be joined');
+          expect(result.useOriginal).toBe(false);
+        }
+      });
+
+      it('should return error when concat encounters object results', async () => {
+        const result = await jsonpathTransformer.transform(
+          createContext(objectData, { expression: '$.items[*]', arrayHandling: 'concat' }),
+        );
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('cannot be joined');
+          expect(result.useOriginal).toBe(false);
+        }
+      });
+
+      it('should succeed when array encounters object results', async () => {
+        const result = await jsonpathTransformer.transform(
+          createContext(objectData, { expression: '$.items[*]', arrayHandling: 'array' }),
+        );
+        expect(result).toEqual({ success: true, value: [{ id: 1 }, { id: 2 }] });
+      });
+
+      it('should succeed when first encounters object result', async () => {
+        const result = await jsonpathTransformer.transform(
+          createContext(objectData, { expression: '$.items[0]', arrayHandling: 'first' }),
+        );
+        expect(result).toEqual({ success: true, value: { id: 1 } });
+      });
+
+      it('should return error when join_space encounters a single object result', async () => {
+        const result = await jsonpathTransformer.transform(
+          createContext(objectData, { expression: '$.items[0]', arrayHandling: 'join_space' }),
+        );
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('cannot be joined');
+        }
+      });
+
+      it('should allow joining arrays that contain only primitives', async () => {
+        const mixedData = { tags: ['alpha', 'beta', 42] };
+        const result = await jsonpathTransformer.transform(
+          createContext(mixedData, { expression: '$.tags[*]', arrayHandling: 'join_comma' }),
+        );
+        expect(result).toEqual({ success: true, value: 'alpha, beta, 42' });
+      });
     });
   });
 
