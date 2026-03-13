@@ -41,11 +41,20 @@ export interface ValidateMappingTypeBody {
   transformers: TransformerConfig[];
 }
 
-/** One step in the type pipeline for validate-mapping-type response. Has either type or error. */
+/** One step in the type pipeline for validate-mapping-type response. Has input/output schema types, or error. */
 export interface MappingTypeTraceStep {
   transformerName: string;
-  type?: Record<string, unknown>;
+  inputJsonSchemaType?: Record<string, unknown>;
+  outputJsonSchemaType?: Record<string, unknown>;
   error?: string;
+}
+
+/** Validation errors per segment: after source, and after each step (destination never has an error). */
+export interface MappingTypeTraceValidation {
+  /** Error when source type is not compatible with first step input (or destination if no steps). */
+  source?: string;
+  /** steps[i] = error when step i output is not compatible with step i+1 input (or destination). */
+  steps?: string[];
 }
 
 /** Response from validate-mapping-type: type trace for a single mapping */
@@ -53,6 +62,7 @@ export interface MappingTypeTraceResponse {
   sourceType: Record<string, unknown>;
   steps: MappingTypeTraceStep[];
   destinationType: Record<string, unknown>;
+  validation?: MappingTypeTraceValidation;
 }
 
 export interface PreviewFieldResult {
@@ -93,4 +103,18 @@ export interface ExportSyncConfig {
     createdAt: string;
     updatedAt: string;
   };
+}
+
+/** One entry in the sync mapping validation error report (validate-mapping-types by sync ID). */
+export interface SyncMappingValidationError {
+  tableMappingIndex: number;
+  fieldMappingIndex: number;
+  /** 'source' = segment after source node; number = step index (0-based) after that transformer. */
+  step: 'source' | number;
+  errorMsg: string;
+}
+
+/** Response from validate-sync-mapping-types: all type validation errors for a sync. */
+export interface ValidateSyncMappingTypesResponse {
+  errors: SyncMappingValidationError[];
 }

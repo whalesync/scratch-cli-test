@@ -17,9 +17,11 @@ import {
   Service,
   SyncId,
   SyncMapping,
+  SyncMappingValidationError,
   TableMapping,
   TransformerConfig,
   TransformerTypes,
+  ValidateSyncMappingTypesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
@@ -1860,6 +1862,96 @@ export class SyncService {
     };
 
     return traceMappingType(mapping, sourceSpec.schema, destSpec.schema);
+  }
+
+  /**
+   * Runs the same type validation as the Configure Transformers modal for every field mapping
+   * in a sync. Returns an error report with tableMappingIndex, fieldMappingIndex, step, and errorMsg.
+   */
+  async validateSyncMappingTypes(
+    workbookId: WorkbookId,
+    syncId: SyncId,
+    actor: Actor,
+  ): Promise<ValidateSyncMappingTypesResponse> {
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    const sync = await this.db.client.sync.findFirst({
+      where: { id: syncId, workbookId },
+    });
+    if (!sync) {
+      throw new NotFoundException('Sync not found');
+    }
+
+    const syncMapping = sync.mappings as unknown as SyncMapping;
+    const tableMappings = syncMapping?.tableMappings ?? [];
+    const errors: SyncMappingValidationError[] = [];
+
+    for (let tableMappingIndex = 0; tableMappingIndex < tableMappings.length; tableMappingIndex++) {
+      const tm = tableMappings[tableMappingIndex];
+      const sourceSpec = (await this.dataFolderService.getStoredSchema(
+        tm.sourceDataFolderId,
+        actor,
+      )) as BaseJsonTableSpec | null;
+      const destSpec = (await this.dataFolderService.getStoredSchema(
+        tm.destinationDataFolderId,
+        actor,
+      )) as BaseJsonTableSpec | null;
+
+      if (!sourceSpec?.schema || !destSpec?.schema) {
+        continue;
+      }
+
+      const columnMappings = tm.columnMappings ?? [];
+      for (let fieldMappingIndex = 0; fieldMappingIndex < columnMappings.length; fieldMappingIndex++) {
+        const cm = columnMappings[fieldMappingIndex];
+        const mapping: ColumnMapping = {
+          sourceColumnId: cm.sourceColumnId,
+          destinationColumnId: cm.destinationColumnId,
+          transformer: cm.transformer,
+          transformers: cm.transformers,
+        };
+
+        const result = traceMappingType(mapping, sourceSpec.schema, destSpec.schema);
+
+        if ('error' in result) {
+          errors.push({
+            tableMappingIndex,
+            fieldMappingIndex,
+            step: 'source',
+            errorMsg: result.error,
+          });
+          continue;
+        }
+
+        const { validation } = result;
+        if (validation?.source) {
+          errors.push({
+            tableMappingIndex,
+            fieldMappingIndex,
+            step: 'source',
+            errorMsg: validation.source,
+          });
+        }
+        if (validation?.steps) {
+          for (let stepIndex = 0; stepIndex < validation.steps.length; stepIndex++) {
+            const msg = validation.steps[stepIndex];
+            if (msg) {
+              errors.push({
+                tableMappingIndex,
+                fieldMappingIndex,
+                step: stepIndex,
+                errorMsg: msg,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return { errors };
   }
 
   /**

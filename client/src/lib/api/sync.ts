@@ -8,6 +8,7 @@ import {
   Sync,
   SyncId,
   ValidateMappingTypeBody,
+  ValidateSyncMappingTypesResponse,
   WhalesyncImportPreviewBody,
   WhalesyncImportPreviewResponse,
   WorkbookId,
@@ -137,5 +138,17 @@ export const syncApi = {
       handleAxiosError(error, 'Failed to validate mapping type');
       return { error: 'Request failed' };
     }
+  },
+
+  /** Run type validation for all field mappings in a sync; returns error report. */
+  validateSyncMappingTypes: async (
+    workbookId: WorkbookId,
+    syncId: SyncId,
+  ): Promise<ValidateSyncMappingTypesResponse> => {
+    const axios = API_CONFIG.getAxiosInstance();
+    const res = await axios.get<ValidateSyncMappingTypesResponse>(
+      `/workbooks/${workbookId}/syncs/${syncId}/validate-mapping-types`,
+    );
+    return res.data;
   },
 };

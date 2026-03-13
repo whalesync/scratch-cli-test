@@ -24,6 +24,7 @@ import type {
   SyncId,
   ValidateMappingBody,
   ValidateMappingTypeBody,
+  ValidateSyncMappingTypesResponse,
   WhalesyncImportPreviewBody,
   WhalesyncImportPreviewResponse,
   WorkbookId,
@@ -226,5 +227,17 @@ export class SyncController {
     checkWorkspacePermissions(actor, workbookId);
     const result = await this.syncService.traceMappingType(workbookId, body, actor);
     return result as MappingTypeTraceResponse | { error: string };
+  }
+
+  /** Run the same type validation as the Configure Transformers modal for every field mapping in this sync. */
+  @Get(':syncId/validate-mapping-types')
+  async validateSyncMappingTypes(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('syncId') syncId: SyncId,
+    @Req() req: RequestWithUser,
+  ): Promise<ValidateSyncMappingTypesResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.validateSyncMappingTypes(workbookId, syncId, actor);
   }
 }

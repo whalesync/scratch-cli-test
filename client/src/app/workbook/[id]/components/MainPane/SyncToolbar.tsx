@@ -10,10 +10,10 @@ import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { syncApi } from '@/lib/api/sync';
 import { useSyncStore } from '@/stores/sync-store';
 import { timeAgo } from '@/utils/helpers';
-import { ActionIcon, Box, Group, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, Modal, Paper, ScrollArea, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import type { SyncId, WorkbookId } from '@spinner/shared-types';
+import type { SyncId, ValidateSyncMappingTypesResponse, WorkbookId } from '@spinner/shared-types';
 import {
   BracesIcon,
   CheckIcon,
@@ -89,6 +89,13 @@ export function SyncToolbar({
 
   // Schedule modal
   const [scheduleModalOpened, { open: openScheduleModal, close: closeScheduleModal }] = useDisclosure(false);
+
+  // Validate mapping types result modal (debug)
+  const [validateResultModalOpened, { open: openValidateResultModal, close: closeValidateResultModal }] =
+    useDisclosure(false);
+  const [validateResult, setValidateResult] = useState<ValidateSyncMappingTypesResponse | { error: string } | null>(
+    null,
+  );
 
   // Inline title editing
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -212,6 +219,20 @@ export function SyncToolbar({
       },
     });
   }, [isNew, syncName, workbookId, syncId, openConfirmDialog, fetchSyncs, router]);
+
+  const handleValidateMappingTypes = useCallback(async () => {
+    if (isNew) return;
+    setValidateResult(null);
+    openValidateResultModal();
+    try {
+      const result = await syncApi.validateSyncMappingTypes(workbookId, syncId as SyncId);
+      setValidateResult(result);
+    } catch (error) {
+      setValidateResult({
+        error: getHumanReadableErrorMessage(error),
+      });
+    }
+  }, [workbookId, syncId, isNew, openValidateResultModal]);
 
   const lastRunDisplay = existingSync?.lastSyncTime ? timeAgo(existingSync.lastSyncTime) : null;
 
@@ -386,6 +407,15 @@ export function SyncToolbar({
                 >
                   Reapply default transforms (All Tables)
                 </Menu.Item>
+                {!isNew && (
+                  <Menu.Item
+                    leftSection={<ListChecksIcon size={16} />}
+                    onClick={handleValidateMappingTypes}
+                    color="var(--mantine-color-devTool-9)"
+                  >
+                    Validate
+                  </Menu.Item>
+                )}
               </>
             )}
           </Menu.Dropdown>
@@ -400,6 +430,19 @@ export function SyncToolbar({
         onSave={onScheduleChange}
       />
       <ConfirmDialog {...dialogProps} />
+
+      <Modal
+        opened={validateResultModalOpened}
+        onClose={closeValidateResultModal}
+        title="Validate mapping types"
+        size="lg"
+      >
+        <ScrollArea.Autosize mah={400} type="scroll">
+          <Paper withBorder p="sm" style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+            {validateResult != null ? JSON.stringify(validateResult, null, 2) : 'Loading…'}
+          </Paper>
+        </ScrollArea.Autosize>
+      </Modal>
 
       <style>{`
         @keyframes spin {

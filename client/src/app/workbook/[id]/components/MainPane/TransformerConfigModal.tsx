@@ -2,6 +2,8 @@
 
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { syncApi } from '@/lib/api/sync';
+import { json } from '@codemirror/lang-json';
+import { EditorView } from '@codemirror/view';
 import {
   ActionIcon,
   Badge,
@@ -17,6 +19,8 @@ import {
   Stack,
   Text,
   TextInput,
+  Tooltip,
+  useMantineColorScheme,
 } from '@mantine/core';
 import type {
   DataFolder,
@@ -26,8 +30,9 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { getTransformerLabel, TRANSFORMER_TYPES, TransformerTypes, type TransformerType } from '@spinner/shared-types';
-import { ArrowRight, Code, Plus, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import CodeMirror from '@uiw/react-codemirror';
+import { AlertTriangle, ArrowRight, Code, Plus, X } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 
 export interface MappingContextForValidation {
   workbookId: WorkbookId;
@@ -59,6 +64,94 @@ function schemaTypeLabel(schema: Record<string, unknown> | undefined): string {
   if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0)
     return (schema.anyOf as Record<string, unknown>[]).map((s) => schemaTypeLabel(s)).join(' | ');
   return 'any';
+}
+
+/** Tooltip string for a step: inputLabel → outputLabel (or Error) */
+function stepTypeTooltip(
+  step:
+    | { inputJsonSchemaType?: Record<string, unknown>; outputJsonSchemaType?: Record<string, unknown>; error?: string }
+    | undefined,
+  loading: boolean,
+): string {
+  if (loading) return '…';
+  if (!step) return '—';
+  const input = schemaTypeLabel(step.inputJsonSchemaType);
+  if (step.error) return `${input} → Error`;
+  const output = schemaTypeLabel(step.outputJsonSchemaType);
+  return `${input} → ${output}`;
+}
+
+/** Wraps a pipeline node (Source, Step N, Destination) with a centered label above the bubble. */
+function NodeWrapper({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Stack gap={2} align="center" style={{ width: 'fit-content', flexShrink: 0 }}>
+      <Text size="xs" c="dimmed">
+        {label}
+      </Text>
+      {children}
+    </Stack>
+  );
+}
+
+const ARROW_WRAPPER_WIDTH = 24;
+/** Min height for all pipeline bubbles (Source, Step, Destination) so they align. */
+const BUBBLE_MIN_HEIGHT = 56;
+
+/** Wraps the between-node slot: warning icon, arrow, plus button. Fixed width for alignment. */
+function ArrowWrapper({
+  validationError,
+  isPlusHovered,
+  onInsert,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  validationError?: string;
+  isPlusHovered: boolean;
+  onInsert: () => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
+  return (
+    <Stack
+      align="center"
+      gap={2}
+      style={{ width: ARROW_WRAPPER_WIDTH, flexShrink: 0 }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <Box
+        style={{
+          width: 16,
+          height: 16,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Tooltip label={validationError} disabled={!validationError}>
+          <Box
+            component="span"
+            style={{
+              visibility: validationError ? 'visible' : 'hidden',
+              display: 'inline-flex',
+            }}
+          >
+            <AlertTriangle size={14} color="var(--mantine-color-yellow-6)" />
+          </Box>
+        </Tooltip>
+      </Box>
+      <ArrowRight size={16} color="var(--mantine-color-dimmed)" />
+      <ActionIcon
+        size="xs"
+        variant={isPlusHovered ? 'light' : 'subtle'}
+        color={isPlusHovered ? 'blue' : 'gray'}
+        title="Add transform"
+        onClick={onInsert}
+      >
+        <Plus size={12} />
+      </ActionIcon>
+    </Stack>
+  );
 }
 
 /** Default config for a new step (used when inserting or when switching type). */
@@ -106,6 +199,20 @@ function defaultConfigForType(type: TransformerType): TransformerConfig {
 }
 
 const transformerSelectData = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label }));
+
+/** Returns true if a transformer config has all required fields filled in (non-empty). */
+export function isTransformerConfigComplete(config: TransformerConfig): boolean {
+  switch (config.type) {
+    case TransformerTypes.SourceFkToDestFk:
+      return !!config.options?.referencedDataFolderId;
+    case TransformerTypes.LookupField:
+      return !!config.options?.referencedDataFolderId && !!config.options?.referencedFieldPath;
+    case TransformerTypes.SourceAssetToDestAsset:
+      return !!config.options?.sourceDataFolderId && !!config.options?.destinationDataFolderId;
+    default:
+      return true;
+  }
+}
 
 const sourceDestBorderStyle = { borderColor: 'var(--mantine-color-gray-8)' };
 
@@ -233,6 +340,44 @@ function TransformerStepForm({
           />
         </>
       )}
+      {config.type === TransformerTypes.SourceAssetToDestAsset && config.options && (
+        <>
+          <Select
+            size="xs"
+            label="Source assets folder"
+            data={folderOptions}
+            value={config.options.sourceDataFolderId ?? ''}
+            onChange={(v) => v && updateOptions({ ...config.options, sourceDataFolderId: v })}
+          />
+          <Select
+            size="xs"
+            label="Destination assets folder"
+            data={folderOptions}
+            value={config.options.destinationDataFolderId ?? ''}
+            onChange={(v) => v && updateOptions({ ...config.options, destinationDataFolderId: v })}
+          />
+          <Select
+            size="xs"
+            label="On unresolved"
+            data={[
+              { value: 'fail', label: 'Fail' },
+              { value: 'ignore', label: 'Ignore' },
+            ]}
+            value={config.options.onUnresolved ?? 'fail'}
+            onChange={(v) => v && updateOptions({ ...config.options, onUnresolved: v as 'fail' | 'ignore' })}
+          />
+          <Select
+            size="xs"
+            label="Output type"
+            data={[
+              { value: 'array', label: 'Array' },
+              { value: 'single', label: 'Single' },
+            ]}
+            value={config.options.outputType ?? 'array'}
+            onChange={(v) => v && updateOptions({ ...config.options, outputType: v as 'array' | 'single' })}
+          />
+        </>
+      )}
     </Stack>
   );
 }
@@ -259,6 +404,9 @@ export function TransformerConfigModal({
   const [hoveredPlusSlot, setHoveredPlusSlot] = useState<number | null>(null);
   /** Admin-only: submodal showing raw validation result */
   const [validationResultModalOpen, setValidationResultModalOpen] = useState(false);
+  /** Type display mode: none, output only, or input & output. Default output. */
+  const [showTypesMode, setShowTypesMode] = useState<'no' | 'output' | 'input-and-output'>('output');
+  const { colorScheme } = useMantineColorScheme();
 
   useEffect(() => {
     if (opened) {
@@ -304,6 +452,7 @@ export function TransformerConfigModal({
   // Validation is nice-to-have: never block the user. On any failure we simply don't show types.
   const runValidation = useCallback(async () => {
     if (!mappingContext) return;
+    if (!currentConfigs.every(isTransformerConfigComplete)) return;
     setTypeTraceLoading(true);
     try {
       const result = await syncApi.validateMappingType(mappingContext.workbookId, {
@@ -347,6 +496,7 @@ export function TransformerConfigModal({
   const sourceLabel = mappingContext?.sourceField ?? 'Source';
   const destLabel = mappingContext?.destField ?? 'Destination';
   const traceSteps = typeTrace && !('error' in typeTrace) ? typeTrace.steps : [];
+  const validation = typeTrace && !('error' in typeTrace) ? typeTrace.validation : undefined;
   const sourceTypeLabel =
     typeTrace && !('error' in typeTrace)
       ? schemaTypeLabel(typeTrace.sourceType)
@@ -391,85 +541,108 @@ export function TransformerConfigModal({
         opened={opened}
         onClose={onClose}
         title={modalTitle}
-        size="xl"
+        size={900}
         customProps={{
           footer: (
-            <Button variant="default" onClick={onClose}>
-              Close
-            </Button>
+            <Group justify="space-between" w="100%">
+              <Group gap="xs">
+                <Text size="xs" fw={500}>
+                  Show types
+                </Text>
+                <Select
+                  size="xs"
+                  w={140}
+                  data={[
+                    { value: 'no', label: 'No' },
+                    { value: 'output', label: 'Output' },
+                    { value: 'input-and-output', label: 'Input & Output' },
+                  ]}
+                  value={showTypesMode}
+                  onChange={(v) => v && setShowTypesMode(v as 'no' | 'output' | 'input-and-output')}
+                />
+              </Group>
+              <Button variant="default" onClick={onClose}>
+                Close
+              </Button>
+            </Group>
           ),
         }}
       >
         <Stack gap="md">
-          {/* Horizontal flow: Step 1/2/… row, then Source → [arrow+plus] step … → Destination */}
-          <ScrollArea.Autosize type="scroll" scrollbarSize={8} mah={160}>
-            <Stack gap="xs" style={{ minWidth: 'min-content' }}>
-              {/* First row: step labels above each transformer bubble */}
-              <Flex align="center" justify="center" gap="xs" wrap="nowrap">
-                <Box style={{ minWidth: 100, flexShrink: 0 }} />
-                {currentConfigs.map((_, index) => (
-                  <Flex key={index} align="center" gap="xs">
-                    <Box style={{ flexShrink: 0, width: 24 }} />
-                    <Text size="xs" c="dimmed" style={{ minWidth: 100, textAlign: 'center' }}>
-                      Step {index + 1}
-                    </Text>
-                  </Flex>
-                ))}
-                <Box style={{ flexShrink: 0, width: 24 }} />
-                <Box style={{ minWidth: 100, flexShrink: 0 }} />
-              </Flex>
-              {/* Second row: bubbles and arrows */}
-              <Flex align="center" justify="center" gap="xs" wrap="nowrap" style={{ minWidth: 'min-content' }}>
-                <Paper withBorder p="xs" radius="sm" style={{ minWidth: 100, flexShrink: 0, ...sourceDestBorderStyle }}>
-                  <Stack gap={2}>
-                    <Text size="xs" lineClamp={1}>
-                      Source
-                    </Text>
-                    <Text size="xs" lineClamp={1} title={sourceLabel}>
-                      {sourceLabel}
-                    </Text>
-                    <Badge size="xs" variant="light" color="gray">
-                      {sourceTypeLabel}
-                    </Badge>
-                  </Stack>
-                </Paper>
+          {/* Pipeline: centered when narrow, scrollable when wide */}
+          <ScrollArea type="scroll" scrollbarSize={8} mah={180}>
+            <Flex justify="center" style={{ minWidth: '100%' }}>
+              <Flex gap="xs" wrap="nowrap" align="center" style={{ minWidth: 'min-content', flexShrink: 0 }}>
+                <NodeWrapper label="Source">
+                  <Paper
+                    withBorder
+                    p="xs"
+                    radius="sm"
+                    style={{
+                      width: 'fit-content',
+                      minWidth: 120,
+                      minHeight: BUBBLE_MIN_HEIGHT,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      ...sourceDestBorderStyle,
+                    }}
+                  >
+                    <Stack gap={2} align="center">
+                      <Text size="xs" fw={600} lineClamp={1} title={sourceLabel}>
+                        {sourceLabel}
+                      </Text>
+                      {(showTypesMode === 'output' || showTypesMode === 'input-and-output') && (
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={showTypesMode === 'input-and-output' && validation?.source ? 'yellow' : 'gray'}
+                        >
+                          {sourceTypeLabel}
+                        </Badge>
+                      )}
+                    </Stack>
+                  </Paper>
+                </NodeWrapper>
+
+                <ArrowWrapper
+                  validationError={validation?.source}
+                  isPlusHovered={hoveredPlusSlot === 0}
+                  onInsert={() => insertAt(0)}
+                  onMouseEnter={() => setHoveredPlusSlot(0)}
+                  onMouseLeave={() => setHoveredPlusSlot(null)}
+                />
 
                 {currentConfigs.map((config, index) => {
                   const traceStep = traceSteps[index];
                   const stepLabel = traceStep ? traceStep.transformerName : getTransformerLabel(config.type);
                   const stepError = traceStep?.error;
-                  const stepTypeLabel =
-                    traceStep?.type != null ? schemaTypeLabel(traceStep.type) : typeTraceLoading ? '…' : '—';
+                  const stepInputLabel = traceStep
+                    ? schemaTypeLabel(traceStep.inputJsonSchemaType)
+                    : typeTraceLoading
+                      ? '…'
+                      : '—';
+                  const stepOutputLabel = stepError
+                    ? 'Error'
+                    : traceStep
+                      ? schemaTypeLabel(traceStep.outputJsonSchemaType)
+                      : typeTraceLoading
+                        ? '…'
+                        : '—';
+                  const stepTypeTitle = stepTypeTooltip(traceStep, typeTraceLoading);
                   const isHovered = hoveredStep === index;
-
-                  const plusSlot = index;
+                  const plusSlot = index + 1;
                   const isPlusHovered = hoveredPlusSlot === plusSlot;
+                  const highlightInput =
+                    showTypesMode === 'input-and-output' &&
+                    ((index === 0 && validation?.source) || (index > 0 && validation?.steps?.[index - 1]));
+                  const highlightOutput = showTypesMode === 'input-and-output' && validation?.steps?.[index];
 
                   return (
-                    <Flex key={index} align="center" gap="xs">
-                      {/* Arrow with plus underneath: insert at this index */}
-                      <Stack
-                        align="center"
-                        gap={2}
-                        style={{ flexShrink: 0 }}
-                        onMouseEnter={() => setHoveredPlusSlot(plusSlot)}
-                        onMouseLeave={() => setHoveredPlusSlot(null)}
-                      >
-                        <ArrowRight size={16} color="var(--mantine-color-dimmed)" />
-                        <ActionIcon
-                          size="xs"
-                          variant={isPlusHovered ? 'light' : 'subtle'}
-                          color={isPlusHovered ? 'blue' : 'gray'}
-                          title="Add transform"
-                          onClick={() => insertAt(index)}
-                        >
-                          <Plus size={12} />
-                        </ActionIcon>
-                      </Stack>
-                      {/* Step bubble: whole bubble clickable to edit; hover shows floating remove (no layout shift) */}
-                      <Stack gap={2} align="center">
+                    <Fragment key={index}>
+                      <NodeWrapper label={`Step ${index + 1}`}>
                         <Box
-                          style={{ position: 'relative', flexShrink: 0 }}
+                          style={{ position: 'relative' }}
                           onMouseEnter={() => setHoveredStep(index)}
                           onMouseLeave={() => setHoveredStep(null)}
                         >
@@ -478,9 +651,11 @@ export function TransformerConfigModal({
                             p="xs"
                             radius="sm"
                             style={{
-                              minWidth: 100,
+                              width: 'fit-content',
+                              minHeight: BUBBLE_MIN_HEIGHT,
+                              display: 'flex',
+                              alignItems: 'center',
                               cursor: 'pointer',
-                              // Fixed 1px border so selected/hover don't shift layout
                               borderWidth: 1,
                               borderStyle: 'solid',
                               borderColor:
@@ -490,24 +665,48 @@ export function TransformerConfigModal({
                                     ? 'var(--mantine-color-blue-2)'
                                     : 'var(--mantine-color-default-border)',
                             }}
-                            title={
-                              stepError ?? ((traceStep?.type ? schemaTypeLabel(traceStep.type) : '') || 'Click to edit')
-                            }
+                            title={stepError ?? (stepTypeTitle || 'Click to edit')}
                             onClick={() => setEditIndex(index)}
                             role="button"
                           >
-                            <Text size="xs" lineClamp={1}>
-                              {stepLabel}
-                            </Text>
-                            {stepError != null ? (
-                              <Badge size="xs" variant="light" color="red" mt={4}>
-                                Error
-                              </Badge>
-                            ) : (
-                              <Badge size="xs" variant="light" color="gray" mt={4}>
-                                {stepTypeLabel}
-                              </Badge>
-                            )}
+                            <Stack gap={2} align="center">
+                              <Text size="xs" fw={600} lineClamp={1}>
+                                {stepLabel}
+                              </Text>
+                              {stepError != null
+                                ? (showTypesMode === 'output' || showTypesMode === 'input-and-output') &&
+                                  (showTypesMode === 'input-and-output' ? (
+                                    <Group gap={4} mt={4} wrap="nowrap" justify="center">
+                                      <Badge size="xs" variant="light" color={highlightInput ? 'yellow' : 'gray'}>
+                                        {stepInputLabel}
+                                      </Badge>
+                                      <ArrowRight size={12} color="var(--mantine-color-dimmed)" />
+                                      <Badge size="xs" variant="light" color="red">
+                                        Error
+                                      </Badge>
+                                    </Group>
+                                  ) : (
+                                    <Badge size="xs" variant="light" color="red" mt={4}>
+                                      Error
+                                    </Badge>
+                                  ))
+                                : (showTypesMode === 'output' || showTypesMode === 'input-and-output') &&
+                                  (showTypesMode === 'input-and-output' ? (
+                                    <Group gap={4} mt={4} wrap="nowrap" justify="center">
+                                      <Badge size="xs" variant="light" color={highlightInput ? 'yellow' : 'gray'}>
+                                        {stepInputLabel}
+                                      </Badge>
+                                      <ArrowRight size={12} color="var(--mantine-color-dimmed)" />
+                                      <Badge size="xs" variant="light" color={highlightOutput ? 'yellow' : 'gray'}>
+                                        {stepOutputLabel}
+                                      </Badge>
+                                    </Group>
+                                  ) : (
+                                    <Badge size="xs" variant="light" color="gray" mt={4}>
+                                      {stepOutputLabel}
+                                    </Badge>
+                                  ))}
+                            </Stack>
                           </Paper>
                           {isHovered && (
                             <Group
@@ -538,81 +737,113 @@ export function TransformerConfigModal({
                             </Group>
                           )}
                         </Box>
-                      </Stack>
-                    </Flex>
+                      </NodeWrapper>
+                      <ArrowWrapper
+                        validationError={validation?.steps?.[index]}
+                        isPlusHovered={isPlusHovered}
+                        onInsert={() => insertAt(plusSlot)}
+                        onMouseEnter={() => setHoveredPlusSlot(plusSlot)}
+                        onMouseLeave={() => setHoveredPlusSlot(null)}
+                      />
+                    </Fragment>
                   );
                 })}
 
-                {/* Arrow + plus after last step: insert at end */}
-                <Stack
-                  align="center"
-                  gap={2}
-                  style={{ flexShrink: 0 }}
-                  onMouseEnter={() => setHoveredPlusSlot(currentConfigs.length)}
-                  onMouseLeave={() => setHoveredPlusSlot(null)}
-                >
-                  <ArrowRight size={16} color="var(--mantine-color-dimmed)" />
-                  <ActionIcon
-                    size="xs"
-                    variant={hoveredPlusSlot === currentConfigs.length ? 'light' : 'subtle'}
-                    color={hoveredPlusSlot === currentConfigs.length ? 'blue' : 'gray'}
-                    title="Add transform"
-                    onClick={() => insertAt(currentConfigs.length)}
+                <NodeWrapper label="Destination">
+                  <Paper
+                    withBorder
+                    p="xs"
+                    radius="sm"
+                    style={{
+                      width: 'fit-content',
+                      minWidth: 120,
+                      minHeight: BUBBLE_MIN_HEIGHT,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      ...sourceDestBorderStyle,
+                    }}
                   >
-                    <Plus size={12} />
-                  </ActionIcon>
-                </Stack>
-
-                <Paper withBorder p="xs" radius="sm" style={{ minWidth: 100, flexShrink: 0, ...sourceDestBorderStyle }}>
-                  <Stack gap={2}>
-                    <Text size="xs" lineClamp={1}>
-                      Destination
-                    </Text>
-                    <Text size="xs" lineClamp={1} title={destLabel}>
-                      {destLabel}
-                    </Text>
-                    <Badge size="xs" variant="light" color="gray">
-                      {destTypeLabel}
-                    </Badge>
-                  </Stack>
-                </Paper>
+                    <Stack gap={2} align="center">
+                      <Text size="xs" fw={600} lineClamp={1} title={destLabel}>
+                        {destLabel}
+                      </Text>
+                      {(showTypesMode === 'output' || showTypesMode === 'input-and-output') && (
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={
+                            showTypesMode === 'input-and-output' &&
+                            (validation?.steps?.[currentConfigs.length - 1] ||
+                              (currentConfigs.length === 0 && validation?.source))
+                              ? 'yellow'
+                              : 'gray'
+                          }
+                        >
+                          {destTypeLabel}
+                        </Badge>
+                      )}
+                    </Stack>
+                  </Paper>
+                </NodeWrapper>
               </Flex>
-            </Stack>
-          </ScrollArea.Autosize>
-
-          {/* Edit form: when no configs always show type-only "add first"; when configs exist show form for editIndex */}
-          {(currentConfigs.length === 0 || (editIndex != null && currentConfigs[editIndex] != null)) && (
-            <Flex justify="center">
-              <Paper withBorder p="sm" radius="md" style={{ maxWidth: 200, width: '100%' }}>
-                {currentConfigs.length === 0 ? (
-                  <>
-                    <Text size="xs" c="dimmed" fw={500} mb="xs">
-                      Add first transformer
-                    </Text>
-                    <Select
-                      size="xs"
-                      label="Type"
-                      placeholder="Select type"
-                      data={transformerSelectData}
-                      value={null}
-                      onChange={(value) => value && addFirstTransformer(value as TransformerType)}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <Text size="xs" c="dimmed" fw={500} mb="xs">
-                      Edit step {editIndex! + 1}
-                    </Text>
-                    <TransformerStepForm
-                      config={currentConfigs[editIndex!]}
-                      onChange={(c) => updateAt(editIndex!, c)}
-                      allFolders={allFolders}
-                    />
-                  </>
-                )}
-              </Paper>
             </Flex>
-          )}
+          </ScrollArea>
+
+          {/* Edit form: add first, edit step, or placeholder. Padding reserves space to reduce layout jump. */}
+          <Flex justify="center" mt="md">
+            <Paper
+              withBorder={!(currentConfigs.length > 0 && (editIndex == null || currentConfigs[editIndex] == null))}
+              p="sm"
+              radius="md"
+              py="md"
+              style={{ maxWidth: 200, width: '100%', minHeight: 120 }}
+            >
+              {currentConfigs.length === 0 ? (
+                <>
+                  <Text size="xs" c="dimmed" fw={500} mb={4}>
+                    Add first transformer
+                  </Text>
+                  <Select
+                    size="xs"
+                    label="Type"
+                    placeholder="Select type"
+                    data={transformerSelectData}
+                    value={null}
+                    onChange={(value) => value && addFirstTransformer(value as TransformerType)}
+                  />
+                </>
+              ) : editIndex != null && currentConfigs[editIndex] != null ? (
+                <>
+                  <Flex justify="space-between" align="center" mb={4}>
+                    <Text size="xs" c="dimmed" fw={500}>
+                      Edit step {editIndex + 1}
+                    </Text>
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="gray"
+                      title="Deselect / close form"
+                      onClick={() => setEditIndex(null)}
+                    >
+                      <X size={14} />
+                    </ActionIcon>
+                  </Flex>
+                  <TransformerStepForm
+                    config={currentConfigs[editIndex]}
+                    onChange={(c) => updateAt(editIndex!, c)}
+                    allFolders={allFolders}
+                  />
+                </>
+              ) : (
+                <Box pt="sm" pb="sm">
+                  <Text size="sm" c="dimmed" ta="center">
+                    Select a transformer to edit its options.
+                  </Text>
+                </Box>
+              )}
+            </Paper>
+          </Flex>
         </Stack>
       </ModalWrapper>
 
@@ -634,11 +865,26 @@ export function TransformerConfigModal({
               syncs.
             </Text>
           ) : (
-            <ScrollArea.Autosize mah={400} type="auto">
-              <Paper withBorder p="sm" style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}>
-                {JSON.stringify(lastValidationResult, null, 2)}
-              </Paper>
-            </ScrollArea.Autosize>
+            <Box
+              style={{
+                border: '1px solid var(--mantine-color-default-border)',
+                borderRadius: 'var(--mantine-radius-md)',
+                overflow: 'hidden',
+              }}
+            >
+              <CodeMirror
+                value={JSON.stringify(lastValidationResult, null, 2)}
+                extensions={[json(), EditorView.lineWrapping]}
+                theme={colorScheme === 'dark' ? 'dark' : 'light'}
+                readOnly
+                basicSetup={{
+                  lineNumbers: true,
+                  foldGutter: true,
+                  highlightActiveLine: false,
+                }}
+                style={{ fontSize: '12px' }}
+              />
+            </Box>
           )}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setValidationResultModalOpen(false)}>

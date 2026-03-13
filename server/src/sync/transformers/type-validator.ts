@@ -1,7 +1,7 @@
-import { TSchema } from '@sinclair/typebox';
+import { TSchema, Type } from '@sinclair/typebox';
 import { ColumnMapping, getTransformerLabel } from '@spinner/shared-types';
 import { isEqual } from 'lodash';
-import { getSchemaAtPath } from '../schema-validator';
+import { getSchemaAtPath, isTypeCompatible } from '../schema-validator';
 import { getTransformerConfigs } from './transformer-pipeline';
 import { getTransformer } from './transformer-registry';
 
@@ -10,11 +10,18 @@ export interface ValidationResult {
   warnings: string[];
 }
 
-/** One step in the type pipeline: transformer name and either output type or error (if input unsupported or previous step failed) */
+/** One step in the type pipeline: transformer name, input/output JSON schema types, or error */
 export interface TypeTraceStep {
   transformerName: string;
-  type?: TSchema;
+  inputJsonSchemaType?: TSchema;
+  outputJsonSchemaType?: TSchema;
   error?: string;
+}
+
+/** Validation errors per segment: after source, and after each step. Destination never has an error. */
+export interface MappingTypeTraceValidation {
+  source?: string;
+  steps?: string[];
 }
 
 /** Full type trace for a single mapping: source → transformers → destination */
@@ -22,6 +29,7 @@ export interface MappingTypeTrace {
   sourceType: TSchema;
   steps: TypeTraceStep[];
   destinationType: TSchema;
+  validation?: MappingTypeTraceValidation;
 }
 
 /**
@@ -129,29 +137,90 @@ export function traceMappingType(
     if (!transformer) {
       return { error: `Transformer "${config.type}" not found in registry.` };
     }
+    // Declared input type for this transformer (what it accepts), not the previous step's output
+    const inputJsonSchemaType = transformer.paramType ? transformer.paramType(config.options) : (Type.Any() as TSchema);
     if (pipelineFailed) {
-      steps.push({ transformerName: label, error: 'Previous step failed' });
+      steps.push({
+        transformerName: label,
+        inputJsonSchemaType,
+        error: 'Previous step failed',
+      });
       continue;
     }
     if (transformer.returnType) {
       try {
         currentType = transformer.returnType(currentType, config.options);
-        steps.push({ transformerName: label, type: currentType });
+        steps.push({
+          transformerName: label,
+          inputJsonSchemaType,
+          outputJsonSchemaType: currentType,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        steps.push({ transformerName: label, error: message });
+        steps.push({
+          transformerName: label,
+          inputJsonSchemaType,
+          error: message,
+        });
         pipelineFailed = true;
       }
     } else {
-      steps.push({ transformerName: label, type: currentType });
+      steps.push({
+        transformerName: label,
+        inputJsonSchemaType,
+        outputJsonSchemaType: currentType,
+      });
     }
   }
+
+  const validation = computeValidation(sourceType, steps, destinationType);
 
   return {
     sourceType,
     steps,
     destinationType,
+    validation,
   };
+}
+
+/**
+ * Runs isTypeCompatible at each boundary (source→first step, step i output→step i+1 input or destination).
+ * Returns validation errors for the source and each step. Destination never has an error.
+ */
+function computeValidation(
+  sourceType: TSchema,
+  steps: TypeTraceStep[],
+  destinationType: TSchema,
+): MappingTypeTraceValidation {
+  const result: MappingTypeTraceValidation = {};
+
+  if (steps.length === 0) {
+    if (!isTypeCompatible(sourceType, destinationType)) {
+      result.source = 'Source type is not compatible with destination type.';
+    }
+    return result;
+  }
+
+  const firstStepInput = steps[0].inputJsonSchemaType;
+  if (firstStepInput && !isTypeCompatible(sourceType, firstStepInput)) {
+    result.source = 'Source type is not compatible with first step input.';
+  }
+
+  for (let i = 0; i < steps.length; i++) {
+    const outputType = steps[i].outputJsonSchemaType;
+    if (!outputType) continue;
+    const nextInput = i + 1 < steps.length ? steps[i + 1].inputJsonSchemaType : destinationType;
+    if (!nextInput) continue;
+    if (!isTypeCompatible(outputType, nextInput)) {
+      result.steps = result.steps ?? [];
+      result.steps[i] =
+        i + 1 < steps.length
+          ? 'Step output type is not compatible with next step input.'
+          : 'Step output type is not compatible with destination type.';
+    }
+  }
+
+  return result;
 }
 
 /**

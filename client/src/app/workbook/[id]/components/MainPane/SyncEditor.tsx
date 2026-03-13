@@ -68,7 +68,7 @@ import { AddFolderMappingModal } from './AddFolderMappingModal';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
 import { SyncToolbar } from './SyncToolbar';
 import { TablePairSelector } from './TablePairSelector';
-import { TransformerConfigModal } from './TransformerConfigModal';
+import { isTransformerConfigComplete, TransformerConfigModal } from './TransformerConfigModal';
 
 interface SyncEditorProps {
   workbookId: WorkbookId;
@@ -576,7 +576,8 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const canPreview =
     !!activePair?.sourceId &&
     activePair.fieldMappings.some((m) => m.sourceField && m.destField) &&
-    !!selectedPreviewFile;
+    !!selectedPreviewFile &&
+    activePair.fieldMappings.every((m) => (m.transformers ?? []).every(isTransformerConfigComplete));
 
   useEffect(() => {
     if (!canPreview || !activePair) return;
