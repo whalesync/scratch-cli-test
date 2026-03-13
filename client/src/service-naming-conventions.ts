@@ -168,6 +168,19 @@ export const ServiceNamingConventions: Record<Service, ServiceNamingConvention> 
     pushOperationName: 'Publish',
     pullOperationName: 'Download',
   },
+  [Service.PIPEDRIVE]: {
+    service: 'Pipedrive',
+    table: 'entity',
+    record: 'record',
+    base: null,
+    tables: 'entities',
+    records: 'records',
+    bases: null,
+    logo: 'pipedrive.svg',
+    oauthLabel: 'OAuth',
+    pushOperationName: 'Publish',
+    pullOperationName: 'Download',
+  },
 };
 
 export const serviceName = (serviceCode: Service): string => {

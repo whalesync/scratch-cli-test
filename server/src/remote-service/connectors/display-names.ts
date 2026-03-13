@@ -3,6 +3,7 @@ import { AirtableConnector } from './library/airtable/airtable-connector';
 import { AudiencefulConnector } from './library/audienceful/audienceful-connector';
 import { MocoConnector } from './library/moco/moco-connector';
 import { NotionConnector } from './library/notion/notion-connector';
+import { PipedriveConnector } from './library/pipedrive/pipedrive-connector';
 import { PostgresConnector } from './library/postgres/postgres-connector';
 import { QuickBooksConnector } from './library/quickbooks/quickbooks-connector';
 import { SupabaseConnector } from './library/supabase/supabase-connector';
@@ -42,6 +43,8 @@ export function getServiceDisplayName(service: Service): string {
       return SupabaseConnector.displayName;
     case Service.QUICKBOOKS:
       return QuickBooksConnector.displayName;
+    case Service.PIPEDRIVE:
+      return PipedriveConnector.displayName;
     default: {
       // Exhaustive check - TypeScript will error if a Service case is missing
       const _exhaustiveCheck: never = service;

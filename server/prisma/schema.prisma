@@ -44,6 +44,7 @@ enum Service {
   SHOPIFY
   SUPABASE
   QUICKBOOKS
+  PIPEDRIVE
 }
 
 enum AuthType {

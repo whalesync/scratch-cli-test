@@ -13,4 +13,5 @@ export const INTERNAL_SERVICES = [
   Service.AUDIENCEFUL,
   Service.MOCO,
   Service.SHOPIFY,
+  Service.PIPEDRIVE,
 ];

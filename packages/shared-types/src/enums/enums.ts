@@ -18,6 +18,7 @@ export enum Service {
   SHOPIFY = 'SHOPIFY',
   SUPABASE = 'SUPABASE',
   QUICKBOOKS = 'QUICKBOOKS',
+  PIPEDRIVE = 'PIPEDRIVE',
 }
 
 export enum AuthType {

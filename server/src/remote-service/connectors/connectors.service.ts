@@ -12,6 +12,7 @@ import { AirtableConnector } from './library/airtable/airtable-connector';
 import { AudiencefulConnector } from './library/audienceful/audienceful-connector';
 import { MocoConnector } from './library/moco/moco-connector';
 import { NotionConnector } from './library/notion/notion-connector';
+import { PipedriveConnector } from './library/pipedrive/pipedrive-connector';
 import { PostgresConnector } from './library/postgres/postgres-connector';
 import { QuickBooksConnector } from './library/quickbooks/quickbooks-connector';
 import { ShopifyConnector } from './library/shopify/shopify-connector';
@@ -242,6 +243,21 @@ export class ConnectorsService {
           );
         } else {
           throw new ConnectorInstantiationError('QuickBooks only supports OAuth authentication', service);
+        }
+      }
+      case Service.PIPEDRIVE: {
+        if (!connectorAccount) {
+          throw new ConnectorInstantiationError('Connector account is required for Pipedrive', service);
+        }
+        const pipedriveRateLimiter = this.createRateLimiter(service, connectorAccount);
+        if (connectorAccount.authType === AuthType.OAUTH) {
+          const accessToken = await this.oauthService.getValidAccessToken(connectorAccount.id);
+          return new PipedriveConnector(accessToken, { rateLimiter: pipedriveRateLimiter, authType: 'oauth' });
+        } else {
+          if (!decryptedCredentials?.apiKey) {
+            throw new ConnectorInstantiationError('API key is required for Pipedrive', service);
+          }
+          return new PipedriveConnector(decryptedCredentials.apiKey, { rateLimiter: pipedriveRateLimiter });
         }
       }
       default:

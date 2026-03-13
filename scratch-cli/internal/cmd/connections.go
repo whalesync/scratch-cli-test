@@ -51,11 +51,14 @@ var serviceAuthConfig = map[string][]authField{
 	"SUPABASE": {
 		{Key: "connectionString", DisplayName: "Connection String", Description: "Supabase connection string (find in Settings > Database > Connection string)", Required: true, Sensitive: true},
 	},
+	"PIPEDRIVE": {
+		{Key: "apiKey", DisplayName: "API Key", Description: "Your Pipedrive API token (find in Settings > Personal preferences > API)", Required: true, Sensitive: true},
+	},
 }
 
 // supportedServices returns the list of service names in display order.
 func supportedServices() []string {
-	return []string{"AIRTABLE", "WEBFLOW", "SHOPIFY", "MOCO", "AUDIENCEFUL", "WORDPRESS", "POSTGRES", "SUPABASE"}
+	return []string{"AIRTABLE", "WEBFLOW", "SHOPIFY", "MOCO", "AUDIENCEFUL", "WORDPRESS", "POSTGRES", "SUPABASE", "PIPEDRIVE"}
 }
 
 var connectionsCmd = &cobra.Command{
@@ -99,6 +102,7 @@ Non-interactive examples:
   scratchmd connections add --service SHOPIFY --param shopDomain=my-store --param apiKey=<key>
   scratchmd connections add --service WORDPRESS --param endpoint=https://example.com --param username=admin --param password=<app-password>
   scratchmd connections add --service MOCO --param domain=yourcompany --param apiKey=<key>
+  scratchmd connections add --service PIPEDRIVE --param apiKey=<token>
   scratchmd connections add --service POSTGRES --param connectionString=postgresql://user:pass@host:5432/db
   scratchmd connections add --service SUPABASE --param connectionString=postgresql://postgres.[ref]:[password]@aws-1-us-east-1.pooler.supabase.com:6543/postgres`,
 	RunE: runConnectionsAdd,
@@ -147,7 +151,7 @@ func init() {
 
 	// Command-specific flags
 	connectionsRemoveCmd.Flags().Bool("yes", false, "Skip confirmation prompt")
-	connectionsAddCmd.Flags().String("service", "", "Service type (AIRTABLE, WEBFLOW, SHOPIFY, MOCO, AUDIENCEFUL, WORDPRESS, POSTGRES, SUPABASE)")
+	connectionsAddCmd.Flags().String("service", "", "Service type (AIRTABLE, WEBFLOW, SHOPIFY, MOCO, AUDIENCEFUL, WORDPRESS, POSTGRES, SUPABASE, PIPEDRIVE)")
 	connectionsAddCmd.Flags().StringSlice("param", nil, "Credential parameter as key=value (repeatable)")
 	connectionsAddCmd.Flags().String("name", "", "Display name for the connection")
 }

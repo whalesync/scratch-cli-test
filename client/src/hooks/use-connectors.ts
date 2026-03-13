@@ -38,6 +38,7 @@ export const useConnectors = () => {
         Service.MOCO,
         Service.POSTGRES,
         Service.SUPABASE,
+        Service.PIPEDRIVE,
       ];
       if (oauthSupportedServices.includes(service)) {
         return 'oauth';
@@ -75,6 +76,7 @@ export const useConnectors = () => {
         Service.MOCO,
         Service.POSTGRES,
         Service.SUPABASE,
+        Service.PIPEDRIVE,
       ];
       const methods: AuthMethod[] = [];
       if (oauthSupportedServices.includes(service)) {
