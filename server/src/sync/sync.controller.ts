@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UseInterceptors,
@@ -15,6 +16,7 @@ import {
 import type {
   AiContextResponse,
   DataFolderId,
+  ExportSyncConfig,
   MappingTypeTraceResponse,
   PreviewRecordBody,
   PreviewRecordResponse,
@@ -86,6 +88,17 @@ export class SyncController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     return this.syncService.generateAiContext(workbookId, actor);
+  }
+
+  @Get('export')
+  async exportSyncs(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('syncId') syncId: SyncId | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<ExportSyncConfig[]> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return await this.syncService.exportSyncs(workbookId, syncId, actor);
   }
 
   @Get(':syncId')

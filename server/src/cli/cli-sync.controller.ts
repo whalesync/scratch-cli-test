@@ -9,11 +9,12 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
+import type { ExportSyncConfig, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
@@ -58,6 +59,17 @@ export class CliSyncController {
   ): Promise<unknown> {
     await this.verifyWorkbookAccess(workbookId, req);
     return await this.syncService.createSync(workbookId, body, userToActor(req.user));
+  }
+
+  @Get('syncs/export')
+  async exportSyncs(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Query('syncId') syncId: SyncId | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<ExportSyncConfig[]> {
+    const actor = userToActor(req.user);
+    await this.verifyWorkbookAccess(workbookId, req);
+    return await this.syncService.exportSyncs(workbookId, syncId, actor);
   }
 
   @Get('syncs/:syncId')

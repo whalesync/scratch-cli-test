@@ -1075,7 +1075,7 @@ func diskToFileMap(rootDir string) (merge.FileMap, error) {
 		name := info.Name()
 		if info.IsDir() {
 			switch name {
-			case ".git":
+			case ".git", "syncs":
 				return filepath.SkipDir
 			case ".scratch":
 				// Descend into .scratch so the merge engine sees server-managed schema

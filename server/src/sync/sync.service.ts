@@ -7,6 +7,7 @@ import {
   createScratchPendingPublishId,
   createSyncId,
   DataFolderId,
+  ExportSyncConfig,
   LookupFieldOptions,
   PreviewFieldResult,
   PreviewRecordBody,
@@ -366,6 +367,56 @@ export class SyncService {
       orderBy: {
         createdAt: 'desc',
       },
+    });
+  }
+
+  /**
+   * Exports sync configurations in SaveSyncBody-compatible format for CLI download.
+   * Includes schedule from the Schedule table and read-only metadata.
+   */
+  async exportSyncs(workbookId: WorkbookId, syncId: SyncId | undefined, actor: Actor): Promise<ExportSyncConfig[]> {
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    const whereClause: Prisma.SyncWhereInput = { workbookId };
+    if (syncId) {
+      whereClause.id = syncId;
+    }
+
+    const syncs = await this.db.client.sync.findMany({
+      where: whereClause,
+      include: { syncTablePairs: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (syncId && syncs.length === 0) {
+      throw new NotFoundException(`Sync ${syncId} not found`);
+    }
+
+    // Batch-fetch all SYNC schedules for this workbook to avoid N+1 queries
+    const schedules = await this.db.client.schedule.findMany({
+      where: { workbookId, action: 'SYNC' },
+    });
+    const scheduleByEntityId = new Map(schedules.map((s) => [s.entityId, s]));
+
+    return syncs.map((sync) => {
+      const schedule = scheduleByEntityId.get(sync.id);
+      return {
+        id: sync.id,
+        displayName: sync.displayName,
+        mappings: sync.mappings as unknown as SyncMapping,
+        validateMappings: false,
+        schedule: schedule?.cronExpression ?? '',
+        publishAfterSync: sync.publishAfterSync,
+        _metadata: {
+          syncState: sync.syncState,
+          lastSyncTime: sync.lastSyncTime?.toISOString() ?? null,
+          createdAt: sync.createdAt.toISOString(),
+          updatedAt: sync.updatedAt.toISOString(),
+        },
+      };
     });
   }
 

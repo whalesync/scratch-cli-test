@@ -68,3 +68,22 @@ export interface PreviewRecordResponse {
 export interface AiContextResponse {
   markdown: string;
 }
+
+/** Exported sync configuration — compatible with SaveSyncBody for re-import via update. */
+export interface ExportSyncConfig {
+  /** Sync ID (used to target updates, ignored on create) */
+  id: string;
+  displayName: string;
+  mappings: SyncMapping;
+  validateMappings: boolean;
+  /** Cron expression for sync schedule, or empty string if none */
+  schedule: string;
+  publishAfterSync: boolean;
+  /** Read-only metadata — ignored by create/update endpoints */
+  _metadata: {
+    syncState: string;
+    lastSyncTime: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+}

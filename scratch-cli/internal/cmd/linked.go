@@ -246,6 +246,47 @@ func resolveWorkbookContext(cmd *cobra.Command) (string, error) {
 	return m.Workbook.ID, nil
 }
 
+// resolveWorkbookDirContext resolves both the workbook ID and its local directory path.
+// Returns (workbookID, workbookDir, error). workbookDir may be empty when using --workspace
+// flag and the workbook directory is not found locally.
+func resolveWorkbookDirContext(cmd *cobra.Command) (string, string, error) {
+	// Check --workspace flag first, then --workbook for backwards compatibility
+	workbookID, _ := cmd.Flags().GetString("workspace")
+	if workbookID == "" {
+		workbookID, _ = cmd.Flags().GetString("workbook")
+	}
+	if workbookID != "" {
+		// Try to find the workbook directory locally
+		dir, m, err := findWorkbookMarkerUpward(".")
+		if err == nil && dir != "" && m.Workbook.ID == workbookID {
+			return workbookID, dir, nil
+		}
+		dir, err = findExistingWorkbookMarker(".", workbookID)
+		if err == nil && dir != "" {
+			return workbookID, dir, nil
+		}
+		return workbookID, "", nil
+	}
+
+	// Check if we're inside a V2 connector subdirectory
+	_, connMarker, _ := findConnectorMarkerUpward(".")
+	if connMarker != nil {
+		dir, _, _ := findWorkbookMarkerUpward(".")
+		return connMarker.Workbook.ID, dir, nil
+	}
+
+	// Walk up looking for workbook marker
+	dir, m, err := findWorkbookMarkerUpward(".")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to detect workspace: %w", err)
+	}
+	if m == nil {
+		return "", "", fmt.Errorf("not inside a workspace directory. Use --workspace flag or run from a workspace directory")
+	}
+
+	return m.Workbook.ID, dir, nil
+}
+
 // resolveLinkedContext resolves both workbook ID and data folder ID from args/flags/markers.
 func resolveLinkedContext(cmd *cobra.Command, args []string) (workbookID string, dataFolderID string, err error) {
 	// 1. Resolve data folder ID from args or marker

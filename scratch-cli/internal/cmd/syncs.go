@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	git "github.com/go-git/go-git/v5"
 	"github.com/spf13/cobra"
+	"github.com/whalesync/scratch-cli/internal/api"
 )
 
 // syncsCmd represents the syncs command group
@@ -23,7 +26,8 @@ Commands:
   syncs create      Create a new sync
   syncs update      Update a sync
   syncs delete      Delete a sync
-  syncs run         Execute a sync`,
+  syncs run         Execute a sync
+  syncs download    Download sync configs as JSON files`,
 }
 
 var syncsListCmd = &cobra.Command{
@@ -106,6 +110,24 @@ Examples:
 	RunE: runSyncsRun,
 }
 
+var syncsDownloadCmd = &cobra.Command{
+	Use:   "download",
+	Short: "Download sync configs as JSON files",
+	Long: `Download sync configurations as JSON files to a syncs/ folder in the current directory.
+
+Each sync is saved as a separate JSON file named after its display name.
+The downloaded files are compatible with 'syncs update --config' for re-upload.
+
+By default, all syncs are downloaded. Use --id to download a specific sync.
+
+Examples:
+  scratchmd syncs download
+  scratchmd syncs download --id sync_abc123
+  scratchmd syncs download --workspace wb_abc123
+  scratchmd syncs download --json`,
+	RunE: runSyncsDownload,
+}
+
 func init() {
 	rootCmd.AddCommand(syncsCmd)
 	syncsCmd.PersistentFlags().String("workspace", "", "Workspace ID (auto-detected from .scratchmd if not set)")
@@ -118,6 +140,7 @@ func init() {
 	syncsCmd.AddCommand(syncsUpdateCmd)
 	syncsCmd.AddCommand(syncsDeleteCmd)
 	syncsCmd.AddCommand(syncsRunCmd)
+	syncsCmd.AddCommand(syncsDownloadCmd)
 
 	// --json flag on subcommands
 	syncsListCmd.Flags().Bool("json", false, "Output as JSON")
@@ -126,6 +149,7 @@ func init() {
 	syncsUpdateCmd.Flags().Bool("json", false, "Output as JSON")
 	syncsDeleteCmd.Flags().Bool("json", false, "Output as JSON")
 	syncsRunCmd.Flags().Bool("json", false, "Output as JSON")
+	syncsDownloadCmd.Flags().Bool("json", false, "Output as JSON")
 
 	// Command-specific flags
 	syncsCreateCmd.Flags().String("config", "", "JSON config (file path or inline JSON)")
@@ -134,6 +158,8 @@ func init() {
 	syncsUpdateCmd.MarkFlagRequired("config")
 	syncsDeleteCmd.Flags().Bool("yes", false, "Skip confirmation prompt")
 	syncsRunCmd.Flags().Bool("no-wait", false, "Don't wait for the sync job to complete")
+	syncsDownloadCmd.Flags().String("id", "", "Download a specific sync by ID (default: all syncs)")
+	syncsDownloadCmd.Flags().StringP("output", "o", "syncs", "Output directory for sync config files")
 }
 
 // loadConfigFlag reads the --config flag value as either a file path or inline JSON.
@@ -503,9 +529,15 @@ func runSyncsRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workbookID, err := resolveWorkbookContext(cmd)
+	workbookID, workbookDir, err := resolveWorkbookDirContext(cmd)
 	if err != nil {
 		return err
+	}
+
+	if workbookDir != "" {
+		if err := checkWorkbookClean(workbookDir); err != nil {
+			return err
+		}
 	}
 
 	resp, err := client.RunSync(workbookID, syncID)
@@ -541,5 +573,147 @@ func runSyncsRun(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Sync completed successfully.")
+	return nil
+}
+
+func runSyncsDownload(cmd *cobra.Command, args []string) error {
+	jsonOutput, _ := cmd.Flags().GetBool("json")
+	syncID, _ := cmd.Flags().GetString("id")
+	outputDir, _ := cmd.Flags().GetString("output")
+
+	client, err := getAuthenticatedClient()
+	if err != nil {
+		return err
+	}
+
+	// Resolve the workbook directory so syncs are saved inside the workbook folder.
+	workbookID, workbookDir, err := resolveWorkbookDirContext(cmd)
+	if err != nil {
+		return err
+	}
+
+	if workbookDir == "" {
+		return fmt.Errorf("workspace %s is not initialized locally. Run 'scratchmd workspaces init %s' first", workbookID, workbookID)
+	}
+
+	// If the user didn't explicitly set -o, default to syncs/ inside the workbook directory.
+	if !cmd.Flags().Changed("output") {
+		outputDir = filepath.Join(workbookDir, "syncs")
+	}
+
+	var configs []api.ExportSyncConfig
+	if syncID != "" {
+		configs, err = client.ExportSync(workbookID, syncID)
+	} else {
+		configs, err = client.ExportSyncs(workbookID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to export syncs: %w", err)
+	}
+
+	if len(configs) == 0 {
+		if jsonOutput {
+			fmt.Println("[]")
+			return nil
+		}
+		fmt.Println("No syncs found in this workspace.")
+		return nil
+	}
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	writtenFiles := make([]string, 0, len(configs))
+	for _, cfg := range configs {
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal sync %q: %w", cfg.DisplayName, err)
+		}
+		data = append(data, '\n')
+
+		filename := syncConfigFilename(cfg.DisplayName, cfg.ID)
+		filePath := filepath.Join(outputDir, filename)
+
+		if err := os.WriteFile(filePath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", filePath, err)
+		}
+		writtenFiles = append(writtenFiles, filePath)
+	}
+
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(map[string]interface{}{
+			"success": true,
+			"count":   len(writtenFiles),
+			"files":   writtenFiles,
+			"output":  outputDir,
+		})
+	}
+
+	fmt.Println()
+	fmt.Printf("Downloaded %d sync config(s) to %s/\n", len(writtenFiles), outputDir)
+	fmt.Println()
+	for _, f := range writtenFiles {
+		fmt.Printf("  %s\n", f)
+	}
+	fmt.Println()
+	fmt.Println("To update a sync from a downloaded config:")
+	fmt.Println("  scratchmd syncs update <sync-id> --config <file>")
+	fmt.Println()
+
+	return nil
+}
+
+// syncConfigFilename generates a filename for a sync config file.
+// Uses the display name if available, falling back to the sync ID.
+func syncConfigFilename(displayName, syncID string) string {
+	name := displayName
+	if name == "" {
+		name = syncID
+	}
+	name = sanitizeFilename(name)
+	// Replace spaces with hyphens and lowercase for consistency
+	name = strings.ReplaceAll(name, " ", "-")
+	name = strings.ToLower(name)
+	return name + ".json"
+}
+
+// checkWorkbookClean verifies that all connector repos in the workbook have no
+// unpushed local changes. Returns an error if any repo has local modifications.
+func checkWorkbookClean(workbookDir string) error {
+	connDirs, err := findConnectorDirectories(workbookDir)
+	if err != nil {
+		return nil // Not a V2 workbook or no connector dirs — skip check
+	}
+
+	for _, connDir := range connDirs {
+		repo, err := git.PlainOpen(connDir)
+		if err != nil {
+			continue
+		}
+
+		headRef, err := repo.Head()
+		if err != nil {
+			continue
+		}
+
+		baseMap, err := treeToFileMap(repo, headRef.Hash())
+		if err != nil {
+			continue
+		}
+
+		localMap, err := diskToFileMap(connDir)
+		if err != nil {
+			continue
+		}
+
+		if !fileMapEqual(baseMap, localMap) {
+			return fmt.Errorf("you have unpushed local changes in %s. Run 'scratchmd files upload' first", filepath.Base(connDir))
+		}
+	}
+
 	return nil
 }

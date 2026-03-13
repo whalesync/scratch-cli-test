@@ -88,6 +88,40 @@ func (c *Client) DeleteSync(workbookID, syncID string) error {
 	return nil
 }
 
+// ExportSyncConfig represents a sync configuration in a format compatible with SaveSyncBody for re-import.
+type ExportSyncConfig struct {
+	ID               string          `json:"id"`
+	DisplayName      string          `json:"displayName"`
+	Mappings         json.RawMessage `json:"mappings"`
+	ValidateMappings bool            `json:"validateMappings"`
+	Schedule         string          `json:"schedule"`
+	PublishAfterSync bool            `json:"publishAfterSync"`
+	Metadata         struct {
+		SyncState    string  `json:"syncState"`
+		LastSyncTime *string `json:"lastSyncTime"`
+		CreatedAt    string  `json:"createdAt"`
+		UpdatedAt    string  `json:"updatedAt"`
+	} `json:"_metadata"`
+}
+
+// ExportSyncs fetches all sync configs for a workbook in export format.
+func (c *Client) ExportSyncs(workbookID string) ([]ExportSyncConfig, error) {
+	var result []ExportSyncConfig
+	if err := c.doRequest(http.MethodGet, "workbooks/"+workbookID+"/syncs/export", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExportSync fetches a single sync config in export format.
+func (c *Client) ExportSync(workbookID, syncID string) ([]ExportSyncConfig, error) {
+	var result []ExportSyncConfig
+	if err := c.doRequest(http.MethodGet, "workbooks/"+workbookID+"/syncs/export?syncId="+syncID, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // RunSync triggers a sync execution and returns the job info.
 func (c *Client) RunSync(workbookID, syncID string) (*RunSyncResponse, error) {
 	var result RunSyncResponse
