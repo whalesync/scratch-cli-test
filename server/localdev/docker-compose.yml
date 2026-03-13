@@ -20,6 +20,22 @@ services:
     build: ../../test-api-fakes/airtable
     ports:
       - "4646:4646"
+  fake-wordpress:
+    build: ../../test-api-fakes/wordpress
+    ports:
+      - "4647:4647"
+  fake-quickbooks:
+    build: ../../test-api-fakes/quickbooks
+    ports:
+      - "4648:4648"
+  fake-moco:
+    build: ../../test-api-fakes/moco
+    ports:
+      - "4649:4649"
+  fake-audienceful:
+    build: ../../test-api-fakes/audienceful
+    ports:
+      - "4651:4651"
 
 volumes:
   mongodb_data:

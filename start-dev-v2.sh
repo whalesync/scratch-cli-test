@@ -55,6 +55,29 @@ echo -e "${YELLOW}Building shared-types package...${NC}"
 echo -e "${GREEN}shared-types built successfully${NC}"
 echo ""
 
+# Ensure Docker infrastructure services are running
+echo -e "${YELLOW}Checking Docker infrastructure services...${NC}"
+(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d db redis mongodb 2>&1) || {
+    echo -e "${RED}Failed to start Docker services. Is Docker running?${NC}"
+    exit 1
+}
+# Wait for PostgreSQL to be ready to accept connections
+echo -ne "${YELLOW}Waiting for PostgreSQL to be ready...${NC}"
+for i in $(seq 1 30); do
+    if docker exec localdev-db-1 pg_isready -U postgres > /dev/null 2>&1; then
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+echo ""
+if ! docker exec localdev-db-1 pg_isready -U postgres > /dev/null 2>&1; then
+    echo -e "${RED}PostgreSQL failed to become ready within 30 seconds${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Docker infrastructure services are running${NC}"
+echo ""
+
 # Install server dependencies and run migrations
 echo -e "${YELLOW}Installing server dependencies...${NC}"
 (
@@ -149,13 +172,6 @@ if [ -d "$SCRIPT_DIR/scratch-git/repos" ]; then
     mv "$SCRIPT_DIR/scratch-git/repos/"* "$SCRIPT_DIR/local/scratch-git-repos/" 2>/dev/null || true
     rm -rf "$SCRIPT_DIR/scratch-git/repos"
     echo -e "${GREEN}Migration complete.${NC}"
-    echo ""
-fi
-
-# Check if Docker services are running
-if ! docker ps 2>/dev/null | grep -q postgres; then
-    echo -e "${RED}Warning: PostgreSQL container doesn't appear to be running.${NC}"
-    echo -e "${YELLOW}Start it with: cd server/localdev && docker compose up -d${NC}"
     echo ""
 fi
 

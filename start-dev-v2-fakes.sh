@@ -59,6 +59,29 @@ echo -e "${YELLOW}Building shared-types package...${NC}"
 echo -e "${GREEN}shared-types built successfully${NC}"
 echo ""
 
+# Ensure Docker infrastructure services are running
+echo -e "${YELLOW}Checking Docker infrastructure services...${NC}"
+(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d db redis mongodb 2>&1) || {
+    echo -e "${RED}Failed to start Docker services. Is Docker running?${NC}"
+    exit 1
+}
+# Wait for PostgreSQL to be ready to accept connections
+echo -ne "${YELLOW}Waiting for PostgreSQL to be ready...${NC}"
+for i in $(seq 1 30); do
+    if docker exec localdev-db-1 pg_isready -U postgres > /dev/null 2>&1; then
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+echo ""
+if ! docker exec localdev-db-1 pg_isready -U postgres > /dev/null 2>&1; then
+    echo -e "${RED}PostgreSQL failed to become ready within 30 seconds${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Docker infrastructure services are running${NC}"
+echo ""
+
 # Install server dependencies and run migrations
 echo -e "${YELLOW}Installing server dependencies...${NC}"
 (
@@ -137,7 +160,7 @@ cleanup() {
 
     # Stop fake API containers
     echo -e "${MAGENTA}Stopping fake API containers...${NC}"
-    (cd "$SCRIPT_DIR/server/localdev" && docker compose stop fake-airtable 2>/dev/null) || true
+    (cd "$SCRIPT_DIR/server/localdev" && docker compose stop fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful 2>/dev/null) || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -161,28 +184,23 @@ if [ -d "$SCRIPT_DIR/scratch-git/repos" ]; then
     echo ""
 fi
 
-# Check if Docker services are running
-if ! docker ps 2>/dev/null | grep -q postgres; then
-    echo -e "${RED}Warning: PostgreSQL container doesn't appear to be running.${NC}"
-    echo -e "${YELLOW}Start it with: cd server/localdev && docker compose up -d${NC}"
-    echo ""
-fi
-
 # Start fake connector APIs
-echo -e "${MAGENTA}[FAKE-AIRTABLE]${NC} Starting fake Airtable API on port 4646..."
-(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d --build fake-airtable 2>&1) || {
-    echo -e "${RED}Failed to start fake Airtable container${NC}"
+echo -e "${MAGENTA}[FAKES]${NC} Starting fake connector APIs..."
+(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d --build fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful 2>&1) || {
+    echo -e "${RED}Failed to start fake API containers${NC}"
     exit 1
 }
-echo -e "${GREEN}Fake Airtable API started${NC}"
+echo -e "${GREEN}Fake connector APIs started${NC}"
 
-# Wait for fake Airtable to be ready
-echo -e "${MAGENTA}[FAKE-AIRTABLE]${NC} Waiting for fake Airtable to be ready..."
-for i in $(seq 1 30); do
-    if curl -s -o /dev/null http://localhost:4646/test/reset -X POST 2>/dev/null; then
-        break
-    fi
-    sleep 1
+# Wait for all fakes to be ready
+echo -e "${MAGENTA}[FAKES]${NC} Waiting for fake APIs to be ready..."
+for port in 4646 4647 4648 4649 4651; do
+    for i in $(seq 1 30); do
+        if curl -s -o /dev/null "http://localhost:$port/test/health" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
 done
 
 # Seed fake Airtable with starter data
@@ -274,10 +292,94 @@ curl -s -X POST http://localhost:4646/test/setup -H 'Content-Type: application/j
   ]
 }' > /dev/null
 echo -e "${GREEN}Fake Airtable seeded (2 bases, 3 tables, 10 records)${NC}"
+
+# Seed fake WordPress with starter data
+echo -e "${MAGENTA}[FAKE-WORDPRESS]${NC} Seeding starter data..."
+curl -s -X POST http://localhost:4647/test/setup -H 'Content-Type: application/json' -d '{
+  "siteInfo": { "name": "Dev WordPress", "url": "http://localhost:4647" },
+  "postTypes": [
+    { "slug": "post", "name": "Posts", "rest_base": "posts", "rest_namespace": "wp/v2", "description": "", "hierarchical": false },
+    { "slug": "page", "name": "Pages", "rest_base": "pages", "rest_namespace": "wp/v2", "description": "", "hierarchical": true }
+  ],
+  "taxonomies": [
+    { "slug": "category", "name": "Categories", "rest_base": "categories", "rest_namespace": "wp/v2", "description": "", "hierarchical": true, "types": ["post"] },
+    { "slug": "post_tag", "name": "Tags", "rest_base": "tags", "rest_namespace": "wp/v2", "description": "", "hierarchical": false, "types": ["post"] }
+  ],
+  "records": [
+    {
+      "tableId": "posts",
+      "records": [
+        { "title": { "rendered": "Hello World", "raw": "Hello World" }, "status": "publish", "content": { "rendered": "<p>Welcome!</p>", "raw": "Welcome!" } },
+        { "title": { "rendered": "Draft Post", "raw": "Draft Post" }, "status": "draft", "content": { "rendered": "<p>WIP</p>", "raw": "WIP" } }
+      ]
+    },
+    {
+      "tableId": "pages",
+      "records": [
+        { "title": { "rendered": "About Us", "raw": "About Us" }, "status": "publish", "content": { "rendered": "<p>About page</p>", "raw": "About page" } }
+      ]
+    }
+  ]
+}' > /dev/null
+echo -e "${GREEN}Fake WordPress seeded (2 post types, 2 taxonomies, 3 records)${NC}"
+
+# Seed fake QuickBooks with starter data
+echo -e "${MAGENTA}[FAKE-QUICKBOOKS]${NC} Seeding starter data..."
+curl -s -X POST http://localhost:4648/test/setup -H 'Content-Type: application/json' -d '{
+  "companyInfo": { "CompanyName": "Dev Company", "LegalName": "Dev Company LLC", "Country": "US" },
+  "entities": [
+    {
+      "entityType": "Customer",
+      "entities": [
+        { "DisplayName": "Acme Corp", "PrimaryEmailAddr": { "Address": "acme@example.com" } },
+        { "DisplayName": "Globex Inc", "PrimaryEmailAddr": { "Address": "globex@example.com" } }
+      ]
+    },
+    {
+      "entityType": "Invoice",
+      "entities": [
+        { "DocNumber": "1001", "TotalAmt": 500.00, "Balance": 500.00 },
+        { "DocNumber": "1002", "TotalAmt": 1200.00, "Balance": 0 }
+      ]
+    }
+  ]
+}' > /dev/null
+echo -e "${GREEN}Fake QuickBooks seeded (1 company, 2 customers, 2 invoices)${NC}"
+
+# Seed fake Moco with starter data
+echo -e "${MAGENTA}[FAKE-MOCO]${NC} Seeding starter data..."
+curl -s -X POST http://localhost:4649/test/setup -H 'Content-Type: application/json' -d '{
+  "companies": [
+    { "name": "Acme Corp", "type": "customer", "website": "https://acme.example.com" },
+    { "name": "Globex Inc", "type": "supplier", "website": "https://globex.example.com" }
+  ],
+  "contacts": [
+    { "firstname": "Alice", "lastname": "Chen", "work_email": "alice@acme.example.com", "job_position": "CTO" },
+    { "firstname": "Bob", "lastname": "Smith", "work_email": "bob@globex.example.com", "job_position": "PM" }
+  ],
+  "projects": [
+    { "name": "Website Redesign", "active": true, "billable": true, "currency": "USD" }
+  ]
+}' > /dev/null
+echo -e "${GREEN}Fake Moco seeded (2 companies, 2 contacts, 1 project)${NC}"
+
+# Seed fake Audienceful with starter data
+echo -e "${MAGENTA}[FAKE-AUDIENCEFUL]${NC} Seeding starter data..."
+curl -s -X POST http://localhost:4651/test/setup -H 'Content-Type: application/json' -d '{
+  "fields": [
+    { "id": "fld001", "name": "First Name", "data_name": "first_name", "type": "string", "editable": true, "required": false },
+    { "id": "fld002", "name": "Company", "data_name": "company", "type": "string", "editable": true, "required": false }
+  ],
+  "people": [
+    { "email": "alice@example.com", "tags": [{ "name": "newsletter" }], "notes": "VIP subscriber", "first_name": "Alice", "company": "Acme" },
+    { "email": "bob@example.com", "tags": [{ "name": "newsletter" }, { "name": "beta" }], "notes": "", "first_name": "Bob", "company": "Globex" }
+  ]
+}' > /dev/null
+echo -e "${GREEN}Fake Audienceful seeded (2 fields, 2 people)${NC}"
 echo ""
 
 # Set URL overrides so the server redirects connector API calls to fakes
-export API_URL_OVERRIDES="https://api.airtable.com=http://localhost:4646"
+export API_URL_OVERRIDES="https://api.airtable.com=http://localhost:4646,https://test.wp.local=http://localhost:4647,https://quickbooks.api.intuit.com=http://localhost:4648,https://sandbox-quickbooks.api.intuit.com=http://localhost:4648,https://test.mocoapp.com=http://localhost:4649,https://app.audienceful.com=http://localhost:4651"
 
 # Start Client (Next.js on port 3000)
 echo -e "${BLUE}[CLIENT]${NC} Starting Next.js dev server on port 3000..."
@@ -307,12 +409,17 @@ SCRATCH_GIT_PID=$!
 
 echo ""
 echo -e "${YELLOW}========================================${NC}"
-echo -e "  ${BLUE}Client${NC}:         http://localhost:3000"
-echo -e "  ${GREEN}Server${NC}:         http://localhost:3010"
-echo -e "  ${YELLOW}scratch-git-2${NC}:   http://localhost:3100 (API) + :3101 (HTTP backend)"
-echo -e "  ${MAGENTA}Fake Airtable${NC}:  http://localhost:4646"
+echo -e "  ${BLUE}Client${NC}:            http://localhost:3000"
+echo -e "  ${GREEN}Server${NC}:            http://localhost:3010"
+echo -e "  ${YELLOW}scratch-git-2${NC}:      http://localhost:3100 (API) + :3101 (HTTP backend)"
+echo -e "  ${MAGENTA}Fake Airtable${NC}:     http://localhost:4646"
+echo -e "  ${MAGENTA}Fake WordPress${NC}:    http://localhost:4647"
+echo -e "  ${MAGENTA}Fake QuickBooks${NC}:   http://localhost:4648"
+echo -e "  ${MAGENTA}Fake Moco${NC}:         http://localhost:4649"
+echo -e "  ${MAGENTA}Fake Audienceful${NC}:  http://localhost:4651"
 echo -e ""
-echo -e "  ${MAGENTA}API overrides${NC}:  Airtable → localhost:4646"
+echo -e "  ${MAGENTA}API overrides${NC}:  All connectors → localhost fakes"
+echo -e "  ${YELLOW}Test domains${NC}:  WordPress=test.wp.local  Moco=test.mocoapp.com"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
