@@ -1,20 +1,13 @@
 import { AuditLogEvent } from '@spinner/shared-types';
 import { User } from './users';
 
-/**
- * An admin view of a user for display in the developer tools
- */
-export interface UserDetails {
-  user: User;
-  workbooks: WorkbookSummary[];
-  connections: ConnectionSummary[];
-  auditLogs: AuditLogEvent[];
-}
-
-export interface WorkbookSummary {
-  id: string;
+export interface DataFolderSummary {
   name: string;
-  numTables: number;
+  connectorService: string | null;
+  path: string | null;
+  lock: string | null;
+  lastSyncTime: Date | null;
+  options: Record<string, unknown> | null;
 }
 
 export interface ConnectionSummary {
@@ -23,4 +16,21 @@ export interface ConnectionSummary {
   service: string;
   workbookId: string | null;
   createdAt: string;
+}
+
+export interface WorkbookSummary {
+  id: string;
+  name: string;
+  numTables: number;
+  connections: ConnectionSummary[];
+  dataFolders: DataFolderSummary[];
+}
+
+/**
+ * An admin view of a user for display in the developer tools
+ */
+export interface UserDetails {
+  user: User;
+  workbooks: WorkbookSummary[];
+  auditLogs: AuditLogEvent[];
 }

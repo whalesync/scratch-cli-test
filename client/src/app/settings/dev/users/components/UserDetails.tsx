@@ -1,6 +1,6 @@
 import { Badge, BadgeError, BadgeOK } from '@/app/components/base/badge';
 import { ButtonPrimaryLight } from '@/app/components/base/buttons';
-import { Text13Book, TextTitle2, TextTitle3 } from '@/app/components/base/text';
+import { Text13Book, TextTitle2, TextTitle3, TextTitle4 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { LabelValuePair } from '@/app/components/LabelValuePair';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
@@ -18,21 +18,27 @@ import {
   CloseButton,
   Code,
   Group,
+  SimpleGrid,
   Stack,
   Table,
+  Tabs,
   TextInput,
   Tooltip,
 } from '@mantine/core';
 import { ConnectorAccountId, IdPrefixes } from '@spinner/shared-types';
 import {
+  BuildingIcon,
   CreditCardIcon,
+  FolderIcon,
   HatGlassesIcon,
   LockKeyholeIcon,
+  LogsIcon,
   PiggyBankIcon,
   SquarePenIcon,
   Trash2Icon,
+  UserCogIcon,
 } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
 
 export const UserDetailsCard = ({
@@ -47,23 +53,16 @@ export const UserDetailsCard = ({
   const [saving, setSaving] = useState(false);
   const [newOrgId, setNewOrgId] = useState('');
   const [deleteOldOrg, setDeleteOldOrg] = useState(false);
+  const [activeWorkbookTab, setActiveWorkbookTab] = useState<string | null>(details.workbooks[0]?.id ?? null);
   const [credentialsMap, setCredentialsMap] = useState<Record<string, Record<string, unknown> | null>>({});
   const [loadingCredentials, setLoadingCredentials] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
+    setActiveWorkbookTab(details.workbooks[0]?.id ?? null);
     setCredentialsMap({});
     setLoadingCredentials({});
   }, [details]);
 
-  const sortedConnections = useMemo(
-    () =>
-      [...details.connections].sort((a, b) => {
-        const wbCompare = (a.workbookId ?? '').localeCompare(b.workbookId ?? '');
-        if (wbCompare !== 0) return wbCompare;
-        return (a.name ?? '').localeCompare(b.name ?? '');
-      }),
-    [details.connections],
-  );
   const { open: openConfirm, dialogProps } = useConfirmDialog();
   const orgIdError =
     newOrgId.trim() && !newOrgId.trim().startsWith(IdPrefixes.ORGANIZATION)
@@ -165,47 +164,59 @@ export const UserDetailsCard = ({
         </Group>
       </Card.Section>
       <Card.Section mt="sm" p="xs" withBorder>
-        <Stack>
-          <LabelValuePair label="ID" value={details.user.id} canCopy />
-          <LabelValuePair label="Name" value={details.user.name} />
-          <LabelValuePair label="Email" value={details.user.email} canCopy />
-          <Group align="center" gap="xs">
-            <LabelValuePair label="Clerk ID" value={details.user.clerkId} canCopy />
-            <Tooltip label="View in Clerk">
-              <Anchor href={clerkUserUrl(details.user.clerkId, getBuildFlavor())} target="_blank" rel="noreferrer">
-                <StyledLucideIcon Icon={HatGlassesIcon} size={16} />
-              </Anchor>
-            </Tooltip>
-          </Group>
-          <Group align="center" gap="xs">
-            <LabelValuePair label="Stripe Customer ID" value={details.user.stripeCustomerId} canCopy />
-            {details.user.stripeCustomerId && (
-              <Tooltip label="View in Stripe">
-                <Anchor
-                  href={stripeCustomerUrl(details.user.stripeCustomerId, getBuildFlavor())}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <StyledLucideIcon Icon={CreditCardIcon} size={16} />
+        <SimpleGrid cols={2} spacing="md">
+          <Stack>
+            <LabelValuePair label="ID" value={details.user.id} canCopy />
+            <LabelValuePair label="Name" value={details.user.name} />
+            <LabelValuePair label="Email" value={details.user.email} canCopy />
+            <LabelValuePair label="Joined" value={new Date(details.user.createdAt).toLocaleString()} />
+            <LabelValuePair label="Last Active" value={new Date(details.user.updatedAt).toLocaleString()} />
+            <LabelValuePair label="Subscription Status" value={<SubscriptionInfo user={details.user} />} />
+          </Stack>
+          <Stack>
+            <Group align="center" gap="xs">
+              <LabelValuePair label="Clerk ID" value={details.user.clerkId} canCopy />
+              <Tooltip label="View in Clerk">
+                <Anchor href={clerkUserUrl(details.user.clerkId, getBuildFlavor())} target="_blank" rel="noreferrer">
+                  <StyledLucideIcon Icon={HatGlassesIcon} size={16} />
                 </Anchor>
               </Tooltip>
-            )}
-          </Group>
-          <Group align="center" gap="xs">
-            <LabelValuePair label="PostHog" value="Sessions" />
-            <Tooltip label="View in PostHog">
-              <Anchor href={posthogPersonUrl(details.user.id, getBuildFlavor())} target="_blank" rel="noreferrer">
-                <StyledLucideIcon Icon={PiggyBankIcon} size={16} />
-              </Anchor>
-            </Tooltip>
-          </Group>
-          <LabelValuePair label="Created" value={new Date(details.user.createdAt).toLocaleString()} />
-          <LabelValuePair label="Subscription Status" value={<SubscriptionInfo user={details.user} />} />
-        </Stack>
+            </Group>
+            <Group align="center" gap="xs">
+              {details.user.stripeCustomerId ? (
+                <LabelValuePair label="Stripe Customer ID" value={details.user.stripeCustomerId} canCopy />
+              ) : (
+                <LabelValuePair label="Stripe Customer ID" value="NONE FOUND!" />
+              )}
+              {details.user.stripeCustomerId && (
+                <Tooltip label="View in Stripe">
+                  <Anchor
+                    href={stripeCustomerUrl(details.user.stripeCustomerId, getBuildFlavor())}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <StyledLucideIcon Icon={CreditCardIcon} size={16} />
+                  </Anchor>
+                </Tooltip>
+              )}
+            </Group>
+            <Group align="center" gap="xs">
+              <LabelValuePair label="PostHog" value="Sessions" />
+              <Tooltip label="View in PostHog">
+                <Anchor href={posthogPersonUrl(details.user.id, getBuildFlavor())} target="_blank" rel="noreferrer">
+                  <StyledLucideIcon Icon={PiggyBankIcon} size={16} />
+                </Anchor>
+              </Tooltip>
+            </Group>
+          </Stack>
+        </SimpleGrid>
       </Card.Section>
       <Card.Section p="xs" withBorder>
         <Stack>
-          <TextTitle3>Organization</TextTitle3>
+          <Group gap="xs">
+            <StyledLucideIcon Icon={BuildingIcon} size={14} c="var(--fg-secondary)" />
+            <TextTitle3>Organization</TextTitle3>
+          </Group>
           <LabelValuePair label="ID" value={details.user.organization?.id} canCopy />
           <LabelValuePair label="Clerk ID" value={details.user.organization?.clerkId} canCopy />
           <LabelValuePair label="Name" value={details.user.organization?.name} />
@@ -247,7 +258,10 @@ export const UserDetailsCard = ({
       </Card.Section>
       <Card.Section p="xs" withBorder>
         <Stack>
-          <TextTitle3>Settings</TextTitle3>
+          <Group gap="xs">
+            <StyledLucideIcon Icon={UserCogIcon} size={14} c="var(--fg-secondary)" />
+            <TextTitle3>User Settings</TextTitle3>
+          </Group>
           {Object.entries(details.user.settings ?? {}).map(([key, value]) => (
             <LabelValuePair
               key={key}
@@ -265,81 +279,114 @@ export const UserDetailsCard = ({
               }
             />
           ))}
+          {Object.keys(details.user.settings ?? {}).length === 0 && <Text13Book>No custom settings</Text13Book>}
         </Stack>
       </Card.Section>
       <Card.Section p="xs" withBorder>
         <Stack>
-          <TextTitle3>Connections</TextTitle3>
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th w="120px">ID</Table.Th>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>Service</Table.Th>
-                <Table.Th>Workbook</Table.Th>
-                <Table.Th>Created</Table.Th>
-                <Table.Th w="40px" />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {sortedConnections.map((connection) => (
-                <Fragment key={connection.id}>
-                  <Table.Tr>
-                    <Table.Td>{connection.id}</Table.Td>
-                    <Table.Td>{connection.name}</Table.Td>
-                    <Table.Td>{connection.service}</Table.Td>
-                    <Table.Td>{connection.workbookId || '-'}</Table.Td>
-                    <Table.Td>{new Date(connection.createdAt).toLocaleDateString()}</Table.Td>
-                    <Table.Td>
-                      <ToolIconButton
-                        icon={LockKeyholeIcon}
-                        onClick={() => handleViewCredentials(connection.id)}
-                        tooltip="View credentials"
-                        loading={loadingCredentials[connection.id]}
-                      />
-                    </Table.Td>
-                  </Table.Tr>
-                  {credentialsMap[connection.id] !== undefined && (
-                    <Table.Tr>
-                      <Table.Td colSpan={6}>
-                        <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                          {JSON.stringify(credentialsMap[connection.id], null, 2)}
-                        </Code>
-                      </Table.Td>
-                    </Table.Tr>
-                  )}
-                </Fragment>
+          <Group gap="xs">
+            <StyledLucideIcon Icon={FolderIcon} size={14} c="var(--fg-secondary)" />
+            <TextTitle3>Workspaces</TextTitle3>
+          </Group>
+          {details.workbooks.length > 0 && (
+            <Tabs value={activeWorkbookTab} onChange={setActiveWorkbookTab}>
+              <Tabs.List>
+                {details.workbooks.map((workbook) => (
+                  <Tabs.Tab key={workbook.id} value={workbook.id}>
+                    {workbook.name}
+                  </Tabs.Tab>
+                ))}
+              </Tabs.List>
+              {details.workbooks.map((workbook) => (
+                <Tabs.Panel key={workbook.id} value={workbook.id} pt="sm">
+                  <Stack gap="sm">
+                    <LabelValuePair label="ID" value={workbook.id} canCopy />
+                    <LabelValuePair label="Tables" value={String(workbook.numTables)} />
+                    <TextTitle4>Data Folders</TextTitle4>
+                    {workbook.dataFolders.length > 0 ? (
+                      <Table>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Name</Table.Th>
+                            <Table.Th>Path</Table.Th>
+                            <Table.Th>Service</Table.Th>
+                            <Table.Th>Lock</Table.Th>
+                            <Table.Th>Last Sync</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {workbook.dataFolders.map((df) => (
+                            <Table.Tr key={df.path ?? df.name}>
+                              <Table.Td>{df.name}</Table.Td>
+                              <Table.Td>{df.path ?? '-'}</Table.Td>
+                              <Table.Td>{df.connectorService ?? '-'}</Table.Td>
+                              <Table.Td>{df.lock ?? '-'}</Table.Td>
+                              <Table.Td>{df.lastSyncTime ? new Date(df.lastSyncTime).toLocaleString() : '-'}</Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    ) : (
+                      <Text13Book>No data folders</Text13Book>
+                    )}
+                    <TextTitle4>Connections</TextTitle4>
+                    {workbook.connections.length > 0 ? (
+                      <Table>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th w="120px">ID</Table.Th>
+                            <Table.Th>Name</Table.Th>
+                            <Table.Th>Service</Table.Th>
+                            <Table.Th>Created</Table.Th>
+                            <Table.Th w="40px" />
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {workbook.connections.map((connection) => (
+                            <Fragment key={connection.id}>
+                              <Table.Tr>
+                                <Table.Td>{connection.id}</Table.Td>
+                                <Table.Td>{connection.name}</Table.Td>
+                                <Table.Td>{connection.service}</Table.Td>
+                                <Table.Td>{new Date(connection.createdAt).toLocaleDateString()}</Table.Td>
+                                <Table.Td>
+                                  <ToolIconButton
+                                    icon={LockKeyholeIcon}
+                                    onClick={() => handleViewCredentials(connection.id)}
+                                    tooltip="View credentials"
+                                    loading={loadingCredentials[connection.id]}
+                                  />
+                                </Table.Td>
+                              </Table.Tr>
+                              {credentialsMap[connection.id] !== undefined && (
+                                <Table.Tr>
+                                  <Table.Td colSpan={5}>
+                                    <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                      {JSON.stringify(credentialsMap[connection.id], null, 2)}
+                                    </Code>
+                                  </Table.Td>
+                                </Table.Tr>
+                              )}
+                            </Fragment>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    ) : (
+                      <Text13Book>No connections</Text13Book>
+                    )}
+                  </Stack>
+                </Tabs.Panel>
               ))}
-            </Table.Tbody>
-          </Table>
+            </Tabs>
+          )}
         </Stack>
       </Card.Section>
       <Card.Section p="xs" withBorder>
         <Stack>
-          <TextTitle3>Workbooks</TextTitle3>
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th w="120px">ID</Table.Th>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>Tables</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {details.workbooks?.map((workbook) => (
-                <Table.Tr key={workbook.id}>
-                  <Table.Td>{workbook.id}</Table.Td>
-                  <Table.Td>{workbook.name}</Table.Td>
-                  <Table.Td>{workbook.numTables}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Stack>
-      </Card.Section>
-      <Card.Section p="xs" withBorder>
-        <Stack>
-          <TextTitle3>Audit Logs</TextTitle3>
+          <Group gap="xs">
+            <StyledLucideIcon Icon={LogsIcon} size={14} c="var(--fg-secondary)" />
+            <TextTitle3>Audit Logs</TextTitle3>
+          </Group>
           <Table>
             <Table.Thead>
               <Table.Tr>
