@@ -51,7 +51,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { DbJobStatus, dbJobToJobEntity } from '../job/entities/job.entity';
 import { JobService } from '../job/job.service';
-import { DevToolsService } from './dev-tools.service';
+import { DevToolsService, WorkbookExportJson } from './dev-tools.service';
 import { UserDetail } from './entities/user-detail.entity';
 
 interface SyncDataFoldersRequestBody {
@@ -452,6 +452,30 @@ export class DevToolsController {
       jobId: job.id,
       message: 'Sync data folders job queued successfully',
     };
+  }
+
+  /* Export a workbook as JSON (decrypted credentials) */
+  @Get('workbooks/:id/export')
+  async exportWorkbook(@Param('id') id: string, @Req() req: RequestWithUser): Promise<WorkbookExportJson> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can export workbooks');
+    }
+
+    return this.devToolsService.exportWorkbook(id);
+  }
+
+  /* Import a workbook from JSON */
+  @Post('workbooks/import')
+  async importWorkbook(@Body() body: unknown, @Req() req: RequestWithUser) {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can import workbooks');
+    }
+
+    return this.devToolsService.importWorkbook(
+      body as Parameters<typeof this.devToolsService.importWorkbook>[0],
+      req.user.id,
+      req.user.organizationId ?? '',
+    );
   }
 
   /* Move a connection's git repo to a new path (copy -> update DB -> delete old) */

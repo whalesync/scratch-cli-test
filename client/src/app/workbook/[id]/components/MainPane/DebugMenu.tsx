@@ -9,13 +9,14 @@ import { workbookApi } from '@/lib/api/workbook';
 import { trackDeleteWorkbook } from '@/lib/posthog';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { RouteUrls } from '@/utils/route-urls';
-import { ActionIcon, Menu } from '@mantine/core';
+import { ActionIcon, Button, Code, CopyButton, Group, Menu, Modal, ScrollArea, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkbookId } from '@spinner/shared-types';
 import {
   ChevronRightIcon,
   DatabaseIcon,
   EllipsisVertical,
+  FileJsonIcon,
   LinkIcon,
   ListRestartIcon,
   ServerCrashIcon,
@@ -38,10 +39,29 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportJson, setExportJson] = useState<string | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
   const router = useRouter();
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
   const { open: openDeleteConfirmDialog, dialogProps: deleteDialogProps } = useDeleteConfirmDialog();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
+
+  const handleExportWorkbook = async () => {
+    setExportLoading(true);
+    setExportJson(null);
+    setExportModalOpen(true);
+    try {
+      const data = await workbookApi.exportWorkbookJson(workbookId);
+      setExportJson(JSON.stringify(data, null, 2));
+    } catch (e) {
+      notifications.show({ title: 'Error', message: 'Failed to export workspace', color: 'red' });
+      setExportModalOpen(false);
+      console.error(e);
+    } finally {
+      setExportLoading(false);
+    }
+  };
 
   const handleResetWorkbook = () => {
     openConfirmDialog({
@@ -151,6 +171,9 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
               >
                 Test Workspace Error
               </Menu.Item>
+              <Menu.Item data-devtool leftSection={<FileJsonIcon size={16} />} onClick={handleExportWorkbook}>
+                Export Workspace JSON
+              </Menu.Item>
             </>
           )}
         </Menu.Dropdown>
@@ -165,6 +188,39 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
         onClose={() => setPermissionsOpen(false)}
         workbookId={workbookId}
       />
+
+      {/* Export JSON Modal */}
+      <Modal
+        opened={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        title="Export Workspace JSON"
+        size="xl"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm" c="red">
+            Use caution, secrets are included in export
+          </Text>
+          {exportLoading ? (
+            <Code block>Loading...</Code>
+          ) : exportJson ? (
+            <>
+              <Group justify="flex-end">
+                <CopyButton value={exportJson}>
+                  {({ copied, copy }) => (
+                    <Button variant="light" size="xs" onClick={copy}>
+                      {copied ? 'Copied' : 'Copy JSON'}
+                    </Button>
+                  )}
+                </CopyButton>
+              </Group>
+              <ScrollArea h={500}>
+                <Code block>{exportJson}</Code>
+              </ScrollArea>
+            </>
+          ) : null}
+        </Stack>
+      </Modal>
 
       {/* Confirm Dialogs */}
       <ConfirmDialog {...dialogProps} />

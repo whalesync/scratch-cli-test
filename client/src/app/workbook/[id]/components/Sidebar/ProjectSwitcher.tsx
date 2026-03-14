@@ -2,12 +2,15 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text13Medium, Text13Regular } from '@/app/components/base/text';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { useWorkbooks } from '@/hooks/use-workbooks';
 import { usersApi } from '@/lib/api/users';
-import { Box, Button, Group, Menu, Modal, Stack, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { workbookApi } from '@/lib/api/workbook';
+import { Box, Button, Group, Menu, Modal, Stack, TextInput, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { notifications } from '@mantine/notifications';
 import type { Workbook, WorkbookId } from '@spinner/shared-types';
-import { CheckIcon, ChevronDownIcon, PencilIcon, PlusIcon } from 'lucide-react';
+import { CheckIcon, ChevronDownIcon, PencilIcon, PlusIcon, UploadIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 
@@ -54,6 +57,7 @@ interface ProjectSwitcherProps {
 export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   const router = useRouter();
   const { workbooks, createWorkbook, updateWorkbook } = useWorkbooks();
+  const { isDevToolsEnabled } = useDevTools();
   const [menuOpened, setMenuOpened] = useState(false);
 
   // Rename modal state
@@ -66,6 +70,11 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   const [createModalOpened, { open: openCreateModal, close: closeCreateModal }] = useDisclosure(false);
   const [createName, setCreateName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  // Import modal state
+  const [importModalOpened, { open: openImportModal, close: closeImportModal }] = useDisclosure(false);
+  const [importJson, setImportJson] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
   const handleSwitchProject = useCallback(
     (workbookId: WorkbookId) => {
@@ -123,6 +132,36 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
       setIsCreating(false);
     }
   }, [createName, createWorkbook, closeCreateModal, router]);
+
+  const handleOpenImport = useCallback(() => {
+    setImportJson('');
+    setMenuOpened(false);
+    openImportModal();
+  }, [openImportModal]);
+
+  const handleImport = useCallback(async () => {
+    if (!importJson.trim()) return;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(importJson);
+    } catch {
+      notifications.show({ title: 'Error', message: 'Invalid JSON', color: 'red' });
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const result = await workbookApi.importWorkbookJson(parsed);
+      closeImportModal();
+      router.push(`/workbook/${result.workbookId}/files`);
+    } catch (error) {
+      notifications.show({ title: 'Error', message: 'Failed to import workspace', color: 'red' });
+      console.error('Failed to import workbook:', error);
+    } finally {
+      setIsImporting(false);
+    }
+  }, [importJson, closeImportModal, router]);
 
   // Find the index of the current workbook in the list for color assignment
   const currentIndex = workbooks?.findIndex((w) => w.id === currentWorkbook.id) ?? 0;
@@ -202,6 +241,16 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
           <Menu.Item onClick={handleOpenCreate} leftSection={<PlusIcon size={14} />}>
             <Text13Regular c="var(--fg-secondary)">New Workspace</Text13Regular>
           </Menu.Item>
+
+          {isDevToolsEnabled && (
+            <>
+              <Menu.Divider />
+              <Menu.Label>Debug Tools</Menu.Label>
+              <Menu.Item data-devtool onClick={handleOpenImport} leftSection={<UploadIcon size={14} />}>
+                Import Workspace from JSON
+              </Menu.Item>
+            </>
+          )}
         </Menu.Dropdown>
       </Menu>
 
@@ -251,6 +300,36 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
               Cancel
             </Button>
             <Button onClick={handleCreate} loading={isCreating} disabled={!createName.trim()}>
+              Create
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Import Modal */}
+      <Modal
+        opened={importModalOpened}
+        onClose={closeImportModal}
+        title="Import Workspace from JSON"
+        size="lg"
+        centered
+      >
+        <Stack gap="md">
+          <Textarea
+            label="Paste exported workspace JSON"
+            placeholder='{"version": 1, ...}'
+            value={importJson}
+            onChange={(e) => setImportJson(e.currentTarget.value)}
+            minRows={12}
+            autosize
+            maxRows={20}
+            data-autofocus
+          />
+          <Group justify="flex-end" gap="sm">
+            <Button variant="subtle" color="gray" onClick={closeImportModal}>
+              Cancel
+            </Button>
+            <Button onClick={handleImport} loading={isImporting} disabled={!importJson.trim()}>
               Create
             </Button>
           </Group>

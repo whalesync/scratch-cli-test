@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
+import { CredentialEncryptionModule } from 'src/credential-encryption/credential-encryption.module';
 import { DbModule } from 'src/db/db.module';
 import { JobModule } from 'src/job/job.module';
 import { PaymentModule } from 'src/payment/payment.module';
@@ -16,6 +17,7 @@ import { DevToolsService } from './dev-tools.service';
   providers: [DevToolsService],
   imports: [
     ScratchConfigModule,
+    CredentialEncryptionModule,
     DbModule,
     UserModule,
     PaymentModule,

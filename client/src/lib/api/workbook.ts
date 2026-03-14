@@ -657,6 +657,28 @@ export const workbookApi = {
     }
   },
 
+  exportWorkbookJson: async (workbookId: WorkbookId): Promise<unknown> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get(`/dev-tools/workbooks/${workbookId}/export`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to export workspace');
+      throw error;
+    }
+  },
+
+  importWorkbookJson: async (json: unknown): Promise<{ workbookId: string }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ workbookId: string }>('/dev-tools/workbooks/import', json);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to import workspace');
+      throw error;
+    }
+  },
+
   moveRepo: async (
     connectorAccountId: string,
     newRepoPath: string,
