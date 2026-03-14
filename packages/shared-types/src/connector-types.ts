@@ -25,6 +25,17 @@ export interface ConnectorPullOptions {
   [key: string]: unknown;
 }
 
+/** Describes a single advanced setting that a connector exposes. */
+export interface ConnectorSettingDefinition {
+  key: string;
+  type: 'boolean' | 'number' | 'string';
+  label: string;
+  description?: string;
+  placeholder?: string;
+  min?: number;
+  max?: number;
+}
+
 /** Types of columns we support. Add more if needed. */
 export enum PostgresColumnType {
   TEXT = 'text',

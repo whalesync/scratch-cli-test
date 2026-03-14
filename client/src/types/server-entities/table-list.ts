@@ -1,4 +1,4 @@
-import { EntityId, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorSettingDefinition, EntityId, TableDiscoveryMode } from '@spinner/shared-types';
 
 export interface TablePreview {
   id: EntityId;
@@ -11,6 +11,9 @@ export interface TablePreview {
 export interface TableList {
   tables: TablePreview[];
   discoveryMode: TableDiscoveryMode;
+  supportsFilters: boolean;
+  supportsFieldSelection: boolean;
+  advancedSettings: ConnectorSettingDefinition[];
 }
 
 export interface TableSearchResult {

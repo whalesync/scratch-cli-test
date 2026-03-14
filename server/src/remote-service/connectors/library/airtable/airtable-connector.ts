@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { ConnectorPullOptions, ConnectorSettingDefinition, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
@@ -20,6 +20,15 @@ interface AirtablePullOptions extends ConnectorPullOptions {
 export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
   readonly service = Service.AIRTABLE;
   static readonly displayName = 'Airtable';
+  static readonly advancedSettings: ConnectorSettingDefinition[] = [
+    {
+      key: 'view',
+      type: 'string',
+      label: 'View',
+      description: 'Airtable view ID to pull records from. Leave empty to pull all records.',
+      placeholder: 'Enter view ID...',
+    },
+  ];
 
   private readonly client: AirtableApiClient;
   private readonly schemaParser = new AirtableSchemaParser();

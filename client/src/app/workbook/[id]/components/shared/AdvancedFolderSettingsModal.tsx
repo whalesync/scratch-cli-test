@@ -4,11 +4,15 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
+import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
-import { Checkbox, NumberInput, Stack, Textarea, TextInput } from '@mantine/core';
-import type { ConnectorPullOptions, DataFolder } from '@spinner/shared-types';
-import { Service } from '@spinner/shared-types';
-import { useEffect, useState } from 'react';
+import { SWR_KEYS } from '@/lib/api/keys';
+import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
+import { TableList } from '@/types/server-entities/table-list';
+import { Checkbox, Group, Loader, NumberInput, Stack, Textarea, TextInput } from '@mantine/core';
+import type { ConnectorPullOptions, ConnectorSettingDefinition, DataFolder } from '@spinner/shared-types';
+import { useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 
 interface AdvancedFolderSettingsModalProps {
   opened: boolean;
@@ -16,54 +20,100 @@ interface AdvancedFolderSettingsModalProps {
   folder: DataFolder;
 }
 
-const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE, Service.SUPABASE]);
+function ConnectorSettingField({
+  setting,
+  value,
+  onChange,
+}: {
+  setting: ConnectorSettingDefinition;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  if (setting.type === 'boolean') {
+    return (
+      <Checkbox
+        label={setting.label}
+        description={setting.description}
+        checked={(value as boolean) ?? false}
+        onChange={(e) => onChange(e.currentTarget.checked)}
+      />
+    );
+  }
+  if (setting.type === 'number') {
+    return (
+      <NumberInput
+        label={setting.label}
+        description={setting.description}
+        placeholder={setting.placeholder}
+        value={(value as number | '') ?? ''}
+        onChange={(val) => onChange(val === '' ? '' : Number(val))}
+        min={setting.min}
+        max={setting.max}
+        hideControls
+      />
+    );
+  }
+  return (
+    <TextInput
+      label={setting.label}
+      description={setting.description}
+      placeholder={setting.placeholder}
+      value={(value as string) ?? ''}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    />
+  );
+}
 
 export function AdvancedFolderSettingsModal({ opened, onClose, folder }: AdvancedFolderSettingsModalProps) {
+  const workbookId = useWorkbookUIStore((state) => state.workbookId);
   const { refresh: refreshDataFolders } = useDataFolders();
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(false);
+  const [settingValues, setSettingValues] = useState<Record<string, unknown>>({});
 
-  // Airtable options
-  const [airtableView, setAirtableView] = useState('');
+  const { data: tableList, isLoading: isLoadingMetadata } = useSWR<TableList>(
+    opened && workbookId && folder.connectorAccountId
+      ? SWR_KEYS.connectorAccounts.tables(workbookId, folder.connectorAccountId)
+      : null,
+    () => connectorAccountsApi.listTables(workbookId!, folder.connectorAccountId!),
+    { revalidateOnFocus: false },
+  );
 
-  // Notion options
-  const [notionExcludePageContent, setNotionExcludePageContent] = useState(false);
-  const [notionChildContentMaxDepth, setNotionChildContentMaxDepth] = useState<number | ''>('');
-
-  const supportsFilter = folder.connectorService != null && FILTER_SUPPORTED_SERVICES.has(folder.connectorService);
-  const isAirtable = folder.connectorService === Service.AIRTABLE;
-  const isNotion = folder.connectorService === Service.NOTION;
-  const hasPullOptions = isAirtable || isNotion;
+  const supportsFilters = tableList?.supportsFilters ?? false;
+  const advancedSettings = useMemo(() => tableList?.advancedSettings ?? [], [tableList?.advancedSettings]);
 
   useEffect(() => {
     if (opened) {
       const opts = (folder.options ?? {}) as ConnectorPullOptions;
       setFilter(opts.filter ?? '');
-      setAirtableView((opts.view as string) ?? '');
-      setNotionExcludePageContent((opts.excludePageContent as boolean) ?? false);
-      setNotionChildContentMaxDepth((opts.childContentMaxDepth as number) ?? '');
+
+      const values: Record<string, unknown> = {};
+      for (const setting of advancedSettings) {
+        const stored = opts[setting.key];
+        values[setting.key] = stored ?? (setting.type === 'boolean' ? false : '');
+      }
+      setSettingValues(values);
     }
-  }, [opened, folder.options]);
+  }, [opened, folder.options, advancedSettings]);
 
   const buildOptions = (): Record<string, unknown> | undefined => {
-    if (isAirtable) {
-      const opts: Record<string, unknown> = {};
-      if (airtableView.trim()) {
-        opts.view = airtableView.trim();
+    if (advancedSettings.length === 0) return undefined;
+    const opts: Record<string, unknown> = {};
+    for (const setting of advancedSettings) {
+      const value = settingValues[setting.key];
+      if (setting.type === 'boolean' && value === true) {
+        opts[setting.key] = true;
+      } else if (setting.type === 'number' && value !== '' && value != null) {
+        opts[setting.key] = value;
+      } else if (setting.type === 'string' && typeof value === 'string' && value.trim()) {
+        opts[setting.key] = value.trim();
       }
-      return opts;
     }
-    if (isNotion) {
-      const opts: Record<string, unknown> = {};
-      if (notionExcludePageContent) {
-        opts.excludePageContent = true;
-      }
-      if (notionChildContentMaxDepth !== '' && notionChildContentMaxDepth >= 0) {
-        opts.childContentMaxDepth = notionChildContentMaxDepth;
-      }
-      return opts;
-    }
-    return undefined;
+    return opts;
+  };
+
+  const updateSettingValue = (key: string, value: unknown) => {
+    setSettingValues((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSave = async () => {
@@ -71,7 +121,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
     try {
       await dataFolderApi.update(folder.id, {
         filter: filter.trim() || null,
-        ...(hasPullOptions && { options: buildOptions() }),
+        ...(advancedSettings.length > 0 && { options: buildOptions() }),
       });
       await refreshDataFolders();
       ScratchpadNotifications.success({
@@ -106,54 +156,38 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
         ),
       }}
     >
-      <Stack>
-        <Textarea
-          label="Filter"
-          description={
-            supportsFilter
-              ? 'Filter expression applied when pulling records from this table.'
-              : 'Filters are only supported for Notion, Airtable, and Supabase connectors.'
-          }
-          placeholder={supportsFilter ? 'Enter filter expression...' : ''}
-          value={filter}
-          onChange={(e) => setFilter(e.currentTarget.value)}
-          disabled={!supportsFilter}
-          autosize
-          minRows={3}
-          maxRows={6}
-        />
-
-        {isAirtable && (
-          <TextInput
-            label="View"
-            description="Airtable view ID to pull records from. Leave empty to pull all records."
-            placeholder="Enter view ID..."
-            value={airtableView}
-            onChange={(e) => setAirtableView(e.currentTarget.value)}
+      {isLoadingMetadata ? (
+        <Group justify="center" py="xl">
+          <Loader size="sm" />
+        </Group>
+      ) : (
+        <Stack>
+          <Textarea
+            label="Filter"
+            description={
+              supportsFilters
+                ? 'Filter expression applied when pulling records from this table.'
+                : 'Filters are not supported for this connector.'
+            }
+            placeholder={supportsFilters ? 'Enter filter expression...' : ''}
+            value={filter}
+            onChange={(e) => setFilter(e.currentTarget.value)}
+            disabled={!supportsFilters}
+            autosize
+            minRows={3}
+            maxRows={6}
           />
-        )}
 
-        {isNotion && (
-          <>
-            <Checkbox
-              label="Exclude page content"
-              description="Skip downloading the body content of Notion pages. This will increase download speed for notion tables."
-              checked={notionExcludePageContent}
-              onChange={(e) => setNotionExcludePageContent(e.currentTarget.checked)}
+          {advancedSettings.map((setting) => (
+            <ConnectorSettingField
+              key={setting.key}
+              setting={setting}
+              value={settingValues[setting.key]}
+              onChange={(val) => updateSettingValue(setting.key, val)}
             />
-            <NumberInput
-              label="Child content max depth"
-              description="Maximum depth of nested child blocks to include. Leave empty for default behavior."
-              placeholder="e.g. 2"
-              value={notionChildContentMaxDepth}
-              onChange={(val) => setNotionChildContentMaxDepth(val === '' ? '' : Number(val))}
-              min={0}
-              max={10}
-              hideControls
-            />
-          </>
-        )}
-      </Stack>
+          ))}
+        </Stack>
+      )}
     </ModalWrapper>
   );
 }

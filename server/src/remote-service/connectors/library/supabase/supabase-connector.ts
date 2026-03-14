@@ -564,6 +564,10 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
     return true;
   }
 
+  supportsFieldSelection(): boolean {
+    return true;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getBatchSize(_operation: 'create' | 'update' | 'delete'): number {
     return 100;

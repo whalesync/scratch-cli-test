@@ -34,7 +34,13 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import type { ConnectorAccount, ConnectorPullOptions, DataFolderId, WorkbookId } from '@spinner/shared-types';
+import type {
+  ConnectorAccount,
+  ConnectorPullOptions,
+  ConnectorSettingDefinition,
+  DataFolderId,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { Service, TableDiscoveryMode } from '@spinner/shared-types';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -130,9 +136,6 @@ function groupTables(tables: TablePreview[], service: Service): TableGroup[] | n
   }));
 }
 
-const FILTER_SUPPORTED_SERVICES = new Set([Service.NOTION, Service.AIRTABLE, Service.SUPABASE]);
-const FIELD_SELECTION_SERVICES = new Set([Service.SUPABASE]);
-
 const DISABLED_MESSAGES: Partial<Record<Service, string>> = {
   [Service.SUPABASE]: "This table doesn't have a unique value column (primary key).",
 };
@@ -142,6 +145,53 @@ const DISABLED_CREATES_MESSAGES: Partial<Record<Service, string>> = {
   [Service.SUPABASE]: "This table doesn't have an auto generated primary key, creates are not supported",
 };
 const DEFAULT_DISABLED_CREATES_MESSAGE = 'Creates are not supported';
+
+function ConnectorSettingField({
+  setting,
+  value,
+  onChange,
+}: {
+  setting: ConnectorSettingDefinition;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  if (setting.type === 'boolean') {
+    return (
+      <Checkbox
+        label={setting.label}
+        description={setting.description}
+        checked={(value as boolean) ?? false}
+        onChange={(e) => onChange(e.currentTarget.checked)}
+        size="xs"
+      />
+    );
+  }
+  if (setting.type === 'number') {
+    return (
+      <NumberInput
+        label={setting.label}
+        description={setting.description}
+        placeholder={setting.placeholder}
+        value={(value as number | '') ?? ''}
+        onChange={(val) => onChange(val === '' ? '' : Number(val))}
+        min={setting.min}
+        max={setting.max}
+        hideControls
+        size="xs"
+      />
+    );
+  }
+  return (
+    <TextInput
+      label={setting.label}
+      description={setting.description}
+      placeholder={setting.placeholder}
+      value={(value as string) ?? ''}
+      onChange={(e) => onChange(e.currentTarget.value)}
+      size="xs"
+    />
+  );
+}
 
 interface ChooseTablesModalProps {
   opened: boolean;
@@ -163,6 +213,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const isSearchMode = discoveryMode === TableDiscoveryMode.SEARCH;
   const availableTables = useMemo(() => data?.tables || [], [data?.tables]);
   const tablesLoading = isLoading || (isValidating && availableTables.length === 0);
+
+  // Connector metadata from listTables response
+  const supportsFilter = data?.supportsFilters ?? false;
+  const supportsFieldSelection = data?.supportsFieldSelection ?? false;
+  const advancedSettings = useMemo(() => data?.advancedSettings ?? [], [data?.advancedSettings]);
+  const hasConnectorOptions = advancedSettings.length > 0;
 
   // Search state for SEARCH mode
   const [searchTerm, setSearchTerm] = useState('');
@@ -192,15 +248,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const [foldersToRemove, setFoldersToRemove] = useState<{ id: DataFolderId; name: string; tableId: string[] }[]>([]);
   const [dirtyFileCount, setDirtyFileCount] = useState(0);
 
-  const supportsFilter = FILTER_SUPPORTED_SERVICES.has(connectorAccount.service);
-  const supportsFieldSelection = FIELD_SELECTION_SERVICES.has(connectorAccount.service);
-  const isAirtable = connectorAccount.service === Service.AIRTABLE;
-  const isNotion = connectorAccount.service === Service.NOTION;
   const groupedTables = useMemo(
     () => groupTables(availableTables, connectorAccount.service),
     [availableTables, connectorAccount.service],
   );
-  const hasConnectorOptions = isAirtable || isNotion;
   const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
     new Map(),
   );
@@ -209,11 +260,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   const [triggerPull, setTriggerPull] = useState(true);
 
-  // Connector-specific options state
-  const [airtableViewValues, setAirtableViewValues] = useState<Map<string, string>>(new Map());
-  const [notionOptions, setNotionOptions] = useState<
-    Map<string, { excludePageContent: boolean; childContentMaxDepth: number | '' }>
-  >(new Map());
+  // Generic per-table connector options state
+  const [connectorOptions, setConnectorOptions] = useState<Map<string, Record<string, unknown>>>(new Map());
 
   // Get currently linked data folders for this connector account
   const linkedFolders = useMemo(() => {
@@ -298,32 +346,24 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       setStep(1);
       setShowConfirmation(false);
 
-      // Initialize connector-specific options from existing folders
-      const initialAirtableViews = new Map<string, string>();
-      const initialNotionOptions = new Map<
-        string,
-        { excludePageContent: boolean; childContentMaxDepth: number | '' }
-      >();
+      // Initialize connector options from existing folders
+      const initialOptions = new Map<string, Record<string, unknown>>();
       linkedFolders.forEach((folder) => {
-        if (folder.tableId.length > 0) {
+        if (folder.tableId.length > 0 && advancedSettings.length > 0) {
           const key = folder.tableId.join('/');
           const opts = folder.options ?? {};
-          if (isAirtable && (opts.view as string)) {
-            initialAirtableViews.set(key, opts.view as string);
+          const values: Record<string, unknown> = {};
+          for (const setting of advancedSettings) {
+            const stored = opts[setting.key];
+            values[setting.key] = stored ?? (setting.type === 'boolean' ? false : '');
           }
-          if (isNotion) {
-            initialNotionOptions.set(key, {
-              excludePageContent: (opts.excludePageContent as boolean) ?? false,
-              childContentMaxDepth: (opts.childContentMaxDepth as number) ?? '',
-            });
-          }
+          initialOptions.set(key, values);
         }
       });
-      setAirtableViewValues(initialAirtableViews);
-      setNotionOptions(initialNotionOptions);
+      setConnectorOptions(initialOptions);
       setTriggerPull(true);
     }
-  }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys, isAirtable, isNotion]);
+  }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys, advancedSettings]);
 
   const handleToggleTable = (table: TablePreview) => {
     if (table.disabled) return;
@@ -360,55 +400,33 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     });
   }, []);
 
-  const handleAirtableViewChange = useCallback((tableKey: string, value: string) => {
-    setAirtableViewValues((prev) => {
+  const handleConnectorOptionChange = useCallback((tableKey: string, settingKey: string, value: unknown) => {
+    setConnectorOptions((prev) => {
       const next = new Map(prev);
-      if (value) {
-        next.set(tableKey, value);
-      } else {
-        next.delete(tableKey);
-      }
+      const current = next.get(tableKey) ?? {};
+      next.set(tableKey, { ...current, [settingKey]: value });
       return next;
     });
   }, []);
 
-  const handleNotionOptionChange = useCallback(
-    (tableKey: string, field: 'excludePageContent' | 'childContentMaxDepth', value: boolean | number | '') => {
-      setNotionOptions((prev) => {
-        const next = new Map(prev);
-        const current = next.get(tableKey) ?? { excludePageContent: false, childContentMaxDepth: '' as number | '' };
-        next.set(tableKey, { ...current, [field]: value });
-        return next;
-      });
-    },
-    [],
-  );
-
   const buildOptionsForTable = useCallback(
     (tableKey: string): Record<string, unknown> | undefined => {
-      if (isAirtable) {
-        const view = airtableViewValues.get(tableKey)?.trim();
-        if (view) return { view };
-        return {};
-      }
-      if (isNotion) {
-        const opts: Record<string, unknown> = {};
-        const notionOpts = notionOptions.get(tableKey);
-        if (notionOpts?.excludePageContent) {
-          opts.excludePageContent = true;
+      if (advancedSettings.length === 0) return undefined;
+      const opts: Record<string, unknown> = {};
+      const tableOpts = connectorOptions.get(tableKey) ?? {};
+      for (const setting of advancedSettings) {
+        const value = tableOpts[setting.key];
+        if (setting.type === 'boolean' && value === true) {
+          opts[setting.key] = true;
+        } else if (setting.type === 'number' && value !== '' && value != null) {
+          opts[setting.key] = value;
+        } else if (setting.type === 'string' && typeof value === 'string' && value.trim()) {
+          opts[setting.key] = value.trim();
         }
-        if (
-          notionOpts?.childContentMaxDepth !== undefined &&
-          notionOpts.childContentMaxDepth !== '' &&
-          notionOpts.childContentMaxDepth >= 0
-        ) {
-          opts.childContentMaxDepth = notionOpts.childContentMaxDepth;
-        }
-        return opts;
       }
-      return undefined;
+      return opts;
     },
-    [isAirtable, isNotion, airtableViewValues, notionOptions],
+    [advancedSettings, connectorOptions],
   );
 
   // Compute tables to add and remove (used in step 2 display and save)
@@ -968,47 +986,15 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                       />
                     )}
 
-                    {!entry.isRemoved && isAirtable && (
-                      <TextInput
-                        label="View (optional)"
-                        description="Airtable view ID to pull records from. Leave empty to pull all records."
-                        placeholder="Enter view ID..."
-                        value={airtableViewValues.get(entry.tableKey) ?? ''}
-                        onChange={(e) => handleAirtableViewChange(entry.tableKey, e.currentTarget.value)}
-                        size="xs"
-                      />
-                    )}
-
-                    {!entry.isRemoved && isNotion && (
-                      <>
-                        <Checkbox
-                          label="Exclude page content"
-                          description="Skip pulling the body content of Notion pages. This will increase pulling speed."
-                          checked={notionOptions.get(entry.tableKey)?.excludePageContent ?? false}
-                          onChange={(e) =>
-                            handleNotionOptionChange(entry.tableKey, 'excludePageContent', e.currentTarget.checked)
-                          }
-                          size="xs"
+                    {!entry.isRemoved &&
+                      advancedSettings.map((setting) => (
+                        <ConnectorSettingField
+                          key={setting.key}
+                          setting={setting}
+                          value={connectorOptions.get(entry.tableKey)?.[setting.key]}
+                          onChange={(val) => handleConnectorOptionChange(entry.tableKey, setting.key, val)}
                         />
-                        <NumberInput
-                          label="Child content max depth (optional)"
-                          description="Maximum depth of nested child blocks to include. Leave empty for default behavior."
-                          placeholder="e.g. 2"
-                          value={notionOptions.get(entry.tableKey)?.childContentMaxDepth ?? ''}
-                          onChange={(val) =>
-                            handleNotionOptionChange(
-                              entry.tableKey,
-                              'childContentMaxDepth',
-                              val === '' ? '' : Number(val),
-                            )
-                          }
-                          min={0}
-                          max={10}
-                          hideControls
-                          size="xs"
-                        />
-                      </>
-                    )}
+                      ))}
                   </Stack>
                 </Box>
               );

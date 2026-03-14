@@ -31,10 +31,9 @@ import { EncryptedData } from '../../utils/encryption';
 import { WorkbookEventService } from '../../workbook/workbook-event.service';
 import { Connector } from '../connectors/connector';
 import { ConnectorsService } from '../connectors/connectors.service';
-import { getServiceDisplayName } from '../connectors/display-names';
+import { getServiceAdvancedSettings, getServiceDisplayName } from '../connectors/display-names';
 import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
-import { TablePreview } from '../connectors/types';
-import { TableSearchResult } from './entities/table-list.entity';
+import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
 import { TestConnectionResponse } from './entities/test-connection.entity';
 import { DecryptedCredentials } from './types/encrypted-credentials.interface';
@@ -449,10 +448,7 @@ export class ConnectorAccountService {
     });
   }
 
-  async listTables(
-    connectorAccountId: string,
-    actor: Actor,
-  ): Promise<{ tables: TablePreview[]; discoveryMode: TableDiscoveryMode }> {
+  async listTables(connectorAccountId: string, actor: Actor): Promise<TableList> {
     const account = await this.findOneById(connectorAccountId, actor);
 
     let connector: Connector<Service, any>;
@@ -473,7 +469,13 @@ export class ConnectorAccountService {
       const tables = await connector
         .listTables()
         .then((tables) => tables.sort((a, b) => a.displayName.localeCompare(b.displayName)));
-      return { tables, discoveryMode: connector.tableDiscoveryMode };
+      return {
+        tables,
+        discoveryMode: connector.tableDiscoveryMode,
+        supportsFilters: connector.supportsFilters(),
+        supportsFieldSelection: connector.supportsFieldSelection(),
+        advancedSettings: getServiceAdvancedSettings(account.service as Service),
+      };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }

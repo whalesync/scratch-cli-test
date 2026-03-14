@@ -11,7 +11,7 @@ import {
   CreatePageParameters,
   QueryDatabaseParameters,
 } from '@notionhq/client/build/src/api-endpoints';
-import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorPullOptions, ConnectorSettingDefinition, Service, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -60,6 +60,22 @@ function unwrapNotionProperty(value: unknown): unknown {
 export class NotionConnector extends Connector<typeof Service.NOTION, NotionDownloadProgress> {
   readonly service = Service.NOTION;
   static displayName = 'Notion';
+  static readonly advancedSettings: ConnectorSettingDefinition[] = [
+    {
+      key: 'excludePageContent',
+      type: 'boolean',
+      label: 'Exclude page content',
+      description: 'Skip downloading the body content of Notion pages. This will increase download speed.',
+    },
+    {
+      key: 'childContentMaxDepth',
+      type: 'number',
+      label: 'Child content max depth',
+      description: 'Maximum depth of nested child blocks to include. Leave empty for default behavior.',
+      min: 0,
+      max: 10,
+    },
+  ];
 
   private readonly client: Client;
   private readonly schemaParser = new NotionSchemaParser();

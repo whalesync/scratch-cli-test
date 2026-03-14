@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorPullOptions, Service, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorPullOptions, ConnectorSettingDefinition, Service, TableDiscoveryMode } from '@spinner/shared-types';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
@@ -34,6 +34,12 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * @returns The display name for the connector.
    */
   static readonly displayName: string;
+
+  /**
+   * Advanced settings that this connector exposes for per-folder configuration.
+   * Connectors with custom pull options should override this with their setting definitions.
+   */
+  static readonly advancedSettings: ConnectorSettingDefinition[] = [];
 
   /**
    * The discovery mode for listing tables. Defaults to LIST.
@@ -141,6 +147,13 @@ export abstract class Connector<T extends Service, TConnectorProgress extends Js
    * Whether the connector supports filter expressions for pulling records.
    */
   supportsFilters(): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the connector supports field/column selection when adding tables.
+   */
+  supportsFieldSelection(): boolean {
     return false;
   }
 
