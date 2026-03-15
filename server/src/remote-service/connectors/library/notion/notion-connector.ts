@@ -38,9 +38,8 @@ interface NotionPullOptions extends ConnectorPullOptions {
   filter?: string | undefined;
   excludePageContent?: boolean | undefined;
   childContentMaxDepth?: number | undefined;
+  pageSize?: number | undefined;
 }
-
-const page_size = Number(process.env.NOTION_PAGE_SIZE ?? 100);
 
 /**
  * Unwrap a Notion property wrapper object.
@@ -74,6 +73,15 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
       description: 'Maximum depth of nested child blocks to include. Leave empty for default behavior.',
       min: 0,
       max: 10,
+    },
+    {
+      key: 'pageSize',
+      type: 'number',
+      label: 'Records per request',
+      description:
+        'Number of records to fetch per request. Reduce this if you have many columns and experience timeouts.',
+      min: 1,
+      max: 100,
     },
   ];
 
@@ -196,7 +204,7 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
       const response = await this.client.databases.query({
         database_id: databaseId,
         start_cursor: nextCursor,
-        page_size,
+        page_size: options.pageSize ?? 100,
         filter: notionFilter,
       });
 
