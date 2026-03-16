@@ -205,9 +205,16 @@ export class WordPressHttpClient {
    */
   async uploadMedia(buffer: Buffer, filename: string, mimeType: string): Promise<WordPressMediaUploadResponse> {
     const url = this.generateUrl(this.endpoint, 'media', null, []);
+    // Sanitize filename for Content-Disposition header (must be ASCII-safe).
+    // NFD decomposition splits accented chars (é → e + combining accent), then we strip the combining marks.
+    const safeFilename = filename
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .replace(/[^\x20-\x7E]/g, '_')
+      .replace(/"/g, '\\"');
     const headers: RawAxiosRequestHeaders = {
       'Content-Type': mimeType,
-      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Disposition': `attachment; filename="${safeFilename}"`,
     };
     const response = await this.client.post<WordPressMediaUploadResponse>(url, buffer, {
       headers,
