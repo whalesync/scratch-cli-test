@@ -18,10 +18,15 @@ export interface TypeTraceStep {
   error?: string;
 }
 
-/** Validation errors per segment: after source, and after each step. Destination never has an error. */
-export interface MappingTypeTraceValidation {
-  source?: string;
-  steps?: string[];
+/** A single type-compatibility error at one boundary in the pipeline. */
+export interface TypeCompatibilityError {
+  /** 'source' = boundary between source and first transformer (or destination if no transformers); number = step index (0-based) boundary after that transformer. */
+  step: 'source' | number;
+  errorMsg: string;
+  outputJsonSchemaType: TSchema;
+  nextInputJsonSchemaType: TSchema;
+  errorType: 'compile_time_type_check';
+  errorLevel: 'error' | 'warning';
 }
 
 /** Full type trace for a single mapping: source → transformers → destination */
@@ -29,7 +34,7 @@ export interface MappingTypeTrace {
   sourceType: TSchema;
   steps: TypeTraceStep[];
   destinationType: TSchema;
-  validation?: MappingTypeTraceValidation;
+  validation: TypeCompatibilityError[];
 }
 
 /**
@@ -185,42 +190,61 @@ export function traceMappingType(
 
 /**
  * Runs isTypeCompatible at each boundary (source→first step, step i output→step i+1 input or destination).
- * Returns validation errors for the source and each step. Destination never has an error.
+ * Returns a flat list of TypeCompatibilityError for every incompatible boundary.
  */
 function computeValidation(
   sourceType: TSchema,
   steps: TypeTraceStep[],
   destinationType: TSchema,
-): MappingTypeTraceValidation {
-  const result: MappingTypeTraceValidation = {};
+): TypeCompatibilityError[] {
+  const errors: TypeCompatibilityError[] = [];
 
   if (steps.length === 0) {
     if (!isTypeCompatible(sourceType, destinationType)) {
-      result.source = 'Source type is not compatible with destination type.';
+      errors.push({
+        step: 'source',
+        errorMsg: 'Source output type is not compatible with Destination input type.',
+        outputJsonSchemaType: sourceType,
+        nextInputJsonSchemaType: destinationType,
+        errorType: 'compile_time_type_check',
+        errorLevel: 'error',
+      });
     }
-    return result;
+    return errors;
   }
 
   const firstStepInput = steps[0].inputJsonSchemaType;
   if (firstStepInput && !isTypeCompatible(sourceType, firstStepInput)) {
-    result.source = 'Source type is not compatible with first step input.';
+    errors.push({
+      step: 'source',
+      errorMsg: `Source output type is not compatible with Step 1 input type.`,
+      outputJsonSchemaType: sourceType,
+      nextInputJsonSchemaType: firstStepInput,
+      errorType: 'compile_time_type_check',
+      errorLevel: 'error',
+    });
   }
 
   for (let i = 0; i < steps.length; i++) {
     const outputType = steps[i].outputJsonSchemaType;
     if (!outputType) continue;
-    const nextInput = i + 1 < steps.length ? steps[i + 1].inputJsonSchemaType : destinationType;
+    const isLast = i + 1 >= steps.length;
+    const nextInput = isLast ? destinationType : steps[i + 1].inputJsonSchemaType;
     if (!nextInput) continue;
     if (!isTypeCompatible(outputType, nextInput)) {
-      result.steps = result.steps ?? [];
-      result.steps[i] =
-        i + 1 < steps.length
-          ? 'Step output type is not compatible with next step input.'
-          : 'Step output type is not compatible with destination type.';
+      const nextLabel = isLast ? 'Destination' : `Step ${i + 2}`;
+      errors.push({
+        step: i,
+        errorMsg: `Step ${i + 1} output type is not compatible with ${nextLabel} input type.`,
+        outputJsonSchemaType: outputType,
+        nextInputJsonSchemaType: nextInput,
+        errorType: 'compile_time_type_check',
+        errorLevel: 'error',
+      });
     }
   }
 
-  return result;
+  return errors;
 }
 
 /**

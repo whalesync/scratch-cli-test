@@ -1922,31 +1922,26 @@ export class SyncService {
             fieldMappingIndex,
             step: 'source',
             errorMsg: result.error,
+            outputJsonSchemaType: {},
+            nextInputJsonSchemaType: {},
+            errorType: 'compile_time_type_check',
+            errorLevel: 'error',
           });
           continue;
         }
 
         const { validation } = result;
-        if (validation?.source) {
+        for (const ve of validation) {
           errors.push({
             tableMappingIndex,
             fieldMappingIndex,
-            step: 'source',
-            errorMsg: validation.source,
+            step: ve.step,
+            errorMsg: ve.errorMsg,
+            outputJsonSchemaType: ve.outputJsonSchemaType,
+            nextInputJsonSchemaType: ve.nextInputJsonSchemaType,
+            errorType: ve.errorType,
+            errorLevel: ve.errorLevel,
           });
-        }
-        if (validation?.steps) {
-          for (let stepIndex = 0; stepIndex < validation.steps.length; stepIndex++) {
-            const msg = validation.steps[stepIndex];
-            if (msg) {
-              errors.push({
-                tableMappingIndex,
-                fieldMappingIndex,
-                step: stepIndex,
-                errorMsg: msg,
-              });
-            }
-          }
         }
       }
     }

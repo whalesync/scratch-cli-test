@@ -49,12 +49,15 @@ export interface MappingTypeTraceStep {
   error?: string;
 }
 
-/** Validation errors per segment: after source, and after each step (destination never has an error). */
-export interface MappingTypeTraceValidation {
-  /** Error when source type is not compatible with first step input (or destination if no steps). */
-  source?: string;
-  /** steps[i] = error when step i output is not compatible with step i+1 input (or destination). */
-  steps?: string[];
+/** A single type-compatibility error at one boundary in the pipeline. */
+export interface TypeCompatibilityError {
+  /** 'source' = boundary after source; number = step index (0-based) boundary after that transformer. */
+  step: 'source' | number;
+  errorMsg: string;
+  outputJsonSchemaType: Record<string, unknown>;
+  nextInputJsonSchemaType: Record<string, unknown>;
+  errorType: 'compile_time_type_check';
+  errorLevel: 'error' | 'warning';
 }
 
 /** Response from validate-mapping-type: type trace for a single mapping */
@@ -62,7 +65,7 @@ export interface MappingTypeTraceResponse {
   sourceType: Record<string, unknown>;
   steps: MappingTypeTraceStep[];
   destinationType: Record<string, unknown>;
-  validation?: MappingTypeTraceValidation;
+  validation: TypeCompatibilityError[];
 }
 
 export interface PreviewFieldResult {
@@ -109,9 +112,13 @@ export interface ExportSyncConfig {
 export interface SyncMappingValidationError {
   tableMappingIndex: number;
   fieldMappingIndex: number;
-  /** 'source' = segment after source node; number = step index (0-based) after that transformer. */
+  /** 'source' = boundary after source; number = step index (0-based) boundary after that transformer. */
   step: 'source' | number;
   errorMsg: string;
+  outputJsonSchemaType: unknown;
+  nextInputJsonSchemaType: unknown;
+  errorType: 'compile_time_type_check';
+  errorLevel: 'error' | 'warning';
 }
 
 /** Response from validate-sync-mapping-types: all type validation errors for a sync. */

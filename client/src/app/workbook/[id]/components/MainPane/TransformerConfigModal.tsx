@@ -141,15 +141,16 @@ function ArrowWrapper({
         </Tooltip>
       </Box>
       <ArrowRight size={16} color="var(--mantine-color-dimmed)" />
-      <ActionIcon
-        size="xs"
-        variant={isPlusHovered ? 'light' : 'subtle'}
-        color={isPlusHovered ? 'blue' : 'gray'}
-        title="Add transform"
-        onClick={onInsert}
-      >
-        <Plus size={12} />
-      </ActionIcon>
+      <Tooltip label="Add a new transformer here">
+        <ActionIcon
+          size="xs"
+          variant={isPlusHovered ? 'light' : 'subtle'}
+          color={isPlusHovered ? 'blue' : 'gray'}
+          onClick={onInsert}
+        >
+          <Plus size={12} />
+        </ActionIcon>
+      </Tooltip>
     </Stack>
   );
 }
@@ -497,6 +498,9 @@ export function TransformerConfigModal({
   const destLabel = mappingContext?.destField ?? 'Destination';
   const traceSteps = typeTrace && !('error' in typeTrace) ? typeTrace.steps : [];
   const validation = typeTrace && !('error' in typeTrace) ? typeTrace.validation : undefined;
+  // Helpers to look up error messages from the flat validation array by step identifier
+  const sourceValidationError = validation?.find((e) => e.step === 'source')?.errorMsg;
+  const stepValidationError = (stepIndex: number) => validation?.find((e) => e.step === stepIndex)?.errorMsg;
   const sourceTypeLabel =
     typeTrace && !('error' in typeTrace)
       ? schemaTypeLabel(typeTrace.sourceType)
@@ -596,7 +600,7 @@ export function TransformerConfigModal({
                         <Badge
                           size="xs"
                           variant="light"
-                          color={showTypesMode === 'input-and-output' && validation?.source ? 'yellow' : 'gray'}
+                          color={showTypesMode === 'input-and-output' && sourceValidationError ? 'yellow' : 'gray'}
                         >
                           {sourceTypeLabel}
                         </Badge>
@@ -606,7 +610,7 @@ export function TransformerConfigModal({
                 </NodeWrapper>
 
                 <ArrowWrapper
-                  validationError={validation?.source}
+                  validationError={sourceValidationError}
                   isPlusHovered={hoveredPlusSlot === 0}
                   onInsert={() => insertAt(0)}
                   onMouseEnter={() => setHoveredPlusSlot(0)}
@@ -635,8 +639,8 @@ export function TransformerConfigModal({
                   const isPlusHovered = hoveredPlusSlot === plusSlot;
                   const highlightInput =
                     showTypesMode === 'input-and-output' &&
-                    ((index === 0 && validation?.source) || (index > 0 && validation?.steps?.[index - 1]));
-                  const highlightOutput = showTypesMode === 'input-and-output' && validation?.steps?.[index];
+                    ((index === 0 && sourceValidationError) || (index > 0 && stepValidationError(index - 1)));
+                  const highlightOutput = showTypesMode === 'input-and-output' && stepValidationError(index);
 
                   return (
                     <Fragment key={index}>
@@ -739,7 +743,7 @@ export function TransformerConfigModal({
                         </Box>
                       </NodeWrapper>
                       <ArrowWrapper
-                        validationError={validation?.steps?.[index]}
+                        validationError={stepValidationError(index)}
                         isPlusHovered={isPlusHovered}
                         onInsert={() => insertAt(plusSlot)}
                         onMouseEnter={() => setHoveredPlusSlot(plusSlot)}
@@ -774,8 +778,8 @@ export function TransformerConfigModal({
                           variant="light"
                           color={
                             showTypesMode === 'input-and-output' &&
-                            (validation?.steps?.[currentConfigs.length - 1] ||
-                              (currentConfigs.length === 0 && validation?.source))
+                            (stepValidationError(currentConfigs.length - 1) ||
+                              (currentConfigs.length === 0 && sourceValidationError))
                               ? 'yellow'
                               : 'gray'
                           }
