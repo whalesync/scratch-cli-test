@@ -1,5 +1,6 @@
 'use client';
 
+import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { syncApi } from '@/lib/api/sync';
 import { json } from '@codemirror/lang-json';
@@ -10,6 +11,7 @@ import {
   Box,
   Button,
   Checkbox,
+  ComboboxItem,
   Flex,
   Group,
   Modal,
@@ -25,7 +27,9 @@ import {
 import type {
   DataFolder,
   DataFolderId,
+  EnsureTypeOptions,
   MappingTypeTraceResponse,
+  SourceFkToDestFkOptions,
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -217,6 +221,11 @@ export function isTransformerConfigComplete(config: TransformerConfig): boolean 
 
 const sourceDestBorderStyle = { borderColor: 'var(--mantine-color-gray-8)' };
 
+const ON_UNRESOLVED_OPTIONS: { value: NonNullable<SourceFkToDestFkOptions['onUnresolved']>; label: string }[] = [
+  { value: 'fail', label: 'Stop and fail the sync' },
+  { value: 'ignore', label: 'Ignore missing record and sync the rest' },
+];
+
 /** Single edit form for one transformer step (max-width 200px). */
 function TransformerStepForm({
   config,
@@ -227,7 +236,18 @@ function TransformerStepForm({
   onChange: (c: TransformerConfig) => void;
   allFolders: DataFolder[];
 }) {
-  const folderOptions = allFolders.map((f) => ({ value: f.id, label: f.name ?? f.id }));
+  const folderSelectData = allFolders.map((f) => ({
+    value: f.id,
+    label: f.name ?? f.id,
+    connectorService: f.connectorService,
+  }));
+  const destAssetFolderSelectData = allFolders
+    .filter((f) => f.isAssetTable)
+    .map((f) => ({
+      value: f.id,
+      label: f.name ?? f.id,
+      connectorService: f.connectorService,
+    }));
 
   const updateOptions = useCallback(
     (opts: Record<string, unknown>) => {
@@ -237,7 +257,7 @@ function TransformerStepForm({
   );
 
   return (
-    <Stack gap="xs" style={{ maxWidth: 200 }}>
+    <Stack gap="xs" style={{ maxWidth: 400 }}>
       <Select
         size="xs"
         label="Type"
@@ -245,99 +265,132 @@ function TransformerStepForm({
         value={config.type}
         onChange={(value) => value && onChange(defaultConfigForType(value as TransformerType))}
       />
-      {config.type === TransformerTypes.EnsureType && config.options && (
-        <>
-          <Select
-            size="xs"
-            label="Expected type"
-            data={[
-              { value: 'string', label: 'string' },
-              { value: 'number', label: 'number' },
-              { value: 'boolean', label: 'boolean' },
-              { value: 'object', label: 'object' },
-              { value: 'array', label: 'array' },
-            ]}
-            value={config.options.expectedType}
-            onChange={(v) => v && updateOptions({ ...config.options, expectedType: v })}
-          />
-          <Select
-            size="xs"
-            label="On failure"
-            data={[
-              { value: 'null', label: 'null' },
-              { value: 'error', label: 'error' },
-              { value: 'omit', label: 'omit' },
-              { value: 'other', label: 'other' },
-            ]}
-            value={config.options.onFailure}
-            onChange={(v) => v && updateOptions({ ...config.options, onFailure: v })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.StringToNumber && (
-        <Stack gap={4}>
-          <Checkbox
-            size="xs"
-            label="Strip currency"
-            checked={config.options?.stripCurrency ?? false}
-            onChange={(e) => updateOptions({ ...config.options, stripCurrency: e.currentTarget.checked })}
-          />
-          <Checkbox
-            size="xs"
-            label="Parse integer"
-            checked={config.options?.parseInteger ?? false}
-            onChange={(e) => updateOptions({ ...config.options, parseInteger: e.currentTarget.checked })}
-          />
-        </Stack>
-      )}
       {config.type === TransformerTypes.AutoConvert && config.options && (
         <Select
           size="xs"
-          label="Target type"
+          label="Target Type"
+          description="The data type to convert the source value to"
           data={[
-            { value: 'string', label: 'string' },
-            { value: 'number', label: 'number' },
-            { value: 'integer', label: 'integer' },
-            { value: 'boolean', label: 'boolean' },
-            { value: 'array', label: 'array' },
+            { value: 'string', label: 'String' },
+            { value: 'number', label: 'Number' },
+            { value: 'integer', label: 'Integer' },
+            { value: 'boolean', label: 'Boolean' },
+            { value: 'array', label: 'Array' },
           ]}
           value={config.options.targetType}
           onChange={(v) => v && updateOptions({ ...config.options, targetType: v })}
         />
       )}
-      {config.type === TransformerTypes.JSONPath && config.options && (
-        <TextInput
-          size="xs"
-          label="Expression"
-          placeholder="$..."
-          value={config.options.expression ?? ''}
-          onChange={(e) => updateOptions({ ...config.options, expression: e.currentTarget.value })}
-        />
-      )}
-      {config.type === TransformerTypes.SourceFkToDestFk && config.options && (
+      {config.type === TransformerTypes.ArrayAutoConvert && config.options && (
         <Select
           size="xs"
-          label="Referenced folder"
-          data={folderOptions}
-          value={config.options.referencedDataFolderId ?? ''}
-          onChange={(v) => v && updateOptions({ ...config.options, referencedDataFolderId: v })}
+          label="Target Element Type"
+          description="The data type to convert each array element to"
+          data={[
+            { value: 'string', label: 'String' },
+            { value: 'number', label: 'Number' },
+            { value: 'integer', label: 'Integer' },
+            { value: 'boolean', label: 'Boolean' },
+          ]}
+          value={config.options.targetType}
+          onChange={(v) => v && updateOptions({ ...config.options, targetType: v })}
         />
+      )}
+      {config.type === TransformerTypes.StringToNumber && (
+        <Stack gap="xs">
+          <Checkbox
+            size="xs"
+            label="Strip currency symbols ($, €, £, ¥, etc.)"
+            checked={config.options?.stripCurrency ?? false}
+            onChange={(e) => updateOptions({ ...config.options, stripCurrency: e.currentTarget.checked })}
+          />
+          <Checkbox
+            size="xs"
+            label="Parse as integer (truncate decimals)"
+            checked={config.options?.parseInteger ?? false}
+            onChange={(e) => updateOptions({ ...config.options, parseInteger: e.currentTarget.checked })}
+          />
+        </Stack>
+      )}
+      {config.type === TransformerTypes.SourceFkToDestFk && config.options && (
+        <>
+          <Select
+            size="xs"
+            label="Referenced Folder"
+            description="The folder containing the records referenced by this foreign key"
+            placeholder="Select folder"
+            data={folderSelectData}
+            value={config.options.referencedDataFolderId || null}
+            onChange={(v) => v && updateOptions({ ...config.options, referencedDataFolderId: v })}
+            renderOption={renderFolderOption}
+            searchable
+          />
+          <Select
+            size="xs"
+            label="Output type"
+            description="Whether to output multiple values (array) or a single value"
+            data={[
+              { value: 'array', label: 'Multiple values (array)' },
+              { value: 'single', label: 'Single value (first item)' },
+            ]}
+            value={(config.options as SourceFkToDestFkOptions).outputType ?? 'array'}
+            onChange={(v) => v && updateOptions({ ...config.options, outputType: v })}
+          />
+          <Select
+            size="xs"
+            label="When a referenced record cannot be found"
+            data={ON_UNRESOLVED_OPTIONS}
+            value={(config.options as SourceFkToDestFkOptions).onUnresolved ?? 'fail'}
+            onChange={(v) => v && updateOptions({ ...config.options, onUnresolved: v })}
+          />
+        </>
       )}
       {config.type === TransformerTypes.LookupField && config.options && (
         <>
           <Select
             size="xs"
-            label="Referenced folder"
-            data={folderOptions}
-            value={config.options.referencedDataFolderId ?? ''}
+            label="Referenced Folder"
+            description="The folder containing the records referenced by this foreign key"
+            placeholder="Select folder"
+            data={folderSelectData}
+            value={config.options.referencedDataFolderId || null}
             onChange={(v) => v && updateOptions({ ...config.options, referencedDataFolderId: v })}
+            renderOption={renderFolderOption}
+            searchable
           />
           <TextInput
             size="xs"
-            label="Field path"
+            label="Field Path"
+            description="The field to extract from the referenced record (e.g. 'name' or 'company.displayName')"
             placeholder="e.g. name"
             value={config.options.referencedFieldPath ?? ''}
             onChange={(e) => updateOptions({ ...config.options, referencedFieldPath: e.currentTarget.value })}
+          />
+        </>
+      )}
+      {config.type === TransformerTypes.JSONPath && config.options && (
+        <>
+          <TextInput
+            size="xs"
+            label="JSONPath Expression"
+            description="JSONPath expression (e.g. $.store.book[0].title)"
+            placeholder="$.path.to.value"
+            value={config.options.expression ?? ''}
+            onChange={(e) => updateOptions({ ...config.options, expression: e.currentTarget.value })}
+          />
+          <Select
+            size="xs"
+            label="Multiple results"
+            description="How to handle when the expression matches multiple values"
+            data={[
+              { value: 'first', label: 'First value' },
+              { value: 'array', label: 'Array' },
+              { value: 'concat', label: 'Join without delimiter' },
+              { value: 'join_space', label: 'Join with spaces' },
+              { value: 'join_comma', label: 'Join with commas' },
+            ]}
+            value={config.options.arrayHandling ?? 'first'}
+            onChange={(v) => v && updateOptions({ ...config.options, arrayHandling: v })}
           />
         </>
       )}
@@ -345,39 +398,99 @@ function TransformerStepForm({
         <>
           <Select
             size="xs"
-            label="Source assets folder"
-            data={folderOptions}
-            value={config.options.sourceDataFolderId ?? ''}
+            label="Source Asset Folder"
+            description="The asset folder on the source side containing the referenced files"
+            placeholder="Select asset folder"
+            data={folderSelectData}
+            value={config.options.sourceDataFolderId || null}
             onChange={(v) => v && updateOptions({ ...config.options, sourceDataFolderId: v })}
+            renderOption={renderFolderOption}
+            searchable
           />
           <Select
             size="xs"
-            label="Destination assets folder"
-            data={folderOptions}
-            value={config.options.destinationDataFolderId ?? ''}
+            label="Destination Asset Folder"
+            description="The asset folder on the destination side where assets will be created"
+            placeholder="Select asset folder"
+            data={destAssetFolderSelectData}
+            value={config.options.destinationDataFolderId || null}
             onChange={(v) => v && updateOptions({ ...config.options, destinationDataFolderId: v })}
-          />
-          <Select
-            size="xs"
-            label="On unresolved"
-            data={[
-              { value: 'fail', label: 'Fail' },
-              { value: 'ignore', label: 'Ignore' },
-            ]}
-            value={config.options.onUnresolved ?? 'fail'}
-            onChange={(v) => v && updateOptions({ ...config.options, onUnresolved: v as 'fail' | 'ignore' })}
+            renderOption={renderFolderOption}
+            searchable
           />
           <Select
             size="xs"
             label="Output type"
+            description="Whether to output multiple values (array) or a single value"
             data={[
-              { value: 'array', label: 'Array' },
-              { value: 'single', label: 'Single' },
+              { value: 'array', label: 'Multiple values (array)' },
+              { value: 'single', label: 'Single value (first item)' },
             ]}
             value={config.options.outputType ?? 'array'}
-            onChange={(v) => v && updateOptions({ ...config.options, outputType: v as 'array' | 'single' })}
+            onChange={(v) => v && updateOptions({ ...config.options, outputType: v })}
+          />
+          <Select
+            size="xs"
+            label="When a source asset cannot be found"
+            data={ON_UNRESOLVED_OPTIONS}
+            value={config.options.onUnresolved ?? 'fail'}
+            onChange={(v) => v && updateOptions({ ...config.options, onUnresolved: v })}
           />
         </>
+      )}
+      {config.type === TransformerTypes.EnsureType && config.options && (
+        <>
+          <Select
+            size="xs"
+            label="Expected Type"
+            description="The type of value that actual values will be checked against"
+            data={[
+              { value: 'string', label: 'String' },
+              { value: 'number', label: 'Number' },
+              { value: 'boolean', label: 'Boolean' },
+              { value: 'object', label: 'Object' },
+              { value: 'array', label: 'Array' },
+            ]}
+            value={config.options.expectedType}
+            onChange={(v) => v && updateOptions({ ...config.options, expectedType: v })}
+          />
+          <Select
+            size="xs"
+            label="When validation fails"
+            description="Action to take if the value does not match the expected type"
+            data={[
+              { value: 'error', label: 'Throw error' },
+              { value: 'null', label: 'Return null' },
+              { value: 'omit', label: 'Omit field' },
+              { value: 'other', label: 'Use fallback value' },
+            ]}
+            value={config.options.onFailure}
+            onChange={(v) => v && updateOptions({ ...config.options, onFailure: v })}
+          />
+          {config.options.onFailure === 'other' && (
+            <TextInput
+              size="xs"
+              label="Fallback Value"
+              description="Value to use when validation fails"
+              placeholder="e.g. 0, unknown, etc."
+              value={(config.options as EnsureTypeOptions).fallbackValue ?? ''}
+              onChange={(e) => updateOptions({ ...config.options, fallbackValue: e.currentTarget.value })}
+            />
+          )}
+        </>
+      )}
+      {config.type === TransformerTypes.NotionFileUrl && (
+        <Select
+          size="xs"
+          label="Multiple results"
+          description="How to handle multiple file URLs"
+          data={[
+            { value: 'array', label: 'Array (default)' },
+            { value: 'first', label: 'First value' },
+          ]}
+          value={config.options?.arrayHandling ?? 'array'}
+          onChange={(v) => v && updateOptions({ ...config.options, arrayHandling: v })}
+        />
       )}
     </Stack>
   );
@@ -801,7 +914,7 @@ export function TransformerConfigModal({
               p="sm"
               radius="md"
               py="md"
-              style={{ maxWidth: 200, width: '100%', minHeight: 120 }}
+              style={{ maxWidth: 400, width: '100%', minHeight: 120 }}
             >
               {currentConfigs.length === 0 ? (
                 <>
@@ -900,3 +1013,10 @@ export function TransformerConfigModal({
     </>
   );
 }
+
+const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
+  <Group gap="xs" wrap="nowrap">
+    {option.connectorService && <ConnectorIcon connector={option.connectorService} size={16} p={0} />}
+    <Text size="sm">{option.label}</Text>
+  </Group>
+);
