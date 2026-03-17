@@ -39,6 +39,9 @@ enum Command {
 
     /// Commit dirty worktrees and push to remote bare repos
     Push(commands::push::Args),
+
+    /// Validate sync config files against workspace schemas
+    ValidateSync(commands::validate_sync::Args),
 }
 
 #[tokio::main]
@@ -61,6 +64,7 @@ async fn main() {
         Command::GenerateDocs(args) => commands::generate_docs::run(args).await,
         Command::RunSync(args) => commands::run_sync::run(args).await,
         Command::Push(args) => commands::push::run(args).await,
+        Command::ValidateSync(args) => commands::validate_sync::run(args).await,
     };
 
     if let Err(e) = result {

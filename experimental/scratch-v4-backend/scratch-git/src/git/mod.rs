@@ -109,6 +109,14 @@ pub fn init_repo(path: &Path) -> Result<()> {
 
     repo.edit_references(edits).map_err(|e| Error::Git(e.to_string()))?;
 
+    // Enable push over HTTP (required by git-http-backend)
+    let config_path = path.join("config");
+    let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+    if !config_content.contains("receivepack") {
+        config_content.push_str("\n[http]\n\treceivepack = true\n");
+        std::fs::write(&config_path, config_content)?;
+    }
+
     tracing::info!("initialized repo at {} (commit {})", path.display(), commit_oid);
     Ok(())
 }

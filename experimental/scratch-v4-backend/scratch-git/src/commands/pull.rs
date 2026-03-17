@@ -51,6 +51,7 @@ pub struct Args {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct WorkbookResponse {
+    #[allow(dead_code)]
     id: String,
     name: String,
     /// Relative path under repos_dir, e.g. "orgId/workbookId/workbook.git"

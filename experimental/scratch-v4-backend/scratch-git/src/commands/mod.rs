@@ -6,6 +6,7 @@ pub mod rebase_dirty;
 pub mod run_sync;
 pub mod serve;
 pub mod upsert_files;
+pub mod validate_sync;
 
 use std::path::{Path, PathBuf};
 use crate::{Error, Result};

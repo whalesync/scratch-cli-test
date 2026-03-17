@@ -95,9 +95,10 @@ fn push_connection(git_dir: &Path, dirty_worktree: &Path, conn_name: &str, messa
         println!("    {conn_name}: committed {} changed file(s)", status.lines().count());
     }
 
-    // git push origin dirty (run from the bare .git dir which has remote origin set)
+    // git push origin dirty — use current_dir=git_dir to avoid inheriting a stale cwd
     let result = Command::new("git")
-        .args(["--git-dir", git_dir.to_str().unwrap(), "push", "origin", "dirty"])
+        .args(["push", "origin", "dirty"])
+        .current_dir(git_dir)
         .output()
         .map_err(|e| Error::Other(format!("failed to run git push: {e}")))?;
 
@@ -130,7 +131,8 @@ fn push_workbook(workbook_dir: &Path, message: &str) -> Result<()> {
     }
 
     let result = Command::new("git")
-        .args(["-C", workbook_dir.to_str().unwrap(), "push", "origin", "master"])
+        .args(["push", "origin", "master"])
+        .current_dir(workbook_dir)
         .output()
         .map_err(|e| Error::Other(format!("failed to run git push: {e}")))?;
 

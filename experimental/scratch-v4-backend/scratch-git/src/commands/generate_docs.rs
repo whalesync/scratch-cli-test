@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{Error, Result};
+use crate::Result;
 use super::resolve_workspace;
 
 #[derive(clap::Args, Debug)]
