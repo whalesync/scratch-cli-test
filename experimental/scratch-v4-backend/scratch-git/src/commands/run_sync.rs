@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{Error, Result};
@@ -63,17 +63,6 @@ struct RecordMatching {
     dest_field: String,
 }
 
-// ---------------------------------------------------------------------------
-// Destination file format (Webflow native)
-// ---------------------------------------------------------------------------
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-struct DestRecord {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    field_data: HashMap<String, Value>,
-}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -186,57 +175,46 @@ fn run_sync(workspace: &Path, config: &SyncConfig) -> Result<()> {
     let mut updated = 0usize;
 
     for (source_filename, source_value) in &source_files {
-        let source_obj = match source_value.as_object() {
-            Some(o) => o,
-            None => {
-                tracing::warn!("skipping {source_filename}: not a JSON object");
-                continue;
-            }
-        };
-
-        // Apply field mappings to build fieldData
-        let mut field_data: HashMap<String, Value> = HashMap::new();
-        for mapping in &config.field_mappings {
-            if let Some(v) = source_obj.get(&mapping.source_field) {
-                field_data.insert(mapping.dest_field.clone(), v.clone());
-            }
+        if !source_value.is_object() {
+            tracing::warn!("skipping {source_filename}: not a JSON object");
+            continue;
         }
 
-        // Find matching dest record
-        let (out_filename, existing_id, base_field_data) = match &config.record_matching {
+        // Find matching dest record (load full existing JSON as base)
+        let (out_filename, mut dest_value) = match &config.record_matching {
             Some(rm) => {
-                let source_match_value = source_obj.get(&rm.source_field).and_then(|v| v.as_str());
+                let source_match_value = get_by_path(&source_value, &rm.source_field)
+                    .and_then(|v| v.as_str());
                 match source_match_value.and_then(|v| dest_index.get(v)) {
-                    Some((dest_filename, dest_record)) => {
-                        // Found a match — reuse filename, preserve id and existing fields
-                        (dest_filename.clone(), dest_record.id.clone(), dest_record.field_data.clone())
+                    Some((dest_filename, existing_json)) => {
+                        // Found a match — reuse filename and all existing fields
+                        (dest_filename.clone(), existing_json.clone())
                     }
                     None => {
-                        // No match — new record, use source filename
-                        (source_filename.clone(), None, HashMap::new())
+                        // No match — new record with a pending name
+                        let hash = pending_hash();
+                        (format!("scratch_pending_{hash}.json"), Value::Object(serde_json::Map::new()))
                     }
                 }
             }
             None => {
-                // No matching configured — use source filename, no id
-                (source_filename.clone(), None, HashMap::new())
+                let hash = pending_hash();
+                (format!("scratch_pending_{hash}.json"), Value::Object(serde_json::Map::new()))
             }
         };
 
-        // Merge: start from existing fieldData, then overlay mapped fields
-        let mut merged_field_data = base_field_data;
-        merged_field_data.extend(field_data);
-
-        let dest_record = DestRecord {
-            id: existing_id,
-            field_data: merged_field_data,
-        };
+        // Apply field mappings via dot-notation paths on both sides
+        for mapping in &config.field_mappings {
+            if let Some(v) = get_by_path(&source_value, &mapping.source_field) {
+                set_by_path(&mut dest_value, &mapping.dest_field, v.clone());
+            }
+        }
 
         let out_path = dest_dir.join(&out_filename);
-        let content = serde_json::to_string_pretty(&dest_record)?;
+        let content = serde_json::to_string_pretty(&dest_value)?;
         std::fs::write(&out_path, content)?;
 
-        if dest_record.id.is_some() {
+        if dest_value.get("id").and_then(|v| v.as_str()).is_some() {
             updated += 1;
         } else {
             created += 1;
@@ -280,29 +258,52 @@ fn read_json_files(dir: &Path) -> Result<JsonFiles> {
 }
 
 /// Build an index of dest files keyed by the record-matching field value.
-/// Key: value of `fieldData[recordMatching.destField]` as string
-/// Value: (filename, parsed DestRecord)
+/// Uses dot-notation path to find the match field in each dest record.
 fn build_dest_index(
     dest_files: &JsonFiles,
     record_matching: Option<&RecordMatching>,
-) -> Result<HashMap<String, (String, DestRecord)>> {
+) -> Result<HashMap<String, (String, Value)>> {
     let mut index = HashMap::new();
     let rm = match record_matching {
         Some(rm) => rm,
         None => return Ok(index),
     };
-
     for (filename, value) in dest_files {
-        // Try to parse as DestRecord
-        let dest_record: DestRecord = match serde_json::from_value(value.clone()) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        if let Some(match_val) = dest_record.field_data.get(&rm.dest_field) {
-            if let Some(s) = match_val.as_str() {
-                index.insert(s.to_string(), (filename.clone(), dest_record));
-            }
+        if let Some(match_val) = get_by_path(value, &rm.dest_field).and_then(|v| v.as_str()) {
+            index.insert(match_val.to_string(), (filename.clone(), value.clone()));
         }
     }
     Ok(index)
+}
+
+/// Resolve a dot-notation path on a JSON value (e.g. "fields.views" → value["fields"]["views"]).
+fn get_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.').fold(Some(value), |acc, key| acc?.as_object()?.get(key))
+}
+
+/// Set a value at a dot-notation path, creating intermediate objects as needed.
+fn set_by_path(value: &mut Value, path: &str, v: Value) {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut current = value;
+    for part in &parts[..parts.len() - 1] {
+        if let Value::Object(map) = current {
+            map.entry(*part).or_insert_with(|| Value::Object(serde_json::Map::new()));
+            current = map.get_mut(*part).unwrap();
+        } else {
+            return;
+        }
+    }
+    if let Value::Object(map) = current {
+        map.insert(parts[parts.len() - 1].to_string(), v);
+    }
+}
+
+/// Generate an 8-character hex string from the current time for pending filenames.
+fn pending_hash() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{:08x}", nanos)
 }

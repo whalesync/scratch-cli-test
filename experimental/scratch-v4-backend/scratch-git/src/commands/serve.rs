@@ -15,15 +15,18 @@ pub struct Args {
     pub port: u16,
 
     /// Root directory where all repos live
-    #[arg(long, env = "SCRATCHMD_REPOS_DIR")]
+    #[arg(long, env = "SCRATCHMD_REPOS_DIR", default_value = "../../../local/repos-v4")]
     pub repos_dir: PathBuf,
 }
 
 pub async fn run(args: Args) -> Result<()> {
     std::fs::create_dir_all(&args.repos_dir)?;
+    let repos_dir = args.repos_dir.canonicalize().map_err(|e| {
+        crate::Error::Other(format!("repos_dir not found at {}: {e}", args.repos_dir.display()))
+    })?;
 
     let state = AppState {
-        repos_dir: args.repos_dir.clone(),
+        repos_dir: repos_dir.clone(),
         lock: Arc::new(RepoBranchLock::new()),
     };
 
@@ -32,7 +35,7 @@ pub async fn run(args: Args) -> Result<()> {
     let listener = TcpListener::bind(&addr).await.map_err(crate::Error::Io)?;
 
     tracing::info!("scratchmd serving on http://{}", addr);
-    tracing::info!("  repos dir: {}", args.repos_dir.display());
+    tracing::info!("  repos dir: {}", repos_dir.display());
     tracing::info!("  git clone: http://{}:{}/git/{{repoPath}}", "localhost", args.port);
     tracing::info!("  init repo: POST http://{}:{}/api/repos/init", "localhost", args.port);
     tracing::info!("  upsert:    POST http://{}:{}/api/repos/upsert-files", "localhost", args.port);

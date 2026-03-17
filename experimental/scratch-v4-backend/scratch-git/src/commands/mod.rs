@@ -10,18 +10,54 @@ pub mod upsert_files;
 use std::path::{Path, PathBuf};
 use crate::{Error, Result};
 
-/// Resolve a workspace path to absolute without using canonicalize(),
-/// which fails when the directory was deleted and recreated under the shell.
+/// Get the current working directory, preferring $PWD (shell-maintained string)
+/// over getcwd() (kernel inode reference that breaks after dir deletion/recreation).
+pub fn cwd() -> Result<PathBuf> {
+    if let Ok(pwd) = std::env::var("PWD") {
+        let p = PathBuf::from(pwd);
+        if p.is_absolute() && p.exists() {
+            return Ok(p);
+        }
+    }
+    std::env::current_dir()
+        .map_err(|e| Error::Other(format!("cannot determine current directory: {e}")))
+}
+
+/// Resolve a workspace path to absolute.
+/// If the path is `.` (the default), walks up the directory tree from cwd
+/// looking for a `.scratch/workbook` directory — so you can run commands
+/// from anywhere inside a pulled workspace without specifying --workspace.
 pub fn resolve_workspace(path: &Path) -> Result<PathBuf> {
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .map_err(|e| Error::Other(format!("cannot determine current directory: {e}")))?
-            .join(path)
+        cwd()?.join(path)
     };
-    if !abs.exists() {
-        return Err(Error::Other(format!("workspace not found at {}", abs.display())));
+
+    // If the path resolves to an explicit non-cwd location, use it directly.
+    // If it's the cwd (i.e. --workspace was "." or omitted), try walking up
+    // to find the workspace root.
+    let current = cwd()?;
+    let search_from = if abs == current { current.clone() } else { abs.clone() };
+
+    // Walk up looking for .scratch/workbook
+    let mut dir = search_from.clone();
+    loop {
+        if dir.join(".scratch/workbook").exists() {
+            return Ok(dir);
+        }
+        if !dir.pop() {
+            break;
+        }
     }
-    Ok(abs)
+
+    // Fallback: use the resolved path directly if it exists
+    if abs.exists() {
+        return Ok(abs);
+    }
+
+    Err(Error::Other(format!(
+        "could not find a workspace (no .scratch/workbook found) starting from {}",
+        search_from.display()
+    )))
 }

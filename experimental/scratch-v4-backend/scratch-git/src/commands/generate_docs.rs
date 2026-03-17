@@ -147,12 +147,12 @@ Sync configs live in `.scratch/workbook/syncs/*.json`.
     "folder": "MySite/Posts"
   },
   "fieldMappings": [
-    { "sourceField": "Name",      "destField": "name" },
-    { "sourceField": "Post Body", "destField": "post-body" }
+    { "sourceField": "fields.Name",      "destField": "fieldData.name" },
+    { "sourceField": "fields.Post Body", "destField": "fieldData.post-body" }
   ],
   "recordMatching": {
-    "sourceField": "Name",
-    "destField": "name"
+    "sourceField": "fields.Name",
+    "destField": "fieldData.name"
   }
 }
 ```
@@ -163,17 +163,18 @@ folder names exactly (case-sensitive).
 **`source.folder`** and **`destination.folder`** are the path within the connection,
 e.g. `MyBase/Posts`. Check the actual folder names by looking at the directory tree.
 
-**`fieldMappings`** — `sourceField` is the key in the source JSON file.
-`destField` is the key inside `fieldData` in the destination file.
-Use the schema files to find the correct field names/slugs. It is also a good
-idea to open a few sample records from both source and destination folders to
-see what values actually look like — schemas show types but records reveal the
-real keys, nesting, and any surprises (e.g. Airtable fields at top level vs
-Webflow fields inside `fieldData`).
+**`fieldMappings`** — both `sourceField` and `destField` are **full dot-notation
+paths** into the JSON file on disk. Always open a few sample records from both
+source and destination to see the exact structure — schemas show types but
+records show the real nesting. Examples:
+- Airtable source fields: `fields.Name`, `fields.Post Body`
+- Webflow dest fields: `fieldData.name`, `fieldData.post-body`
+- Any path works: `id`, `createdTime`, `fieldData.slug`, etc.
 
 **`recordMatching`** — used to update existing destination records instead of
-creating duplicates. The sync finds the destination record where
-`fieldData[destField] == source[sourceField]`.
+creating duplicates. The sync finds the destination record where the value at
+`destField` equals the value at `sourceField`. Unmatched source records are
+written as `scratch_pending_<hash>.json` (new records awaiting publish).
 
 ## Running a sync
 

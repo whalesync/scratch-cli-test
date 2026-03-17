@@ -70,7 +70,7 @@ export class PollJob implements JobHandlerBuilder<PollJobDefinition> {
             folder,
             message: `poll: ${tableSpec.name}`,
             files: files.map((f) => {
-              const record = f.fields ?? f;
+              const record = f;
               let filename = String(f.id);
               if (tableSpec.slugColumnRemoteId) {
                 const slugValue = tableSpec.slugColumnRemoteId.split('.').reduce<unknown>((obj, key) => {
