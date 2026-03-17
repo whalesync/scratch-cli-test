@@ -1,0 +1,45 @@
+[package]
+name = "scratchmd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "scratchmdv4"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower = "0.5"
+
+# Git
+gix = { version = "0.70", features = ["worktree-mutation"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive", "env"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Concurrency
+dashmap = "6"
+
+# HTTP client (for scratchmd pull → API server)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Async I/O helpers
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"

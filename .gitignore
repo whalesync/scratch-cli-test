@@ -56,3 +56,6 @@ junit.xml
 
 # Napi-RS native addons
 *.node
+
+# Local dev data
+local/

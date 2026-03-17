@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workbooks Workbook[]
+}
+
+model Workbook {
+  id             String       @id
+  name           String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  connectorAccounts ConnectorAccount[]
+  jobs              Job[]
+}
+
+model ConnectorAccount {
+  id           String   @id
+  workbookId   String
+  workbook     Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  service      String
+  displayName  String
+  repoPath     String?
+  credentials  Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  jobs Job[]
+}
+
+model Job {
+  id                 String            @id
+  workbookId         String?
+  workbook           Workbook?         @relation(fields: [workbookId], references: [id], onDelete: SetNull)
+  connectorAccountId String?
+  connectorAccount   ConnectorAccount? @relation(fields: [connectorAccountId], references: [id], onDelete: SetNull)
+  userId             String
+  type               String
+  status             String            @default("created")
+  data               Json
+  progress           Json?
+  error              String?
+  bullJobId          String?
+  processedOn        DateTime?
+  finishedOn         DateTime?
+  cancelRequestedAt  DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}

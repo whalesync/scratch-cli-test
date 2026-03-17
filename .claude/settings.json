@@ -13,7 +13,14 @@
       "Bash(yarn lint-fix:*)",
       "Bash(yarn tsc:*)",
       "Bash(yarn build:*)",
-      "Bash(yarn format:*)"
+      "Bash(yarn format:*)",
+      "Bash(yarn setup:*)",
+      "Bash(yarn trigger-pull:*)",
+      "Read(//private/tmp/**)",
+      "Bash(lsof -ti:3011)",
+      "Bash(cargo check:*)",
+      "Bash(lsof -ti:3100)",
+      "Bash(/Users/ijd/repos/spinner/experimental/scratch-v4-backend/TEST_LOOP.md:*)"
     ]
   },
   "hooks": {

@@ -1,0 +1,5 @@
+# Rust build output
+/target/
+
+# Local dev data
+/local/
