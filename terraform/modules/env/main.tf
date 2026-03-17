@@ -1,4 +1,9 @@
 locals {
+  default_labels = var.default_labels != null ? var.default_labels : {
+    "terraform" = "true"
+    "env"       = var.env_name
+  }
+
   artifact_registry_url = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${var.env_name}-registry"
 
   # APIs
@@ -330,10 +335,10 @@ module "redis" {
   region             = var.gcp_region
   depends_on         = [module.vpc]
 
-  labels = {
+  labels = merge(local.default_labels, {
     # Used to help the connect_to_gcp_* scripts to find the right instance automatically
     "primary" = "true"
-  }
+  })
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
@@ -359,12 +364,10 @@ module "db_primary" {
   backup_start_time = var.db_backup_start_time
   backup_location   = var.gcp_region
 
-  labels = {
+  labels = merge(local.default_labels, {
     # Used to help the connect_to_gcp_* scripts to find the right instance automatically
-    "primary"   = "true"
-    "env"       = var.env_name,
-    "terraform" = "true",
-  }
+    "primary" = "true"
+  })
 
   depends_on = [
     module.vpc,
@@ -413,9 +416,9 @@ resource "google_storage_bucket" "assets" {
     method = ["GET"]
     origin = [var.client_domain]
   }
-  labels = {
+  labels = merge(local.default_labels, {
     "vanta-contains-user-data" = "true"
-  }
+  })
 }
 
 resource "google_storage_bucket_iam_member" "assets_cloudrun" {

@@ -8,6 +8,10 @@ module "eu_production" {
   gcp_region         = "europe-west1"
   gcp_zone           = "europe-west1-b"
   as_gitlab          = var.as_gitlab
+  default_labels = {
+    "terraform" : "true"
+    "env" : "production"
+  }
 
   # Cloud IDS (creates a new endpoint in europe-west1-b)
   enable_intrusion_detection = true

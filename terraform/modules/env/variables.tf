@@ -3,6 +3,12 @@ variable "env_name" {
   description = "Name of the environment: test | staging | production"
 }
 
+variable "default_labels" {
+  type        = map(string)
+  default     = null
+  description = "Override for the default labels applied to all resources. If not set, defaults to {terraform: true, env: env_name}."
+}
+
 variable "app_env" {
   type        = string
   default     = null
