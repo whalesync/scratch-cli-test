@@ -281,6 +281,18 @@ variable "scratch_git_snapshot_hours_in_cycle" {
   description = "Hours between each disk snapshot for the scratch-git data disk (1, 2, 3, 4, 6, 8, 12, or 24)."
 }
 
+variable "enable_static_assets_lb" {
+  type        = bool
+  default     = false
+  description = "Whether to enable the static assets GCS bucket with HTTPS load balancer."
+}
+
+variable "static_assets_domain" {
+  type        = string
+  default     = ""
+  description = "Domain name for the static assets load balancer (e.g., 'static.scratch.md')."
+}
+
 variable "langsmith_project" {
   type        = string
   description = "LangSmith project name for tracing (e.g., 'scratchmd', 'scratchmd-test')."

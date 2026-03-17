@@ -36,6 +36,10 @@ module "eu_production" {
   api_service_max_instance_count = 4
   worker_concurrency             = 10
 
+  # Static Assets
+  enable_static_assets_lb = true
+  static_assets_domain    = "static.scratch.md"
+
   # LangSmith
   langsmith_project = "scratchmd"
 }

@@ -438,3 +438,18 @@ resource "google_project_iam_custom_role" "assets_object_reader" {
   permissions = ["storage.objects.get"]
 }
 
+## ---------------------------------------------------------------------------------------------------------------------
+## Static Assets Bucket + LB
+## ---------------------------------------------------------------------------------------------------------------------
+
+module "static_bucket_lb" {
+  count  = var.enable_static_assets_lb ? 1 : 0
+  source = "../../modules/static_bucket_lb"
+
+  name            = "${var.env_name}-static"
+  gcp_project_id  = var.gcp_project_id
+  bucket_location = var.gcp_region
+  domain          = var.static_assets_domain
+  cors_origins    = ["https://${var.client_domain}"]
+}
+

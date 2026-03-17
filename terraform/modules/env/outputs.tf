@@ -36,3 +36,8 @@ output "nat_egress_ip" {
   description = "Static outbound IP for customer whitelisting"
   value       = module.cloudnat.nat_egress_ip
 }
+
+output "static_assets_lb_ip" {
+  description = "IP address of the static assets load balancer"
+  value       = var.enable_static_assets_lb ? module.static_bucket_lb[0].ip_address : null
+}
