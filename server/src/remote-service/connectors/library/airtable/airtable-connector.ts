@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, ConnectorSettingDefinition, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, ConnectorSettingDefinition, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
@@ -20,6 +20,13 @@ interface AirtablePullOptions extends ConnectorPullOptions {
 export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
   readonly service = Service.AIRTABLE;
   static readonly displayName = 'Airtable';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Airtable',
+    base: 'base',
+    bases: 'bases',
+    logo: 'airtable.svg',
+    oauth: { label: 'OAuth' },
+  });
   static readonly advancedSettings: ConnectorSettingDefinition[] = [
     {
       key: 'view',

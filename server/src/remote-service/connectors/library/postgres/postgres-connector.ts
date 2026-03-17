@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { ConnectorPullOptions, PostgresColumnType, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, PostgresColumnType, Service } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
@@ -96,6 +96,15 @@ function mapScalarPgType(typeName: string): { schema: TSchema; pgType: PostgresC
 export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
   readonly service = Service.POSTGRES;
   static readonly displayName = 'PostgreSQL';
+  static readonly metadata = connectorMetadata({
+    displayName: 'PostgreSQL',
+    record: 'row',
+    records: 'rows',
+    base: 'database',
+    bases: 'databases',
+    logo: 'postgres.svg',
+    visible: false,
+  });
 
   private readonly client: PostgresClient;
 

@@ -1,11 +1,11 @@
 'use client';
 
 import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
+import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { oAuthApi } from '@/lib/api/oauth';
-import { serviceName } from '@/service-naming-conventions';
-import { OAuthService } from '@/types/oauth';
 import { RouteUrls } from '@/utils/route-urls';
 import { Alert, Container, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Service } from '@spinner/shared-types';
 import { CircleCheckBigIcon, CircleXIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -21,6 +21,7 @@ export default function OAuthCallbackPage() {
   const searchParams = useSearchParams();
   const [state, setState] = useState<OAuthCallbackState>({ status: 'loading' });
   const hasExecuted = useRef(false);
+  const { metadata } = useConnectorsMetadata();
 
   useEffect(() => {
     // Prevent multiple executions
@@ -65,7 +66,7 @@ export default function OAuthCallbackPage() {
           state,
         });
 
-        const service = (serviceParam as OAuthService) || serviceFromState;
+        const service = (serviceParam as Service) || serviceFromState;
 
         if (!service || !isValidOAuthService(service)) {
           setState({
@@ -81,7 +82,7 @@ export default function OAuthCallbackPage() {
 
         setState({
           status: 'success',
-          message: `Successfully connected to ${serviceName(service)}!`,
+          message: `Successfully connected to ${getServiceName(metadata, service)}!`,
           connectorAccountId: result.connectorAccountId,
         });
 
@@ -116,7 +117,7 @@ export default function OAuthCallbackPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const extractServiceFromState = (): OAuthService | null => {
+  const extractServiceFromState = (): Service | null => {
     try {
       const state = searchParams.get('state');
       if (!state) return null;
@@ -126,7 +127,7 @@ export default function OAuthCallbackPage() {
       const parsed = JSON.parse(decoded);
 
       // Extract service from the parsed state
-      return (parsed.service as OAuthService) || null;
+      return (parsed.service as Service) || null;
     } catch {
       return null;
     }
@@ -148,10 +149,8 @@ export default function OAuthCallbackPage() {
     }
   };
 
-  const isValidOAuthService = (service: string): service is OAuthService => {
-    return ['NOTION', 'AIRTABLE', 'YOUTUBE', 'WEBFLOW', 'WIX_BLOG', 'SHOPIFY', 'SUPABASE', 'QUICKBOOKS'].includes(
-      service,
-    );
+  const isValidOAuthService = (service: string): service is Service => {
+    return metadata ? metadata[service as Service]?.oauth !== undefined : false;
   };
 
   return (

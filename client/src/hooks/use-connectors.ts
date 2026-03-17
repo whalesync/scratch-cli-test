@@ -1,6 +1,6 @@
-import { INTERNAL_SERVICES } from '@/types/server-entities/connector-accounts';
 import { Service } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
+import { useConnectorsMetadata } from './use-connectors-metadata';
 import { useScratchPadUser } from './useScratchpadUser';
 
 export type AuthMethod = 'user_provided_params' | 'oauth' | 'oauth_custom';
@@ -10,6 +10,7 @@ export type AuthMethod = 'user_provided_params' | 'oauth' | 'oauth_custom';
  */
 export const useConnectors = () => {
   const { user, isAdmin } = useScratchPadUser();
+  const { metadata } = useConnectorsMetadata();
 
   const getDefaultAuthMethod = useCallback(
     (service: Service): AuthMethod => {
@@ -94,15 +95,21 @@ export const useConnectors = () => {
     [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.SHOPIFY_API_KEYS],
   );
 
-  // For admins show all services. Dedupe in case of overlap between flags and internal services.
+  // For admins show all visible services. Dedupe in case of overlap between flags and metadata.
   // In development, show all connectors without filtering.
   const availableServices = useMemo(() => {
     if (process.env.NODE_ENV === 'development') {
       return Object.values(Service);
     }
     const connectorListFromFlags = (user?.experimentalFlags?.CONNECTOR_LIST ?? []) as Service[];
-    return isAdmin ? [...new Set([...connectorListFromFlags, ...INTERNAL_SERVICES])] : connectorListFromFlags;
-  }, [user?.experimentalFlags?.CONNECTOR_LIST, isAdmin]);
+    if (!isAdmin) return connectorListFromFlags;
+    const visibleServices = metadata
+      ? (Object.entries(metadata)
+          .filter(([, m]) => m.visible)
+          .map(([s]) => s) as Service[])
+      : [];
+    return [...new Set([...connectorListFromFlags, ...visibleServices])];
+  }, [user?.experimentalFlags?.CONNECTOR_LIST, isAdmin, metadata]);
 
   return {
     getDefaultAuthMethod,

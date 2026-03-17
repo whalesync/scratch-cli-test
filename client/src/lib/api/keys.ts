@@ -2,6 +2,9 @@ import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { Arguments } from 'swr';
 
 export const SWR_KEYS = {
+  connectorsMetadata: {
+    all: () => ['connectors-metadata', 'all'] as const,
+  },
   connectorAccounts: {
     list: (workbookId: string) => ['connector-accounts', 'list', workbookId],
     detail: (workbookId: string, id: string) => ['connector-accounts', 'detail', workbookId, id],

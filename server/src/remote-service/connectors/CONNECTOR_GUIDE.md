@@ -68,19 +68,20 @@ export abstract class Connector<
 
 ### Required Abstract Members
 
-| Member                                            | Signature                                                                                                                                                                                                      | Purpose                                                                                     |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `service`                                         | `abstract readonly service: T`                                                                                                                                                                                 | The Service enum value                                                                      |
-| `displayName`                                     | `static readonly displayName: string`                                                                                                                                                                          | Human-readable name (e.g., `'Airtable'`)                                                    |
-| `testConnection()`                                | `abstract testConnection(): Promise<void>`                                                                                                                                                                     | Validate credentials. Throw on failure, resolve silently on success.                        |
-| `listTables()`                                    | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                               | Return all available tables/collections                                                     |
-| `fetchJsonTableSpec(id)`                          | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                        | Build the full JSON schema for a table                                                      |
-| `pullRecordFiles(tableSpec, callback, progress)`  | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress): Promise<void>` | Stream all records via batched callbacks                                                    |
-| `getBatchSize(operation)`                         | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                   | Max batch size per CRUD operation (must be > 0)                                             |
-| `createRecords(tableSpec, files)`                 | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                       | Create records, return files with remote IDs assigned                                       |
-| `updateRecords(tableSpec, files, changedKeys?)` | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] \| undefined)[]): Promise<void>`                                                        | Update existing records (see [Partial Field Updates](#partial-field-updates-changedkeys)) |
-| `deleteRecords(tableSpec, files)`                 | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                  | Delete records                                                                              |
-| `extractConnectorErrorDetails(error)`             | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                 | Translate service errors to user-friendly messages                                          |
+| Member                                           | Signature                                                                                                                                                                                                      | Purpose                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `service`                                        | `abstract readonly service: T`                                                                                                                                                                                 | The Service enum value                                                                                                |
+| `displayName`                                    | `static readonly displayName: string`                                                                                                                                                                          | Human-readable name (e.g., `'Airtable'`)                                                                              |
+| `metadata`                                       | `static readonly metadata: ConnectorMetadata`                                                                                                                                                                  | Connector metadata (display name, terminology, logo, visibility, OAuth labels). Use the `connectorMetadata()` helper. |
+| `testConnection()`                               | `abstract testConnection(): Promise<void>`                                                                                                                                                                     | Validate credentials. Throw on failure, resolve silently on success.                                                  |
+| `listTables()`                                   | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                               | Return all available tables/collections                                                                               |
+| `fetchJsonTableSpec(id)`                         | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                        | Build the full JSON schema for a table                                                                                |
+| `pullRecordFiles(tableSpec, callback, progress)` | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress): Promise<void>` | Stream all records via batched callbacks                                                                              |
+| `getBatchSize(operation)`                        | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                   | Max batch size per CRUD operation (must be > 0)                                                                       |
+| `createRecords(tableSpec, files)`                | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                       | Create records, return files with remote IDs assigned                                                                 |
+| `updateRecords(tableSpec, files, changedKeys?)`  | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] \| undefined)[]): Promise<void>`                                                                         | Update existing records (see [Partial Field Updates](#partial-field-updates-changedkeys))                             |
+| `deleteRecords(tableSpec, files)`                | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                  | Delete records                                                                                                        |
+| `extractConnectorErrorDetails(error)`            | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                 | Translate service errors to user-friendly messages                                                                    |
 
 ### Optional Methods
 
@@ -444,8 +445,8 @@ When adding a new connector, touch all of these:
 ### Server — Connector Registration
 
 - [ ] Add connector class in `server/src/remote-service/connectors/library/<service-name>/`
+- [ ] Add `static readonly metadata` using `connectorMetadata()` — this defines display name, terminology, logo, visibility, and OAuth labels (see example below)
 - [ ] Add switch case in `ConnectorsService.getConnector()` (`connectors.service.ts`)
-- [ ] Add case in `getServiceDisplayName()` (`display-names.ts`)
 - [ ] Add credential fields to `DecryptedCredentials` interface if needed (`packages/shared-types/src/connector-account-types.ts`)
 - [ ] Add `AuthParser` and register in `ConnectorsService.getAuthParser()` if auth pre-processing is needed
 
@@ -455,11 +456,29 @@ When adding a new connector, touch all of these:
 - [ ] Register provider in `OAuthModule` (`server/src/oauth/oauth.module.ts`)
 - [ ] Add to `OAuthService` constructor providers map (`server/src/oauth/oauth.service.ts`)
 
-### Client
+### Connector Metadata Example
 
-- [ ] Add entry in `ServiceNamingConventions` (`client/src/service-naming-conventions.ts`) — includes display names, table/record terminology, logo
-- [ ] Add to `OAuthService` type union if OAuth (`client/src/types/oauth.ts`)
-- [ ] Add to `isValidOAuthService()` check if OAuth (`client/src/app/oauth/callback-step-2/page.tsx`)
+The `connectorMetadata()` helper merges your overrides with sensible defaults (`table: 'table'`, `record: 'record'`, `base: null`, `visible: true`, `pushOperationName: 'Publish'`, `pullOperationName: 'Download'`). You must provide `displayName` and `logo`.
+
+```typescript
+import { connectorMetadata } from '@spinner/shared-types';
+
+export class MyConnector extends Connector<typeof Service.MY_SERVICE> {
+  static readonly displayName = 'My Service';
+  static readonly metadata = connectorMetadata({
+    displayName: 'My Service',
+    table: 'collection',
+    tables: 'collections',
+    record: 'item',
+    records: 'items',
+    logo: 'my-service.svg',
+    oauth: { label: 'OAuth' }, // omit if no OAuth support
+  });
+  // ...
+}
+```
+
+The metadata is served at `GET /connectors/metadata` and consumed by the client automatically — no client-side file changes are needed when adding a new connector.
 
 ## 7. Common Patterns
 

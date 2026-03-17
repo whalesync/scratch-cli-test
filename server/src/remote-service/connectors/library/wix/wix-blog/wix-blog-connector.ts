@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import type { DraftPost } from '@wix/auto_sdk_blog_draft-posts';
 import { draftPosts } from '@wix/blog';
 import { members } from '@wix/members';
@@ -20,6 +20,15 @@ export const WIX_DEFAULT_BATCH_SIZE = 100; // Wix API supports up to 100
 export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
   readonly service = Service.WIX_BLOG;
   static readonly displayName = 'Wix Blog';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Wix Blog',
+    table: 'site',
+    tables: 'sites',
+    record: 'post',
+    records: 'posts',
+    logo: 'wix.svg',
+    oauth: { label: 'OAuth' },
+  });
 
   private readonly htmlToRicosConverter = new HtmlToWixConverter();
   private readonly ricosToHtmlConverter = new WixToHtmlConverter();

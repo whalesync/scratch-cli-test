@@ -6,7 +6,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -89,6 +89,17 @@ const STRIP_ON_UPDATE_MAP: Partial<Record<EntityType, Set<string>>> = {
 export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
   readonly service = Service.SHOPIFY;
   static readonly displayName = 'Shopify';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Shopify',
+    table: 'resource',
+    tables: 'resources',
+    record: 'item',
+    records: 'items',
+    base: 'store',
+    bases: 'stores',
+    logo: 'shopify.svg',
+    oauth: { label: 'OAuth' },
+  });
 
   private readonly client: ShopifyApiClient;
 

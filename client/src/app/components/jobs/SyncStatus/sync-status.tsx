@@ -1,7 +1,7 @@
 import { FC } from 'react';
 import { TableIndicator } from './components/base-avatar-with-indicator';
 
-import { getServiceName } from '@/service-naming-conventions';
+import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { ActionIcon, Text } from '@mantine/core';
 import { Service } from '@spinner/shared-types';
 import { ArrowRightIcon } from 'lucide-react';
@@ -40,6 +40,7 @@ const getBadgeColor = (status: TableStatus) => {
 };
 
 export const SyncStatus: FC<Props> = (props) => {
+  const { metadata } = useConnectorsMetadata();
   const { tableName, connector, doneCount, totalCount, status, direction = 'right' } = props;
   const badgeColor = getBadgeColor(status);
   const isMoving = status === 'in_progress';
@@ -66,7 +67,7 @@ export const SyncStatus: FC<Props> = (props) => {
           {getStatusText(status)}
         </Text>
       }
-      bottomRightSlot={<>{getServiceName(connector as Service)}</>}
+      bottomRightSlot={<>{getServiceName(metadata, connector as Service)}</>}
       thirdRowCenter={
         <Text c="var(--fg-muted)" fw={500}>
           {direction === 'left'

@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -31,6 +31,15 @@ const PAGE_SIZE = 1000;
 export class QuickBooksConnector extends Connector<typeof Service.QUICKBOOKS, QuickBooksDownloadProgress> {
   readonly service = Service.QUICKBOOKS;
   static readonly displayName = 'QuickBooks Online';
+  static readonly metadata = connectorMetadata({
+    displayName: 'QuickBooks Online',
+    table: 'entity',
+    tables: 'entities',
+    base: 'company',
+    bases: 'companies',
+    logo: 'quickbooks.svg',
+    oauth: { label: 'OAuth' },
+  });
 
   private readonly client: QuickBooksApiClient;
 

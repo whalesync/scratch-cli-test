@@ -11,7 +11,13 @@ import {
   CreatePageParameters,
   QueryDatabaseParameters,
 } from '@notionhq/client/build/src/api-endpoints';
-import { ConnectorPullOptions, ConnectorSettingDefinition, Service, TableDiscoveryMode } from '@spinner/shared-types';
+import {
+  connectorMetadata,
+  ConnectorPullOptions,
+  ConnectorSettingDefinition,
+  Service,
+  TableDiscoveryMode,
+} from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -59,6 +65,15 @@ function unwrapNotionProperty(value: unknown): unknown {
 export class NotionConnector extends Connector<typeof Service.NOTION, NotionDownloadProgress> {
   readonly service = Service.NOTION;
   static displayName = 'Notion';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Notion',
+    table: 'database',
+    tables: 'databases',
+    record: 'page',
+    records: 'pages',
+    logo: 'notion.svg',
+    oauth: { label: 'OAuth' },
+  });
   static readonly advancedSettings: ConnectorSettingDefinition[] = [
     {
       key: 'excludePageContent',

@@ -1,4 +1,4 @@
-import { getLogo } from '@/service-naming-conventions';
+import { getLogo, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Image, MantineSpacing, StyleProp } from '@mantine/core';
 import { Service } from '@spinner/shared-types';
 import { ImageProps } from 'next/image';
@@ -12,7 +12,8 @@ export function ConnectorIcon(
     },
 ) {
   const { connector, size, withBorder, p, ...rest } = props;
-  const iconUrl = getLogo(connector as Service);
+  const { metadata } = useConnectorsMetadata();
+  const iconUrl = getLogo(metadata, connector as Service);
 
   return (
     <Image

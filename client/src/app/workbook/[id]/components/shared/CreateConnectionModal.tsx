@@ -2,10 +2,14 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
+import {
+  getOauthLabel,
+  getOauthPrivateLabel,
+  getServiceName,
+  useConnectorsMetadata,
+} from '@/hooks/use-connectors-metadata';
 import { useSubscription } from '@/hooks/use-subscription';
 import { ScratchpadApiError } from '@/lib/api/error';
-import { getOauthLabel, getOauthPrivateLabel, serviceName } from '@/service-naming-conventions';
-import { OAuthService } from '@/types/oauth';
 import { initiateOAuth } from '@/utils/oauth';
 import {
   Alert,
@@ -54,13 +58,14 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const [customClientId, setCustomClientId] = useState('');
   const [customClientSecret, setCustomClientSecret] = useState('');
   const [showOAuthCustom, setShowOAuthCustom] = useState(false);
+  const { metadata } = useConnectorsMetadata();
   const { canCreateDataSource } = useSubscription();
   const { createConnectorAccount } = useConnectorAccounts(workbookId);
   const { getDefaultAuthMethod, getSupportedAuthMethods, availableServices } = useConnectors();
 
   const handleSelectNewService = (service: Service) => {
     setNewService(service);
-    setNewDisplayName(serviceName(service));
+    setNewDisplayName(getServiceName(metadata, service));
     setAuthMethod(getDefaultAuthMethod(service));
     setCustomClientId('');
     setCustomClientSecret('');
@@ -94,7 +99,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
       const connectionName = newDisplayName ?? undefined;
       const returnPage = returnUrl ?? window.location.pathname;
       console.debug('connectionName', connectionName);
-      await initiateOAuth(newService as OAuthService, {
+      await initiateOAuth(newService, {
         // (http|https)://<host, e.g. test.scratch.md>
         redirectPrefix: `${window.location.protocol}//${window.location.host}`,
         workbookId: workbookId,
@@ -121,7 +126,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
     }
     if (!canCreateDataSource(newService)) {
       setError(
-        `You have reached the limit for ${serviceName(newService)} connections. Please upgrade your plan to add more.`,
+        `You have reached the limit for ${getServiceName(metadata, newService)} connections. Please upgrade your plan to add more.`,
       );
       return;
     }
@@ -215,7 +220,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
           <>
             <ButtonSecondaryOutline onClick={props.onClose}>Cancel</ButtonSecondaryOutline>
             <ButtonPrimaryLight onClick={handleCreate} loading={isOAuthLoading || isCreating}>
-              {authMethod === 'oauth' && newService ? 'Connect with ' + serviceName(newService) : 'Create'}
+              {authMethod === 'oauth' && newService ? 'Connect with ' + getServiceName(metadata, newService) : 'Create'}
             </ButtonPrimaryLight>
           </>
         ),
@@ -249,7 +254,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                   <Group gap="xs" wrap="nowrap">
                     <ConnectorIcon connector={service} size={20} />
                     <MantineText size="sm" fw={500}>
-                      {serviceName(service)}
+                      {getServiceName(metadata, service)}
                     </MantineText>
                   </Group>
                   {isSelected && <Check style={{ width: 12, height: 12, color: 'var(--mantine-color-teal-6)' }} />}
@@ -291,7 +296,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
             >
               <Group gap="xs" mt="xs">
                 {getSupportedAuthMethods(newService).includes('oauth') && (
-                  <Radio value="oauth" label={getOauthLabel(newService)} />
+                  <Radio value="oauth" label={getOauthLabel(metadata, newService)} />
                 )}
                 {getSupportedAuthMethods(newService).includes('user_provided_params') && (
                   <Radio
@@ -304,7 +309,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                   />
                 )}
                 {newService === Service.YOUTUBE && showOAuthCustom && (
-                  <Radio value="oauth_custom" label={getOauthPrivateLabel(newService)} />
+                  <Radio value="oauth_custom" label={getOauthPrivateLabel(metadata, newService)} />
                 )}
               </Group>
             </Radio.Group>

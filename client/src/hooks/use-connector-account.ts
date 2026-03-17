@@ -11,10 +11,11 @@ import {
 import { useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { ScratchpadNotifications } from '../app/components/ScratchpadNotifications';
-import { serviceName } from '../service-naming-conventions';
+import { getServiceName, useConnectorsMetadata } from './use-connectors-metadata';
 
 export const useConnectorAccounts = (workbookId: string | undefined) => {
   const { mutate } = useSWRConfig();
+  const { metadata } = useConnectorsMetadata();
   const {
     data,
     error,
@@ -62,7 +63,7 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
       if (r.health == 'ok') {
         ScratchpadNotifications.success({
           title: 'Connection healthy',
-          message: `Scratch can connect to ${serviceName(con.service)}`,
+          message: `Scratch can connect to ${getServiceName(metadata, con.service)}`,
         });
       } else {
         ScratchpadNotifications.error({

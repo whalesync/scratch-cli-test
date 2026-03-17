@@ -5,7 +5,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "test": "jest --runInBand --forceExit",
+    "test:integration": "jest --runInBand --forceExit",
     "test:watch": "jest --runInBand --watch --forceExit"
   },
   "devDependencies": {

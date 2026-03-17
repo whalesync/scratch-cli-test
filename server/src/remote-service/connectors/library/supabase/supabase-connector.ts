@@ -9,7 +9,7 @@
  * Data access uses a dedicated PostgreSQL role created during setup.
  */
 import { Type, type TSchema } from '@sinclair/typebox';
-import { PostgresColumnType, Service, type ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, PostgresColumnType, Service, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { sanitizeForTableWsId } from '../../ids';
@@ -251,6 +251,15 @@ function mapPgType(
 export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
   readonly service = Service.SUPABASE;
   static readonly displayName = 'Supabase';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Supabase',
+    record: 'row',
+    records: 'rows',
+    base: 'project',
+    bases: 'projects',
+    logo: 'supabase.svg',
+    oauth: { label: 'OAuth' },
+  });
 
   private readonly connectionString: string | undefined;
   private readonly projects: SupabaseProjectConfig[];

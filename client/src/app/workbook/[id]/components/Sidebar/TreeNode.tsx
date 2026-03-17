@@ -17,7 +17,6 @@ import { workbookApi } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { OAuthService } from '@/types/oauth';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { initiateOAuth } from '@/utils/oauth';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
@@ -413,7 +412,7 @@ export function ConnectionNode({
     }
     setIsReauthorizing(true);
     try {
-      await initiateOAuth(connectorAccount.service as OAuthService, {
+      await initiateOAuth(connectorAccount.service, {
         workbookId: workbookId,
         redirectPrefix: `${window.location.protocol}//${window.location.host}`,
         connectionMethod: 'OAUTH_SYSTEM',
@@ -1514,7 +1513,7 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
     setIsReauthorizing(true);
 
     try {
-      await initiateOAuth(connectorAccount.service as OAuthService, {
+      await initiateOAuth(connectorAccount.service, {
         workbookId: workbookId,
         redirectPrefix: `${window.location.protocol}//${window.location.host}`,
         connectionMethod: 'OAUTH_SYSTEM',

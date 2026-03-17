@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { ConnectorAccount } from '@prisma/client';
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
@@ -12,6 +12,16 @@ import { buildYouTubeJsonTableSpec } from './youtube-json-schema';
 export class YouTubeConnector extends Connector<typeof Service.YOUTUBE> {
   readonly service = Service.YOUTUBE;
   static readonly displayName = 'YouTube';
+  static readonly metadata = connectorMetadata({
+    displayName: 'YouTube',
+    table: 'channel',
+    tables: 'channels',
+    record: 'video',
+    records: 'videos',
+    logo: 'youtube.svg',
+    visible: false,
+    oauth: { label: 'OAuth (100 api credits/day)', privateLabel: 'Private OAuth (10,000 api credits/day)' },
+  });
 
   private readonly apiClient: YoutubeApiClient;
 

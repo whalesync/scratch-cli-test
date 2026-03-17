@@ -13,7 +13,7 @@ import { DecorativeBoxedIcon } from '@/app/components/Icons/DecorativeBoxedIcon'
 import customBordersClasses from '@/app/components/theme/custom-borders.module.css';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
-import { ServiceNamingConventions } from '@/service-naming-conventions';
+import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { ActionIcon, Badge, Box, Code, CopyButton, Group, Stack, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Service, type WorkbookId } from '@spinner/shared-types';
@@ -48,10 +48,13 @@ const CHIP_COLORS = [
   'var(--mantine-color-red-5)',
 ];
 
-const services = Object.values(Service).map((s) => ({
-  key: s,
-  name: ServiceNamingConventions[s].service,
-}));
+function useServiceList() {
+  const { metadata } = useConnectorsMetadata();
+  return Object.values(Service).map((s) => ({
+    key: s,
+    name: getServiceName(metadata, s),
+  }));
+}
 
 const CommandBlock = ({ command }: { command: string }) => (
   <Group
@@ -178,6 +181,7 @@ export default function FilesPage() {
   const workbookId = params.id as WorkbookId;
   const { connectorAccounts, isLoading } = useConnectorAccounts(workbookId);
   const [connectionModalOpened, { open: openConnectionModal, close: closeConnectionModal }] = useDisclosure(false);
+  const services = useServiceList();
 
   const hasConnections = !isLoading && connectorAccounts && connectorAccounts.length > 0;
 

@@ -10,6 +10,7 @@ export * from './enums';
 export * from './db';
 
 export * from './connector-account-types';
+export * from './connector-metadata';
 export * from './connector-types';
 export * from './file-types';
 export * from './ids';

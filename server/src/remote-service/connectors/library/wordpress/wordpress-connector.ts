@@ -1,5 +1,5 @@
 import { TObject } from '@sinclair/typebox';
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
@@ -32,6 +32,14 @@ import {
 export class WordPressConnector extends Connector<typeof Service.WORDPRESS, WordPressDownloadProgress> {
   readonly service = Service.WORDPRESS;
   static readonly displayName = 'WordPress';
+  static readonly metadata = connectorMetadata({
+    displayName: 'WordPress',
+    table: 'post',
+    tables: 'posts',
+    record: 'post',
+    records: 'posts',
+    logo: 'wordpress.svg',
+  });
   override supportsFileUpload = true;
 
   private client: WordPressHttpClient;

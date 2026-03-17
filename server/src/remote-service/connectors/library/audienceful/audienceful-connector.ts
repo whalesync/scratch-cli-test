@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
@@ -19,6 +19,14 @@ import { AudiencefulField } from './audienceful-types';
 export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> {
   readonly service = Service.AUDIENCEFUL;
   static readonly displayName = 'Audienceful';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Audienceful',
+    table: 'list',
+    tables: 'lists',
+    record: 'person',
+    records: 'people',
+    logo: 'audienceful.svg',
+  });
 
   private readonly client: AudiencefulApiClient;
 

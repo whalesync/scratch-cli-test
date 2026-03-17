@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -34,6 +34,14 @@ const ENTITY_DISPLAY_NAMES: Record<MocoEntityType, string> = {
 export class MocoConnector extends Connector<typeof Service.MOCO> {
   readonly service = Service.MOCO;
   static readonly displayName = 'Moco CRM';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Moco CRM',
+    table: 'entity',
+    tables: 'entities',
+    base: 'account',
+    bases: 'accounts',
+    logo: 'moco.svg',
+  });
 
   private readonly client: MocoApiClient;
 

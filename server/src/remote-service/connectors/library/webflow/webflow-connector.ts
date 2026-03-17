@@ -1,5 +1,5 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -38,6 +38,14 @@ const WEBFLOW_RETRY_OPTS: WithRetryOpts = {
 export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
   readonly service = Service.WEBFLOW;
   static readonly displayName = 'Webflow';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Webflow',
+    table: 'collection',
+    tables: 'collections',
+    record: 'item',
+    records: 'items',
+    logo: 'webflow.svg',
+  });
   override supportsFileUpload = true;
 
   private readonly client: WebflowClient;

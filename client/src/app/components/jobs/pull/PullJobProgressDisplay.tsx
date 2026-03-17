@@ -6,7 +6,7 @@ import {
   isPullLinkedFolderFilesProgress,
 } from '@/app/components/jobs/pull/PullJobProgress';
 import { SyncStatus } from '@/app/components/jobs/SyncStatus/sync-status';
-import { getServiceName } from '@/service-naming-conventions';
+import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { JobEntity } from '@/types/server-entities/job';
 import { Alert, Stack } from '@mantine/core';
 import { Service } from '@spinner/shared-types';
@@ -19,6 +19,7 @@ type Props = {
 
 export const PullJobProgressDisplay: FC<Props> = (props) => {
   const { job } = props;
+  const { metadata } = useConnectorsMetadata();
 
   if (!job || !job.publicProgress) {
     return null;
@@ -42,7 +43,7 @@ export const PullJobProgressDisplay: FC<Props> = (props) => {
           {publicProgress.hasDirtyDiscoveredDeletes && (
             <Alert icon={<AlertCircle size={16} />} color="yellow" p="xs">
               Files with unpublished scratch changes were deleted from{' '}
-              {getServiceName(publicProgress.connector as Service)}
+              {getServiceName(metadata, publicProgress.connector as Service)}
             </Alert>
           )}
         </Stack>
@@ -71,7 +72,8 @@ export const PullJobProgressDisplay: FC<Props> = (props) => {
 
             {folder.hasDirtyDiscoveredDeletes && (
               <Alert icon={<AlertCircle size={16} />} color="yellow" p="xs">
-                Files with unpublished scratch changes were deleted from {getServiceName(folder.connector as Service)}
+                Files with unpublished scratch changes were deleted from{' '}
+                {getServiceName(metadata, folder.connector as Service)}
               </Alert>
             )}
           </Stack>
@@ -100,7 +102,8 @@ export const PullJobProgressDisplay: FC<Props> = (props) => {
 
           {table.hasDirtyDiscoveredDeletes && (
             <Alert icon={<AlertCircle size={16} />} color="yellow" p="xs">
-              Records with unpublished scratch changes were deleted from {getServiceName(table.connector as Service)}
+              Records with unpublished scratch changes were deleted from{' '}
+              {getServiceName(metadata, table.connector as Service)}
             </Alert>
           )}
         </Stack>

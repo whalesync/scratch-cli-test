@@ -1,4 +1,4 @@
-import { ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -22,6 +22,13 @@ import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES, PipedriveDownloadProgress, Pipedriv
 export class PipedriveConnector extends Connector<typeof Service.PIPEDRIVE, PipedriveDownloadProgress> {
   readonly service = Service.PIPEDRIVE;
   static readonly displayName = 'Pipedrive';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Pipedrive',
+    table: 'entity',
+    tables: 'entities',
+    logo: 'pipedrive.svg',
+    oauth: { label: 'OAuth' },
+  });
 
   private readonly client: PipedriveApiClient;
 
