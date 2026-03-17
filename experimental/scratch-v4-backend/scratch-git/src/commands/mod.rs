@@ -7,6 +7,10 @@ pub mod run_sync;
 pub mod serve;
 pub mod upsert_files;
 pub mod validate_sync;
+pub mod build_index;
+pub mod dump_index;
+pub mod plan_publish;
+pub mod delete_publish_plans;
 
 use std::path::{Path, PathBuf};
 use crate::{Error, Result};

@@ -42,6 +42,18 @@ enum Command {
 
     /// Validate sync config files against workspace schemas
     ValidateSync(commands::validate_sync::Args),
+
+    /// Build SQLite file index for each connection (used by publish planning)
+    BuildIndex(commands::build_index::Args),
+
+    /// Dump the contents of connection file indexes to the console
+    DumpIndex(commands::dump_index::Args),
+
+    /// Diff dirty vs master and write a publish plan to .scratch/publish-plans/
+    PlanPublish(commands::plan_publish::Args),
+
+    /// Delete publish plan folders (all plans if no --plan-id given)
+    DeletePublishPlans(commands::delete_publish_plans::Args),
 }
 
 #[tokio::main]
@@ -65,6 +77,10 @@ async fn main() {
         Command::RunSync(args) => commands::run_sync::run(args).await,
         Command::Push(args) => commands::push::run(args).await,
         Command::ValidateSync(args) => commands::validate_sync::run(args).await,
+        Command::BuildIndex(args) => commands::build_index::run(args).await,
+        Command::DumpIndex(args) => commands::dump_index::run(args).await,
+        Command::PlanPublish(args) => commands::plan_publish::run(args).await,
+        Command::DeletePublishPlans(args) => commands::delete_publish_plans::run(args).await,
     };
 
     if let Err(e) = result {

@@ -528,6 +528,156 @@ fn diff_trees(
 }
 
 // ---------------------------------------------------------------------------
+// Delete files from master
+// ---------------------------------------------------------------------------
+
+/// Result of a delete-files operation.
+#[derive(Debug, Serialize)]
+pub struct DeleteFilesResult {
+    pub commit_oid: String,
+    pub files_deleted: usize,
+}
+
+/// Delete `file_names` from `folder` on the `master` branch of the bare repo at `repo_path`.
+///
+/// Files that don't exist are silently ignored.
+/// Write-locked per repo path — same as upsert_files.
+pub fn delete_files(
+    repo_path: &Path,
+    folder: &str,
+    file_names: &[String],
+    message: &str,
+    lock: &RepoBranchLock,
+) -> Result<DeleteFilesResult> {
+    let _guard = lock.acquire(repo_path, "master");
+
+    let repo = gix::open(repo_path)?;
+
+    let master_ref = repo
+        .find_reference(MASTER_BRANCH)
+        .map_err(|e| Error::Git(format!("cannot find master: {e}")))?;
+    let master_commit_id = master_ref
+        .into_fully_peeled_id()
+        .map_err(|e| Error::Git(e.to_string()))?;
+    let master_commit = master_commit_id
+        .object()
+        .map_err(|e| Error::Git(e.to_string()))?
+        .into_commit();
+    let root_tree_id = master_commit
+        .tree_id()
+        .map_err(|e| Error::Git(e.to_string()))?;
+
+    let mut root_tree = read_tree(&repo, root_tree_id.detach())?;
+
+    let folder_parts: Vec<&str> = folder.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+
+    let mut files_deleted = 0;
+    for name in file_names {
+        let full_path_parts: Vec<&str> = folder_parts
+            .iter()
+            .copied()
+            .chain(std::iter::once(name.as_str()))
+            .collect();
+
+        if remove_from_tree(&repo, &mut root_tree, &full_path_parts)? {
+            files_deleted += 1;
+        }
+    }
+
+    if files_deleted == 0 {
+        // Nothing changed — return the current master commit as-is
+        return Ok(DeleteFilesResult {
+            commit_oid: master_commit_id.to_string(),
+            files_deleted: 0,
+        });
+    }
+
+    let new_root_tree_id = write_tree(&repo, &root_tree)?;
+
+    let sig = gix::actor::SignatureRef {
+        name: "Scratch".into(),
+        email: "scratch@scratch.io".into(),
+        time: gix::date::Time::now_local_or_utc(),
+    };
+    let new_commit = gix::objs::Commit {
+        tree: new_root_tree_id,
+        parents: vec![master_commit_id.detach()].into(),
+        author: sig.to_owned(),
+        committer: sig.to_owned(),
+        encoding: None,
+        message: message.into(),
+        extra_headers: vec![],
+    };
+    let new_commit_id = repo
+        .write_object(&gix::objs::Object::Commit(new_commit))
+        .map_err(|e| Error::Git(e.to_string()))?;
+
+    let edit = RefEdit {
+        change: Change::Update {
+            log: LogChange {
+                mode: gix::refs::transaction::RefLog::AndReference,
+                force_create_reflog: false,
+                message: message.into(),
+            },
+            expected: PreviousValue::MustExistAndMatch(gix::refs::Target::Object(
+                master_commit_id.detach(),
+            )),
+            new: gix::refs::Target::Object(new_commit_id.detach()),
+        },
+        name: MASTER_BRANCH.try_into().map_err(|e: gix::validate::reference::name::Error| Error::Git(e.to_string()))?,
+        deref: false,
+    };
+    repo.edit_references(vec![edit]).map_err(|e| Error::Git(e.to_string()))?;
+
+    tracing::info!(
+        "deleted {} files from {}/{} (commit {})",
+        files_deleted,
+        repo_path.display(),
+        folder,
+        new_commit_id
+    );
+
+    Ok(DeleteFilesResult {
+        commit_oid: new_commit_id.to_string(),
+        files_deleted,
+    })
+}
+
+/// Recursively remove `path_parts` from `tree`.
+/// Returns `true` if an entry was removed.
+fn remove_from_tree(
+    repo: &gix::Repository,
+    tree: &mut Tree,
+    path_parts: &[&str],
+) -> Result<bool> {
+    let name = path_parts[0];
+
+    if path_parts.len() == 1 {
+        let before = tree.entries.len();
+        tree.entries.retain(|e| e.filename.as_bytes() != name.as_bytes());
+        Ok(tree.entries.len() < before)
+    } else {
+        let subtree_entry_idx = tree
+            .entries
+            .iter()
+            .position(|e| e.filename.as_bytes() == name.as_bytes() && e.mode == tree::EntryKind::Tree.into());
+
+        if let Some(idx) = subtree_entry_idx {
+            let subtree_id = tree.entries[idx].oid;
+            let mut subtree = read_tree(repo, subtree_id)?;
+            let removed = remove_from_tree(repo, &mut subtree, &path_parts[1..])?;
+            if removed {
+                let new_subtree_id = write_tree(repo, &subtree)?;
+                tree.entries[idx].oid = new_subtree_id;
+            }
+            Ok(removed)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Read file from a branch
 // ---------------------------------------------------------------------------
 

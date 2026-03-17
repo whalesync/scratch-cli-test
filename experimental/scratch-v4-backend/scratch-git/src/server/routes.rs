@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::git::{self, DiffEntry, FileEntry, ReadFileEntry, RebaseDirtyResult, UpsertResult};
+use crate::git::{self, DeleteFilesResult, DiffEntry, FileEntry, ReadFileEntry, RebaseDirtyResult, UpsertResult};
 use crate::{Error, Result};
 
 use super::AppState;
@@ -174,6 +174,45 @@ pub async fn diff(
     .map_err(|e| Error::Other(e.to_string()))??;
 
     Ok(Json(DiffResponse { files }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/repos/delete-files
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFilesRequest {
+    pub repo_path: String,
+    /// Folder within the repo, e.g. "MyBase/Posts"
+    pub folder: String,
+    /// Commit message
+    pub message: String,
+    /// Filenames to delete, e.g. ["recAbc.json", "recDef.json"]
+    pub file_names: Vec<String>,
+}
+
+pub async fn delete_files(
+    State(state): State<AppState>,
+    Json(body): Json<DeleteFilesRequest>,
+) -> Result<Json<DeleteFilesResult>> {
+    let repo_path = PathBuf::from(&body.repo_path);
+
+    if !repo_path.starts_with(&state.repos_dir) {
+        return Err(Error::Other(format!(
+            "repoPath must be under repos_dir ({})",
+            state.repos_dir.display()
+        )));
+    }
+
+    let lock = state.lock.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        git::delete_files(&repo_path, &body.folder, &body.file_names, &body.message, &lock)
+    })
+    .await
+    .map_err(|e| Error::Other(e.to_string()))??;
+
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------

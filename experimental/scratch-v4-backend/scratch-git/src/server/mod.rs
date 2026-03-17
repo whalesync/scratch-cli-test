@@ -25,6 +25,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/repos/upsert-files", post(routes::upsert_files))
         .route("/api/repos/rebase-dirty", post(routes::rebase_dirty))
         .route("/api/repos/diff", post(routes::diff))
+        .route("/api/repos/delete-files", post(routes::delete_files))
         .route("/api/repos/read-files", post(routes::read_files))
         // Git HTTP backend — handles git clone / fetch / push
         // Path: /git/{repoPath...} where repoPath is relative to repos_dir

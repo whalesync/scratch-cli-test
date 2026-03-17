@@ -20,10 +20,15 @@ All `yarn` commands run from `server/`. `scratchmdv4` commands run from anywhere
 scratchmdv4 serve                  // start git server (keep running in a separate terminal)
 yarn test:reset                    // clean + setup + poll + clone-repo (or run steps individually)
 scratchmdv4 pull exp-wb-1          // clone workspace to local/cli-v4/<WorkbookName>/
+scratchmdv4 build-index            // build SQLite file index from master worktrees
+scratchmdv4 dump-index             // (optional) inspect index contents
 # ask agent to write a sync        // create a sync (see syncs.md for prompt guidance)
+scratchmdv4 validate-sync          // validate sync config against schemas
 scratchmdv4 run-sync               // apply sync: merge mapped fields into dest worktree
 scratchmdv4 push                   // commit dirty changes and push to remote bare repos
-# publish                          // coming soon
+scratchmdv4 plan-publish           // diff dirty vs master → write plan to {ConnName}/.scratch/publish-plans/
+scratchmdv4 delete-publish-plans   // (optional) clear all plans and re-plan
+# scratchmdv4 execute-publish      // coming soon
 ```
 
 Individual steps: `yarn test:clean` · `yarn test:setup` · `yarn test:poll` · `yarn test:clone`
