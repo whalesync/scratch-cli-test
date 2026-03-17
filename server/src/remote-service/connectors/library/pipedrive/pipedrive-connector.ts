@@ -26,7 +26,7 @@ export class PipedriveConnector extends Connector<typeof Service.PIPEDRIVE, Pipe
     displayName: 'Pipedrive',
     table: 'entity',
     tables: 'entities',
-    logo: 'pipedrive.svg',
+    logo: 'https://static.scratch.md/connector-icons/pipedrive.svg',
     oauth: { label: 'OAuth' },
   });
 

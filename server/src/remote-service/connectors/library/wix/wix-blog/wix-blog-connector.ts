@@ -26,7 +26,7 @@ export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
     tables: 'sites',
     record: 'post',
     records: 'posts',
-    logo: 'wix.svg',
+    logo: 'https://static.scratch.md/connector-icons/wix.svg',
     oauth: { label: 'OAuth' },
   });
 

@@ -49,7 +49,7 @@ const modelProviders: ModelProvider[] = [
 
 function getModelIconPath(modelName: string | null | undefined): string {
   if (!modelName) {
-    return '/model-icons/open-router.svg';
+    return 'https://static.scratch.md/model-icons/open-router.svg';
   }
 
   // Extract the prefix (part before the first "/")
@@ -58,10 +58,10 @@ function getModelIconPath(modelName: string | null | undefined): string {
   const provider = modelProviders.find((provider) => provider.patterns.includes(prefix));
 
   if (!provider) {
-    return '/model-icons/open-router.svg';
+    return 'https://static.scratch.md/model-icons/open-router.svg';
   }
 
-  return `/model-icons/${provider.icon}`;
+  return `https://static.scratch.md/model-icons/${provider.icon}`;
 }
 
 export function ModelProviderIcon(

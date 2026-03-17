@@ -471,7 +471,7 @@ export class MyConnector extends Connector<typeof Service.MY_SERVICE> {
     tables: 'collections',
     record: 'item',
     records: 'items',
-    logo: 'my-service.svg',
+    logo: 'https://static.scratch.md/connector-icons/my-service.svg',
     oauth: { label: 'OAuth' }, // omit if no OAuth support
   });
   // ...

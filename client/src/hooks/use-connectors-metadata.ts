@@ -28,9 +28,9 @@ export const getLogo = (
   metadata: Record<Service, ConnectorMetadata> | undefined,
   service: Service | null | undefined,
 ): string => {
-  if (!service) return '/connector-icons/csv.svg';
-  const logo = metadata?.[service]?.logo;
-  return logo ? `/connector-icons/${logo}` : '/connector-icons/csv.svg';
+  const fallback = 'https://static.scratch.md/connector-icons/csv.svg';
+  if (!service) return fallback;
+  return metadata?.[service]?.logo ?? fallback;
 };
 
 export const getOauthLabel = (metadata: Record<Service, ConnectorMetadata> | undefined, service: Service): string => {

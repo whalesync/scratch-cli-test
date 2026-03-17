@@ -40,7 +40,7 @@ export class MocoConnector extends Connector<typeof Service.MOCO> {
     tables: 'entities',
     base: 'account',
     bases: 'accounts',
-    logo: 'moco.svg',
+    logo: 'https://static.scratch.md/connector-icons/moco.svg',
   });
 
   private readonly client: MocoApiClient;

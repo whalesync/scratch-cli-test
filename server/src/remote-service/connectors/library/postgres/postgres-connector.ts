@@ -102,7 +102,7 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
     records: 'rows',
     base: 'database',
     bases: 'databases',
-    logo: 'postgres.svg',
+    logo: 'https://static.scratch.md/connector-icons/postgres.svg',
     visible: false,
   });
 

@@ -257,7 +257,7 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
     records: 'rows',
     base: 'project',
     bases: 'projects',
-    logo: 'supabase.svg',
+    logo: 'https://static.scratch.md/connector-icons/supabase.svg',
     oauth: { label: 'OAuth' },
   });
 

@@ -18,7 +18,7 @@ export class YouTubeConnector extends Connector<typeof Service.YOUTUBE> {
     tables: 'channels',
     record: 'video',
     records: 'videos',
-    logo: 'youtube.svg',
+    logo: 'https://static.scratch.md/connector-icons/youtube.svg',
     visible: false,
     oauth: { label: 'OAuth (100 api credits/day)', privateLabel: 'Private OAuth (10,000 api credits/day)' },
   });

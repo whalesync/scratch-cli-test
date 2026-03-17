@@ -44,7 +44,7 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     tables: 'collections',
     record: 'item',
     records: 'items',
-    logo: 'webflow.svg',
+    logo: 'https://static.scratch.md/connector-icons/webflow.svg',
   });
   override supportsFileUpload = true;
 

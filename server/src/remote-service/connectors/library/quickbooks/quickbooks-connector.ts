@@ -37,7 +37,7 @@ export class QuickBooksConnector extends Connector<typeof Service.QUICKBOOKS, Qu
     tables: 'entities',
     base: 'company',
     bases: 'companies',
-    logo: 'quickbooks.svg',
+    logo: 'https://static.scratch.md/connector-icons/quickbooks.svg',
     oauth: { label: 'OAuth' },
   });
 

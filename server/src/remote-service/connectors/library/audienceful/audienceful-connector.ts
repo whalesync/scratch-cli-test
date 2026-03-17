@@ -25,7 +25,7 @@ export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> 
     tables: 'lists',
     record: 'person',
     records: 'people',
-    logo: 'audienceful.svg',
+    logo: 'https://static.scratch.md/connector-icons/audienceful.svg',
   });
 
   private readonly client: AudiencefulApiClient;

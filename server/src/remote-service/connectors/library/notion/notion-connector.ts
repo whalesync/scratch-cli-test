@@ -71,7 +71,7 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
     tables: 'databases',
     record: 'page',
     records: 'pages',
-    logo: 'notion.svg',
+    logo: 'https://static.scratch.md/connector-icons/notion.svg',
     oauth: { label: 'OAuth' },
   });
   static readonly advancedSettings: ConnectorSettingDefinition[] = [

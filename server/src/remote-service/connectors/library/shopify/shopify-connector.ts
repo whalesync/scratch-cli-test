@@ -97,7 +97,7 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
     records: 'items',
     base: 'store',
     bases: 'stores',
-    logo: 'shopify.svg',
+    logo: 'https://static.scratch.md/connector-icons/shopify.svg',
     oauth: { label: 'OAuth' },
   });
 

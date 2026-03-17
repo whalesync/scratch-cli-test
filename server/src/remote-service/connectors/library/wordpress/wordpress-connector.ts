@@ -38,7 +38,7 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     tables: 'posts',
     record: 'post',
     records: 'posts',
-    logo: 'wordpress.svg',
+    logo: 'https://static.scratch.md/connector-icons/wordpress.svg',
   });
   override supportsFileUpload = true;
 

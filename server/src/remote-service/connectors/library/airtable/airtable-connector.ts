@@ -24,7 +24,7 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
     displayName: 'Airtable',
     base: 'base',
     bases: 'bases',
-    logo: 'airtable.svg',
+    logo: 'https://static.scratch.md/connector-icons/airtable.svg',
     oauth: { label: 'OAuth' },
   });
   static readonly advancedSettings: ConnectorSettingDefinition[] = [
