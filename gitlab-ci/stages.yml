@@ -1,4 +1,5 @@
 stages:
+  - test
   - build and test
   - push to prod
   - push images
