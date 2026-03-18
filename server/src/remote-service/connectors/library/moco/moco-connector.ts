@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -9,6 +9,7 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { MocoApiClient, MocoError } from './moco-api-client';
 import { buildMocoJsonTableSpec } from './moco-json-schema';

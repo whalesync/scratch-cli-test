@@ -15,7 +15,6 @@ import {
   connectorMetadata,
   ConnectorPullOptions,
   ConnectorSettingDefinition,
-  Service,
   TableDiscoveryMode,
 } from '@spinner/shared-types';
 import _ from 'lodash';
@@ -25,6 +24,7 @@ import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams 
 import { Connector } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { createNotionBlockDiff } from './conversion/notion-block-diff';
 import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor';

@@ -1,10 +1,11 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions, PostgresColumnType, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, PostgresColumnType } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { PostgresClient, PostgresClientError } from './postgres-client';
 import {

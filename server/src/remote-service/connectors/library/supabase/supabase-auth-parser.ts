@@ -1,6 +1,6 @@
-import { Service } from '@spinner/shared-types';
 import { AuthParser } from '../../connector';
 import { ConnectorAuthError } from '../../error';
+import { Service } from '../../service-constants';
 
 const PLACEHOLDER_PATTERN = /\[YOUR[_-]PASSWORD\]/i;
 

@@ -1,8 +1,9 @@
 import { IsEnum, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
-import { AuthType, Service } from '../../enums';
+import type { Service } from '../../enums';
+import { AuthType } from '../../enums';
 
 export class CreateConnectorAccountDto {
-  @IsEnum(Service)
+  @IsString()
   @IsNotEmpty()
   readonly service?: Service;
 

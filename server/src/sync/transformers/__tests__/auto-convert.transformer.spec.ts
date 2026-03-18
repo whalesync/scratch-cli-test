@@ -1,4 +1,5 @@
-import { AutoConvertOptions, Service } from '@spinner/shared-types';
+import { AutoConvertOptions } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { autoConvertTransformer } from '../implementations/auto-convert.transformer';
 import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';

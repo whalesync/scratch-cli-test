@@ -55,6 +55,7 @@ import { LoaderWithMessage } from '@/app/components/LoaderWithMessage';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { RelativeDate } from '@/app/components/RelativeDate';
 import { ToolIconButton } from '@/app/components/ToolIconButton';
+import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import {
   Alert,
   Anchor,
@@ -72,7 +73,6 @@ import {
   Stack,
   Tooltip,
 } from '@mantine/core';
-import { Service } from '@spinner/shared-types';
 import {
   AlertTriangle,
   AlignEndHorizontal,
@@ -514,27 +514,7 @@ export default function DevComponentGalleryPage() {
           >
             <CircularProgress fraction={0.75} />
           </GalleryItem>
-          <GalleryItem label="ConnectorIcon (40px, with border)">
-            <Group gap="sm">
-              {Object.values(Service).map((service) => (
-                <ConnectorIcon key={service} connector={service} withBorder color="red" />
-              ))}
-            </Group>
-          </GalleryItem>
-          <GalleryItem label="ConnectorIcon (40px, no border)">
-            <Group gap="sm">
-              {Object.values(Service).map((service) => (
-                <ConnectorIcon key={service} connector={service} color="red" />
-              ))}
-            </Group>
-          </GalleryItem>
-          <GalleryItem label="ConnectorIcon (20px)">
-            <Group gap="sm">
-              {Object.values(Service).map((service) => (
-                <ConnectorIcon key={service} connector={service} size={24} color="red" />
-              ))}
-            </Group>
-          </GalleryItem>
+          <ConnectorIconGalleryItems />
           <GalleryItem label="ModelProviderIcon (20px)">
             <Group gap="sm">
               {[
@@ -1078,5 +1058,35 @@ function ColorChip({
 function Figma() {
   return (
     <Image src="/figma.svg" alt="Figma" width={10} height={15} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+  );
+}
+
+function ConnectorIconGalleryItems() {
+  const { metadata } = useConnectorsMetadata();
+  const services = metadata ? Object.keys(metadata) : [];
+  return (
+    <>
+      <GalleryItem label="ConnectorIcon (40px, with border)">
+        <Group gap="sm">
+          {services.map((service) => (
+            <ConnectorIcon key={service} connector={service} withBorder color="red" />
+          ))}
+        </Group>
+      </GalleryItem>
+      <GalleryItem label="ConnectorIcon (40px, no border)">
+        <Group gap="sm">
+          {services.map((service) => (
+            <ConnectorIcon key={service} connector={service} color="red" />
+          ))}
+        </Group>
+      </GalleryItem>
+      <GalleryItem label="ConnectorIcon (20px)">
+        <Group gap="sm">
+          {services.map((service) => (
+            <ConnectorIcon key={service} connector={service} size={24} color="red" />
+          ))}
+        </Group>
+      </GalleryItem>
+    </>
   );
 }

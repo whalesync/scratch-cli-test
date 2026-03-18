@@ -6,10 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuthType, ConnectorAccount } from '@prisma/client';
+import type { Service } from '@spinner/shared-types';
 import {
   ConnectorAccountId,
   createConnectorAccountId,
-  Service,
   ShopifyConnectorExtras,
   TableDiscoveryMode,
   UpdateConnectorAccountDto,
@@ -21,6 +21,7 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { WSLogger } from 'src/logger';
 import { OAuthService } from 'src/oauth/oauth.service';
+import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';
@@ -92,7 +93,7 @@ export class ConnectorAccountService {
 
     // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
     let extras: Record<string, string> = { ...parsedExtras };
-    if (createDto.service === Service.SHOPIFY && parsedCredentials.shopDomain) {
+    if (createDto.service === ServiceConst.SHOPIFY && parsedCredentials.shopDomain) {
       const shopifyExtras: ShopifyConnectorExtras = { shopDomain: parsedCredentials.shopDomain };
       extras = { ...extras, ...shopifyExtras };
       delete parsedCredentials.shopDomain;

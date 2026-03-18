@@ -9,24 +9,9 @@
  * Service is a string type. New connectors register via the connector registry
  * and no longer require a DB migration to add a new enum value.
  *
- * The const object below provides backward-compatible constants (Service.AIRTABLE still works).
+ * The const object with service key constants lives in the server:
+ * server/src/remote-service/connectors/service-constants.ts
  */
-// eslint-disable-next-line @typescript-eslint/no-redeclare
-export const Service = {
-  NOTION: 'NOTION',
-  AIRTABLE: 'AIRTABLE',
-  POSTGRES: 'POSTGRES',
-  YOUTUBE: 'YOUTUBE',
-  WORDPRESS: 'WORDPRESS',
-  WEBFLOW: 'WEBFLOW',
-  WIX_BLOG: 'WIX_BLOG',
-  AUDIENCEFUL: 'AUDIENCEFUL',
-  MOCO: 'MOCO',
-  SHOPIFY: 'SHOPIFY',
-  SUPABASE: 'SUPABASE',
-  QUICKBOOKS: 'QUICKBOOKS',
-  PIPEDRIVE: 'PIPEDRIVE',
-} as const;
 export type Service = string;
 
 export enum AuthType {

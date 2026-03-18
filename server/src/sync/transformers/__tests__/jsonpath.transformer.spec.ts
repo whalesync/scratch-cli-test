@@ -1,4 +1,5 @@
-import { JSONPathOptions, Service } from '@spinner/shared-types';
+import { JSONPathOptions } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { jsonpathTransformer } from '../implementations/jsonpath.transformer';
 import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';

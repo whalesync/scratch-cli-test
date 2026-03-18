@@ -1,4 +1,4 @@
-import { Service } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { hashUrl, hashUrlPath } from '../../remote-service/connectors/asset-extraction-helpers';
 import { Connector } from '../../remote-service/connectors/connector';
 import { AssetExtractorService } from '../asset-extractor.service';

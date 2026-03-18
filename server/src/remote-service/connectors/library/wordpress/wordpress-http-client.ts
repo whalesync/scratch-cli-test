@@ -1,9 +1,9 @@
-import { Service } from '@spinner/shared-types';
 import axios, { AxiosInstance, AxiosResponse, RawAxiosRequestHeaders } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
 import { createApiClient } from '../../create-api-client';
 import { ConnectorAuthError } from '../../error';
+import { Service } from '../../service-constants';
 import { WORDPRESS_ORG_V2_PATH, WORDPRESS_UPLOAD_TIMEOUT_MS } from './wordpress-constants';
 import {
   WordPressBatchRequestItem,

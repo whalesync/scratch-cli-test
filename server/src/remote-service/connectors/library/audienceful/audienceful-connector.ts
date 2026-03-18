@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
@@ -8,6 +8,7 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AudiencefulApiClient, AudiencefulError } from './audienceful-api-client';
 import { buildAudiencefulJsonTableSpec } from './audienceful-json-schema';

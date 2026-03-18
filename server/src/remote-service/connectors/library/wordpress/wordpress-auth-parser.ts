@@ -1,6 +1,6 @@
-import { Service } from '@spinner/shared-types';
 import { AuthParser } from '../../connector';
 import { ConnectorInstantiationError } from '../../error';
+import { Service } from '../../service-constants';
 import { WordPressHttpClient } from './wordpress-http-client';
 
 export class WordPressAuthParser extends AuthParser {

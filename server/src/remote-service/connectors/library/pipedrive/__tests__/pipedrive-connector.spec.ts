@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Service } from '@spinner/shared-types';
+import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
 import { PipedriveConnector } from '../pipedrive-connector';
 

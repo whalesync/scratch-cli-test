@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, isQuickBooksConnectorExtras, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, isQuickBooksConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -9,6 +9,7 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { QuickBooksApiClient, QuickBooksError } from './quickbooks-api-client';
 import { buildQuickBooksJsonTableSpec } from './quickbooks-json-schema';

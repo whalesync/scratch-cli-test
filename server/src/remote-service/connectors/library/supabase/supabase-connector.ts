@@ -9,13 +9,14 @@
  * Data access uses a dedicated PostgreSQL role created during setup.
  */
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, PostgresColumnType, Service, type ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, PostgresColumnType, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
+import { Service } from '../../service-constants';
 import {
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,

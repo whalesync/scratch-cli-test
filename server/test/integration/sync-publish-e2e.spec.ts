@@ -10,7 +10,6 @@ import {
   createUserId,
   createWorkbookId,
   DataFolderId,
-  Service,
   SyncId,
   SyncMapping,
   TableMapping,
@@ -29,6 +28,7 @@ import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service
 import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
 import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec, ConnectorFile } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, getDefaultRepoPath, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';

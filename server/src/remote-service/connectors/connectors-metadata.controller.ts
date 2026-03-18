@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
-import { ConnectorMetadata, Service } from '@spinner/shared-types';
+import { ConnectorMetadata } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { ScratchConfigService } from '../../config/scratch-config.service';
 import { getAllConnectorMetadata } from './display-names';
 

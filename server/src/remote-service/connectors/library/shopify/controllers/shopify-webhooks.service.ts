@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Service, WorkbookId } from '@spinner/shared-types';
+import { WorkbookId } from '@spinner/shared-types';
 import * as crypto from 'crypto';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
+import { Service } from '../../../service-constants';
 
 @Injectable()
 export class ShopifyWebhooksService {

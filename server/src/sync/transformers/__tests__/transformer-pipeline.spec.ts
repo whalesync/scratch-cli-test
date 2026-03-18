@@ -1,11 +1,11 @@
 import {
   ColumnMapping,
   DataFolderId,
-  Service,
   TransformerConfig,
   TransformerType,
   TransformerTypes,
 } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { createNullLookupTools } from '../lookup-tools';
 import {
   applyTransformerPipeline,

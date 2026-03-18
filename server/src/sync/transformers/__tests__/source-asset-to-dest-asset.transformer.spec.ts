@@ -1,9 +1,5 @@
-import {
-  createScratchPendingPublishId,
-  DataFolderId,
-  Service,
-  SourceAssetToDestAssetOptions,
-} from '@spinner/shared-types';
+import { createScratchPendingPublishId, DataFolderId, SourceAssetToDestAssetOptions } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { sourceAssetToDestAssetTransformer } from '../implementations/source-asset-to-dest-asset.transformer';
 import { AssetMappingResult, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
 

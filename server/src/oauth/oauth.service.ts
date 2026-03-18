@@ -10,7 +10,6 @@ import {
   createConnectorAccountId,
   isShopifyConnectorExtras,
   QuickBooksConnectorExtras,
-  Service,
   ShopifyConnectorExtras,
   SupabaseProjectCredentials,
   ValidatedOAuthInitiateOptionsDto,
@@ -28,6 +27,7 @@ import {
   buildCreateUserSQL,
   SupabaseApiClient,
 } from 'src/remote-service/connectors/library/supabase';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';

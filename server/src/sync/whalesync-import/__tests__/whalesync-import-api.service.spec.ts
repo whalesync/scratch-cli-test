@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { BadGatewayException, BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import type { WhalesyncImportPreviewBody, WorkbookId } from '@spinner/shared-types';
-import { Service } from '@spinner/shared-types';
 import axios, { AxiosError } from 'axios';
 import type { ScratchConfigService } from 'src/config/scratch-config.service';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import type { Actor } from 'src/users/types';
 import type { DataFolderService } from 'src/workbook/data-folder.service';
 import { WhalesyncImportApiService } from '../whalesync-import-api.service';

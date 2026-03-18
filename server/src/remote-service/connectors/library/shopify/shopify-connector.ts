@@ -6,7 +6,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions, isShopifyConnectorExtras, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, isShopifyConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -18,6 +18,7 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { ShopifyApiClient, ShopifyError } from './shopify-api-client';

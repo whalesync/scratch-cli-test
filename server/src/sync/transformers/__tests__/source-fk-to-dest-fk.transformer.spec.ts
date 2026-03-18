@@ -1,4 +1,5 @@
-import { createScratchPendingPublishId, DataFolderId, Service, SourceFkToDestFkOptions } from '@spinner/shared-types';
+import { createScratchPendingPublishId, DataFolderId, SourceFkToDestFkOptions } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { sourceFkToDestFkTransformer } from '../implementations/source-fk-to-dest-fk.transformer';
 import { FkMappingResult, LookupTools, SyncRecord, TransformContext } from '../transformer.types';
 

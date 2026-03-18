@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, ConnectorSettingDefinition, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
@@ -11,6 +11,7 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';

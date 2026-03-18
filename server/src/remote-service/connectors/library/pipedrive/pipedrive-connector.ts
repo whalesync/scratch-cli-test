@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -9,6 +9,7 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { PipedriveApiClient, PipedriveError } from './pipedrive-api-client';
 import { buildPipedriveJsonTableSpec } from './pipedrive-json-schema';

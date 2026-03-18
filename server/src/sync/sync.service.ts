@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TSchema } from '@sinclair/typebox';
+import type { Service } from '@spinner/shared-types';
 import {
   AiContextResponse,
   ColumnMapping,
@@ -14,7 +15,6 @@ import {
   PreviewRecordResponse,
   SaveSyncBody,
   ScheduleAction,
-  Service,
   SyncId,
   SyncMapping,
   SyncMappingValidationError,
@@ -31,6 +31,7 @@ import zipObjectDeep from 'lodash/zipObjectDeep';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -619,7 +620,7 @@ export class SyncService {
 
     const tipSections: Array<{ service: Service; tip: string }> = [
       {
-        service: Service.NOTION,
+        service: ServiceConst.NOTION,
         tip: [
           '### Notion',
           '- Rich text fields contain Notion block objects. Use the `notion_to_html` transformer to convert them to HTML.',
@@ -627,7 +628,7 @@ export class SyncService {
         ].join('\n'),
       },
       {
-        service: Service.AIRTABLE,
+        service: ServiceConst.AIRTABLE,
         tip: [
           '### Airtable',
           "- Linked record fields are foreign keys. Use `source_fk_to_dest_fk` if you're syncing the related table too.",
@@ -635,15 +636,15 @@ export class SyncService {
         ].join('\n'),
       },
       {
-        service: Service.POSTGRES,
+        service: ServiceConst.POSTGRES,
         tip: ['### Postgres', '- Field paths correspond directly to column names.'].join('\n'),
       },
       {
-        service: Service.SUPABASE,
+        service: ServiceConst.SUPABASE,
         tip: ['### Supabase', '- Field paths correspond directly to column names.'].join('\n'),
       },
       {
-        service: Service.WEBFLOW,
+        service: ServiceConst.WEBFLOW,
         tip: ['### Webflow', "- CMS fields use Webflow's internal field slugs."].join('\n'),
       },
     ];

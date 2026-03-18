@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { Service } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { webflowOptionTransformer } from '../implementations/webflow-option.transformer';
 import { createNullLookupTools } from '../lookup-tools';

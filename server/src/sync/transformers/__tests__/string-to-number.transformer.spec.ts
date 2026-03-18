@@ -1,4 +1,5 @@
-import { Service, StringToNumberOptions } from '@spinner/shared-types';
+import { StringToNumberOptions } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { stringToNumberTransformer } from '../implementations/string-to-number.transformer';
 import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';

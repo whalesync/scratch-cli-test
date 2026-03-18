@@ -10,7 +10,7 @@ import type {
   WhalesyncSyncExport,
   WorkbookId,
 } from '@spinner/shared-types';
-import { Service } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 
 // ---------------------------------------------------------------------------
 // IDs

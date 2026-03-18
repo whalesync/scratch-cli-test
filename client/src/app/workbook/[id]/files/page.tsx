@@ -16,7 +16,7 @@ import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { ActionIcon, Badge, Box, Code, CopyButton, Group, Stack, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { Service, type WorkbookId } from '@spinner/shared-types';
+import type { WorkbookId } from '@spinner/shared-types';
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -50,7 +50,8 @@ const CHIP_COLORS = [
 
 function useServiceList() {
   const { metadata } = useConnectorsMetadata();
-  return Object.values(Service).map((s) => ({
+  if (!metadata) return [];
+  return Object.keys(metadata).map((s) => ({
     key: s,
     name: getServiceName(metadata, s),
   }));

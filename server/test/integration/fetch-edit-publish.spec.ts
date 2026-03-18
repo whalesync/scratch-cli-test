@@ -80,7 +80,6 @@ import {
   createDataFolderId,
   createWorkbookId,
   DataFolderId,
-  Service,
   WorkbookId,
 } from '@spinner/shared-types';
 import { Pool } from 'pg';
@@ -97,6 +96,7 @@ import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { SchemaHelperService } from 'src/publish-plan/schema-helper.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';

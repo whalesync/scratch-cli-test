@@ -5,9 +5,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
-import { Service } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';

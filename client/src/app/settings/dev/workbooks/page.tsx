@@ -5,6 +5,7 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
 import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
 import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
+import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
@@ -33,7 +34,6 @@ import {
   AdminWorkbookDto,
   GitGcResponse,
   GitObjectCountsResponse,
-  Service,
   WorkbookId,
 } from '@spinner/shared-types';
 import {
@@ -52,9 +52,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
 
-const ALL_SERVICES = Object.values(Service);
-
-function serviceLabel(s: Service): string {
+function serviceLabel(s: string): string {
   return s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
@@ -442,14 +440,16 @@ function DataFoldersModal({
 
 // ── Service multiselect ────────────────────────────────────────────────────────
 
-function ServiceMultiselect({ selected, onChange }: { selected: Service[]; onChange: (services: Service[]) => void }) {
-  const toggle = (s: Service) => {
+function ServiceMultiselect({ selected, onChange }: { selected: string[]; onChange: (services: string[]) => void }) {
+  const { metadata } = useConnectorsMetadata();
+  const allServices = metadata ? Object.keys(metadata) : [];
+  const toggle = (s: string) => {
     onChange(selected.includes(s) ? selected.filter((x) => x !== s) : [...selected, s]);
   };
 
   return (
     <Group gap={4} wrap="wrap">
-      {ALL_SERVICES.map((s) => {
+      {allServices.map((s) => {
         const active = selected.includes(s);
         return (
           <Tooltip key={s} label={serviceLabel(s)} position="top">
@@ -567,7 +567,7 @@ export default function WorkbooksDevPage() {
 
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
-  const [serviceFilter, setServiceFilter] = useState<Service[]>([]);
+  const [serviceFilter, setServiceFilter] = useState<string[]>([]);
   const [serviceMode, setServiceMode] = useState<'AND' | 'OR'>('OR');
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);

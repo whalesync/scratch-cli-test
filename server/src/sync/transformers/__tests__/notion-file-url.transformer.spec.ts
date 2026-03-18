@@ -1,4 +1,5 @@
-import { NotionFileUrlOptions, Service } from '@spinner/shared-types';
+import { NotionFileUrlOptions } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
 import { notionFileUrlTransformer } from '../implementations/notion-file-url.transformer';
 import { createNullLookupTools } from '../lookup-tools';
 import { SyncRecord, TransformContext } from '../transformer.types';

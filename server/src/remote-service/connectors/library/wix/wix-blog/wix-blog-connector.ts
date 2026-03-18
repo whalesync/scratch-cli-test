@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import type { DraftPost } from '@wix/auto_sdk_blog_draft-posts';
 import { draftPosts } from '@wix/blog';
 import { members } from '@wix/members';
@@ -10,6 +10,7 @@ import { defaultResolveFieldValue, extractFromAnnotatedSchema, hashUrl } from '.
 import { Connector } from '../../../connector';
 import { connectorRegistry } from '../../../connector-registry';
 import { ConnectorInstantiationError } from '../../../error';
+import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../../types';
 import { HtmlToWixConverter } from '../rich-content/html-to-ricos';
 import { createTurndownService } from '../rich-content/markdown-helpers';

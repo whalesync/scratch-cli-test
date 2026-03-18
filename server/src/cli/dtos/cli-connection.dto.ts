@@ -1,5 +1,5 @@
-import { Service } from '@spinner/shared-types';
-import { IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
+import type { Service } from '@spinner/shared-types';
+import { IsObject, IsOptional, IsString } from 'class-validator';
 
 /**
  * DTO for creating a connection via CLI.
@@ -8,7 +8,7 @@ import { IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
  * WordPress needs {endpoint, username, password}).
  */
 export class CreateCliConnectionDto {
-  @IsEnum(Service)
+  @IsString()
   service?: Service;
 
   @IsObject()

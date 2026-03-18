@@ -1,5 +1,5 @@
-import type { DataFolder, DataFolderId } from '@spinner/shared-types';
-import { Service } from '@spinner/shared-types';
+import type { DataFolder, DataFolderId, Service } from '@spinner/shared-types';
+import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { convertWhalesyncExport } from '../whalesync-import.service';
 import {
   buildSchemasMap,
@@ -73,12 +73,12 @@ function buildAirtableToWebflowScenario(opts?: { syncDirection?: 'left' | 'right
   });
 
   const leftFolder = makeDataFolder({
-    connectorService: Service.AIRTABLE,
+    connectorService: ServiceConst.AIRTABLE,
     tableId: ['appAAA', 'tblPROD'],
   });
 
   const rightFolder = makeDataFolder({
-    connectorService: Service.WEBFLOW,
+    connectorService: ServiceConst.WEBFLOW,
     tableId: ['site111', 'col111'],
   });
 
@@ -225,19 +225,19 @@ describe('convertWhalesyncExport', () => {
       });
 
       const folder1 = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblA'],
       });
       const folder2 = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblB'],
       });
       const folder3 = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'colA'],
       });
       const folder4 = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'colB'],
       });
       const folders: DataFolder[] = [folder1, folder2, folder3, folder4];
@@ -287,7 +287,7 @@ describe('convertWhalesyncExport', () => {
 
       // Only provide left folder — right is missing
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
 
@@ -322,7 +322,7 @@ describe('convertWhalesyncExport', () => {
       });
 
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
 
@@ -473,11 +473,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -561,11 +561,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -632,11 +632,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -687,7 +687,7 @@ describe('convertWhalesyncExport', () => {
       });
 
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
 
@@ -710,12 +710,12 @@ describe('convertWhalesyncExport', () => {
 
       const firstFolder = makeDataFolder({
         id: 'dfd_first00001' as DataFolderId,
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const secondFolder = makeDataFolder({
         id: 'dfd_second0001' as DataFolderId,
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const schemas = new Map([
@@ -735,7 +735,7 @@ describe('convertWhalesyncExport', () => {
       });
 
       const badFolder1 = makeDataFolder({ connectorService: null, tableId: ['appAAA', 'tblPROD'] });
-      const badFolder2 = makeDataFolder({ connectorService: Service.AIRTABLE, tableId: [] });
+      const badFolder2 = makeDataFolder({ connectorService: ServiceConst.AIRTABLE, tableId: [] });
 
       // Bad folders come first but should be skipped; real folders should be used
       const result = convertWhalesyncExport([badFolder1, badFolder2, leftFolder, rightFolder], wsExport, schemas);
@@ -751,7 +751,7 @@ describe('convertWhalesyncExport', () => {
 
       // Override leftFolder without schema in the map
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       // Only rightFolder has a schema — leftFolder has none
@@ -768,7 +768,7 @@ describe('convertWhalesyncExport', () => {
 
       // Override rightFolder without schema in the map
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       // Only leftFolder has a schema — rightFolder has none
@@ -828,11 +828,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -894,11 +894,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -962,11 +962,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -1039,11 +1039,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: Service.AIRTABLE,
+        connectorService: ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: Service.WEBFLOW,
+        connectorService: ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap(
@@ -1188,11 +1188,11 @@ describe('convertWhalesyncExport', () => {
       });
 
       const leftFolder = makeDataFolder({
-        connectorService: opts.leftService ?? Service.AIRTABLE,
+        connectorService: opts.leftService ?? ServiceConst.AIRTABLE,
         tableId: ['appAAA', 'tblPROD'],
       });
       const rightFolder = makeDataFolder({
-        connectorService: opts.rightService ?? Service.WEBFLOW,
+        connectorService: opts.rightService ?? ServiceConst.WEBFLOW,
         tableId: ['site111', 'col111'],
       });
       const schemas = buildSchemasMap([leftFolder, opts.leftSchema], [rightFolder, opts.rightSchema]);
