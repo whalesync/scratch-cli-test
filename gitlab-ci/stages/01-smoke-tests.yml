@@ -76,6 +76,7 @@ notify slack on smoke test failure:
   dependencies: []
   needs:
     - job: smoke tests
+      optional: true
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
@@ -84,5 +85,5 @@ notify slack on smoke test failure:
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled Tests"'
-  when: on_failure
+      when: on_failure
   allow_failure: true
