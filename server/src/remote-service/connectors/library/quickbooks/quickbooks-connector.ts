@@ -44,6 +44,17 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
     bases: 'companies',
     logo: 'https://static.scratch.md/connector-icons/quickbooks.svg',
     oauth: { label: 'OAuth' },
+    credentialFields: {
+      oauth: [
+        {
+          key: 'quickbooksSandbox',
+          type: 'boolean',
+          label: 'Sandbox mode',
+          description: 'Connect to the QuickBooks sandbox environment for testing',
+          required: false,
+        },
+      ],
+    },
   });
 
   private readonly client: QuickBooksApiClient;

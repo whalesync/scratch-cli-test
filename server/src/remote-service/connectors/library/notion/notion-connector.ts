@@ -74,6 +74,11 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     records: 'pages',
     logo: 'https://static.scratch.md/connector-icons/notion.svg',
     oauth: { label: 'OAuth' },
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+      ],
+    },
   });
   static readonly advancedSettings: ConnectorSettingDefinition[] = [
     {

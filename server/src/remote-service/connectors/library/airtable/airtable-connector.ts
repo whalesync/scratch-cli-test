@@ -31,6 +31,11 @@ export class AirtableConnector extends Connector {
     bases: 'bases',
     logo: 'https://static.scratch.md/connector-icons/airtable.svg',
     oauth: { label: 'OAuth' },
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+      ],
+    },
   });
   static readonly advancedSettings: ConnectorSettingDefinition[] = [
     {

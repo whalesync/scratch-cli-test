@@ -31,6 +31,11 @@ export class AudiencefulConnector extends Connector {
     record: 'person',
     records: 'people',
     logo: 'https://static.scratch.md/connector-icons/audienceful.svg',
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+      ],
+    },
   });
 
   private readonly client: AudiencefulApiClient;

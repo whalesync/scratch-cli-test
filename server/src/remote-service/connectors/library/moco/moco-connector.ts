@@ -46,6 +46,26 @@ export class MocoConnector extends Connector {
     base: 'account',
     bases: 'accounts',
     logo: 'https://static.scratch.md/connector-icons/moco.svg',
+    credentialFields: {
+      user_provided_params: [
+        {
+          key: 'domain',
+          type: 'string',
+          label: 'Moco Domain',
+          placeholder: 'yourcompany',
+          description: "Your Moco subdomain (e.g., 'yourcompany' from yourcompany.mocoapp.com)",
+          required: true,
+        },
+        {
+          key: 'apiKey',
+          type: 'password',
+          label: 'API Key',
+          placeholder: 'Enter your Moco API key',
+          description: 'Generate an API key in your Moco account under Integrations',
+          required: true,
+        },
+      ],
+    },
   });
 
   private readonly client: MocoApiClient;

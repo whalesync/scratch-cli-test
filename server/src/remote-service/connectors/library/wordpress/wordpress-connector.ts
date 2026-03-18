@@ -45,6 +45,31 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     record: 'post',
     records: 'posts',
     logo: 'https://static.scratch.md/connector-icons/wordpress.svg',
+    credentialFields: {
+      user_provided_params: [
+        {
+          key: 'username',
+          type: 'string',
+          label: 'Username',
+          placeholder: 'Enter your WordPress username',
+          required: true,
+        },
+        {
+          key: 'password',
+          type: 'password',
+          label: 'Application password',
+          placeholder: 'Enter your application password here',
+          required: true,
+        },
+        {
+          key: 'endpoint',
+          type: 'string',
+          label: 'WordPress URL',
+          placeholder: 'Enter the address of your WordPress site here',
+          required: true,
+        },
+      ],
+    },
   });
   override supportsFileUpload = true;
 

@@ -104,6 +104,36 @@ export class ShopifyConnector extends Connector {
     bases: 'stores',
     logo: 'https://static.scratch.md/connector-icons/shopify.svg',
     oauth: { label: 'OAuth' },
+    credentialFields: {
+      user_provided_params: [
+        {
+          key: 'shopDomain',
+          type: 'string',
+          label: 'Shop Domain',
+          placeholder: 'your-store.myshopify.com',
+          description: 'Your Shopify store domain (e.g., your-store.myshopify.com)',
+          required: true,
+        },
+        {
+          key: 'apiKey',
+          type: 'password',
+          label: 'Admin API Access Token',
+          placeholder: 'shpat_...',
+          description: 'Create a custom app in Settings > Apps > Develop apps to get an access token',
+          required: true,
+        },
+      ],
+      oauth: [
+        {
+          key: 'shopDomain',
+          type: 'string',
+          label: 'Shop Domain',
+          placeholder: 'your-store.myshopify.com',
+          description: 'Enter your Shopify store domain',
+          required: false,
+        },
+      ],
+    },
   });
 
   private readonly client: ShopifyApiClient;

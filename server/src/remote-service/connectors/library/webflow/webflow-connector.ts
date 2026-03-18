@@ -47,6 +47,11 @@ export class WebflowConnector extends Connector {
     record: 'item',
     records: 'items',
     logo: 'https://static.scratch.md/connector-icons/webflow.svg',
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+      ],
+    },
   });
   override supportsFileUpload = true;
 

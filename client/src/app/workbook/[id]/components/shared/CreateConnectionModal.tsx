@@ -24,7 +24,7 @@ import {
   TextInput,
   UnstyledButton,
 } from '@mantine/core';
-import { Service } from '@spinner/shared-types';
+import { ConnectorSettingDefinition, OAuthInitiateOptionsDto } from '@spinner/shared-types';
 import { Check } from 'lucide-react';
 import { useState } from 'react';
 
@@ -41,18 +41,11 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const { workbookId, returnUrl, onConnectionCreated, ...modalProps } = props;
   const [error, setError] = useState<string | null>(null);
   const [newDisplayName, setNewDisplayName] = useState<string | null>(null);
-  const [newApiKey, setNewApiKey] = useState('');
-  const [endpoint, setEndpoint] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [domain, setDomain] = useState('');
-  const [connectionString, setConnectionString] = useState('');
-  const [newService, setNewService] = useState<Service | null>(null);
+  const [newService, setNewService] = useState<string | null>(null);
   const [newModifier, setNewModifier] = useState<string | null>(null);
   const [authMethod, setAuthMethod] = useState<AuthMethod>('oauth');
 
-  const [shopDomain, setShopDomain] = useState('');
-  const [quickbooksSandbox, setQuickbooksSandbox] = useState(false);
+  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [customClientId, setCustomClientId] = useState('');
@@ -63,27 +56,28 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const { createConnectorAccount } = useConnectorAccounts(workbookId);
   const { getDefaultAuthMethod, getSupportedAuthMethods, availableServices } = useConnectors();
 
-  const handleSelectNewService = (service: Service) => {
+  const currentFields: ConnectorSettingDefinition[] =
+    (newService ? metadata?.[newService]?.credentialFields?.[authMethod] : undefined) ?? [];
+
+  const setFieldValue = (key: string, value: string | boolean) => {
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSelectNewService = (service: string) => {
     setNewService(service);
     setNewDisplayName(getServiceName(metadata, service));
     setAuthMethod(getDefaultAuthMethod(service));
     setCustomClientId('');
     setCustomClientSecret('');
+    setFieldValues({});
   };
 
   const handleClearForm = () => {
-    setNewApiKey('');
-    setUsername('');
-    setPassword('');
-    setEndpoint('');
-    setDomain('');
-    setConnectionString('');
-    setShopDomain('');
-    setQuickbooksSandbox(false);
+    setFieldValues({});
     setNewService(null);
     setNewModifier(null);
     setNewDisplayName(null);
-    setAuthMethod('oauth'); // Reset to default
+    setAuthMethod('oauth');
     setError(null);
   };
 
@@ -99,7 +93,8 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
       const connectionName = newDisplayName ?? undefined;
       const returnPage = returnUrl ?? window.location.pathname;
       console.debug('connectionName', connectionName);
-      await initiateOAuth(newService, {
+
+      const oauthOptions: OAuthInitiateOptionsDto = {
         // (http|https)://<host, e.g. test.scratch.md>
         redirectPrefix: `${window.location.protocol}//${window.location.host}`,
         workbookId: workbookId,
@@ -108,9 +103,15 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
         customClientSecret: isCustom ? customClientSecret : undefined,
         connectionName: connectionName,
         returnPage: returnPage,
-        shopDomain: newService === Service.SHOPIFY ? shopDomain : undefined,
-        quickbooksSandbox: newService === Service.QUICKBOOKS ? quickbooksSandbox : undefined,
-      });
+      };
+      // Assign credential field values to the options (keys match OAuthInitiateOptionsDto properties)
+      for (const field of currentFields) {
+        const val = fieldValues[field.key];
+        if (val !== undefined && val !== '') {
+          (oauthOptions as Record<string, unknown>)[field.key] = val;
+        }
+      }
+      await initiateOAuth(newService, oauthOptions);
       // The initiateOAuth function will redirect the user, so we don't need to do anything else here
     } catch (error) {
       console.error('OAuth initiation failed:', error);
@@ -130,44 +131,17 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
       );
       return;
     }
-    if (
-      authMethod === 'user_provided_params' &&
-      newService !== Service.WORDPRESS &&
-      newService !== Service.MOCO &&
-      newService !== Service.POSTGRES &&
-      newService !== Service.SHOPIFY &&
-      newService !== Service.SUPABASE &&
-      !newApiKey
-    ) {
-      setError('API key is required for this service.');
-      return;
+
+    // Validate required credential fields
+    if (authMethod === 'user_provided_params') {
+      for (const field of currentFields) {
+        if (field.required && !fieldValues[field.key]) {
+          setError(`${field.label} is required.`);
+          return;
+        }
+      }
     }
-    if (
-      authMethod === 'user_provided_params' &&
-      (newService === Service.POSTGRES || newService === Service.SUPABASE) &&
-      !connectionString
-    ) {
-      setError('Connection string is required.');
-      return;
-    }
-    if (
-      authMethod === 'user_provided_params' &&
-      newService === Service.WORDPRESS &&
-      !username &&
-      !password &&
-      !endpoint
-    ) {
-      setError('Username, password, and endpoint are required for this service.');
-      return;
-    }
-    if (authMethod === 'user_provided_params' && newService === Service.MOCO && (!domain || !newApiKey)) {
-      setError('Domain and API key are required for Moco.');
-      return;
-    }
-    if (authMethod === 'user_provided_params' && newService === Service.SHOPIFY && (!shopDomain || !newApiKey)) {
-      setError('Shop domain and API access token are required for Shopify.');
-      return;
-    }
+
     try {
       setIsCreating(true);
       // For OAuth, the connection will be created in the callback page
@@ -176,18 +150,18 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
         return;
       }
 
+      // Build userProvidedParams from field values
+      const userProvidedParams: Record<string, string> = {};
+      for (const field of currentFields) {
+        const val = fieldValues[field.key];
+        if (typeof val === 'string' && val) {
+          userProvidedParams[field.key] = val;
+        }
+      }
+
       const createdAccount = await createConnectorAccount({
         service: newService,
-        userProvidedParams:
-          newService === Service.WORDPRESS
-            ? { username, password, endpoint }
-            : newService === Service.MOCO
-              ? { domain, apiKey: newApiKey }
-              : newService === Service.SHOPIFY
-                ? { shopDomain, apiKey: newApiKey }
-                : newService === Service.POSTGRES || newService === Service.SUPABASE
-                  ? { connectionString }
-                  : { apiKey: newApiKey },
+        userProvidedParams,
         modifier: newModifier || undefined,
         displayName: newDisplayName || undefined,
       });
@@ -210,6 +184,42 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const renderField = (field: ConnectorSettingDefinition) => {
+    if (field.type === 'boolean') {
+      return (
+        <Checkbox
+          key={field.key}
+          label={field.label}
+          description={field.description}
+          checked={!!fieldValues[field.key]}
+          onChange={(e) => setFieldValue(field.key, e.currentTarget.checked)}
+        />
+      );
+    }
+    if (field.type === 'password') {
+      return (
+        <PasswordInput
+          key={field.key}
+          label={field.label}
+          placeholder={field.placeholder}
+          description={field.description}
+          value={(fieldValues[field.key] as string) ?? ''}
+          onChange={(e) => setFieldValue(field.key, e.currentTarget.value)}
+        />
+      );
+    }
+    return (
+      <TextInput
+        key={field.key}
+        label={field.label}
+        placeholder={field.placeholder}
+        description={field.description}
+        value={(fieldValues[field.key] as string) ?? ''}
+        onChange={(e) => setFieldValue(field.key, e.currentTarget.value)}
+      />
+    );
   };
 
   return (
@@ -292,7 +302,10 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                 </span>
               }
               value={authMethod}
-              onChange={(value) => setAuthMethod(value as AuthMethod)}
+              onChange={(value) => {
+                setAuthMethod(value as AuthMethod);
+                setFieldValues({});
+              }}
             >
               <Group gap="xs" mt="xs">
                 {getSupportedAuthMethods(newService).includes('oauth') && (
@@ -301,20 +314,16 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                 {getSupportedAuthMethods(newService).includes('user_provided_params') && (
                   <Radio
                     value="user_provided_params"
-                    label={
-                      newService === Service.SUPABASE || newService === Service.POSTGRES
-                        ? 'Connection String'
-                        : 'API Key'
-                    }
+                    label={metadata?.[newService]?.userProvidedParamsLabel ?? 'API Key'}
                   />
                 )}
-                {newService === Service.YOUTUBE && showOAuthCustom && (
+                {showOAuthCustom && getSupportedAuthMethods(newService).includes('oauth_custom') && (
                   <Radio value="oauth_custom" label={getOauthPrivateLabel(metadata, newService)} />
                 )}
               </Group>
             </Radio.Group>
           )}
-          {/* Private OAuth credentials (YouTube only for now) */}
+          {/* Private OAuth credentials (oauth_custom) */}
           {authMethod === 'oauth_custom' && (
             <>
               <Alert color="blue" title="Private OAuth">
@@ -338,115 +347,8 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
               />
             </>
           )}
-          {authMethod === 'oauth' && newService === Service.SHOPIFY && (
-            <TextInput
-              label="Shop Domain"
-              placeholder="your-store.myshopify.com"
-              description="Enter your Shopify store domain"
-              value={shopDomain}
-              onChange={(e) => setShopDomain(e.currentTarget.value)}
-            />
-          )}
-          {authMethod === 'oauth' && newService === Service.QUICKBOOKS && (
-            <Checkbox
-              label="Sandbox mode"
-              description="Connect to the QuickBooks sandbox environment for testing"
-              checked={quickbooksSandbox}
-              onChange={(e) => setQuickbooksSandbox(e.currentTarget.checked)}
-            />
-          )}
-          {authMethod === 'user_provided_params' && newService === Service.SHOPIFY && (
-            <Stack>
-              <TextInput
-                label="Shop Domain"
-                placeholder="your-store.myshopify.com"
-                description="Your Shopify store domain (e.g., your-store.myshopify.com)"
-                value={shopDomain}
-                onChange={(e) => setShopDomain(e.currentTarget.value)}
-              />
-              <PasswordInput
-                label="Admin API Access Token"
-                placeholder="shpat_..."
-                description="Create a custom app in Settings > Apps > Develop apps to get an access token"
-                value={newApiKey}
-                onChange={(e) => setNewApiKey(e.currentTarget.value)}
-              />
-            </Stack>
-          )}
-          {authMethod === 'user_provided_params' && newService === Service.WORDPRESS && (
-            <Stack>
-              <Group grow>
-                <TextInput
-                  label="Username"
-                  placeholder="Enter your WordPress username"
-                  value={username}
-                  onChange={(e) => setUsername(e.currentTarget.value)}
-                />
-                <PasswordInput
-                  label="Application password"
-                  placeholder="Enter your application password here"
-                  value={password}
-                  onChange={(e) => setPassword(e.currentTarget.value)}
-                />
-              </Group>
-              <TextInput
-                label="WordPress URL"
-                placeholder="Enter the address of your WordPress site here"
-                value={endpoint}
-                onChange={(e) => setEndpoint(e.currentTarget.value)}
-              />
-            </Stack>
-          )}
-          {authMethod === 'user_provided_params' && newService === Service.MOCO && (
-            <Stack>
-              <TextInput
-                label="Moco Domain"
-                placeholder="yourcompany"
-                description="Your Moco subdomain (e.g., 'yourcompany' from yourcompany.mocoapp.com)"
-                value={domain}
-                onChange={(e) => setDomain(e.currentTarget.value)}
-              />
-              <PasswordInput
-                label="API Key"
-                placeholder="Enter your Moco API key"
-                description="Generate an API key in your Moco account under Integrations"
-                value={newApiKey}
-                onChange={(e) => setNewApiKey(e.currentTarget.value)}
-              />
-            </Stack>
-          )}
-          {authMethod === 'user_provided_params' && newService === Service.POSTGRES && (
-            <PasswordInput
-              label="Connection String"
-              placeholder="postgres://user:password@host:5432/database"
-              value={connectionString}
-              onChange={(e) => setConnectionString(e.currentTarget.value)}
-            />
-          )}
-          {authMethod === 'user_provided_params' && newService === Service.SUPABASE && (
-            <PasswordInput
-              label="Connection String"
-              placeholder="postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
-              description="Find this in your Supabase project under Settings > Database > Connection string"
-              value={connectionString}
-              onChange={(e) => setConnectionString(e.currentTarget.value)}
-            />
-          )}
-          {newService &&
-            newService !== Service.WORDPRESS &&
-            newService !== Service.MOCO &&
-            newService !== Service.SHOPIFY &&
-            newService !== Service.POSTGRES &&
-            newService !== Service.SUPABASE &&
-            getSupportedAuthMethods(newService).includes('user_provided_params') &&
-            authMethod === 'user_provided_params' && (
-              <PasswordInput
-                label="API Key"
-                placeholder="Enter API Key"
-                value={newApiKey}
-                onChange={(e) => setNewApiKey(e.currentTarget.value)}
-              />
-            )}
+          {/* Data-driven credential fields for the current auth method */}
+          {currentFields.length > 0 && <Stack>{currentFields.map((field) => renderField(field))}</Stack>}
         </Stack>
       </Stack>
     </ModalWrapper>

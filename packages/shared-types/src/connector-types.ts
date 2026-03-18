@@ -28,12 +28,13 @@ export interface ConnectorPullOptions {
 /** Describes a single advanced setting that a connector exposes. */
 export interface ConnectorSettingDefinition {
   key: string;
-  type: 'boolean' | 'number' | 'string';
+  type: 'boolean' | 'number' | 'string' | 'password';
   label: string;
   description?: string;
   placeholder?: string;
   min?: number;
   max?: number;
+  required?: boolean;
 }
 
 /** Types of columns we support. Add more if needed. */

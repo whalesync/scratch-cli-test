@@ -1,3 +1,5 @@
+import { ConnectorSettingDefinition } from './connector-types';
+
 export type AuthMethod = 'oauth' | 'user_provided_params' | 'oauth_custom';
 
 export interface ConnectorMetadata {
@@ -18,6 +20,8 @@ export interface ConnectorMetadata {
     label: string;
     privateLabel?: string;
   };
+  credentialFields?: Partial<Record<AuthMethod, ConnectorSettingDefinition[]>>;
+  userProvidedParamsLabel?: string;
 }
 
 const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {

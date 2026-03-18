@@ -3,8 +3,9 @@ import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
-import { Alert, Group, ModalProps, PasswordInput, Stack, TextInput } from '@mantine/core';
-import { AuthType, ConnectorAccount, Service } from '@spinner/shared-types';
+import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
+import { Alert, Checkbox, ModalProps, PasswordInput, Stack, TextInput } from '@mantine/core';
+import { AuthType, ConnectorAccount, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
 
 interface UpdateConnectionModalProps extends ModalProps {
@@ -14,19 +15,19 @@ interface UpdateConnectionModalProps extends ModalProps {
 export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
   const { connectorAccount, ...modalProps } = props;
   const { workbook } = useActiveWorkbook();
+  const { metadata } = useConnectorsMetadata();
   const [updatedName, setUpdatedName] = useState('');
-  const [updatedApiKey, setUpdatedApiKey] = useState('');
-  const [updatedUsername, setUpdatedUsername] = useState('');
-  const [updatedPassword, setUpdatedPassword] = useState('');
-  const [updatedEndpoint, setUpdatedEndpoint] = useState('');
   const [updatedModifier, setUpdatedModifier] = useState<string | null>(null);
-  const [updatedDomain, setUpdatedDomain] = useState('');
-  const [updatedShopDomain, setUpdatedShopDomain] = useState('');
-  const [updatedConnectionString, setUpdatedConnectionString] = useState('');
+  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { updateConnectorAccount } = useConnectorAccounts(workbook?.id);
+
+  const credentialFields: ConnectorSettingDefinition[] =
+    (connectorAccount?.service
+      ? metadata?.[connectorAccount.service]?.credentialFields?.user_provided_params
+      : undefined) ?? [];
 
   useEffect(() => {
     if (connectorAccount) {
@@ -35,6 +36,10 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
     }
   }, [connectorAccount]);
 
+  const setFieldValue = (key: string, value: string | boolean) => {
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  };
+
   const handleUpdate = async () => {
     if (!connectorAccount) return;
     setIsSaving(true);
@@ -42,29 +47,18 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
       // Build userProvidedParams only if user has entered values
       let userProvidedParams: Record<string, string> | undefined = undefined;
 
-      if (connectorAccount.service === Service.WORDPRESS) {
-        if (updatedUsername || updatedPassword || updatedEndpoint) {
-          userProvidedParams = {
-            username: updatedUsername,
-            password: updatedPassword,
-            endpoint: updatedEndpoint,
-          };
-        }
-      } else if (connectorAccount.service === Service.MOCO) {
-        if (updatedDomain || updatedApiKey) {
-          userProvidedParams = { domain: updatedDomain, apiKey: updatedApiKey };
-        }
-      } else if (connectorAccount.service === Service.SHOPIFY) {
-        if (updatedShopDomain || updatedApiKey) {
-          userProvidedParams = { shopDomain: updatedShopDomain, apiKey: updatedApiKey };
-        }
-      } else if (connectorAccount.service === Service.POSTGRES || connectorAccount.service === Service.SUPABASE) {
-        if (updatedConnectionString) {
-          userProvidedParams = { connectionString: updatedConnectionString };
-        }
-      } else {
-        if (updatedApiKey) {
-          userProvidedParams = { apiKey: updatedApiKey };
+      const hasAnyValue = credentialFields.some((f) => {
+        const val = fieldValues[f.key];
+        return typeof val === 'string' ? !!val : false;
+      });
+
+      if (hasAnyValue) {
+        userProvidedParams = {};
+        for (const field of credentialFields) {
+          const val = fieldValues[field.key];
+          if (typeof val === 'string') {
+            userProvidedParams[field.key] = val;
+          }
         }
       }
 
@@ -86,6 +80,42 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
 
   const isUserProvidedParams = connectorAccount?.authType === AuthType.USER_PROVIDED_PARAMS;
 
+  const renderField = (field: ConnectorSettingDefinition) => {
+    if (field.type === 'boolean') {
+      return (
+        <Checkbox
+          key={field.key}
+          label={field.label}
+          description={field.description}
+          checked={!!fieldValues[field.key]}
+          onChange={(e) => setFieldValue(field.key, e.currentTarget.checked)}
+        />
+      );
+    }
+    if (field.type === 'password') {
+      return (
+        <PasswordInput
+          key={field.key}
+          label={field.label}
+          placeholder={field.placeholder}
+          description={field.description}
+          value={(fieldValues[field.key] as string) ?? ''}
+          onChange={(e) => setFieldValue(field.key, e.currentTarget.value)}
+        />
+      );
+    }
+    return (
+      <TextInput
+        key={field.key}
+        label={field.label}
+        placeholder={field.placeholder}
+        description={field.description}
+        value={(fieldValues[field.key] as string) ?? ''}
+        onChange={(e) => setFieldValue(field.key, e.currentTarget.value)}
+      />
+    );
+  };
+
   return (
     <ModalWrapper
       customProps={{
@@ -104,13 +134,7 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
       centered
       {...modalProps}
       onExitTransitionEnd={() => {
-        setUpdatedApiKey('');
-        setUpdatedUsername('');
-        setUpdatedPassword('');
-        setUpdatedEndpoint('');
-        setUpdatedDomain('');
-        setUpdatedShopDomain('');
-        setUpdatedConnectionString('');
+        setFieldValues({});
         setError(null);
       }}
     >
@@ -118,101 +142,9 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
         {error && <Alert color="red">{error}</Alert>}
         <TextInput label="Display Name" value={updatedName} onChange={(e) => setUpdatedName(e.currentTarget.value)} />
 
-        {isUserProvidedParams && connectorAccount?.service === Service.WORDPRESS && (
-          <Stack>
-            <Group grow>
-              <TextInput
-                label="Username"
-                placeholder="Enter your WordPress username"
-                value={updatedUsername}
-                onChange={(e) => setUpdatedUsername(e.currentTarget.value)}
-              />
-              <PasswordInput
-                label="Application password"
-                placeholder="Enter your application password here"
-                value={updatedPassword}
-                onChange={(e) => setUpdatedPassword(e.currentTarget.value)}
-              />
-            </Group>
-            <TextInput
-              label="WordPress URL"
-              placeholder="Enter the address of your WordPress site here"
-              value={updatedEndpoint}
-              onChange={(e) => setUpdatedEndpoint(e.currentTarget.value)}
-            />
-          </Stack>
+        {isUserProvidedParams && credentialFields.length > 0 && (
+          <Stack>{credentialFields.map((field) => renderField(field))}</Stack>
         )}
-
-        {isUserProvidedParams && connectorAccount?.service === Service.SHOPIFY && (
-          <Stack>
-            <TextInput
-              label="Shop Domain"
-              placeholder="your-store.myshopify.com"
-              description="Your Shopify store domain (e.g., your-store.myshopify.com)"
-              value={updatedShopDomain}
-              onChange={(e) => setUpdatedShopDomain(e.currentTarget.value)}
-            />
-            <PasswordInput
-              label="Admin API Access Token"
-              placeholder="shpat_..."
-              description="Create a custom app in Settings > Apps > Develop apps to get an access token"
-              value={updatedApiKey}
-              onChange={(e) => setUpdatedApiKey(e.currentTarget.value)}
-            />
-          </Stack>
-        )}
-
-        {isUserProvidedParams && connectorAccount?.service === Service.MOCO && (
-          <Stack>
-            <TextInput
-              label="Moco Domain"
-              placeholder="yourcompany"
-              description="Your Moco subdomain (e.g., 'yourcompany' from yourcompany.mocoapp.com)"
-              value={updatedDomain}
-              onChange={(e) => setUpdatedDomain(e.currentTarget.value)}
-            />
-            <PasswordInput
-              label="API Key"
-              placeholder="Enter your Moco API key"
-              description="Generate an API key in your Moco account under Integrations"
-              value={updatedApiKey}
-              onChange={(e) => setUpdatedApiKey(e.currentTarget.value)}
-            />
-          </Stack>
-        )}
-
-        {isUserProvidedParams && connectorAccount?.service === Service.POSTGRES && (
-          <PasswordInput
-            label="Connection String"
-            placeholder="postgres://user:password@host:5432/database"
-            value={updatedConnectionString}
-            onChange={(e) => setUpdatedConnectionString(e.currentTarget.value)}
-          />
-        )}
-
-        {isUserProvidedParams && connectorAccount?.service === Service.SUPABASE && (
-          <PasswordInput
-            label="Connection String"
-            placeholder="postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
-            description="Find this in your Supabase project under Settings > Database > Connection string"
-            value={updatedConnectionString}
-            onChange={(e) => setUpdatedConnectionString(e.currentTarget.value)}
-          />
-        )}
-
-        {isUserProvidedParams &&
-          connectorAccount?.service !== Service.WORDPRESS &&
-          connectorAccount?.service !== Service.SHOPIFY &&
-          connectorAccount?.service !== Service.MOCO &&
-          connectorAccount?.service !== Service.POSTGRES &&
-          connectorAccount?.service !== Service.SUPABASE && (
-            <PasswordInput
-              label="API Key"
-              value={updatedApiKey}
-              placeholder="Enter your new API key, secret or token"
-              onChange={(e) => setUpdatedApiKey(e.currentTarget.value)}
-            />
-          )}
       </Stack>
     </ModalWrapper>
   );

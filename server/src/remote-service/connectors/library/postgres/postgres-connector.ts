@@ -106,6 +106,18 @@ export class PostgresConnector extends Connector {
     bases: 'databases',
     logo: 'https://static.scratch.md/connector-icons/postgres.svg',
     visible: false,
+    userProvidedParamsLabel: 'Connection String',
+    credentialFields: {
+      user_provided_params: [
+        {
+          key: 'connectionString',
+          type: 'password',
+          label: 'Connection String',
+          placeholder: 'postgres://user:password@host:5432/database',
+          required: true,
+        },
+      ],
+    },
   });
 
   private readonly client: PostgresClient;

@@ -33,6 +33,11 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     tables: 'entities',
     logo: 'https://static.scratch.md/connector-icons/pipedrive.svg',
     oauth: { label: 'OAuth' },
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+      ],
+    },
   });
 
   private readonly client: PipedriveApiClient;

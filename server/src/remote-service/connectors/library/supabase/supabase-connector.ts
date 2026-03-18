@@ -262,6 +262,19 @@ export class SupabaseConnector extends Connector {
     bases: 'projects',
     logo: 'https://static.scratch.md/connector-icons/supabase.svg',
     oauth: { label: 'OAuth' },
+    userProvidedParamsLabel: 'Connection String',
+    credentialFields: {
+      user_provided_params: [
+        {
+          key: 'connectionString',
+          type: 'password',
+          label: 'Connection String',
+          placeholder: 'postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres',
+          description: 'Find this in your Supabase project under Settings > Database > Connection string',
+          required: true,
+        },
+      ],
+    },
   });
 
   private readonly connectionString: string | undefined;
