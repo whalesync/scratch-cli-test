@@ -247,6 +247,7 @@ pub struct WorkbookListResponse {
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct JobProgress {
     pub id: String,
     pub status: String,
@@ -358,6 +359,7 @@ impl ApiClient {
 pub struct TablePreviewId(pub String);
 
 impl TablePreviewId {
+    #[allow(dead_code)]
     pub fn parts(&self) -> Vec<String> {
         self.0.split(',').map(|s| s.to_string()).collect()
     }
@@ -408,6 +410,7 @@ pub struct TableList {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct TableSearchResult {
     #[serde(default)]
     pub tables: Vec<TablePreview>,
@@ -485,6 +488,7 @@ impl ApiClient {
         .await
     }
 
+    #[allow(dead_code)]
     pub async fn search_connection_tables(
         &self,
         workbook_id: &str,
@@ -586,6 +590,7 @@ pub struct Sync {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 pub struct RunSyncResponse {
     #[serde(default)]
     pub success: bool,

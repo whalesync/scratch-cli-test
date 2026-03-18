@@ -79,6 +79,7 @@ impl Marker {
         }
     }
 
+    #[allow(dead_code)]
     pub fn server_url(&self) -> Option<&str> {
         match self {
             Marker::Workspace(m) => Some(&m.workbook.server_url),
@@ -199,6 +200,7 @@ pub fn sanitize_filename(name: &str) -> String {
 
 /// Build the connector directory name from service + display name.
 /// Format: "<Service> - <DisplayName>" with special chars replaced.
+#[allow(dead_code)]
 pub fn connector_dir_name(service: &str, display_name: &str) -> String {
     sanitize_filename(&format!("{} - {}", service, display_name))
 }

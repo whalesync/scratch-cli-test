@@ -275,6 +275,12 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     std::fs::create_dir_all(target_dir)?;
     markers::write_workspace(target_dir, &wb.id, &wb.name, server_url)?;
 
+    // Write .gitignore to exclude .scratch/ from any parent git repo
+    let gitignore = target_dir.join(".gitignore");
+    if !gitignore.exists() {
+        let _ = std::fs::write(&gitignore, ".scratch/\n");
+    }
+
     if wb.connector_accounts.is_empty() {
         return Ok(0);
     }
@@ -290,6 +296,10 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
         }
 
         git_clone(&ca.git_url, &conn_dir, token)?;
+
+        // Set up master worktree for index building
+        let _ = git_fetch_main(&conn_dir, token);
+        let _ = setup_master_worktree(&wb.id, &conn_dir, target_dir, &dir_name);
 
         markers::write_connector(
             &conn_dir,
@@ -383,4 +393,59 @@ fn find_existing_workspace(output_dir: &str, workbook_id: &str) -> Option<PathBu
 
 fn connector_dir_name(service: &str, display_name: &str) -> String {
     markers::sanitize_filename(&format!("{} - {}", service, display_name))
+}
+
+/// Fetch origin/main into refs/remotes/origin/main so the master worktree can be created.
+fn git_fetch_main(conn_dir: &Path, token: &str) -> anyhow::Result<()> {
+    let auth_header = format!("Authorization: API-Token {}", token);
+    let status = Command::new("git")
+        .current_dir(conn_dir)
+        .args([
+            "-c", &format!("http.extraHeader={}", auth_header),
+            "fetch", "--quiet", "origin",
+            "refs/heads/main:refs/remotes/origin/main",
+        ])
+        .status()?;
+    if !status.success() {
+        // Non-fatal: main branch may not exist on older workbooks
+        eprintln!("  Note: could not fetch main branch for {}", conn_dir.display());
+    }
+    Ok(())
+}
+
+/// Add a git worktree for the main branch at .scratch/connections/{dir_name}/master.
+fn setup_master_worktree(
+    _workbook_id: &str,
+    conn_dir: &Path,
+    workspace_dir: &Path,
+    dir_name: &str,
+) -> anyhow::Result<()> {
+    let master = crate::shared::index::master_dir(workspace_dir, dir_name);
+
+    // If already exists, skip
+    if master.exists() {
+        return Ok(());
+    }
+
+    // Ensure parent exists
+    if let Some(parent) = master.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Use "origin/main" (the remote tracking ref) since single-branch clone
+    // only fetches dirty; there's no local "main" branch until we create one.
+    let status = Command::new("git")
+        .current_dir(conn_dir)
+        .args([
+            "worktree", "add",
+            "--quiet",
+            master.to_str().unwrap_or("."),
+            "origin/main",
+        ])
+        .status()?;
+
+    if !status.success() {
+        eprintln!("  Note: could not create master worktree for {} (main branch may not exist)", dir_name);
+    }
+    Ok(())
 }

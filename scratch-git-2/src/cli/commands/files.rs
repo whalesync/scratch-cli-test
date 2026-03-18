@@ -72,6 +72,9 @@ fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
                 println!("Downloading {}...", dir.file_name().unwrap_or_default().to_string_lossy());
             }
             results.push(download_single_repo(dir, &token)?);
+            // Update master worktree to reflect latest main branch
+            let conn_dir_name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let _ = update_master_worktree(dir, &wb_dir, &conn_dir_name, &token);
         }
         let agg = aggregate_download(&results);
         print_download_result(&agg, json)
@@ -875,6 +878,38 @@ fn print_upload_result(result: &UploadResult, json: bool) -> anyhow::Result<()> 
     println!("{}", parts.join(", "));
     for msg in &result.messages {
         println!("Warning: {}", msg);
+    }
+    Ok(())
+}
+
+// ── Master worktree update ────────────────────────────────────────────────────
+
+/// Pull the master worktree to the latest origin/main.
+/// Silently skips if the worktree does not exist yet.
+fn update_master_worktree(conn_dir: &Path, workspace_dir: &Path, conn_dir_name: &str, token: &str) -> anyhow::Result<()> {
+    let master = crate::shared::index::master_dir(workspace_dir, conn_dir_name);
+    if !master.exists() {
+        return Ok(());
+    }
+
+    // Fetch main from the connector dir (has remote config + auth)
+    let auth_header = format!("Authorization: API-Token {}", token);
+    let _ = Command::new("git")
+        .current_dir(conn_dir)
+        .args([
+            "-c", &format!("http.extraHeader={}", auth_header),
+            "fetch", "--quiet", "origin", "refs/heads/main:refs/remotes/origin/main",
+        ])
+        .status();
+
+    // Reset the master worktree to origin/main
+    let status = Command::new("git")
+        .current_dir(&master)
+        .args(["reset", "--hard", "origin/main"])
+        .status()?;
+
+    if !status.success() {
+        eprintln!("  Warning: could not update master worktree for {}", conn_dir_name);
     }
     Ok(())
 }

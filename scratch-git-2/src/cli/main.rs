@@ -9,7 +9,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
-use commands::{auth, connections, files, linked, syncs, workspaces};
+use commands::{auth, connections, files, index, linked, syncs, workspaces};
 
 #[derive(Parser)]
 #[command(
@@ -71,6 +71,23 @@ enum Commands {
         #[command(subcommand)]
         command: syncs::SyncsCommands,
     },
+    /// Rebuild SQLite file index for the current workspace
+    #[command(name = "build-index")]
+    BuildIndex {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
+    /// Print file index contents (for debugging)
+    #[command(name = "dump-index")]
+    DumpIndex {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Dump only the named connection (case-sensitive)
+        #[arg(long)]
+        connection: Option<String>,
+    },
 }
 
 fn build_client(server_url: &str) -> anyhow::Result<ApiClient> {
@@ -108,6 +125,9 @@ async fn main() {
             Ok(client) => syncs::run(command, &client, workspace.as_deref(), cli.json).await,
             Err(e) => Err(e),
         },
+
+        Commands::BuildIndex { workspace } => index::build_command(&workspace),
+        Commands::DumpIndex { workspace, connection } => index::dump_command(&workspace, connection.as_deref()),
     };
 
     if let Err(e) = result {
