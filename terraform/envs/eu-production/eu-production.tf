@@ -44,6 +44,9 @@ module "eu_production" {
   enable_static_assets_lb = true
   static_assets_domain    = "static.scratch.md"
 
+  # Vanta compliance
+  vanta_contains_user_data = true
+
   # LangSmith
   langsmith_project = "scratchmd"
 }

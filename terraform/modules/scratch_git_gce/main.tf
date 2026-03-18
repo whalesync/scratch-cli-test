@@ -16,10 +16,9 @@ resource "google_compute_disk" "data" {
   size    = var.disk_size_gb
   project = var.gcp_project_id
 
-  labels = {
-    "service"   = "scratch-git"
-    "terraform" = "true"
-  }
+  labels = merge(var.labels, {
+    "service" = "scratch-git"
+  })
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
@@ -47,11 +46,10 @@ resource "google_compute_resource_policy" "snapshot_schedule" {
     }
 
     snapshot_properties {
-      labels = {
-        "service"   = "scratch-git"
-        "terraform" = "true"
-        "type"      = "automated-backup"
-      }
+      labels = merge(var.labels, {
+        "service" = "scratch-git"
+        "type"    = "automated-backup"
+      })
       storage_locations = [var.region]
     }
   }

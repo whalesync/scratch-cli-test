@@ -6,6 +6,8 @@ locals {
 
   artifact_registry_url = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${var.env_name}-registry"
 
+  vanta_user_data_labels = var.vanta_contains_user_data ? { "vanta-contains-user-data" = "true" } : {}
+
   # APIs
   enabled_apis = [
     "certificatemanager.googleapis.com",
@@ -317,6 +319,7 @@ module "scratch_git_gce" {
   boot_disk_size_gb       = var.scratch_git_boot_disk_size_gb
   disk_size_gb            = var.scratch_git_disk_size_gb
   snapshot_hours_in_cycle = var.scratch_git_snapshot_hours_in_cycle
+  labels                  = merge(local.default_labels, local.vanta_user_data_labels)
 
   depends_on = [module.vpc, module.iam-sa]
 }
@@ -335,7 +338,7 @@ module "redis" {
   region             = var.gcp_region
   depends_on         = [module.vpc]
 
-  labels = merge(local.default_labels, {
+  labels = merge(local.default_labels, local.vanta_user_data_labels, {
     # Used to help the connect_to_gcp_* scripts to find the right instance automatically
     "primary" = "true"
   })
@@ -364,7 +367,7 @@ module "db_primary" {
   backup_start_time = var.db_backup_start_time
   backup_location   = var.gcp_region
 
-  labels = merge(local.default_labels, {
+  labels = merge(local.default_labels, local.vanta_user_data_labels, {
     # Used to help the connect_to_gcp_* scripts to find the right instance automatically
     "primary" = "true"
   })
@@ -416,9 +419,7 @@ resource "google_storage_bucket" "assets" {
     method = ["GET"]
     origin = [var.client_domain]
   }
-  labels = merge(local.default_labels, {
-    "vanta-contains-user-data" = "true"
-  })
+  labels = merge(local.default_labels, local.vanta_user_data_labels)
 }
 
 resource "google_storage_bucket_iam_member" "assets_cloudrun" {

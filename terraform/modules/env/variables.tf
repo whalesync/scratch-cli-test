@@ -303,3 +303,9 @@ variable "langsmith_project" {
   type        = string
   description = "LangSmith project name for tracing (e.g., 'scratchmd', 'scratchmd-test')."
 }
+
+variable "vanta_contains_user_data" {
+  type        = bool
+  default     = false
+  description = "Whether to apply the 'vanta-contains-user-data' label to resources that store user data. Only needed in production where Vanta monitors."
+}

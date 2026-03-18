@@ -107,3 +107,9 @@ variable "snapshot_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "labels" {
+  description = "Labels to apply to data disk and snapshots"
+  type        = map(string)
+  default     = {}
+}
