@@ -86,7 +86,10 @@ describe('YourConnector', () => {
       // Set up multi-page response
       mockClient.getData
         .mockResolvedValueOnce({
-          items: [{ id: 'item1', name: 'Item 1' }, { id: 'item2', name: 'Item 2' }],
+          items: [
+            { id: 'item1', name: 'Item 1' },
+            { id: 'item2', name: 'Item 2' },
+          ],
           hasMore: true,
           nextCursor: 'cursor1',
         })
@@ -197,10 +200,7 @@ describe('YourConnector', () => {
 
   describe('createRecords', () => {
     it('should create records and return files with remote IDs', async () => {
-      const newFiles: ConnectorFile[] = [
-        { name: 'New Item 1' },
-        { name: 'New Item 2' },
-      ];
+      const newFiles: ConnectorFile[] = [{ name: 'New Item 1' }, { name: 'New Item 2' }];
 
       mockClient.postData.mockResolvedValue({
         items: [
@@ -218,29 +218,21 @@ describe('YourConnector', () => {
 
   describe('updateRecords', () => {
     it('should update records', async () => {
-      const files: ConnectorFile[] = [
-        { id: 'item1', name: 'Updated Name' },
-      ];
+      const files: ConnectorFile[] = [{ id: 'item1', name: 'Updated Name' }];
 
       mockClient.postData.mockResolvedValue({});
 
-      await expect(
-        connector.updateRecords(mockTableSpec, {}, files),
-      ).resolves.toBeUndefined();
+      await expect(connector.updateRecords(mockTableSpec, {}, files)).resolves.toBeUndefined();
     });
   });
 
   describe('deleteRecords', () => {
     it('should delete records', async () => {
-      const files: ConnectorFile[] = [
-        { id: 'item1', name: 'To Delete' },
-      ];
+      const files: ConnectorFile[] = [{ id: 'item1', name: 'To Delete' }];
 
       mockClient.deleteData.mockResolvedValue({});
 
-      await expect(
-        connector.deleteRecords(mockTableSpec, files),
-      ).resolves.toBeUndefined();
+      await expect(connector.deleteRecords(mockTableSpec, files)).resolves.toBeUndefined();
     });
   });
 });
@@ -306,10 +298,7 @@ it('should handle cursor-based pagination', async () => {
   await connector.pullRecordFiles(mockTableSpec, callback, {});
 
   expect(mockClient.databases.query).toHaveBeenCalledTimes(2);
-  expect(mockClient.databases.query).toHaveBeenNthCalledWith(
-    2,
-    expect.objectContaining({ start_cursor: 'cursor1' }),
-  );
+  expect(mockClient.databases.query).toHaveBeenNthCalledWith(2, expect.objectContaining({ start_cursor: 'cursor1' }));
 
   // Verify progress is passed for resume support
   expect(callback).toHaveBeenCalledWith(
@@ -349,18 +338,17 @@ The Airtable connector delegates pagination to its API client using async iterat
 ```typescript
 it('should handle async iterator pagination', async () => {
   // Mock the client to return an async iterable
-  const batches = [
-    [{ id: 'rec1', fields: { Name: 'Record 1' } }],
-    [{ id: 'rec2', fields: { Name: 'Record 2' } }],
-  ];
+  const batches = [[{ id: 'rec1', fields: { Name: 'Record 1' } }], [{ id: 'rec2', fields: { Name: 'Record 2' } }]];
 
-  mockClient.listRecords.mockReturnValue({
-    [Symbol.asyncIterator]: async function* () {
-      for (const batch of batches) {
-        yield batch;
-      }
-    },
-  }());
+  mockClient.listRecords.mockReturnValue(
+    {
+      [Symbol.asyncIterator]: async function* () {
+        for (const batch of batches) {
+          yield batch;
+        }
+      },
+    }(),
+  );
 
   const callback = jest.fn().mockResolvedValue(undefined);
   await connector.pullRecordFiles(mockTableSpec, callback, {});

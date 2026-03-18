@@ -1,1 +1,1 @@
-export { getAuthToken, type AuthConfig } from './clerk-auth';
+export { getAuthToken, type AuthConfig } from "./clerk-auth";

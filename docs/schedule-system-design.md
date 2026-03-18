@@ -80,10 +80,10 @@ enum ScheduleAction {
 Each schedule targets exactly one entity via `entityId`. The interpretation depends on `action`:
 
 | Action    | `entityId` references | Example                              |
-|-----------|----------------------|--------------------------------------|
-| `PULL`    | `DataFolder.id`      | Pull one linked folder on a schedule |
-| `PUBLISH` | `DataFolder.id`      | Publish one folder on a schedule     |
-| `SYNC`    | `Sync.id`            | Run one sync on a schedule           |
+| --------- | --------------------- | ------------------------------------ |
+| `PULL`    | `DataFolder.id`       | Pull one linked folder on a schedule |
+| `PUBLISH` | `DataFolder.id`       | Publish one folder on a schedule     |
+| `SYNC`    | `Sync.id`             | Run one sync on a schedule           |
 
 **Why no FK constraint?** A single column references either the `DataFolder` or `Sync` table depending on the action. Application-level validation on create/update ensures the referenced entity exists and belongs to the workbook. If the entity is deleted, the `Schedule` should be cleaned up via application logic (or a periodic sweep).
 
@@ -138,13 +138,20 @@ server/src/schedule/
 ```
 
 **Module registration:**
+
 - `ScheduleModule` is always imported in `AppModule` (CRUD endpoints needed for the API).
 - `ScheduleEvaluatorService` is conditionally registered only when `isCronService()` is true, following the existing pattern.
 
 ```typescript
 // schedule.module.ts
 @Module({
-  imports: [DbModule, ScratchConfigModule, WorkerEnqueuerModule, JobModule, WorkbookModule],
+  imports: [
+    DbModule,
+    ScratchConfigModule,
+    WorkerEnqueuerModule,
+    JobModule,
+    WorkbookModule,
+  ],
   controllers: [ScheduleController],
   providers: [
     ScheduleService,
@@ -177,6 +184,7 @@ Every minute:
 ### Computing `nextRunAt`
 
 Use a cron-parsing library (e.g. `cron-parser`) to compute the next occurrence from the cron expression. `nextRunAt` is updated:
+
 - On schedule creation
 - On schedule update (cron expression change)
 - After each successful trigger
@@ -351,12 +359,14 @@ class CreateScheduleDto {
   enabled?: boolean;
 }
 
-type ValidatedCreateScheduleDto = Required<Pick<CreateScheduleDto,
-  'name' | 'action' | 'entityId' | 'cronExpression'
->> & CreateScheduleDto;
+type ValidatedCreateScheduleDto = Required<
+  Pick<CreateScheduleDto, "name" | "action" | "entityId" | "cronExpression">
+> &
+  CreateScheduleDto;
 ```
 
 **Validation on create/update:**
+
 - Verify `entityId` references a valid DataFolder (for PULL/PUBLISH) or Sync (for SYNC)
 - Verify the referenced entity belongs to the workbook in the URL path
 - For PULL: verify the DataFolder has a `connectorAccountId` (is a linked folder)
@@ -364,6 +374,7 @@ type ValidatedCreateScheduleDto = Required<Pick<CreateScheduleDto,
 ### Cron Expression Validation
 
 Validate `cronExpression` on create/update:
+
 - Must be valid 5-field cron syntax
 - Minimum interval: **5 minutes** (prevent overly aggressive schedules)
 - Use `cron-parser` to validate and compute next run time
@@ -371,6 +382,7 @@ Validate `cronExpression` on create/update:
 ### Preset Intervals
 
 The client can offer preset friendly options that map to cron expressions:
+
 - Every 5 minutes: `*/5 * * * *`
 - Every 15 minutes: `*/15 * * * *`
 - Every hour: `0 * * * *`
@@ -382,14 +394,18 @@ The client can offer preset friendly options that map to cron expressions:
 ```typescript
 function actionToJobType(action: ScheduleAction): string {
   switch (action) {
-    case 'PULL':    return 'pull-linked-folder-files';
-    case 'PUBLISH': return 'publish-data-folder';
-    case 'SYNC':    return 'sync-data-folders';
+    case "PULL":
+      return "pull-linked-folder-files";
+    case "PUBLISH":
+      return "publish-data-folder";
+    case "SYNC":
+      return "sync-data-folders";
   }
 }
 ```
 
 When enqueuing, the evaluator calls the same `BullEnqueuerService` methods used by the manual API:
+
 - `PULL` → `enqueuePullLinkedFolderFilesJob(workbookId, actor, entityId as DataFolderId)`
 - `PUBLISH` → `enqueuePublishDataFolderJob(workbookId, actor, [entityId as DataFolderId])`
 - `SYNC` → `enqueueSyncDataFoldersJob(workbookId, entityId as SyncId, actor)`
@@ -399,11 +415,13 @@ The schedule's `organizationId` and `userId` are used to construct the `Actor` (
 ## Implementation Steps
 
 ### Phase 1: Core Infrastructure
+
 1. Add `Schedule` and `ScheduleAction` to Prisma schema, run migration
 2. Create `schedule` module with CRUD service + controller + DTOs
 3. Add `cron-parser` dependency (`yarn add cron-parser`)
 
 ### Phase 2: Evaluation Loop
+
 4. Create `ScheduleEvaluatorService` with `@Cron(EVERY_MINUTE)` trigger
 5. Implement workbook-level concurrency check
 6. Implement recency-based debounce
@@ -411,10 +429,12 @@ The schedule's `organizationId` and `userId` are used to construct the `Actor` (
 8. Wire evaluator into `ScheduleModule` (conditional on `isCronService()`)
 
 ### Phase 3: API & Client
+
 9. Add REST endpoints + auth guards
 10. Client UI for creating/managing schedules (out of scope for this doc)
 
 ### Phase 4: Enhancements (Future)
+
 11. Schedule execution history / audit log
 12. Webhook-triggered schedules (not cron, but event-driven)
 13. Per-schedule error tracking and auto-disable after N failures

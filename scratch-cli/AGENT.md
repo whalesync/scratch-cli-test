@@ -160,13 +160,13 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
 
 ### Global Flags
 
-| Flag | Description |
-|------|-------------|
-| `-v, --verbose` | Enable verbose output |
-| `--config <path>` | Config file path (default: `.scratchmd.config.yaml`) |
-| `--scratch-url <url>` | Override scratch server URL |
-| `--version` | Show version information |
-| `-h, --help` | Show help for any command |
+| Flag                  | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `-v, --verbose`       | Enable verbose output                                |
+| `--config <path>`     | Config file path (default: `.scratchmd.config.yaml`) |
+| `--scratch-url <url>` | Override scratch server URL                          |
+| `--version`           | Show version information                             |
+| `-h, --help`          | Show help for any command                            |
 
 ---
 
@@ -177,7 +177,13 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
 ```json
 {
   "workbooks": [
-    { "id": "...", "name": "...", "tableCount": 0, "createdAt": "...", "updatedAt": "..." }
+    {
+      "id": "...",
+      "name": "...",
+      "tableCount": 0,
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
   ],
   "total": 1
 }
@@ -186,13 +192,25 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
 ### workspaces create / workspaces show
 
 ```json
-{ "id": "...", "name": "...", "tableCount": 0, "createdAt": "...", "updatedAt": "...", "gitUrl": "..." }
+{
+  "id": "...",
+  "name": "...",
+  "tableCount": 0,
+  "createdAt": "...",
+  "updatedAt": "...",
+  "gitUrl": "..."
+}
 ```
 
 ### workspaces init
 
 ```json
-{ "workbookId": "...", "workbookName": "...", "directory": "./MyWorkspace", "fileCount": 12 }
+{
+  "workbookId": "...",
+  "workbookName": "...",
+  "directory": "./MyWorkspace",
+  "fileCount": 12
+}
 ```
 
 ### files download
@@ -245,13 +263,16 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
 
 ```json
 {
-  "id": "...", "name": "...",
+  "id": "...",
+  "name": "...",
   "connectorService": "webflow",
   "connectorDisplayName": "My Webflow",
   "lastSyncTime": "2024-01-15T10:30:00Z",
   "lock": null,
   "hasChanges": true,
-  "creates": 2, "updates": 1, "deletes": 0
+  "creates": 2,
+  "updates": 1,
+  "deletes": 0
 }
 ```
 
@@ -307,7 +328,12 @@ scratchmd syncs run <sync-id> --json --no-wait                       # Run and r
     "createdAt": "...",
     "updatedAt": "...",
     "syncTablePairs": [
-      { "id": "...", "syncId": "...", "sourceDataFolderId": "...", "destinationDataFolderId": "..." }
+      {
+        "id": "...",
+        "syncId": "...",
+        "sourceDataFolderId": "...",
+        "destinationDataFolderId": "..."
+      }
     ]
   }
 ]
@@ -342,6 +368,7 @@ With `--no-wait`, returns immediately:
 The CLI uses `.scratchmd` YAML marker files to auto-detect context:
 
 **Workspace root** (created by `workspaces init`):
+
 ```yaml
 version: "1"
 workbook:
@@ -352,6 +379,7 @@ workbook:
 ```
 
 **Data folder** (created inside each linked table subdirectory):
+
 ```yaml
 version: "1"
 dataFolder:
@@ -360,6 +388,7 @@ dataFolder:
 ```
 
 The CLI walks upward from the current directory to find these markers. This means:
+
 - From `MyWorkspace/` — workspace context is detected for `files`, `linked list`, etc.
 - From `MyWorkspace/BlogPosts/` — both workspace and data folder context are detected for `linked show`, `linked pull`, etc.
 
@@ -376,14 +405,14 @@ The CLI walks upward from the current directory to find these markers. This mean
 
 ## Troubleshooting
 
-| Error | Solution |
-|-------|----------|
-| `"not logged in"` | Run `scratchmd auth login` |
-| `"Token expired"` | Run `scratchmd auth login` to get a new token |
+| Error                                | Solution                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `"not logged in"`                    | Run `scratchmd auth login`                                                         |
+| `"Token expired"`                    | Run `scratchmd auth login` to get a new token                                      |
 | `"not inside a workspace directory"` | Run from a directory with `.scratchmd` marker, or pass the workspace ID explicitly |
-| `"upload failed after 5 attempts"` | Concurrent server changes caused all retries to fail; try again |
-| Browser doesn't open | Use `--no-browser` flag and visit the URL manually |
-| Command hangs | Likely hit an interactive prompt; use `--yes` or non-interactive flags |
+| `"upload failed after 5 attempts"`   | Concurrent server changes caused all retries to fail; try again                    |
+| Browser doesn't open                 | Use `--no-browser` flag and visit the URL manually                                 |
+| Command hangs                        | Likely hit an interactive prompt; use `--yes` or non-interactive flags             |
 
 ## Read-Only Files
 

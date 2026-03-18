@@ -5,7 +5,7 @@
  */
 
 // Core types
-export * from './types';
+export * from "./types";
 
 // Plugins
-export * from './plugins';
+export * from "./plugins";

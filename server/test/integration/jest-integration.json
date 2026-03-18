@@ -11,9 +11,7 @@
       }
     ]
   },
-  "transformIgnorePatterns": [
-    "node_modules/(?!(nanoid)/)"
-  ],
+  "transformIgnorePatterns": ["node_modules/(?!(nanoid)/)"],
   "moduleNameMapper": {
     "^src/(.*)$": "<rootDir>/../../src/$1"
   },

@@ -64,3 +64,10 @@ junit.xml
 
 # Local dev data
 local/
+
+# Client local artifacts
+client/.auth/
+client/.clerk/.tmp/
+client/playwright-report/
+client/test-results/
+client/next-env.d.ts

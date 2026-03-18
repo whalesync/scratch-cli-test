@@ -138,7 +138,6 @@ model PublishPipelineEntry {
 ### Mapping Phases to DB
 
 1. **Build Phase**:
-
    - Instead of writing a commit, the `PipelineBuildService` will `createMany` entries in `PublishPipelineEntry`.
    - **Edit Phase**: Populates `editOperation` and sets `hasEdit=true`.
    - **Create Phase**: Populates `createOperation` and sets `hasCreate=true`.
@@ -184,13 +183,11 @@ model FileIndex {
 #### How it's populated
 
 1. **During pull** (`/Users/ijd/repos/mackerel/src/lib/pull.ts`):
-
    - After writing each batch of records to main, calls `fileIndex.upsertBatch(entries)` where each entry is `{ folderPath, recordId, filename }`.
    - `upsertBatch()` uses raw SQL `INSERT ... ON CONFLICT DO UPDATE` in chunks of 500 for efficiency. Stamps `lastSeenAt = now()` on every upsert.
    - After the full pull completes, calls `fileIndex.findStaleEntries(folderPath, pullStartTime, limit)` to find records with `lastSeenAt < pullStartTime` or `lastSeenAt IS NULL`. These represent records that existed in the index but were not returned by the external service — i.e., they were deleted upstream. The stale entries are deleted from both git and the FileIndex.
 
 2. **Auto-rebuild** (also in pull.ts):
-
    - Before each pull, checks if FileIndex count matches actual JSON file count on disk.
    - If diverged, triggers `fileIndex.rebuild()` to reindex.
 
@@ -267,24 +264,20 @@ Deduplication is applied via a `Set` keyed on `folderPath|fileName|recordId`.
 #### How it's populated
 
 1. **During writes to main** (`/Users/ijd/repos/mackerel/src/lib/storage/files.ts`):
-
    - `writeFilesToMain()` calls `fileReference.updateRefsForFiles(gitBucket, "main", files, schemasByFolder)`. When schemas are provided (during pull), both `@/` and resolved ID refs are extracted.
    - `deleteFilesFromMain()` calls `fileReference.removeRefsForFiles()` to clean up refs where deleted files were the source.
 
 2. **During writes to dirty branch** (`/Users/ijd/repos/mackerel/src/lib/storage/files.ts`):
-
    - `writeFilesToDirty()` calls `fileReference.updateRefsForFiles(gitBucket, "dirty/{userId}", files)`. No schema is passed for user edits, so only `@/` refs are extracted.
    - `deleteFilesFromDirty()` calls `fileReference.removeRefsForFiles()`.
 
 3. **Update pattern** (`updateRefsForFiles()`):
-
    - Delete all existing refs for the given source files on the given branch.
    - Extract refs from each file's content.
    - Bulk insert new refs using raw SQL `INSERT ... ON CONFLICT DO NOTHING` in chunks of 500.
 
 4. **Backfill** (`backfillRefs(gitBucket, branch)`):
    Called after pull completes. Cross-references FileIndex to fill in missing data:
-
    - **Pass 1**: Refs that have `targetFileRecordId` but no `targetFileName` → look up filename in FileIndex.
    - **Pass 2**: Refs that have `targetFileName` but no `targetFileRecordId` → look up record ID in FileIndex.
      This ensures both columns are populated for optimal query performance (queries can match by either filename or record ID).
@@ -299,7 +292,6 @@ Deduplication is applied via a `Set` keyed on `folderPath|fileName|recordId`.
 #### How the publish pipeline uses it
 
 - **Build phase** (`/Users/ijd/repos/mackerel/src/lib/publish-pipeline/build.ts` lines 281-301):
-
   - For each deleted file, builds a `RefTarget` with `folderPath`, `fileName`, and `recordId`.
   - Calls `fileReference.findRefsToFiles(gitBucket, refTargets, ["main", dirtyBranch])`.
   - Returns all files that reference the files being deleted.

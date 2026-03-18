@@ -4,19 +4,19 @@
 
 Both values come from the app's **Client credentials** section in the Shopify app dashboard (under "Configuration" > "Client credentials"):
 
-| Variable | Description |
-|----------|-------------|
-| `SHOPIFY_CLIENT_ID` | OAuth client ID, used for the OAuth authorization flow |
+| Variable                | Description                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `SHOPIFY_CLIENT_ID`     | OAuth client ID, used for the OAuth authorization flow                                     |
 | `SHOPIFY_CLIENT_SECRET` | OAuth client secret, used for OAuth token exchange and HMAC webhook signature verification |
 
 Each environment (test/prod) has its own app with its own credentials.
 
 ## Dashboard Links
 
-| Environment | App Dashboard | App Store Listing |
-|-------------|--------------|-------------------|
-| Test | [Test App](https://dev.shopify.com/dashboard/205560593/apps/331011489793) | — |
-| Production | [Prod App](https://dev.shopify.com/dashboard/205560593/apps/331007164417) | [App Store](https://partners.shopify.com/4746333/apps/331007164417/overview) |
+| Environment | App Dashboard                                                             | App Store Listing                                                            |
+| ----------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Test        | [Test App](https://dev.shopify.com/dashboard/205560593/apps/331011489793) | —                                                                            |
+| Production  | [Prod App](https://dev.shopify.com/dashboard/205560593/apps/331007164417) | [App Store](https://partners.shopify.com/4746333/apps/331007164417/overview) |
 
 ## Configuring GDPR Compliance Webhooks
 

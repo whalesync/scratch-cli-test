@@ -8,6 +8,7 @@ This document describes the procedure for destroying the test and production env
 
 1. **Terraform 1.13.4** installed (see `terraform/.terraform-version`)
 2. **GCP authentication** configured for the target projects (`spv1-test` and `spv1-production`)
+
 ## Step 1: Disable CI/CD Pipelines
 
 Disable any GitLab CI/CD pipelines that deploy to these environments to prevent Terraform resources from being re-created after destruction.

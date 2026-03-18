@@ -23,6 +23,7 @@ Asset references in record files can change through three main pathways. Each pa
 When a sync runs between two connected DataFolders, asset references from the source records are written into destination records. This can introduce new asset URLs that the destination connector doesn't recognize. For example, syncing an Airtable table with attachment fields into Webflow means Airtable-hosted URLs (which expire) end up in Webflow image fields that expect permanent CDN URLs.
 
 Key considerations:
+
 - The sync transformer must detect asset fields and either rehost the source asset or flag it for upload to the destination connector.
 - Assets from the source may already exist in the destination's Asset table if they were previously synced — deduplication via `remoteAssetId` prevents re-uploading.
 - Expiring source URLs (Airtable, Notion) must be rehosted before the sync writes them, since they may expire before the next publish.
@@ -37,6 +38,7 @@ Users can modify record files directly through the Scratch CLI (`scratch-cli`). 
 - Update metadata like `alt` text or filenames without changing the asset itself.
 
 Key considerations:
+
 - The CLI has no built-in asset upload flow today — users would paste in raw URLs that may not be valid connector references.
 - A CLI command like `scratch asset upload <file>` could handle uploading to rehosting storage and returning an `@asset/` pseudo-reference for the user to place in the record.
 - Validation at publish time must catch invalid asset references (URLs the connector can't resolve) and surface clear errors.
@@ -51,30 +53,31 @@ The Scratch web UI can provide purpose-built tools for managing assets on record
 - **Metadata editing** — User edits `alt` text, filenames, or other metadata directly in the asset field UI without replacing the underlying file.
 
 Key considerations:
+
 - Eager upload (on attach) vs lazy upload (at publish) affects whether orphan assets accumulate when users abandon changes.
 - The UI should show asset thumbnails and status (pending upload, uploaded, expired URL) so users understand what will happen at publish time.
 - For asset-table connectors (WordPress media, Webflow `__assets__`), the UI could present the asset table as a dedicated library view rather than just inline field editing.
 
 ## Asset Mutation Types
 
-| # | Mutation                    | Example                                              | Requires Upload? |
-|---|-----------------------------|------------------------------------------------------|------------------|
-| 1 | Replace asset URL           | Swap an image for a different one                    | Yes              |
-| 2 | Add asset to array field    | Add attachment to Airtable `multipleAttachments`     | Yes              |
-| 3 | Remove asset from field     | Delete one image from a Webflow multi-image field    | No               |
-| 4 | Clear entire field          | Set an image field to `null`                         | No               |
-| 5 | Modify asset metadata only  | Change `alt` text on a Webflow image, rename file    | No               |
+| #   | Mutation                   | Example                                           | Requires Upload? |
+| --- | -------------------------- | ------------------------------------------------- | ---------------- |
+| 1   | Replace asset URL          | Swap an image for a different one                 | Yes              |
+| 2   | Add asset to array field   | Add attachment to Airtable `multipleAttachments`  | Yes              |
+| 3   | Remove asset from field    | Delete one image from a Webflow multi-image field | No               |
+| 4   | Clear entire field         | Set an image field to `null`                      | No               |
+| 5   | Modify asset metadata only | Change `alt` text on a Webflow image, rename file | No               |
 
 For **asset-table** connectors (WordPress media, Webflow `__assets__`), records themselves ARE assets, so record create/edit/delete maps directly to asset CRUD.
 
 ## FK Resolution Parallel
 
-| FK Resolution                                      | Asset Resolution                                          |
-|----------------------------------------------------|-----------------------------------------------------------|
-| Pseudo-ref `@/folder/file.json` → remote record ID | Local/new asset reference → remote asset ID + URL         |
-| Target record must exist before referencing record  | Asset must be uploaded before referencing record publishes |
-| `RefResolverService` resolves batch                 | New `AssetResolverService` resolves batch                 |
-| `FileIndex` maps filenames → remote IDs             | `Asset` table maps `remoteAssetId` → URLs                 |
+| FK Resolution                                      | Asset Resolution                                           |
+| -------------------------------------------------- | ---------------------------------------------------------- |
+| Pseudo-ref `@/folder/file.json` → remote record ID | Local/new asset reference → remote asset ID + URL          |
+| Target record must exist before referencing record | Asset must be uploaded before referencing record publishes |
+| `RefResolverService` resolves batch                | New `AssetResolverService` resolves batch                  |
+| `FileIndex` maps filenames → remote IDs            | `Asset` table maps `remoteAssetId` → URLs                  |
 
 ## Proposed Publishing Phase Order
 
@@ -200,6 +203,7 @@ Content block assets differ from property-level assets in several ways that affe
 **No schema path.** Property-level assets have a known JSON path (e.g., `properties.Hero Image`) annotated with `x-scratch-asset-field`. Content block assets are at arbitrary positions in a variable-depth block tree. The asset resolver cannot use schema paths to locate them — it must walk the full `page_content` tree.
 
 **Notion-hosted vs external URLs.** Each content block has a `type` field — either `file` (Notion-hosted, expiring URL) or `external` (permanent external URL). When a user replaces a block's image:
+
 - If the new asset is uploaded to Notion via the API, Notion returns a `file`-type block with a hosted URL.
 - If the user provides an external URL, it becomes an `external`-type block.
 - The asset resolver needs to know which type to produce based on how the asset was sourced.
@@ -235,15 +239,15 @@ A similar pattern applies to Wix Blog's `richContent.nodes` array. IMAGE nodes c
 
 ## Connector-Specific Asset Formats
 
-| Connector     | Field Types                        | URL Expiry | Upload Support |
-|---------------|------------------------------------|------------|----------------|
-| Airtable      | `multipleAttachments` (array)      | Yes (2-4h) | Yes            |
-| Webflow       | Image, File, MultiImage            | No         | Yes            |
-| Webflow       | `__assets__` table                 | No         | Yes            |
-| Notion        | files (array), cover, icon         | Yes        | Yes            |
-| WordPress     | media table                        | No         | Yes            |
-| Wix Blog      | heroImage, richContent blocks      | No         | TBD            |
-| Shopify       | Files, ProductMedia                | No         | No (read-only) |
+| Connector | Field Types                   | URL Expiry | Upload Support |
+| --------- | ----------------------------- | ---------- | -------------- |
+| Airtable  | `multipleAttachments` (array) | Yes (2-4h) | Yes            |
+| Webflow   | Image, File, MultiImage       | No         | Yes            |
+| Webflow   | `__assets__` table            | No         | Yes            |
+| Notion    | files (array), cover, icon    | Yes        | Yes            |
+| WordPress | media table                   | No         | Yes            |
+| Wix Blog  | heroImage, richContent blocks | No         | TBD            |
+| Shopify   | Files, ProductMedia           | No         | No (read-only) |
 
 ## Open Design Decisions
 

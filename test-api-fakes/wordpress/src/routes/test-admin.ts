@@ -1,13 +1,13 @@
-import { Router } from 'express';
-import { store, PostType, Taxonomy, EndpointSchema } from '../store';
+import { Router } from "express";
+import { store, PostType, Taxonomy, EndpointSchema } from "../store";
 
 const router = Router();
 
-router.get('/health', (_req, res) => {
+router.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-router.get('/dump', (_req, res) => {
+router.get("/dump", (_req, res) => {
   const tables: Record<string, unknown[]> = {};
   for (const [tableId, recordMap] of store.records) {
     tables[tableId] = Array.from(recordMap.values());
@@ -28,12 +28,12 @@ router.get('/dump', (_req, res) => {
   });
 });
 
-router.post('/reset', (_req, res) => {
+router.post("/reset", (_req, res) => {
   store.reset();
   res.status(200).json({ ok: true });
 });
 
-router.post('/setup', (req, res) => {
+router.post("/setup", (req, res) => {
   const { siteInfo, postTypes, taxonomies, schemas, records } = req.body;
 
   if (siteInfo) {
@@ -53,13 +53,19 @@ router.post('/setup', (req, res) => {
   }
 
   if (schemas) {
-    for (const entry of schemas as Array<{ tableId: string; schema: EndpointSchema }>) {
+    for (const entry of schemas as Array<{
+      tableId: string;
+      schema: EndpointSchema;
+    }>) {
       store.schemas.set(entry.tableId, entry.schema);
     }
   }
 
   if (records) {
-    for (const entry of records as Array<{ tableId: string; records: Record<string, unknown>[] }>) {
+    for (const entry of records as Array<{
+      tableId: string;
+      records: Record<string, unknown>[];
+    }>) {
       for (const recordFields of entry.records) {
         store.addRecord(entry.tableId, recordFields);
       }
@@ -69,13 +75,13 @@ router.post('/setup', (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-router.post('/simulate-rate-limit', (req, res) => {
+router.post("/simulate-rate-limit", (req, res) => {
   const { count, retryAfterSeconds } = req.body;
   store.queueRateLimit(count, retryAfterSeconds);
   res.status(200).json({ ok: true });
 });
 
-router.post('/simulate-error', (req, res) => {
+router.post("/simulate-error", (req, res) => {
   const { statusCode, body } = req.body;
   store.queueError(statusCode, body);
   res.status(200).json({ ok: true });

@@ -28,8 +28,8 @@ interface QueuedError {
 }
 
 function generateUid(): string {
-  const chars = 'abcdef0123456789';
-  let result = '';
+  const chars = "abcdef0123456789";
+  let result = "";
   for (let i = 0; i < 12; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
@@ -65,14 +65,16 @@ class Store {
     const { email, tags, notes, extra_data, ...customFields } = data;
 
     const normalizedTags: PersonTag[] = tags
-      ? tags.map((t) => (typeof t === 'string' ? { name: t } : (t as PersonTag)))
+      ? tags.map((t) =>
+          typeof t === "string" ? { name: t } : (t as PersonTag),
+        )
       : [];
 
     const person: Person = {
       uid,
       email,
       tags: normalizedTags,
-      notes: notes ?? '',
+      notes: notes ?? "",
       extra_data: extra_data ?? {},
       created: now,
       updated: now,
@@ -116,7 +118,9 @@ class Store {
     const { tags, notes, extra_data, ...customFields } = data;
 
     if (tags !== undefined) {
-      person.tags = tags.map((t) => (typeof t === 'string' ? { name: t } : (t as PersonTag)));
+      person.tags = tags.map((t) =>
+        typeof t === "string" ? { name: t } : (t as PersonTag),
+      );
     }
     if (notes !== undefined) {
       person.notes = notes;
@@ -127,7 +131,7 @@ class Store {
 
     // Apply custom fields
     for (const [key, value] of Object.entries(customFields)) {
-      if (key !== 'email') {
+      if (key !== "email") {
         person[key] = value;
       }
     }

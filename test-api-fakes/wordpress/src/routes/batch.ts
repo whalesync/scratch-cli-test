@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import { store } from '../store';
+import { Router } from "express";
+import { store } from "../store";
 
 const router = Router();
 
@@ -23,8 +23,8 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
   if (!wpMatch) {
     return {
       body: {
-        code: 'rest_no_route',
-        message: 'No route was found matching the URL and request method.',
+        code: "rest_no_route",
+        message: "No route was found matching the URL and request method.",
         data: { status: 404 },
       },
       status: 404,
@@ -36,13 +36,13 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
   const recordId = wpMatch[2];
 
   switch (method.toUpperCase()) {
-    case 'POST': {
+    case "POST": {
       if (recordId) {
         // POST to a specific record ID is not standard; treat as error
         return {
           body: {
-            code: 'rest_no_route',
-            message: 'No route was found matching the URL and request method.',
+            code: "rest_no_route",
+            message: "No route was found matching the URL and request method.",
             data: { status: 404 },
           },
           status: 404,
@@ -53,13 +53,13 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
       return { body: record, status: 201, headers: {} };
     }
 
-    case 'PUT':
-    case 'PATCH': {
+    case "PUT":
+    case "PATCH": {
       if (!recordId) {
         return {
           body: {
-            code: 'rest_no_route',
-            message: 'No route was found matching the URL and request method.',
+            code: "rest_no_route",
+            message: "No route was found matching the URL and request method.",
             data: { status: 404 },
           },
           status: 404,
@@ -70,8 +70,8 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
       if (!updated) {
         return {
           body: {
-            code: 'rest_post_invalid_id',
-            message: 'Invalid post ID.',
+            code: "rest_post_invalid_id",
+            message: "Invalid post ID.",
             data: { status: 404 },
           },
           status: 404,
@@ -81,12 +81,12 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
       return { body: updated, status: 200, headers: {} };
     }
 
-    case 'DELETE': {
+    case "DELETE": {
       if (!recordId) {
         return {
           body: {
-            code: 'rest_no_route',
-            message: 'No route was found matching the URL and request method.',
+            code: "rest_no_route",
+            message: "No route was found matching the URL and request method.",
             data: { status: 404 },
           },
           status: 404,
@@ -97,25 +97,29 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
       if (!deleted) {
         return {
           body: {
-            code: 'rest_post_invalid_id',
-            message: 'Invalid post ID.',
+            code: "rest_post_invalid_id",
+            message: "Invalid post ID.",
             data: { status: 404 },
           },
           status: 404,
           headers: {},
         };
       }
-      return { body: { deleted: true, previous: deleted }, status: 200, headers: {} };
+      return {
+        body: { deleted: true, previous: deleted },
+        status: 200,
+        headers: {},
+      };
     }
 
-    case 'GET': {
+    case "GET": {
       if (recordId) {
         const record = store.getRecord(tableId, recordId);
         if (!record) {
           return {
             body: {
-              code: 'rest_post_invalid_id',
-              message: 'Invalid post ID.',
+              code: "rest_post_invalid_id",
+              message: "Invalid post ID.",
               data: { status: 404 },
             },
             status: 404,
@@ -131,8 +135,8 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
     default:
       return {
         body: {
-          code: 'rest_no_route',
-          message: 'No route was found matching the URL and request method.',
+          code: "rest_no_route",
+          message: "No route was found matching the URL and request method.",
           data: { status: 404 },
         },
         status: 404,
@@ -142,13 +146,16 @@ function processBatchRequest(request: BatchRequest): BatchResponse {
 }
 
 // POST /batch/v1 — Batch operations
-router.post('/batch/v1', (req, res) => {
-  const { requests } = req.body as { validation?: string; requests: BatchRequest[] };
+router.post("/batch/v1", (req, res) => {
+  const { requests } = req.body as {
+    validation?: string;
+    requests: BatchRequest[];
+  };
 
   if (!requests || !Array.isArray(requests)) {
     res.status(400).json({
-      code: 'rest_invalid_json',
-      message: 'Invalid JSON body.',
+      code: "rest_invalid_json",
+      message: "Invalid JSON body.",
       data: { status: 400 },
     });
     return;
@@ -159,7 +166,7 @@ router.post('/batch/v1', (req, res) => {
   const hasFailed = responses.some((r) => r.status >= 400);
 
   res.status(207).json({
-    failed: hasFailed ? 'some' : 'none',
+    failed: hasFailed ? "some" : "none",
     responses,
   });
 });

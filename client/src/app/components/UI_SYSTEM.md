@@ -636,14 +636,14 @@ return (
 
 ### ConfirmDialog Props
 
-| Prop           | Type                      | Default     | Description                              |
-| -------------- | ------------------------- | ----------- | ---------------------------------------- |
-| `title`        | `string`                  | required    | Dialog title                             |
-| `message`      | `ReactNode`               | required    | Dialog body content                      |
-| `confirmLabel` | `string`                  | `'Confirm'` | Text for confirm button                  |
-| `cancelLabel`  | `string`                  | `'Cancel'`  | Text for cancel button                   |
+| Prop           | Type                      | Default     | Description                                |
+| -------------- | ------------------------- | ----------- | ------------------------------------------ |
+| `title`        | `string`                  | required    | Dialog title                               |
+| `message`      | `ReactNode`               | required    | Dialog body content                        |
+| `confirmLabel` | `string`                  | `'Confirm'` | Text for confirm button                    |
+| `cancelLabel`  | `string`                  | `'Cancel'`  | Text for cancel button                     |
 | `variant`      | `'primary'` \| `'danger'` | `'primary'` | Button style (green primary or red danger) |
-| `onConfirm`    | `() => Promise<void>`     | required    | Async action to perform on confirm       |
+| `onConfirm`    | `() => Promise<void>`     | required    | Async action to perform on confirm         |
 
 ---
 

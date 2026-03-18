@@ -7,3 +7,12 @@ node_modules/
 
 # Experimental
 experimental/
+
+# Local dev artifacts
+client/.auth/
+client/.clerk/.tmp/
+client/playwright-report/
+client/test-results/
+client/next-env.d.ts
+server/debug-openrouter.js
+server/openrouter-out.json

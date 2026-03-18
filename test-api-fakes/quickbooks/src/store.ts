@@ -11,7 +11,7 @@ interface QueuedError {
 class Store {
   /** Map<PascalCaseEntityType, Map<id, entity>> */
   entities: Map<string, Map<string, QuickBooksEntity>> = new Map();
-  companyInfo: Record<string, unknown> = { CompanyName: 'Test Company' };
+  companyInfo: Record<string, unknown> = { CompanyName: "Test Company" };
   errorQueue: QueuedError[] = [];
   rateLimitCount: number = 0;
   rateLimitRetryAfterSeconds: number = 30;
@@ -19,7 +19,7 @@ class Store {
 
   reset(): void {
     this.entities.clear();
-    this.companyInfo = { CompanyName: 'Test Company' };
+    this.companyInfo = { CompanyName: "Test Company" };
     this.errorQueue = [];
     this.rateLimitCount = 0;
     this.rateLimitRetryAfterSeconds = 30;

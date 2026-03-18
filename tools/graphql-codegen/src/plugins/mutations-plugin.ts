@@ -14,8 +14,8 @@ import {
   isInputObjectType,
   isObjectType,
   isListType,
-} from 'graphql';
-import { EntityConfig, MutationOutput } from '../types';
+} from "graphql";
+import { EntityConfig, MutationOutput } from "../types";
 
 /**
  * Generate mutations for all writable entities
@@ -44,9 +44,12 @@ export function generateMutations(
 /**
  * Generate a mutation file for an entity
  */
-export function generateMutationFile(output: MutationOutput, queryFieldsConstName: string): string {
+export function generateMutationFile(
+  output: MutationOutput,
+  queryFieldsConstName: string,
+): string {
   const constantName = toScreamingSnakeCase(output.entityType);
-  const schemaFileName = output.entityType.replace(/_/g, '-');
+  const schemaFileName = output.entityType.replace(/_/g, "-");
 
   const mutationConsts: string[] = [];
 
@@ -55,9 +58,12 @@ export function generateMutationFile(output: MutationOutput, queryFieldsConstNam
 
     // For delete mutations, don't use query fields
     const mutationCode =
-      mutation.type === 'delete'
+      mutation.type === "delete"
         ? mutation.code
-        : mutation.code.replace('${QUERY_FIELDS}', `\${${queryFieldsConstName}}`);
+        : mutation.code.replace(
+            "${QUERY_FIELDS}",
+            `\${${queryFieldsConstName}}`,
+          );
 
     mutationConsts.push(`/**
  * ${mutation.type.charAt(0).toUpperCase() + mutation.type.slice(1)} mutation for ${output.entityType}
@@ -67,9 +73,10 @@ export const ${constName} = \`${mutationCode}\`;`);
 
   // Import statement for query fields
   const importStatement =
-    output.mutations.length > 0 && output.mutations.some((m) => m.type !== 'delete')
+    output.mutations.length > 0 &&
+    output.mutations.some((m) => m.type !== "delete")
       ? `import { ${queryFieldsConstName} } from '../schemas/${schemaFileName}.schema';\n\n`
-      : '';
+      : "";
 
   let content = `/**
  * Generated mutations for ${output.entityType}
@@ -78,13 +85,13 @@ export const ${constName} = \`${mutationCode}\`;`);
  * To regenerate, run: yarn codegen:shopify
  */
 
-${importStatement}${mutationConsts.join('\n\n')}
+${importStatement}${mutationConsts.join("\n\n")}
 
 /**
  * Fields that are read-only and should be stripped before mutations
  */
 export const ${constantName}_READ_ONLY_FIELDS = new Set([
-${output.readOnlyFields.map((f) => `  '${f}',`).join('\n')}
+${output.readOnlyFields.map((f) => `  '${f}',`).join("\n")}
 ]);
 `;
 
@@ -95,7 +102,7 @@ ${output.readOnlyFields.map((f) => `  '${f}',`).join('\n')}
  * Fields to strip on update only (required for create)
  */
 export const ${constantName}_STRIP_ON_UPDATE_FIELDS = new Set([
-${output.stripOnUpdateFields.map((f) => `  '${f}',`).join('\n')}
+${output.stripOnUpdateFields.map((f) => `  '${f}',`).join("\n")}
 ]);
 `;
   }
@@ -108,7 +115,7 @@ ${output.stripOnUpdateFields.map((f) => `  '${f}',`).join('\n')}
  */
 export function generateMutationIndexFile(entityTypes: string[]): string {
   const exports = entityTypes.map((entityType) => {
-    const fileName = entityType.replace(/_/g, '-');
+    const fileName = entityType.replace(/_/g, "-");
     return `export * from './${fileName}.mutations';`;
   });
 
@@ -119,7 +126,7 @@ export function generateMutationIndexFile(entityTypes: string[]): string {
  * To regenerate, run: yarn codegen:shopify
  */
 
-${exports.join('\n')}
+${exports.join("\n")}
 `;
 }
 
@@ -137,13 +144,15 @@ class MutationsGenerator {
    */
   generateForEntity(entity: EntityConfig): MutationOutput | null {
     if (!entity.mutations || !this.mutationType) {
-      console.log(`  Skipping ${entity.entityType}: ${!entity.mutations ? 'no mutations config' : 'no mutation type'}`);
+      console.log(
+        `  Skipping ${entity.entityType}: ${!entity.mutations ? "no mutations config" : "no mutation type"}`,
+      );
       return null;
     }
 
     console.log(`  Processing ${entity.entityType}...`);
 
-    const mutations: MutationOutput['mutations'] = [];
+    const mutations: MutationOutput["mutations"] = [];
     let inputFieldNames: Set<string> = new Set();
 
     // Check if this entity uses bulk mutations
@@ -156,13 +165,17 @@ class MutationsGenerator {
         const inputType = this.getInputType(createMutation);
         if (inputType) {
           inputFieldNames = this.getInputFieldNames(inputType);
-          console.log(`  ${entity.mutations.create}: found ${inputFieldNames.size} input fields`);
+          console.log(
+            `  ${entity.mutations.create}: found ${inputFieldNames.size} input fields`,
+          );
         } else {
-          console.warn(`  ${entity.mutations.create}: could not find input type`);
+          console.warn(
+            `  ${entity.mutations.create}: could not find input type`,
+          );
         }
 
         mutations.push({
-          type: 'create',
+          type: "create",
           name: entity.mutations.create,
           code: isBulk
             ? this.generateBulkCreateMutation(entity, createMutation)
@@ -182,12 +195,14 @@ class MutationsGenerator {
           const inputType = this.getInputType(updateMutation);
           if (inputType) {
             inputFieldNames = this.getInputFieldNames(inputType);
-            console.log(`  ${entity.mutations.update}: found ${inputFieldNames.size} input fields`);
+            console.log(
+              `  ${entity.mutations.update}: found ${inputFieldNames.size} input fields`,
+            );
           }
         }
 
         mutations.push({
-          type: 'update',
+          type: "update",
           name: entity.mutations.update,
           code: isBulk
             ? this.generateBulkUpdateMutation(entity, updateMutation)
@@ -203,7 +218,7 @@ class MutationsGenerator {
       const deleteMutation = this.getMutationField(entity.mutations.delete);
       if (deleteMutation) {
         mutations.push({
-          type: 'delete',
+          type: "delete",
           name: entity.mutations.delete,
           code: isBulk
             ? this.generateBulkDeleteMutation(entity, deleteMutation)
@@ -222,7 +237,9 @@ class MutationsGenerator {
     // Compute read-only fields
     const readOnlyFields = this.computeReadOnlyFields(entity, inputFieldNames);
 
-    console.log(`    Generated ${mutations.length} mutations, ${readOnlyFields.length} read-only fields`);
+    console.log(
+      `    Generated ${mutations.length} mutations, ${readOnlyFields.length} read-only fields`,
+    );
 
     return {
       entityType: entity.entityType,
@@ -232,7 +249,9 @@ class MutationsGenerator {
     };
   }
 
-  private getMutationField(mutationName: string): GraphQLField<unknown, unknown> | null {
+  private getMutationField(
+    mutationName: string,
+  ): GraphQLField<unknown, unknown> | null {
     if (!this.mutationType) return null;
     const fields = this.mutationType.getFields();
     return fields[mutationName] || null;
@@ -243,9 +262,11 @@ class MutationsGenerator {
    * Looks for any argument that is an InputObjectType, not just ones named "input".
    * Also handles bulk mutations where the input is wrapped in a list type.
    */
-  private getInputType(mutation: GraphQLField<unknown, unknown>): GraphQLInputObjectType | null {
+  private getInputType(
+    mutation: GraphQLField<unknown, unknown>,
+  ): GraphQLInputObjectType | null {
     // First try to find an argument named 'input' (most common)
-    let inputArg = mutation.args.find((arg) => arg.name === 'input');
+    let inputArg = mutation.args.find((arg) => arg.name === "input");
 
     // If not found, look for any InputObjectType argument (for page, blog, article, etc.)
     if (!inputArg) {
@@ -288,9 +309,11 @@ class MutationsGenerator {
   /**
    * Get the primary input argument info (name and type name) for a mutation.
    */
-  private getInputArgInfo(mutation: GraphQLField<unknown, unknown>): { argName: string; typeName: string } | null {
+  private getInputArgInfo(
+    mutation: GraphQLField<unknown, unknown>,
+  ): { argName: string; typeName: string } | null {
     // First try 'input', then any InputObjectType
-    let inputArg = mutation.args.find((arg) => arg.name === 'input');
+    let inputArg = mutation.args.find((arg) => arg.name === "input");
 
     if (!inputArg) {
       inputArg = mutation.args.find((arg) => {
@@ -309,7 +332,7 @@ class MutationsGenerator {
       argType = argType.ofType;
     }
 
-    const typeName = 'name' in argType ? argType.name : null;
+    const typeName = "name" in argType ? argType.name : null;
     if (!typeName) return null;
 
     return { argName: inputArg.name, typeName };
@@ -320,12 +343,17 @@ class MutationsGenerator {
     return new Set(Object.keys(fields));
   }
 
-  private computeReadOnlyFields(entity: EntityConfig, inputFieldNames: Set<string>): string[] {
+  private computeReadOnlyFields(
+    entity: EntityConfig,
+    inputFieldNames: Set<string>,
+  ): string[] {
     // If we couldn't find input fields, fall back to manually specified fields only
     if (inputFieldNames.size === 0) {
-      console.warn(`  No input fields found for ${entity.entityType}, using manual read-only list`);
+      console.warn(
+        `  No input fields found for ${entity.entityType}, using manual read-only list`,
+      );
       const manual = entity.mutations?.additionalReadOnlyFields || [];
-      return ['id', ...manual].sort();
+      return ["id", ...manual].sort();
     }
 
     // Get all fields from the output type
@@ -347,7 +375,7 @@ class MutationsGenerator {
     }
 
     // Always add 'id' as it's typically passed separately
-    readOnlyFields.add('id');
+    readOnlyFields.add("id");
 
     // Add any additional manually specified read-only fields
     if (entity.mutations?.additionalReadOnlyFields) {
@@ -373,7 +401,7 @@ class MutationsGenerator {
   ): string {
     const mutationName = mutation.name;
     const argInfo = this.getInputArgInfo(mutation);
-    const argName = argInfo?.argName || 'input';
+    const argName = argInfo?.argName || "input";
     const inputTypeName = argInfo?.typeName || `${entity.graphqlType}Input`;
     const outputFieldName = this.getOutputFieldName(entity.graphqlType);
 
@@ -396,12 +424,12 @@ class MutationsGenerator {
   ): string {
     const mutationName = mutation.name;
     const argInfo = this.getInputArgInfo(mutation);
-    const argName = argInfo?.argName || 'input';
+    const argName = argInfo?.argName || "input";
     const inputTypeName = argInfo?.typeName || `${entity.graphqlType}Input`;
     const outputFieldName = this.getOutputFieldName(entity.graphqlType);
 
     // Check if mutation has a separate 'id' argument
-    const hasIdArg = mutation.args.some((arg) => arg.name === 'id');
+    const hasIdArg = mutation.args.some((arg) => arg.name === "id");
 
     if (hasIdArg) {
       return `mutation ${toPascalCase(mutationName)}($id: ID!, $${argName}: ${inputTypeName}!) {
@@ -438,7 +466,7 @@ class MutationsGenerator {
     const deletedIdField = `deleted${entity.graphqlType}Id`;
 
     // Check if mutation has a separate 'id' argument (some use input object, some use direct id)
-    const hasIdArg = mutation.args.some((arg) => arg.name === 'id');
+    const hasIdArg = mutation.args.some((arg) => arg.name === "id");
     const argInfo = this.getInputArgInfo(mutation);
 
     if (hasIdArg && !argInfo) {
@@ -511,8 +539,8 @@ class MutationsGenerator {
       params.push(`${inputArgInfo.argName}: $${inputArgInfo.argName}`);
     }
 
-    return `mutation ${toPascalCase(mutationName)}(${args.join(', ')}) {
-  ${mutationName}(${params.join(', ')}) {
+    return `mutation ${toPascalCase(mutationName)}(${args.join(", ")}) {
+  ${mutationName}(${params.join(", ")}) {
     ${outputFieldName} {
       \${QUERY_FIELDS}
     }
@@ -549,8 +577,8 @@ class MutationsGenerator {
       params.push(`${inputArgInfo.argName}: $${inputArgInfo.argName}`);
     }
 
-    return `mutation ${toPascalCase(mutationName)}(${args.join(', ')}) {
-  ${mutationName}(${params.join(', ')}) {
+    return `mutation ${toPascalCase(mutationName)}(${args.join(", ")}) {
+  ${mutationName}(${params.join(", ")}) {
     ${outputFieldName} {
       \${QUERY_FIELDS}
     }
@@ -575,9 +603,9 @@ class MutationsGenerator {
 
     // Find the IDs array argument (e.g., variantsIds)
     const idsArg = mutation.args.find(
-      (arg) => arg.name.endsWith('Ids') || arg.name === 'ids',
+      (arg) => arg.name.endsWith("Ids") || arg.name === "ids",
     );
-    const idsArgName = idsArg?.name || 'ids';
+    const idsArgName = idsArg?.name || "ids";
 
     const args: string[] = [];
     const params: string[] = [];
@@ -590,8 +618,8 @@ class MutationsGenerator {
     args.push(`$${idsArgName}: [ID!]!`);
     params.push(`${idsArgName}: $${idsArgName}`);
 
-    return `mutation ${toPascalCase(mutationName)}(${args.join(', ')}) {
-  ${mutationName}(${params.join(', ')}) {
+    return `mutation ${toPascalCase(mutationName)}(${args.join(", ")}) {
+  ${mutationName}(${params.join(", ")}) {
     userErrors {
       field
       message
@@ -603,15 +631,17 @@ class MutationsGenerator {
   /**
    * Get the parent ID argument name (e.g., productId)
    */
-  private getParentIdArgName(mutation: GraphQLField<unknown, unknown>): string | null {
+  private getParentIdArgName(
+    mutation: GraphQLField<unknown, unknown>,
+  ): string | null {
     // Look for arguments ending with 'Id' that are ID type
     const idArg = mutation.args.find((arg) => {
-      if (!arg.name.endsWith('Id')) return false;
+      if (!arg.name.endsWith("Id")) return false;
       let argType = arg.type;
       if (isNonNullType(argType)) {
         argType = argType.ofType;
       }
-      return 'name' in argType && argType.name === 'ID';
+      return "name" in argType && argType.name === "ID";
     });
     return idArg?.name || null;
   }
@@ -619,16 +649,18 @@ class MutationsGenerator {
   /**
    * Get the bulk input argument info (e.g., variants: [ProductVariantsBulkInput!]!)
    */
-  private getBulkInputArgInfo(mutation: GraphQLField<unknown, unknown>): { argName: string; typeName: string } | null {
+  private getBulkInputArgInfo(
+    mutation: GraphQLField<unknown, unknown>,
+  ): { argName: string; typeName: string } | null {
     // Look for list type arguments that aren't ID arrays
     for (const arg of mutation.args) {
       // Skip ID arguments
-      if (arg.name.endsWith('Id') || arg.name.endsWith('Ids')) continue;
+      if (arg.name.endsWith("Id") || arg.name.endsWith("Ids")) continue;
 
       // Get the type string representation
       const typeStr = arg.type.toString();
       // Look for list types like [SomeInput!]!
-      if (typeStr.startsWith('[') && typeStr.includes('Input')) {
+      if (typeStr.startsWith("[") && typeStr.includes("Input")) {
         return { argName: arg.name, typeName: typeStr };
       }
     }
@@ -640,7 +672,7 @@ class MutationsGenerator {
    */
   private getOutputFieldNamePlural(graphqlType: string): string {
     const singular = graphqlType.charAt(0).toLowerCase() + graphqlType.slice(1);
-    return singular + 's';
+    return singular + "s";
   }
 }
 
@@ -650,9 +682,9 @@ function toPascalCase(str: string): string {
   return str
     .split(/[-_]/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
+    .join("");
 }
 
 function toScreamingSnakeCase(str: string): string {
-  return str.toUpperCase().replace(/-/g, '_');
+  return str.toUpperCase().replace(/-/g, "_");
 }

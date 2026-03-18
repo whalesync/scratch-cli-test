@@ -1,43 +1,43 @@
-import { Router } from 'express';
-import { store } from '../store';
+import { Router } from "express";
+import { store } from "../store";
 
 const router = Router();
 
 const SUPPORTED_ENTITY_TYPES = [
-  'Account',
-  'Bill',
-  'BillPayment',
-  'CompanyInfo',
-  'CreditMemo',
-  'Customer',
-  'Deposit',
-  'Employee',
-  'Estimate',
-  'Invoice',
-  'Item',
-  'JournalEntry',
-  'Payment',
-  'PaymentMethod',
-  'Purchase',
-  'PurchaseOrder',
-  'RefundReceipt',
-  'SalesReceipt',
-  'TaxCode',
-  'TaxRate',
-  'Term',
-  'TimeActivity',
-  'Vendor',
+  "Account",
+  "Bill",
+  "BillPayment",
+  "CompanyInfo",
+  "CreditMemo",
+  "Customer",
+  "Deposit",
+  "Employee",
+  "Estimate",
+  "Invoice",
+  "Item",
+  "JournalEntry",
+  "Payment",
+  "PaymentMethod",
+  "Purchase",
+  "PurchaseOrder",
+  "RefundReceipt",
+  "SalesReceipt",
+  "TaxCode",
+  "TaxRate",
+  "Term",
+  "TimeActivity",
+  "Vendor",
 ];
 
 interface ParsedQuery {
-  fields: string[] | '*';
+  fields: string[] | "*";
   entityType: string;
   startPosition?: number;
   maxResults?: number;
 }
 
 function parseQuery(sql: string): ParsedQuery | null {
-  const normalized = sql.trim().replace(/\s+/g, ' ');
+  const normalized = sql.trim().replace(/\s+/g, " ");
 
   // Match: SELECT <fields> FROM <EntityType> [STARTPOSITION <n>] [MAXRESULTS <n>]
   const match = normalized.match(
@@ -46,7 +46,8 @@ function parseQuery(sql: string): ParsedQuery | null {
   if (!match) return null;
 
   const rawFields = match[1].trim();
-  const fields: string[] | '*' = rawFields === '*' ? '*' : rawFields.split(/\s*,\s*/);
+  const fields: string[] | "*" =
+    rawFields === "*" ? "*" : rawFields.split(/\s*,\s*/);
   const entityType = match[2];
   const startPosition = match[3] ? parseInt(match[3], 10) : undefined;
   const maxResults = match[4] ? parseInt(match[4], 10) : undefined;
@@ -60,17 +61,17 @@ function toPascalCase(entityType: string): string | undefined {
 }
 
 // GET /v3/company/:realmId/query?query=<SQL-like query>
-router.get('/v3/company/:realmId/query', (req, res) => {
+router.get("/v3/company/:realmId/query", (req, res) => {
   const queryString = req.query.query;
-  if (typeof queryString !== 'string' || !queryString.trim()) {
+  if (typeof queryString !== "string" || !queryString.trim()) {
     res.status(400).json({
       Fault: {
-        type: 'ValidationFault',
+        type: "ValidationFault",
         Error: [
           {
-            Message: 'Invalid query',
-            Detail: 'Missing or empty query parameter',
-            code: '4000',
+            Message: "Invalid query",
+            Detail: "Missing or empty query parameter",
+            code: "4000",
           },
         ],
       },
@@ -82,12 +83,12 @@ router.get('/v3/company/:realmId/query', (req, res) => {
   if (!parsed) {
     res.status(400).json({
       Fault: {
-        type: 'ValidationFault',
+        type: "ValidationFault",
         Error: [
           {
-            Message: 'Invalid query',
+            Message: "Invalid query",
             Detail: `Could not parse query: ${queryString}`,
-            code: '4000',
+            code: "4000",
           },
         ],
       },
@@ -99,12 +100,12 @@ router.get('/v3/company/:realmId/query', (req, res) => {
   if (!pascalType) {
     res.status(400).json({
       Fault: {
-        type: 'ValidationFault',
+        type: "ValidationFault",
         Error: [
           {
-            Message: 'Invalid query',
+            Message: "Invalid query",
             Detail: `Unsupported entity type: ${parsed.entityType}`,
-            code: '4000',
+            code: "4000",
           },
         ],
       },
@@ -113,13 +114,13 @@ router.get('/v3/company/:realmId/query', (req, res) => {
   }
 
   // CompanyInfo is special — always return from store.companyInfo
-  if (pascalType === 'CompanyInfo') {
-    const companyInfoEntity = { Id: '1', ...store.companyInfo };
+  if (pascalType === "CompanyInfo") {
+    const companyInfoEntity = { Id: "1", ...store.companyInfo };
     let result: Record<string, unknown> = companyInfoEntity;
 
     // If specific fields were requested, filter to just those fields
-    if (parsed.fields !== '*') {
-      result = { Id: '1' };
+    if (parsed.fields !== "*") {
+      result = { Id: "1" };
       for (const field of parsed.fields) {
         if (field in companyInfoEntity) {
           result[field] = (companyInfoEntity as Record<string, unknown>)[field];

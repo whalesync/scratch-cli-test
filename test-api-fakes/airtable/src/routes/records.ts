@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import { store } from '../store';
+import { Router } from "express";
+import { store } from "../store";
 
 const router = Router();
 
@@ -20,7 +20,7 @@ function parseRecordIdsFromFormula(formula: string): string[] | null {
   return ids.length > 0 ? ids : null;
 }
 
-router.get('/:baseId/:tableId', (req, res) => {
+router.get("/:baseId/:tableId", (req, res) => {
   const { baseId, tableId } = req.params;
   const { offset, filterByFormula } = req.query;
 
@@ -28,8 +28,8 @@ router.get('/:baseId/:tableId', (req, res) => {
   if (tables === undefined || !tables.some((t) => t.id === tableId)) {
     res.status(404).json({
       error: {
-        type: 'NOT_FOUND',
-        message: 'Could not find table',
+        type: "NOT_FOUND",
+        message: "Could not find table",
       },
     });
     return;
@@ -38,7 +38,7 @@ router.get('/:baseId/:tableId', (req, res) => {
   let records = store.listRecords(baseId, tableId);
 
   // Apply filterByFormula if present
-  if (filterByFormula && typeof filterByFormula === 'string') {
+  if (filterByFormula && typeof filterByFormula === "string") {
     const filteredIds = parseRecordIdsFromFormula(filterByFormula);
     if (filteredIds) {
       const idSet = new Set(filteredIds);
@@ -47,29 +47,37 @@ router.get('/:baseId/:tableId', (req, res) => {
   }
 
   // Apply pagination
-  const startIndex = offset ? parseInt(Buffer.from(offset as string, 'base64').toString('utf-8'), 10) : 0;
+  const startIndex = offset
+    ? parseInt(Buffer.from(offset as string, "base64").toString("utf-8"), 10)
+    : 0;
   const page = records.slice(startIndex, startIndex + PAGE_SIZE);
 
   const response: { records: typeof page; offset?: string } = {
-    records: page.map((r) => ({ id: r.id, fields: r.fields, createdTime: r.createdTime })),
+    records: page.map((r) => ({
+      id: r.id,
+      fields: r.fields,
+      createdTime: r.createdTime,
+    })),
   };
 
   if (startIndex + PAGE_SIZE < records.length) {
-    response.offset = Buffer.from(String(startIndex + PAGE_SIZE)).toString('base64');
+    response.offset = Buffer.from(String(startIndex + PAGE_SIZE)).toString(
+      "base64",
+    );
   }
 
   res.json(response);
 });
 
-router.post('/:baseId/:tableId', (req, res) => {
+router.post("/:baseId/:tableId", (req, res) => {
   const { baseId, tableId } = req.params;
   const { records: inputRecords } = req.body;
 
   if (!inputRecords || inputRecords.length > 10) {
     res.status(422).json({
       error: {
-        type: 'INVALID_REQUEST',
-        message: 'Cannot create more than 10 records at a time',
+        type: "INVALID_REQUEST",
+        message: "Cannot create more than 10 records at a time",
       },
     });
     return;
@@ -79,30 +87,36 @@ router.post('/:baseId/:tableId', (req, res) => {
   if (tables === undefined || !tables.some((t) => t.id === tableId)) {
     res.status(404).json({
       error: {
-        type: 'NOT_FOUND',
-        message: 'Could not find table',
+        type: "NOT_FOUND",
+        message: "Could not find table",
       },
     });
     return;
   }
 
-  const created = inputRecords.map((input: { fields: Record<string, unknown> }) => {
-    const record = store.addRecord(baseId, tableId, input.fields);
-    return { id: record.id, fields: record.fields, createdTime: record.createdTime };
-  });
+  const created = inputRecords.map(
+    (input: { fields: Record<string, unknown> }) => {
+      const record = store.addRecord(baseId, tableId, input.fields);
+      return {
+        id: record.id,
+        fields: record.fields,
+        createdTime: record.createdTime,
+      };
+    },
+  );
 
   res.json({ records: created });
 });
 
-router.patch('/:baseId/:tableId', (req, res) => {
+router.patch("/:baseId/:tableId", (req, res) => {
   const { baseId, tableId } = req.params;
   const { records: inputRecords } = req.body;
 
   if (!inputRecords || inputRecords.length > 10) {
     res.status(422).json({
       error: {
-        type: 'INVALID_REQUEST',
-        message: 'Cannot update more than 10 records at a time',
+        type: "INVALID_REQUEST",
+        message: "Cannot update more than 10 records at a time",
       },
     });
     return;
@@ -114,28 +128,32 @@ router.patch('/:baseId/:tableId', (req, res) => {
     if (!record) {
       res.status(404).json({
         error: {
-          type: 'NOT_FOUND',
-          message: 'Could not find record',
+          type: "NOT_FOUND",
+          message: "Could not find record",
         },
       });
       return;
     }
-    updated.push({ id: record.id, fields: record.fields, createdTime: record.createdTime });
+    updated.push({
+      id: record.id,
+      fields: record.fields,
+      createdTime: record.createdTime,
+    });
   }
 
   res.json({ records: updated });
 });
 
-router.delete('/:baseId/:tableId', (req, res) => {
+router.delete("/:baseId/:tableId", (req, res) => {
   const { baseId, tableId } = req.params;
 
   // Support both records[] and records query params
   let recordIds: string[] = [];
-  if (req.query['records[]']) {
-    const param = req.query['records[]'];
+  if (req.query["records[]"]) {
+    const param = req.query["records[]"];
     recordIds = Array.isArray(param) ? (param as string[]) : [param as string];
-  } else if (req.query['records']) {
-    const param = req.query['records'];
+  } else if (req.query["records"]) {
+    const param = req.query["records"];
     recordIds = Array.isArray(param) ? (param as string[]) : [param as string];
   }
 

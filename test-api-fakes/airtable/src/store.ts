@@ -39,8 +39,9 @@ interface QueuedError {
 }
 
 function generateRecordId(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = 'rec';
+  const chars =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let result = "rec";
   for (let i = 0; i < 14; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
@@ -75,7 +76,11 @@ class Store {
     this.tables.get(baseId)!.set(table.id, table);
   }
 
-  addRecord(baseId: string, tableId: string, fields: Record<string, unknown>): AirtableRecord {
+  addRecord(
+    baseId: string,
+    tableId: string,
+    fields: Record<string, unknown>,
+  ): AirtableRecord {
     const key = `${baseId}:${tableId}`;
     if (!this.records.has(key)) {
       this.records.set(key, new Map());
@@ -89,7 +94,11 @@ class Store {
     return record;
   }
 
-  getRecord(baseId: string, tableId: string, recordId: string): AirtableRecord | undefined {
+  getRecord(
+    baseId: string,
+    tableId: string,
+    recordId: string,
+  ): AirtableRecord | undefined {
     const key = `${baseId}:${tableId}`;
     return this.records.get(key)?.get(recordId);
   }

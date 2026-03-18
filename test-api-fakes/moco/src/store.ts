@@ -71,7 +71,10 @@ class Store {
     return this.companies.get(id);
   }
 
-  updateCompany(id: number, data: Partial<MocoCompany>): MocoCompany | undefined {
+  updateCompany(
+    id: number,
+    data: Partial<MocoCompany>,
+  ): MocoCompany | undefined {
     const company = this.companies.get(id);
     if (!company) return undefined;
     const updated: MocoCompany = {
@@ -113,7 +116,10 @@ class Store {
     return this.contacts.get(id);
   }
 
-  updateContact(id: number, data: Partial<MocoContact>): MocoContact | undefined {
+  updateContact(
+    id: number,
+    data: Partial<MocoContact>,
+  ): MocoContact | undefined {
     const contact = this.contacts.get(id);
     if (!contact) return undefined;
     const updated: MocoContact = {
@@ -155,7 +161,10 @@ class Store {
     return this.projects.get(id);
   }
 
-  updateProject(id: number, data: Partial<MocoProject>): MocoProject | undefined {
+  updateProject(
+    id: number,
+    data: Partial<MocoProject>,
+  ): MocoProject | undefined {
     const project = this.projects.get(id);
     if (!project) return undefined;
     const updated: MocoProject = {

@@ -34,6 +34,7 @@ user action
 ```
 
 Costs:
+
 1. **Extra network hops.** sync/publish touches three processes before doing real work.
 2. **Index lag.** FileIndex and FileReference live in Postgres, separated from the git data they describe.
 3. **Language boundary tax.** Business logic runs in single-threaded Node.js. Rust does the same work 10-100x faster, in parallel.
@@ -45,13 +46,13 @@ The fix: a single Rust binary (`scratchmd`) that contains all the business logic
 
 ## What Stays vs. What Changes
 
-| Component | Fate | Notes |
-|-----------|------|-------|
-| `/server` (NestJS) | **Stays** | Auth, web UI APIs, workbook/connection CRUD, BullMQ job queue, connector orchestration |
-| `scratch-git-2` | **Replaced** | New `scratchmd` binary handles git + business logic |
-| `scratch-cli` (Go) | **Replaced** | New `scratchmd` binary in CLI mode |
-| Postgres `FileIndex` / `FileReference` | **Migrated to SQLite** | Co-located with git repos (Phase 2) |
-| `/experimental/scratch-v4-backend` | **New** | Clone of relevant server parts — connectors, jobs, poll job. Developed here first. **Do not share types with current `/server/src` code. Put potentially shared types in `/server/to-be-shared-types/`.** |
+| Component                              | Fate                   | Notes                                                                                                                                                                                                     |
+| -------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/server` (NestJS)                     | **Stays**              | Auth, web UI APIs, workbook/connection CRUD, BullMQ job queue, connector orchestration                                                                                                                    |
+| `scratch-git-2`                        | **Replaced**           | New `scratchmd` binary handles git + business logic                                                                                                                                                       |
+| `scratch-cli` (Go)                     | **Replaced**           | New `scratchmd` binary in CLI mode                                                                                                                                                                        |
+| Postgres `FileIndex` / `FileReference` | **Migrated to SQLite** | Co-located with git repos (Phase 2)                                                                                                                                                                       |
+| `/experimental/scratch-v4-backend`     | **New**                | Clone of relevant server parts — connectors, jobs, poll job. Developed here first. **Do not share types with current `/server/src` code. Put potentially shared types in `/server/to-be-shared-types/`.** |
 
 ---
 
@@ -60,6 +61,7 @@ The fix: a single Rust binary (`scratchmd`) that contains all the business logic
 One Rust binary, two personalities:
 
 ### CLI mode
+
 ```bash
 scratchmd init-repo --path /path/to/repos/orgId/workbookId/connId
 scratchmd upsert-files --repo /path/to/repo.git --folder tableId/records --message "pull 2026-03-16"
@@ -74,6 +76,7 @@ Every operation is directly invokable from the terminal. No HTTP required for lo
 `scratchmd serve` starts a built-in Axum HTTP server. For Milestone 1 this is the simplest approach — true CGI (fork-per-request via a separate `scratchmd-cgi` binary) can be added later. The interface design follows CGI principles (each operation is discrete and stateless) but we run as a long-lived process.
 
 The server exposes two surfaces:
+
 1. **Custom operations** (`/api/...`) — our business logic
 2. **Raw git protocol** (`/git/...`) — proxied to the system `git http-backend` subprocess, enabling `git clone`, `git fetch`, `git push`
 
@@ -118,11 +121,11 @@ POST  /git/{repoPath}/git-receive-pack
 
 Three types of JSON objects stored in git repos. All use the **same format as the current product** — no schema changes at the record level.
 
-| Object | Location in repo | Notes |
-|--------|-----------------|-------|
-| **Records** | `{tableId}/records/{filename}.json` | One file per CMS record |
-| **Schema** | `{tableId}/.scratch/schema.json` | Generated from CMS field definitions. Read-only for agents and CLI. |
-| **Syncs** | `syncs/{syncId}.json` | In the workbook-level git repo (not connection repos). Single branch. Committed on every change. |
+| Object      | Location in repo                    | Notes                                                                                            |
+| ----------- | ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Records** | `{tableId}/records/{filename}.json` | One file per CMS record                                                                          |
+| **Schema**  | `{tableId}/.scratch/schema.json`    | Generated from CMS field definitions. Read-only for agents and CLI.                              |
+| **Syncs**   | `syncs/{syncId}.json`               | In the workbook-level git repo (not connection repos). Single branch. Committed on every change. |
 
 Schemas and records live in **connection repos** (one per CMS connection). Syncs live in the **workbook repo** (one per workbook, shared across connections). The workbook repo has a single branch — no dirty/master split.
 
@@ -207,6 +210,7 @@ git -C .scratch/connections/{connId}/.git \
 ```
 
 If `dirty` branch does not exist yet on a fresh repo, create it from master:
+
 ```bash
 git -C .git worktree add -b dirty ../{connId}/ master
 ```
@@ -232,10 +236,10 @@ This invariant simplifies diffs: `git diff master..dirty` always shows exactly "
 
 ### The fundamental asymmetry
 
-| Environment | File access | Why |
-|-------------|-------------|-----|
-| Cloud backend | Extract blobs on-demand from bare repo via gix | No working directory; stateless; minimal footprint |
-| Local agent session | Read/write real filesystem files | AI agents operate on the filesystem — they cannot read git objects |
+| Environment         | File access                                    | Why                                                                |
+| ------------------- | ---------------------------------------------- | ------------------------------------------------------------------ |
+| Cloud backend       | Extract blobs on-demand from bare repo via gix | No working directory; stateless; minimal footprint                 |
+| Local agent session | Read/write real filesystem files               | AI agents operate on the filesystem — they cannot read git objects |
 
 ### Dirty branch is always materialized locally
 
@@ -267,13 +271,13 @@ Record files are in `{connId}/{tableId}/records/`. Edit them directly.
 Changes are auto-committed to the dirty branch.
 
 To read a published (master) record:
-  cat .scratch/connections/{connId}/master/{tableId}/records/{id}.json
+cat .scratch/connections/{connId}/master/{tableId}/records/{id}.json
 
 Sync configs are in `.scratch/workbook/syncs/`. Edit as JSON.
 Schema files (`schema.json`) are read-only — do not edit.
 
 To see unpublished changes:
-  scratchmd diff
+scratchmd diff
 
 Do NOT edit anything inside `.scratch/connections/*/\.git/`.
 ```
@@ -293,15 +297,15 @@ Non-Rhai scripts run as subprocesses. The engine pipes a JSON record to stdin an
 
 ## Phase Migration Plan
 
-| Phase | What | Key benefit |
-|-------|------|-------------|
-| **M1** | `scratchmd` (init + upsert-files + HTTP server + git backend proxy), experimental NestJS backend (connectors + poll job), `scratchmd pull` CLI command | End-to-end: Airtable pull → bare repo → local materialized worktree |
-| **Phase 2** | SQLite index per connection (replaces Postgres FileIndex/FileReference) | Eliminates cross-system joins; enables publish plan in Rust |
-| **Phase 3a** | Sync transform step in Rust (`POST /api/sync/run`) | 20-60x faster; Rayon parallel; no paged HTTP loop |
-| **Phase 3b** | Publish plan builder in Rust | Single-process join against git + SQLite |
-| **Phase 3c** | Dirty status via SQLite diff instead of tree walk | Sub-millisecond for 100k files |
-| **Phase 3d** | Schema validation in Rust (shared crate, available in CLI offline) | No server round-trip for validation |
-| **Phase 4** | Local runner mode (WebSocket relay, exclusive ownership sessions) | Air-gapped, offline, zero cloud storage |
+| Phase        | What                                                                                                                                                   | Key benefit                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| **M1**       | `scratchmd` (init + upsert-files + HTTP server + git backend proxy), experimental NestJS backend (connectors + poll job), `scratchmd pull` CLI command | End-to-end: Airtable pull → bare repo → local materialized worktree |
+| **Phase 2**  | SQLite index per connection (replaces Postgres FileIndex/FileReference)                                                                                | Eliminates cross-system joins; enables publish plan in Rust         |
+| **Phase 3a** | Sync transform step in Rust (`POST /api/sync/run`)                                                                                                     | 20-60x faster; Rayon parallel; no paged HTTP loop                   |
+| **Phase 3b** | Publish plan builder in Rust                                                                                                                           | Single-process join against git + SQLite                            |
+| **Phase 3c** | Dirty status via SQLite diff instead of tree walk                                                                                                      | Sub-millisecond for 100k files                                      |
+| **Phase 3d** | Schema validation in Rust (shared crate, available in CLI offline)                                                                                     | No server round-trip for validation                                 |
+| **Phase 4**  | Local runner mode (WebSocket relay, exclusive ownership sessions)                                                                                      | Air-gapped, offline, zero cloud storage                             |
 
 ---
 
@@ -318,6 +322,7 @@ A fully runnable end-to-end slice that proves the architecture:
 5. `scratchmd pull` — clones the workbook to local disk with the correct worktree structure
 
 **Verification:**
+
 - Remote: `{GIT_REPOS_DIR}/{orgId}/{workbookId}/{connId}/repo.git` exists, has a `master` branch with Airtable records as JSON files
 - Local: `{workbookName}-{workbookId}/{connName}-{connId}/{tableId}/records/*.json` are visible and readable as normal files, no git knowledge required
 
@@ -367,14 +372,15 @@ scratchmd serve --port 3100 --repos-dir /var/scratch-repos
 
 Axum HTTP server routing:
 
-| Method | Path | Handler |
-|--------|------|---------|
-| POST | `/api/repos/init` | `body: {path}` → `init-repo` |
-| POST | `/api/repos/upsert-files` | `body: {repoPath, folder, message, files[]}` → `upsert-files` |
-| GET | `/git/*path` | proxy to `git http-backend` (see below) |
-| POST | `/git/*path` | proxy to `git http-backend` |
+| Method | Path                      | Handler                                                       |
+| ------ | ------------------------- | ------------------------------------------------------------- |
+| POST   | `/api/repos/init`         | `body: {path}` → `init-repo`                                  |
+| POST   | `/api/repos/upsert-files` | `body: {repoPath, folder, message, files[]}` → `upsert-files` |
+| GET    | `/git/*path`              | proxy to `git http-backend` (see below)                       |
+| POST   | `/git/*path`              | proxy to `git http-backend`                                   |
 
 **git http-backend proxying:**
+
 - Set env: `GIT_PROJECT_ROOT={repos-dir}`, `GIT_HTTP_EXPORT_ALL=1`
 - Set CGI env: `REQUEST_METHOD`, `QUERY_STRING`, `PATH_INFO`, `CONTENT_TYPE`, `CONTENT_LENGTH`
 - Exec `git http-backend`, pipe stdin/stdout
@@ -440,7 +446,7 @@ Standalone NestJS app. Shares the same Postgres DB as the existing server (same 
 ```typescript
 class ScratchGitClient {
   // POST /api/repos/init
-  async initRepo(path: string): Promise<void>
+  async initRepo(path: string): Promise<void>;
 
   // POST /api/repos/upsert-files
   async upsertFiles(opts: {
@@ -448,7 +454,7 @@ class ScratchGitClient {
     folder: string;
     message: string;
     files: Array<{ path: string; content: string }>;
-  }): Promise<{ commitOid: string; filesWritten: number }>
+  }): Promise<{ commitOid: string; filesWritten: number }>;
 }
 ```
 
@@ -461,6 +467,7 @@ cd experimental/scratch-v4-backend && yarn setup
 ```
 
 Sequence:
+
 1. Connect to Postgres (Prisma or raw SQL — keep it minimal)
 2. Upsert Org: `{ id: 'exp-org-1', name: 'Experiment Org' }`
 3. Upsert Workbook: `{ id: 'exp-wb-1', name: 'Experiment Workbook', orgId: 'exp-org-1' }`
@@ -471,6 +478,7 @@ Sequence:
 8. Print: `Setup complete. Repo at: {repoPath}`
 
 **Constants needed (leave empty in `.env.example`):**
+
 ```
 AIRTABLE_API_KEY=
 AIRTABLE_BASE_ID=
@@ -579,11 +587,13 @@ ls ~/scratch-test/
 ### D. Verification checklist
 
 **After `yarn trigger-pull` completes:**
+
 - [ ] `ls /tmp/scratch-repos/exp-org-1/exp-wb-1/exp-conn-1/repo.git` — looks like a bare git repo (HEAD, objects/, refs/)
 - [ ] `git -C /tmp/scratch-repos/.../repo.git log master --oneline` — shows commits named "pull … page N"
 - [ ] `git -C /tmp/scratch-repos/.../repo.git show master:{tableId}/records/recXxx.json` — valid JSON
 
 **After `scratchmd pull` completes:**
+
 - [ ] `~/scratch-test/Experiment Workbook-exp-wb-1/{connName}-exp-conn-1/{tableId}/records/` contains `.json` files
 - [ ] Files are plain readable JSON — `cat ~/scratch-test/.../recXxx.json` works
 - [ ] `git -C ~/scratch-test/.scratch/connections/.../\.git worktree list` shows two worktrees: dirty (top-level) + master (.scratch/…/master/)
@@ -674,10 +684,10 @@ While local-active:
 
 ### Why not alternatives
 
-| Approach | Problem |
-|----------|---------|
-| Open an HTTP port | NAT + firewalls block it for almost all real users |
-| Polling for jobs | N-second latency on every cron-triggered sync |
-| Reverse SSH tunnel | Scratch must build and operate relay SSH infrastructure |
-| Cloudflare Tunnel | Hard third-party dependency, 30MB extra binary |
-| WebRTC | Designed for media streaming; requires TURN server for ~15% of networks |
+| Approach           | Problem                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| Open an HTTP port  | NAT + firewalls block it for almost all real users                      |
+| Polling for jobs   | N-second latency on every cron-triggered sync                           |
+| Reverse SSH tunnel | Scratch must build and operate relay SSH infrastructure                 |
+| Cloudflare Tunnel  | Hard third-party dependency, 30MB extra binary                          |
+| WebRTC             | Designed for media streaming; requires TURN server for ~15% of networks |

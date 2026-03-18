@@ -15,6 +15,7 @@ Recent commits (`79995f7b`, `1b9b01af`, `1eb5e45f`, `f1382411`) fixed `repoId` r
 For V2 workbooks, each connector account gets its own subdirectory with its own `.git`. This is necessary because each connector is a separate git repo on the server.
 
 **V1 layout (unchanged):**
+
 ```
 MyWorkbook/
   .git/
@@ -25,6 +26,7 @@ MyWorkbook/
 ```
 
 **V2 layout (new):**
+
 ```
 MyWorkbook/
   .scratchmd          # version: "2", no .git here
@@ -47,10 +49,12 @@ MyWorkbook/
 ## Step 1: Server — Expand `GET /cli/v1/workbooks/:id` Response
 
 **Files:**
+
 - `server/src/cli/cli-workbook.controller.ts`
 - `server/src/cli/dtos/cli-workbook.dto.ts`
 
 **Changes:**
+
 - Add `CliConnectorAccountDto` with fields: `id`, `displayName`, `service`, `gitUrl`, `dataFolders`
 - Add `version` and `connectorAccounts` fields to `CliWorkbookResponseDto`
 - Inject `DbService` into `CliWorkbookController`
@@ -63,6 +67,7 @@ MyWorkbook/
 **File:** `server/src/cli/cli-workbook.controller.ts`
 
 **Changes:**
+
 - Inject `ScratchGitService` into `CliWorkbookController`
 - Add new route: `@All(':id/connectors/:connectorAccountId/git/*path')`
   - Verifies workbook access
@@ -74,12 +79,14 @@ MyWorkbook/
 ## Step 3: Rust Backend — Activate V2 Repo Routing
 
 **Files:**
+
 - `scratch-git-2/src/state.rs`
 - `scratch-git-2/src/routes/smart_http.rs`
 - `scratch-git-2/src/routes/manage.rs`
 - `scratch-git-2/src/git/repo.rs`
 
 **Changes:**
+
 - Uncomment `V2_ID_SEPARATOR` and `repo_path_v2()` in `state.rs`
 - Add `resolve_repo_path(repo_id)` that detects `--` separator and routes to V1 or V2 path
 - Update `smart_http.rs` `git_backend` handler to use `resolve_repo_path` and adjust `GIT_PROJECT_ROOT`/`PATH_INFO` for nested V2 paths
@@ -91,6 +98,7 @@ MyWorkbook/
 **File:** `scratch-cli/internal/api/client_workbooks.go`
 
 **Changes:**
+
 - Add `Version int` field to `Workbook` struct
 - Add `ConnectorAccount` struct with `ID`, `DisplayName`, `Service`, `GitUrl`, `DataFolders`
 - Add `ConnectorAccounts []ConnectorAccount` field to `Workbook` struct
@@ -100,6 +108,7 @@ MyWorkbook/
 **File:** `scratch-cli/internal/cmd/workbooks.go`
 
 **Changes:**
+
 - Add `ConnectorMarker` struct with `Workbook` (ID/Name) and `Connector` (ID/DisplayName/Service) sections
 - In `runWorkbooksInit()`, branch on `workbook.Version >= 2`:
   - Create workbook root directory with version "2" `.scratchmd` marker (no `.git`)
@@ -115,6 +124,7 @@ MyWorkbook/
 **File:** `scratch-cli/internal/cmd/files.go`
 
 **Changes:**
+
 - Extract core download logic (lines 194-399) into `downloadForDirectory(dir, creds)` helper
 - Extract core upload logic (lines 474-757) into `uploadForDirectory(dir, creds)` helper
 - Add `loadConnectorMarker(dir)` function to detect connector-level markers

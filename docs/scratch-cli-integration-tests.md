@@ -31,13 +31,13 @@ scratch-cli-tests/
 
 Tests target different environments via environment variables:
 
-| Variable | Required | Description | Examples |
-|---|---|---|---|
-| `SCRATCH_API_KEY` | **yes** | API key for authentication | `sk_test_abc123` |
-| `SCRATCH_API_URL` | no | Base URL of the Scratch server | `http://localhost:3010` (default), `https://test.scratch.md`, `https://app.scratch.md` |
-| `TEST_AIRTABLE_PAT` | no* | Airtable Personal Access Token | Required for connection/linked/files suites |
-| `SCRATCH_CLI_BINARY` | no | Path to prebuilt `scratchmd` binary | Skips `go build` if set |
-| `DEBUG` | no | Set to `1` for verbose CLI output | |
+| Variable             | Required | Description                         | Examples                                                                               |
+| -------------------- | -------- | ----------------------------------- | -------------------------------------------------------------------------------------- |
+| `SCRATCH_API_KEY`    | **yes**  | API key for authentication          | `sk_test_abc123`                                                                       |
+| `SCRATCH_API_URL`    | no       | Base URL of the Scratch server      | `http://localhost:3010` (default), `https://test.scratch.md`, `https://app.scratch.md` |
+| `TEST_AIRTABLE_PAT`  | no\*     | Airtable Personal Access Token      | Required for connection/linked/files suites                                            |
+| `SCRATCH_CLI_BINARY` | no       | Path to prebuilt `scratchmd` binary | Skips `go build` if set                                                                |
+| `DEBUG`              | no       | Set to `1` for verbose CLI output   |                                                                                        |
 
 \* If `TEST_AIRTABLE_PAT` is not set, the connections, linked folders, and files suites will be skipped.
 
@@ -93,11 +93,11 @@ DEBUG=1 SCRATCH_API_KEY=sk_test_... yarn test
 ```js
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  testMatch: ['**/tests/**/*.spec.ts'],
-  globalSetup: './src/global-setup.ts',
-  globalTeardown: './src/global-teardown.ts',
+  preset: "ts-jest",
+  testEnvironment: "node",
+  testMatch: ["**/tests/**/*.spec.ts"],
+  globalSetup: "./src/global-setup.ts",
+  globalTeardown: "./src/global-teardown.ts",
   testTimeout: 120000, // 120s — pull/publish operations can be slow
 };
 ```
@@ -131,52 +131,59 @@ The global setup handles three responsibilities:
 3. **Health-check the target server**
 
 ```ts
-import { execSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import yaml from 'js-yaml'; // or use a simple string template
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import yaml from "js-yaml"; // or use a simple string template
 
-const STATE_FILE = path.join(os.tmpdir(), 'scratch-cli-tests-state.json');
+const STATE_FILE = path.join(os.tmpdir(), "scratch-cli-tests-state.json");
 
 export default async function globalSetup() {
   const apiKey = process.env.SCRATCH_API_KEY;
   if (!apiKey) {
-    throw new Error('SCRATCH_API_KEY environment variable is required');
+    throw new Error("SCRATCH_API_KEY environment variable is required");
   }
 
-  const serverUrl = process.env.SCRATCH_API_URL || 'http://localhost:3010';
+  const serverUrl = process.env.SCRATCH_API_URL || "http://localhost:3010";
 
   // 1. Resolve or build the CLI binary
   let binaryPath = process.env.SCRATCH_CLI_BINARY;
   if (!binaryPath) {
-    const cliDir = path.resolve(__dirname, '../../scratch-cli');
-    console.log('Building scratchmd binary...');
-    execSync('go build -o ./scratchmd ./cmd/scratchmd', { cwd: cliDir, stdio: 'inherit' });
-    binaryPath = path.join(cliDir, 'scratchmd');
+    const cliDir = path.resolve(__dirname, "../../scratch-cli");
+    console.log("Building scratchmd binary...");
+    execSync("go build -o ./scratchmd ./cmd/scratchmd", {
+      cwd: cliDir,
+      stdio: "inherit",
+    });
+    binaryPath = path.join(cliDir, "scratchmd");
   }
 
   // Verify binary exists and is executable
-  execSync(`${binaryPath} --version`, { stdio: 'pipe' });
+  execSync(`${binaryPath} --version`, { stdio: "pipe" });
 
   // 2. Write credentials file to an isolated temp HOME
   //    so tests don't interfere with the developer's real credentials
-  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-cli-test-home-'));
-  const credsDir = path.join(tempHome, '.scratchmd');
+  const tempHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), "scratch-cli-test-home-"),
+  );
+  const credsDir = path.join(tempHome, ".scratchmd");
   fs.mkdirSync(credsDir, { recursive: true });
 
   // The CLI credentials.yaml format (v2): keyed by normalized server hostname
   const hostname = new URL(serverUrl).hostname;
   const credsContent = [
-    '# Auto-generated by scratch-cli-tests',
+    "# Auto-generated by scratch-cli-tests",
     'version: "2.0.0"',
-    'environments:',
+    "environments:",
     `  ${hostname}:`,
     `    apiToken: "${apiKey}"`,
-    '',
-  ].join('\n');
+    "",
+  ].join("\n");
 
-  fs.writeFileSync(path.join(credsDir, 'credentials.yaml'), credsContent, { mode: 0o600 });
+  fs.writeFileSync(path.join(credsDir, "credentials.yaml"), credsContent, {
+    mode: 0o600,
+  });
 
   // 3. Health check the target server
   const healthUrl = `${serverUrl}/health`;
@@ -189,7 +196,9 @@ export default async function globalSetup() {
       // not ready
     }
     if (i === maxAttempts - 1) {
-      throw new Error(`Server at ${serverUrl} did not become healthy within 15s`);
+      throw new Error(
+        `Server at ${serverUrl} did not become healthy within 15s`,
+      );
     }
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -205,16 +214,16 @@ export default async function globalSetup() {
 ### `src/global-teardown.ts`
 
 ```ts
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const STATE_FILE = path.join(os.tmpdir(), 'scratch-cli-tests-state.json');
+const STATE_FILE = path.join(os.tmpdir(), "scratch-cli-tests-state.json");
 
 export default async function globalTeardown() {
   if (!fs.existsSync(STATE_FILE)) return;
 
-  const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+  const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
   fs.unlinkSync(STATE_FILE);
 
   // Clean up temp HOME with credentials
@@ -235,12 +244,15 @@ export default async function globalTeardown() {
 The core abstraction — a typed class that shells out to the `scratchmd` binary, passes `--json` for machine-readable output, and parses the result.
 
 ```ts
-import { execSync, ExecSyncOptionsWithStringEncoding } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import {
+  execSync,
+  ExecSyncOptionsWithStringEncoding,
+} from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const STATE_FILE = path.join(os.tmpdir(), 'scratch-cli-tests-state.json');
+const STATE_FILE = path.join(os.tmpdir(), "scratch-cli-tests-state.json");
 
 interface TestState {
   binaryPath: string;
@@ -249,7 +261,7 @@ interface TestState {
 }
 
 function loadState(): TestState {
-  return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+  return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
 }
 
 export interface ExecResult {
@@ -275,24 +287,23 @@ export class ScratchCli {
    * --json and --scratch-url are automatically appended.
    * HOME is pointed at the temp directory with pre-seeded credentials.
    */
-  run(args: string[], opts?: { cwd?: string; expectError?: boolean }): ExecResult {
-    const fullArgs = [
-      ...args,
-      '--json',
-      '--scratch-url', this.serverUrl,
-    ];
+  run(
+    args: string[],
+    opts?: { cwd?: string; expectError?: boolean },
+  ): ExecResult {
+    const fullArgs = [...args, "--json", "--scratch-url", this.serverUrl];
 
-    const cmd = `${this.binaryPath} ${fullArgs.map(shellEscape).join(' ')}`;
+    const cmd = `${this.binaryPath} ${fullArgs.map(shellEscape).join(" ")}`;
 
     const execOpts: ExecSyncOptionsWithStringEncoding = {
-      encoding: 'utf-8',
+      encoding: "utf-8",
       env: {
         ...process.env,
         HOME: this.tempHome, // Use temp HOME so CLI reads our seeded credentials
       },
       cwd: opts?.cwd,
       timeout: 60_000,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ["pipe", "pipe", "pipe"],
     };
 
     if (process.env.DEBUG) {
@@ -304,26 +315,29 @@ export class ScratchCli {
       if (process.env.DEBUG) {
         console.log(`[cli:out] ${stdout}`);
       }
-      return { stdout: stdout.trim(), stderr: '', exitCode: 0 };
+      return { stdout: stdout.trim(), stderr: "", exitCode: 0 };
     } catch (err: any) {
       if (opts?.expectError) {
         return {
-          stdout: (err.stdout || '').trim(),
-          stderr: (err.stderr || '').trim(),
+          stdout: (err.stdout || "").trim(),
+          stderr: (err.stderr || "").trim(),
           exitCode: err.status ?? 1,
         };
       }
       throw new Error(
         `CLI command failed (exit ${err.status}):\n` +
-        `  cmd: ${cmd}\n` +
-        `  stdout: ${err.stdout}\n` +
-        `  stderr: ${err.stderr}`
+          `  cmd: ${cmd}\n` +
+          `  stdout: ${err.stdout}\n` +
+          `  stderr: ${err.stderr}`,
       );
     }
   }
 
   /** Run and parse JSON output */
-  json<T = unknown>(args: string[], opts?: { cwd?: string; expectError?: boolean }): T {
+  json<T = unknown>(
+    args: string[],
+    opts?: { cwd?: string; expectError?: boolean },
+  ): T {
     const result = this.run(args, opts);
     return JSON.parse(result.stdout) as T;
   }
@@ -343,15 +357,15 @@ function shellEscape(arg: string): string {
 ### `src/helpers.ts`
 
 ```ts
-import crypto from 'node:crypto';
-import { ScratchCli } from './cli';
+import crypto from "node:crypto";
+import { ScratchCli } from "./cli";
 
 let counter = 0;
 
 /** Generate a unique name for test isolation */
-export function uniqueName(prefix = 'cli-test'): string {
+export function uniqueName(prefix = "cli-test"): string {
   const ts = Date.now().toString(36);
-  const rand = crypto.randomBytes(4).toString('hex');
+  const rand = crypto.randomBytes(4).toString("hex");
   return `${prefix}-${ts}-${rand}-${counter++}`;
 }
 
@@ -361,7 +375,7 @@ export function uniqueName(prefix = 'cli-test'): string {
  */
 export function deleteWorkspace(cli: ScratchCli, workspaceId: string): void {
   try {
-    cli.run(['workspaces', 'delete', workspaceId, '--yes']);
+    cli.run(["workspaces", "delete", workspaceId, "--yes"]);
   } catch {
     // best effort
   }
@@ -377,75 +391,99 @@ All tests instantiate a `ScratchCli` that shells out to the real binary with `--
 CRUD lifecycle tests for workspaces.
 
 ```ts
-import { ScratchCli } from '../src/cli';
-import { uniqueName, deleteWorkspace } from '../src/helpers';
+import { ScratchCli } from "../src/cli";
+import { uniqueName, deleteWorkspace } from "../src/helpers";
 
 const cli = new ScratchCli();
 
-describe('Workspaces', () => {
+describe("Workspaces", () => {
   let workspaceId: string;
 
   afterEach(() => {
     if (workspaceId) {
       deleteWorkspace(cli, workspaceId);
-      workspaceId = '';
+      workspaceId = "";
     }
   });
 
-  describe('create', () => {
-    it('should create a workspace with a name', () => {
-      const name = uniqueName('ws');
-      const result = cli.json<{ id: string; name: string }>(['workspaces', 'create', '--name', name]);
+  describe("create", () => {
+    it("should create a workspace with a name", () => {
+      const name = uniqueName("ws");
+      const result = cli.json<{ id: string; name: string }>([
+        "workspaces",
+        "create",
+        "--name",
+        name,
+      ]);
       workspaceId = result.id;
       expect(result.name).toBe(name);
       expect(result.id).toBeTruthy();
     });
   });
 
-  describe('show', () => {
-    it('should retrieve a workspace by ID', () => {
-      const name = uniqueName('ws');
-      const created = cli.json<{ id: string }>(['workspaces', 'create', '--name', name]);
+  describe("show", () => {
+    it("should retrieve a workspace by ID", () => {
+      const name = uniqueName("ws");
+      const created = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        "--name",
+        name,
+      ]);
       workspaceId = created.id;
 
-      const shown = cli.json<{ id: string; name: string; version: number }>(
-        ['workspaces', 'show', workspaceId],
-      );
+      const shown = cli.json<{ id: string; name: string; version: number }>([
+        "workspaces",
+        "show",
+        workspaceId,
+      ]);
       expect(shown.id).toBe(workspaceId);
       expect(shown.name).toBe(name);
       expect(shown.version).toBe(2);
     });
 
-    it('should fail for a non-existent workspace', () => {
-      const result = cli.run(['workspaces', 'show', 'wkb_nonexistent'], { expectError: true });
+    it("should fail for a non-existent workspace", () => {
+      const result = cli.run(["workspaces", "show", "wkb_nonexistent"], {
+        expectError: true,
+      });
       expect(result.exitCode).not.toBe(0);
     });
   });
 
-  describe('list', () => {
-    it('should include the created workspace in the list', () => {
-      const name = uniqueName('ws');
-      const created = cli.json<{ id: string }>(['workspaces', 'create', '--name', name]);
+  describe("list", () => {
+    it("should include the created workspace in the list", () => {
+      const name = uniqueName("ws");
+      const created = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        "--name",
+        name,
+      ]);
       workspaceId = created.id;
 
-      const list = cli.json<{ workspaces: Array<{ id: string; name: string }> }>(
-        ['workspaces', 'list'],
-      );
+      const list = cli.json<{
+        workspaces: Array<{ id: string; name: string }>;
+      }>(["workspaces", "list"]);
       expect(list.workspaces.some((ws) => ws.id === workspaceId)).toBe(true);
     });
   });
 
-  describe('delete', () => {
-    it('should delete a workspace', () => {
-      const name = uniqueName('ws');
-      const created = cli.json<{ id: string }>(['workspaces', 'create', '--name', name]);
+  describe("delete", () => {
+    it("should delete a workspace", () => {
+      const name = uniqueName("ws");
+      const created = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        "--name",
+        name,
+      ]);
       const id = created.id;
 
-      cli.run(['workspaces', 'delete', id, '--yes']);
+      cli.run(["workspaces", "delete", id, "--yes"]);
 
-      const result = cli.run(['workspaces', 'show', id], { expectError: true });
+      const result = cli.run(["workspaces", "show", id], { expectError: true });
       expect(result.exitCode).not.toBe(0);
-      workspaceId = ''; // already deleted
+      workspaceId = ""; // already deleted
     });
   });
 });
@@ -458,20 +496,25 @@ describe('Workspaces', () => {
 Tests require a live external service credential via `TEST_AIRTABLE_PAT`. Suite is skipped if not set.
 
 ```ts
-import { ScratchCli } from '../src/cli';
-import { uniqueName, deleteWorkspace } from '../src/helpers';
+import { ScratchCli } from "../src/cli";
+import { uniqueName, deleteWorkspace } from "../src/helpers";
 
 const cli = new ScratchCli();
 const airtablePat = process.env.TEST_AIRTABLE_PAT;
 
 const describeIfAirtable = airtablePat ? describe : describe.skip;
 
-describeIfAirtable('Connections', () => {
+describeIfAirtable("Connections", () => {
   let workspaceId: string;
   let connectionId: string;
 
   beforeAll(() => {
-    const ws = cli.json<{ id: string }>(['workspaces', 'create', '--name', uniqueName('conn')]);
+    const ws = cli.json<{ id: string }>([
+      "workspaces",
+      "create",
+      "--name",
+      uniqueName("conn"),
+    ]);
     workspaceId = ws.id;
   });
 
@@ -479,54 +522,69 @@ describeIfAirtable('Connections', () => {
     if (workspaceId) deleteWorkspace(cli, workspaceId);
   });
 
-  describe('add', () => {
-    it('should create an Airtable connection', () => {
+  describe("add", () => {
+    it("should create an Airtable connection", () => {
       const result = cli.json<{ id: string; service: string }>([
-        'connections', 'add',
-        '--workspace', workspaceId,
-        '--service', 'AIRTABLE',
-        '--param', `apiKey=${airtablePat}`,
-        '--name', uniqueName('airtable'),
+        "connections",
+        "add",
+        "--workspace",
+        workspaceId,
+        "--service",
+        "AIRTABLE",
+        "--param",
+        `apiKey=${airtablePat}`,
+        "--name",
+        uniqueName("airtable"),
       ]);
       connectionId = result.id;
-      expect(result.service).toBe('AIRTABLE');
+      expect(result.service).toBe("AIRTABLE");
       expect(result.id).toBeTruthy();
     });
   });
 
-  describe('list', () => {
-    it('should list connections for the workspace', () => {
+  describe("list", () => {
+    it("should list connections for the workspace", () => {
       const result = cli.json<Array<{ id: string }>>([
-        'connections', 'list',
-        '--workspace', workspaceId,
+        "connections",
+        "list",
+        "--workspace",
+        workspaceId,
       ]);
       expect(result.length).toBeGreaterThanOrEqual(1);
       expect(result.some((c) => c.id === connectionId)).toBe(true);
     });
   });
 
-  describe('show', () => {
-    it('should show connection details', () => {
+  describe("show", () => {
+    it("should show connection details", () => {
       const result = cli.json<{ id: string; service: string }>([
-        'connections', 'show', connectionId,
-        '--workspace', workspaceId,
+        "connections",
+        "show",
+        connectionId,
+        "--workspace",
+        workspaceId,
       ]);
       expect(result.id).toBe(connectionId);
-      expect(result.service).toBe('AIRTABLE');
+      expect(result.service).toBe("AIRTABLE");
     });
   });
 
-  describe('remove', () => {
-    it('should remove a connection', () => {
+  describe("remove", () => {
+    it("should remove a connection", () => {
       cli.run([
-        'connections', 'remove', connectionId,
-        '--workspace', workspaceId,
-        '--yes',
+        "connections",
+        "remove",
+        connectionId,
+        "--workspace",
+        workspaceId,
+        "--yes",
       ]);
 
       const list = cli.json<Array<{ id: string }>>([
-        'connections', 'list',
-        '--workspace', workspaceId,
+        "connections",
+        "list",
+        "--workspace",
+        workspaceId,
       ]);
       expect(list.some((c) => c.id === connectionId)).toBe(false);
     });
@@ -541,30 +599,39 @@ describeIfAirtable('Connections', () => {
 Depends on a live Airtable connection. Exercises the full linked table lifecycle.
 
 ```ts
-import { ScratchCli } from '../src/cli';
-import { uniqueName, deleteWorkspace } from '../src/helpers';
+import { ScratchCli } from "../src/cli";
+import { uniqueName, deleteWorkspace } from "../src/helpers";
 
 const cli = new ScratchCli();
 const airtablePat = process.env.TEST_AIRTABLE_PAT;
 
 const describeIfAirtable = airtablePat ? describe : describe.skip;
 
-describeIfAirtable('Linked Folders', () => {
+describeIfAirtable("Linked Folders", () => {
   let workspaceId: string;
   let connectionId: string;
   let linkedFolderId: string;
 
   beforeAll(() => {
     // Create workspace
-    const ws = cli.json<{ id: string }>(['workspaces', 'create', '--name', uniqueName('linked')]);
+    const ws = cli.json<{ id: string }>([
+      "workspaces",
+      "create",
+      "--name",
+      uniqueName("linked"),
+    ]);
     workspaceId = ws.id;
 
     // Add Airtable connection
     const conn = cli.json<{ id: string }>([
-      'connections', 'add',
-      '--workspace', workspaceId,
-      '--service', 'AIRTABLE',
-      '--param', `apiKey=${airtablePat}`,
+      "connections",
+      "add",
+      "--workspace",
+      workspaceId,
+      "--service",
+      "AIRTABLE",
+      "--param",
+      `apiKey=${airtablePat}`,
     ]);
     connectionId = conn.id;
   });
@@ -573,81 +640,96 @@ describeIfAirtable('Linked Folders', () => {
     if (workspaceId) deleteWorkspace(cli, workspaceId);
   });
 
-  describe('available', () => {
-    it('should list available tables from the connection', () => {
-      const result = cli.json<{ tables: Array<{ id: string; displayName: string }> }>([
-        'linked', 'available', connectionId,
-        '--workspace', workspaceId,
-      ]);
+  describe("available", () => {
+    it("should list available tables from the connection", () => {
+      const result = cli.json<{
+        tables: Array<{ id: string; displayName: string }>;
+      }>(["linked", "available", connectionId, "--workspace", workspaceId]);
       expect(result.tables.length).toBeGreaterThan(0);
     });
   });
 
-  describe('add', () => {
-    it('should link a table to the workspace', () => {
+  describe("add", () => {
+    it("should link a table to the workspace", () => {
       // First discover available tables
-      const tables = cli.json<{ tables: Array<{ id: string; displayName: string }> }>([
-        'linked', 'available', connectionId,
-        '--workspace', workspaceId,
-      ]);
+      const tables = cli.json<{
+        tables: Array<{ id: string; displayName: string }>;
+      }>(["linked", "available", connectionId, "--workspace", workspaceId]);
       const firstTable = tables.tables[0];
 
       const result = cli.json<{ id: string; name: string }>([
-        'linked', 'add',
-        '--workspace', workspaceId,
-        '--connection', connectionId,
-        '--table', firstTable.id,
-        '--name', firstTable.displayName,
+        "linked",
+        "add",
+        "--workspace",
+        workspaceId,
+        "--connection",
+        connectionId,
+        "--table",
+        firstTable.id,
+        "--name",
+        firstTable.displayName,
       ]);
       linkedFolderId = result.id;
       expect(result.name).toBe(firstTable.displayName);
     });
   });
 
-  describe('list', () => {
-    it('should list linked folders grouped by connector', () => {
+  describe("list", () => {
+    it("should list linked folders grouped by connector", () => {
       const result = cli.json<Array<{ dataFolders: Array<{ id: string }> }>>([
-        'linked', 'list',
-        '--workspace', workspaceId,
+        "linked",
+        "list",
+        "--workspace",
+        workspaceId,
       ]);
       const allFolders = result.flatMap((g) => g.dataFolders);
       expect(allFolders.some((f) => f.id === linkedFolderId)).toBe(true);
     });
   });
 
-  describe('show', () => {
-    it('should show linked folder details with change counts', () => {
-      const result = cli.json<{ id: string; creates: number; updates: number; deletes: number }>([
-        'linked', 'show', linkedFolderId,
-        '--workspace', workspaceId,
-      ]);
+  describe("show", () => {
+    it("should show linked folder details with change counts", () => {
+      const result = cli.json<{
+        id: string;
+        creates: number;
+        updates: number;
+        deletes: number;
+      }>(["linked", "show", linkedFolderId, "--workspace", workspaceId]);
       expect(result.id).toBe(linkedFolderId);
-      expect(typeof result.creates).toBe('number');
+      expect(typeof result.creates).toBe("number");
     });
   });
 
-  describe('pull', () => {
-    it('should pull data from the remote and complete successfully', () => {
+  describe("pull", () => {
+    it("should pull data from the remote and complete successfully", () => {
       // `linked pull` with --json waits for the job and prints the result
       const result = cli.run([
-        'linked', 'pull', linkedFolderId,
-        '--workspace', workspaceId,
+        "linked",
+        "pull",
+        linkedFolderId,
+        "--workspace",
+        workspaceId,
       ]);
       expect(result.exitCode).toBe(0);
     });
   });
 
-  describe('remove', () => {
-    it('should unlink a folder from the workspace', () => {
+  describe("remove", () => {
+    it("should unlink a folder from the workspace", () => {
       cli.run([
-        'linked', 'remove', linkedFolderId,
-        '--workspace', workspaceId,
-        '--yes',
+        "linked",
+        "remove",
+        linkedFolderId,
+        "--workspace",
+        workspaceId,
+        "--yes",
       ]);
 
       const list = cli.json<Array<{ dataFolders: Array<{ id: string }> }>>([
-        'linked', 'list',
-        '--workspace', workspaceId,
+        "linked",
+        "list",
+        "--workspace",
+        workspaceId,
       ]);
       const allFolders = list.flatMap((g) => g.dataFolders);
       expect(allFolders.some((f) => f.id === linkedFolderId)).toBe(false);
@@ -663,17 +745,17 @@ describeIfAirtable('Linked Folders', () => {
 Tests the `files download` and `files upload` commands, which operate via git clone/fetch/push. These tests use `workspaces init` to clone the workspace locally, then exercise the download/upload round-trip.
 
 ```ts
-import fs from 'node:fs';
-import path from 'node:path';
-import { ScratchCli } from '../src/cli';
-import { uniqueName, deleteWorkspace } from '../src/helpers';
+import fs from "node:fs";
+import path from "node:path";
+import { ScratchCli } from "../src/cli";
+import { uniqueName, deleteWorkspace } from "../src/helpers";
 
 const cli = new ScratchCli();
 const airtablePat = process.env.TEST_AIRTABLE_PAT;
 
 const describeIfAirtable = airtablePat ? describe : describe.skip;
 
-describeIfAirtable('Files', () => {
+describeIfAirtable("Files", () => {
   let workspaceId: string;
   let connectionId: string;
   let linkedFolderId: string;
@@ -681,83 +763,97 @@ describeIfAirtable('Files', () => {
 
   beforeAll(() => {
     // Full setup: workspace → connection → linked folder → pull
-    const ws = cli.json<{ id: string }>(['workspaces', 'create', '--name', uniqueName('files')]);
+    const ws = cli.json<{ id: string }>([
+      "workspaces",
+      "create",
+      "--name",
+      uniqueName("files"),
+    ]);
     workspaceId = ws.id;
 
     const conn = cli.json<{ id: string }>([
-      'connections', 'add',
-      '--workspace', workspaceId,
-      '--service', 'AIRTABLE',
-      '--param', `apiKey=${airtablePat}`,
+      "connections",
+      "add",
+      "--workspace",
+      workspaceId,
+      "--service",
+      "AIRTABLE",
+      "--param",
+      `apiKey=${airtablePat}`,
     ]);
     connectionId = conn.id;
 
-    const tables = cli.json<{ tables: Array<{ id: string; displayName: string }> }>([
-      'linked', 'available', connectionId,
-      '--workspace', workspaceId,
-    ]);
+    const tables = cli.json<{
+      tables: Array<{ id: string; displayName: string }>;
+    }>(["linked", "available", connectionId, "--workspace", workspaceId]);
     const firstTable = tables.tables[0];
 
     const linked = cli.json<{ id: string }>([
-      'linked', 'add',
-      '--workspace', workspaceId,
-      '--connection', connectionId,
-      '--table', firstTable.id,
-      '--name', firstTable.displayName,
+      "linked",
+      "add",
+      "--workspace",
+      workspaceId,
+      "--connection",
+      connectionId,
+      "--table",
+      firstTable.id,
+      "--name",
+      firstTable.displayName,
     ]);
     linkedFolderId = linked.id;
 
     // Pull data from Airtable
-    cli.run([
-      'linked', 'pull', linkedFolderId,
-      '--workspace', workspaceId,
-    ]);
+    cli.run(["linked", "pull", linkedFolderId, "--workspace", workspaceId]);
 
     // Init (clone) workspace locally
-    workspaceDir = path.join(cli.home, 'test-workspace');
+    workspaceDir = path.join(cli.home, "test-workspace");
     fs.mkdirSync(workspaceDir, { recursive: true });
-    cli.run(['workspaces', 'init', workspaceId], { cwd: workspaceDir });
+    cli.run(["workspaces", "init", workspaceId], { cwd: workspaceDir });
   });
 
   afterAll(() => {
     if (workspaceId) deleteWorkspace(cli, workspaceId);
     if (workspaceDir) {
-      try { fs.rmSync(workspaceDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      try {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
     }
   });
 
-  describe('download', () => {
-    it('should download files from the workspace', () => {
-      const result = cli.run(['files', 'download'], { cwd: workspaceDir });
+  describe("download", () => {
+    it("should download files from the workspace", () => {
+      const result = cli.run(["files", "download"], { cwd: workspaceDir });
       expect(result.exitCode).toBe(0);
     });
 
-    it('should have files on disk after download', () => {
+    it("should have files on disk after download", () => {
       // V2 workspaces have connector subdirectories with data folders inside
       const entries = fs.readdirSync(workspaceDir);
       // Should have at least the .scratchmd marker and a connector directory
       expect(entries.length).toBeGreaterThan(0);
-      expect(entries.some((e) => e === '.scratchmd')).toBe(true);
+      expect(entries.some((e) => e === ".scratchmd")).toBe(true);
     });
   });
 
-  describe('upload', () => {
-    it('should upload with no local changes (no-op)', () => {
-      const result = cli.run(['files', 'upload'], { cwd: workspaceDir });
+  describe("upload", () => {
+    it("should upload with no local changes (no-op)", () => {
+      const result = cli.run(["files", "upload"], { cwd: workspaceDir });
       expect(result.exitCode).toBe(0);
     });
   });
 
-  describe('round-trip', () => {
-    it('should handle download → local edit → upload → download cycle', () => {
+  describe("round-trip", () => {
+    it("should handle download → local edit → upload → download cycle", () => {
       // Find a markdown file in the workspace
       const findMdFiles = (dir: string): string[] => {
         const results: string[] = [];
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
           const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          if (entry.isDirectory() && !entry.name.startsWith(".")) {
             results.push(...findMdFiles(fullPath));
-          } else if (entry.name.endsWith('.md')) {
+          } else if (entry.name.endsWith(".md")) {
             results.push(fullPath);
           }
         }
@@ -766,27 +862,29 @@ describeIfAirtable('Files', () => {
 
       const mdFiles = findMdFiles(workspaceDir);
       if (mdFiles.length === 0) {
-        console.warn('No markdown files found — skipping round-trip test');
+        console.warn("No markdown files found — skipping round-trip test");
         return;
       }
 
       // Append to a file
       const targetFile = mdFiles[0];
-      const original = fs.readFileSync(targetFile, 'utf-8');
-      fs.writeFileSync(targetFile, original + '\n<!-- test edit -->');
+      const original = fs.readFileSync(targetFile, "utf-8");
+      fs.writeFileSync(targetFile, original + "\n<!-- test edit -->");
 
       // Upload
-      const uploadResult = cli.run(['files', 'upload'], { cwd: workspaceDir });
+      const uploadResult = cli.run(["files", "upload"], { cwd: workspaceDir });
       expect(uploadResult.exitCode).toBe(0);
 
       // Restore original content and download to verify
       fs.writeFileSync(targetFile, original);
-      const downloadResult = cli.run(['files', 'download'], { cwd: workspaceDir });
+      const downloadResult = cli.run(["files", "download"], {
+        cwd: workspaceDir,
+      });
       expect(downloadResult.exitCode).toBe(0);
 
       // File should contain our edit (merged from server)
-      const afterDownload = fs.readFileSync(targetFile, 'utf-8');
-      expect(afterDownload).toContain('<!-- test edit -->');
+      const afterDownload = fs.readFileSync(targetFile, "utf-8");
+      expect(afterDownload).toContain("<!-- test edit -->");
     });
   });
 });

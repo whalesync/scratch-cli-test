@@ -142,7 +142,9 @@ export function generateSchemaFile(
     configLines.push(`  parent: {`);
     configLines.push(`    entityType: '${entity.parent.entityType}',`);
     configLines.push(`    foreignKey: '${entity.parent.foreignKey}',`);
-    configLines.push(`    connectionField: '${entity.parent.connectionField}',`);
+    configLines.push(
+      `    connectionField: '${entity.parent.connectionField}',`,
+    );
     configLines.push(`  },`);
   }
 

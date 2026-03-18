@@ -11,9 +11,7 @@
       }
     ]
   },
-  "transformIgnorePatterns": [
-    "node_modules/(?!(nanoid)/)"
-  ],
+  "transformIgnorePatterns": ["node_modules/(?!(nanoid)/)"],
   "globalSetup": "<rootDir>/jest-setup.ts",
   "maxWorkers": 1,
   "testTimeout": 120000,

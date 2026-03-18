@@ -147,6 +147,7 @@ goreleaser release --snapshot --clean
 ```
 
 This creates binaries in `dist/` for both environments:
+
 - **Production**: `scratchmd_<version>_<os>_<arch>.tar.gz` → points to `https://api.scratch.md`
 - **Test**: `scratchmd-test_<version>_<os>_<arch>.tar.gz` → points to `https://test-api.scratch.md`
 
@@ -177,6 +178,7 @@ goreleaser release --clean
 ```
 
 This will:
+
 1. Build binaries for all platforms (linux, darwin, windows × amd64, arm64)
 2. Create archives with checksums
 3. Publish a GitHub release with all artifacts

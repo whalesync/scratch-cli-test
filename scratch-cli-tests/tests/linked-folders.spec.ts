@@ -77,7 +77,9 @@ describeIfPostgres("Linked Folders", () => {
         workspaceId,
       ]);
       expect(result.length).toBeGreaterThan(0);
-      expect(result.some((t) => t.displayName === "integration_blog_posts")).toBe(true);
+      expect(
+        result.some((t) => t.displayName === "integration_blog_posts"),
+      ).toBe(true);
     });
   });
 

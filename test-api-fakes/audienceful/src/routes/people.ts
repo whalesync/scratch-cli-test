@@ -1,19 +1,22 @@
-import { Router } from 'express';
-import { store } from '../store';
+import { Router } from "express";
+import { store } from "../store";
 
 const router = Router();
 
 const PAGE_SIZE = 50;
 
-router.get('/', (req, res) => {
+router.get("/", (req, res) => {
   const people = store.listPeople();
 
   // Parse cursor for pagination
   let startIndex = 0;
   const cursorParam = req.query.cursor;
-  if (typeof cursorParam === 'string') {
+  if (typeof cursorParam === "string") {
     try {
-      startIndex = parseInt(Buffer.from(cursorParam, 'base64').toString('utf-8'), 10);
+      startIndex = parseInt(
+        Buffer.from(cursorParam, "base64").toString("utf-8"),
+        10,
+      );
     } catch {
       startIndex = 0;
     }
@@ -23,13 +26,17 @@ router.get('/', (req, res) => {
   const hasNext = startIndex + PAGE_SIZE < people.length;
 
   const protocol = req.protocol;
-  const host = req.get('host');
-  const basePath = '/api/people/';
+  const host = req.get("host");
+  const basePath = "/api/people/";
 
-  const nextCursor = hasNext ? Buffer.from(String(startIndex + PAGE_SIZE)).toString('base64') : null;
+  const nextCursor = hasNext
+    ? Buffer.from(String(startIndex + PAGE_SIZE)).toString("base64")
+    : null;
 
   res.json({
-    next: nextCursor ? `${protocol}://${host}${basePath}?cursor=${nextCursor}` : null,
+    next: nextCursor
+      ? `${protocol}://${host}${basePath}?cursor=${nextCursor}`
+      : null,
     previous: null,
     count: page.length,
     total: people.length,
@@ -37,13 +44,13 @@ router.get('/', (req, res) => {
   });
 });
 
-router.get('/:uid/', (req, res) => {
+router.get("/:uid/", (req, res) => {
   const { uid } = req.params;
   const person = store.getPerson(uid);
 
   if (!person) {
     res.status(404).json({
-      detail: 'Not found.',
+      detail: "Not found.",
     });
     return;
   }
@@ -51,26 +58,32 @@ router.get('/:uid/', (req, res) => {
   res.json(person);
 });
 
-router.post('/', (req, res) => {
+router.post("/", (req, res) => {
   const { email, tags, notes, extra_data, ...customFields } = req.body;
 
   if (!email) {
     res.status(400).json({
-      detail: 'email is required.',
+      detail: "email is required.",
     });
     return;
   }
 
-  const person = store.addPerson({ email, tags, notes, extra_data, ...customFields });
+  const person = store.addPerson({
+    email,
+    tags,
+    notes,
+    extra_data,
+    ...customFields,
+  });
   res.status(201).json(person);
 });
 
-router.put('/', (req, res) => {
+router.put("/", (req, res) => {
   const { email, tags, notes, extra_data, ...customFields } = req.body;
 
   if (!email) {
     res.status(400).json({
-      detail: 'email is required.',
+      detail: "email is required.",
     });
     return;
   }
@@ -78,21 +91,32 @@ router.put('/', (req, res) => {
   // If person doesn't exist, create them
   const existing = store.getPersonByEmail(email);
   if (!existing) {
-    const person = store.addPerson({ email, tags, notes, extra_data, ...customFields });
+    const person = store.addPerson({
+      email,
+      tags,
+      notes,
+      extra_data,
+      ...customFields,
+    });
     res.status(201).json(person);
     return;
   }
 
-  const person = store.updatePerson(email, { tags, notes, extra_data, ...customFields });
+  const person = store.updatePerson(email, {
+    tags,
+    notes,
+    extra_data,
+    ...customFields,
+  });
   res.json(person);
 });
 
-router.delete('/', (req, res) => {
+router.delete("/", (req, res) => {
   const { email } = req.body;
 
   if (!email) {
     res.status(400).json({
-      detail: 'email is required.',
+      detail: "email is required.",
     });
     return;
   }

@@ -120,15 +120,15 @@ scratchmd syncs run <id>            # Execute a sync
 
 ### Global Flags
 
-| Flag | Description |
-|------|-------------|
-| `-v, --verbose` | Enable verbose output |
-| `--config <path>` | Config file path (default: `.scratchmd.config.yaml`) |
-| `--scratch-url <url>` | Override scratch server URL |
-| `--json` | Output as JSON (available on most subcommands) |
-| `--yes` | Skip confirmation prompts |
-| `--version` | Show version information |
-| `-h, --help` | Show help for any command |
+| Flag                  | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `-v, --verbose`       | Enable verbose output                                |
+| `--config <path>`     | Config file path (default: `.scratchmd.config.yaml`) |
+| `--scratch-url <url>` | Override scratch server URL                          |
+| `--json`              | Output as JSON (available on most subcommands)       |
+| `--yes`               | Skip confirmation prompts                            |
+| `--version`           | Show version information                             |
+| `-h, --help`          | Show help for any command                            |
 
 ## Enabling Command Completion
 

@@ -161,5 +161,4 @@ push scratch-git image to production artifact registry:
     - docker push ${GCP_REGISTRY_URL}/spinner-scratch-git:latest
   rules:
     - !reference [.rules, on_merge_to_prod]
-
 #endregion

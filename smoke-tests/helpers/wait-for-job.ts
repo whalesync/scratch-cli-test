@@ -1,4 +1,4 @@
-import { TestApiClient } from './test-api-client';
+import { TestApiClient } from "./test-api-client";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -14,18 +14,22 @@ export async function waitForJob(
 ): Promise<{ state: string; publicProgress?: any; failedReason?: string }> {
   const start = Date.now();
 
-  let lastState = '';
+  let lastState = "";
   while (Date.now() - start < timeoutMs) {
     const res = await api.get(`/jobs/${jobId}/progress`);
 
     if (res.status === 401) {
-      console.warn(`waitForJob: 401 on job ${jobId} (token refresh may have failed), retrying...`);
+      console.warn(
+        `waitForJob: 401 on job ${jobId} (token refresh may have failed), retrying...`,
+      );
       await sleep(2000);
       continue;
     }
 
     if (res.status !== 200) {
-      throw new Error(`Failed to get job progress: ${res.status} ${JSON.stringify(res.data)}`);
+      throw new Error(
+        `Failed to get job progress: ${res.status} ${JSON.stringify(res.data)}`,
+      );
     }
 
     const job = res.data;
@@ -33,14 +37,16 @@ export async function waitForJob(
       console.log(`waitForJob: job ${jobId} state=${job.state}`);
       lastState = job.state;
     }
-    if (job.state === 'completed' || job.state === 'failed') {
+    if (job.state === "completed" || job.state === "failed") {
       return job;
     }
 
     await sleep(500);
   }
 
-  throw new Error(`Job ${jobId} did not complete within ${timeoutMs}ms (last state: ${lastState})`);
+  throw new Error(
+    `Job ${jobId} did not complete within ${timeoutMs}ms (last state: ${lastState})`,
+  );
 }
 
 /**

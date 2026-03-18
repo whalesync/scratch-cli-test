@@ -32,7 +32,7 @@ This comes directly from the git diff status. `scratchGitService.getRepoStatus(r
 - **`added`** → create
 - **`deleted`** → delete
 
-Files that only appear because they *reference* a deleted record (but aren't themselves modified/added) are also processed in the edit phase, but only if the ref-stripping actually changes them.
+Files that only appear because they _reference_ a deleted record (but aren't themselves modified/added) are also processed in the edit phase, but only if the ref-stripping actually changes them.
 
 ## Pseudo-ref handling
 
@@ -42,7 +42,7 @@ Pseudo-refs are references to records that don't yet have a real remote ID (they
 
 - **Pass 1** (`stripDeletedRecordRefs`): Removes references to records being deleted in this publish.
 - **Pass 2** (`stripPseudoRefs`): Removes any remaining pseudo-refs (refs with pending-publish IDs) from the content. The edit/create operation uses this stripped version so the connector never sees unresolved refs.
-- If pass 2 changed anything, a **backfill** operation is created with the pass-1 content (which still has the pseudo-refs). This is queued to run *after* creates, so by then the referenced records will have real IDs.
+- If pass 2 changed anything, a **backfill** operation is created with the pass-1 content (which still has the pseudo-refs). This is queued to run _after_ creates, so by then the referenced records will have real IDs.
 
 ### During run
 
@@ -56,13 +56,13 @@ The actual resolution logic lives in `RefResolverService` and `RefCleanerService
 
 ## Key services involved
 
-| Service | Role |
-|---------|------|
-| `PublishPlanBuildService` | Diffs branches, plans operations |
-| `PublishPlanRunService` | Executes planned operations against connectors |
-| `RefCleanerService` | Strips deleted-record refs and pseudo-refs during build |
-| `RefResolverService` | Resolves pseudo-refs to real IDs during run |
-| `FileIndexService` | Maps filenames to remote record IDs |
-| `FileReferenceService` | Tracks inter-file references for ref-clearing |
-| `SchemaHelperService` | Resolves table specs and schemas for data folders |
-| `ScratchGitService` | Git operations (diff, read, commit, rebase, rename) |
+| Service                   | Role                                                    |
+| ------------------------- | ------------------------------------------------------- |
+| `PublishPlanBuildService` | Diffs branches, plans operations                        |
+| `PublishPlanRunService`   | Executes planned operations against connectors          |
+| `RefCleanerService`       | Strips deleted-record refs and pseudo-refs during build |
+| `RefResolverService`      | Resolves pseudo-refs to real IDs during run             |
+| `FileIndexService`        | Maps filenames to remote record IDs                     |
+| `FileReferenceService`    | Tracks inter-file references for ref-clearing           |
+| `SchemaHelperService`     | Resolves table specs and schemas for data folders       |
+| `ScratchGitService`       | Git operations (diff, read, commit, rebase, rename)     |

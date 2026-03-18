@@ -2,40 +2,40 @@ services:
   db:
     image: postgres:13.7
     ports:
-      - "5432:5432"
+      - '5432:5432'
     environment:
       POSTGRES_PASSWORD: postgres
     command: postgres -c shared_preload_libraries=pg_stat_statements -c timezone=UTC
   redis:
     image: redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
   mongodb:
     image: mongo:latest
     ports:
-      - "27017:27017"
+      - '27017:27017'
     volumes:
       - mongodb_data:/data/db
   fake-airtable:
     build: ../../test-api-fakes/airtable
     ports:
-      - "4646:4646"
+      - '4646:4646'
   fake-wordpress:
     build: ../../test-api-fakes/wordpress
     ports:
-      - "4647:4647"
+      - '4647:4647'
   fake-quickbooks:
     build: ../../test-api-fakes/quickbooks
     ports:
-      - "4648:4648"
+      - '4648:4648'
   fake-moco:
     build: ../../test-api-fakes/moco
     ports:
-      - "4649:4649"
+      - '4649:4649'
   fake-audienceful:
     build: ../../test-api-fakes/audienceful
     ports:
-      - "4651:4651"
+      - '4651:4651'
 
 volumes:
   mongodb_data:

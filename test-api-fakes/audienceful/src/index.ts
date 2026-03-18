@@ -1,9 +1,9 @@
-import express from 'express';
-import { store } from './store';
-import { authMiddleware } from './middleware/auth';
-import testAdminRouter from './routes/test-admin';
-import peopleRouter from './routes/people';
-import fieldsRouter from './routes/fields';
+import express from "express";
+import { store } from "./store";
+import { authMiddleware } from "./middleware/auth";
+import testAdminRouter from "./routes/test-admin";
+import peopleRouter from "./routes/people";
+import fieldsRouter from "./routes/fields";
 
 export function createApp(): express.Express {
   const app = express();
@@ -12,16 +12,16 @@ export function createApp(): express.Express {
 
   // Error simulation middleware — runs before auth and routes, but skips /test/ endpoints
   app.use((req, res, next) => {
-    if (req.path.startsWith('/test/')) {
+    if (req.path.startsWith("/test/")) {
       next();
       return;
     }
 
     const retryAfter = store.checkRateLimit();
     if (retryAfter !== null) {
-      res.set('Retry-After', String(retryAfter));
+      res.set("Retry-After", String(retryAfter));
       res.status(429).json({
-        detail: 'Request was throttled.',
+        detail: "Request was throttled.",
       });
       return;
     }
@@ -37,9 +37,9 @@ export function createApp(): express.Express {
 
   app.use(authMiddleware);
 
-  app.use('/test', testAdminRouter);
-  app.use('/api/people/fields', fieldsRouter);
-  app.use('/api/people', peopleRouter);
+  app.use("/test", testAdminRouter);
+  app.use("/api/people/fields", fieldsRouter);
+  app.use("/api/people", peopleRouter);
 
   return app;
 }

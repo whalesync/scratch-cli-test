@@ -7,7 +7,7 @@
  */
 export interface ScalarMapping {
   /** The TypeBox type to use (e.g., 'string', 'number', 'boolean') */
-  typeboxType: 'string' | 'number' | 'boolean' | 'unknown';
+  typeboxType: "string" | "number" | "boolean" | "unknown";
   /** Whether the scalar is nullable by default */
   nullable: boolean;
   /** Optional format for string types */
@@ -106,7 +106,7 @@ export interface TypeBoxSchemaOutput {
 export interface MutationOutput {
   entityType: string;
   mutations: {
-    type: 'create' | 'update' | 'delete';
+    type: "create" | "update" | "delete";
     name: string;
     code: string;
   }[];

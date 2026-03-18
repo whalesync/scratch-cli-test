@@ -2,5 +2,5 @@
  * GraphQL Codegen Plugins
  */
 
-export * from './typebox-plugin';
-export * from './mutations-plugin';
+export * from "./typebox-plugin";
+export * from "./mutations-plugin";

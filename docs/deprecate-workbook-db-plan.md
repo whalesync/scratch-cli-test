@@ -12,11 +12,11 @@ This document outlines the plan for deprecating and removing the `WorkbookDb` an
 
 ### Core Files
 
-| File | Location | Description |
-|------|----------|-------------|
-| `workbook-db.ts` | `server/src/workbook/` | Main class (~1,240 lines) with file CRUD, search, sync, and publishing operations |
-| `workbook-db.service.ts` | `server/src/workbook/` | NestJS service wrapper with lifecycle hooks |
-| `workbook-db.module.ts` | `server/src/workbook/` | NestJS module that provides and exports the service |
+| File                     | Location               | Description                                                                       |
+| ------------------------ | ---------------------- | --------------------------------------------------------------------------------- |
+| `workbook-db.ts`         | `server/src/workbook/` | Main class (~1,240 lines) with file CRUD, search, sync, and publishing operations |
+| `workbook-db.service.ts` | `server/src/workbook/` | NestJS service wrapper with lifecycle hooks                                       |
+| `workbook-db.module.ts`  | `server/src/workbook/` | NestJS module that provides and exports the service                               |
 
 ### Key Functionality in WorkbookDb
 
@@ -42,35 +42,35 @@ These standalone functions are imported separately from the WorkbookDb class:
 
 ### 1. Server Services (4 files)
 
-| File | Usage | Impact |
-|------|-------|--------|
-| `workbook.service.ts` | Constructor injection only | Low - remove injection |
-| `files.service.ts` | **20+ method calls** to workbookDb | **High** - primary consumer |
-| `folder.service.ts` | Constructor injection only | Low - remove injection |
+| File                                | Usage                                             | Impact                                |
+| ----------------------------------- | ------------------------------------------------- | ------------------------------------- |
+| `workbook.service.ts`               | Constructor injection only                        | Low - remove injection                |
+| `files.service.ts`                  | **20+ method calls** to workbookDb                | **High** - primary consumer           |
+| `folder.service.ts`                 | Constructor injection only                        | Low - remove injection                |
 | `webflow-custom-actions.service.ts` | Uses `convertFileToConnectorRecord()` + injection | Medium - already deprecated code path |
 
 ### 2. BullMQ Worker Jobs (3 files)
 
-| Job Handler | File | WorkbookDb Usage |
-|-------------|------|------------------|
-| `PullFilesJobHandler` | `pull-files.job.ts` | `resetSeenFlagForFolder()` |
-| `PullRecordFilesJobHandler` | `pull-record-files.job.ts` | Constructor receives WorkbookDb |
+| Job Handler                       | File                              | WorkbookDb Usage                |
+| --------------------------------- | --------------------------------- | ------------------------------- |
+| `PullFilesJobHandler`             | `pull-files.job.ts`               | `resetSeenFlagForFolder()`      |
+| `PullRecordFilesJobHandler`       | `pull-record-files.job.ts`        | Constructor receives WorkbookDb |
 | `PullLinkedFolderFilesJobHandler` | `pull-linked-folder-files.job.ts` | Constructor receives WorkbookDb |
 
 ### 3. Job Infrastructure (2 files)
 
-| File | Usage |
-|------|-------|
+| File                     | Usage                                                 |
+| ------------------------ | ----------------------------------------------------- |
 | `job-handler.service.ts` | Passes `workbookDbService.workbookDb` to job handlers |
-| `workers.module.ts` | Imports `WorkbookDbModule` |
+| `workers.module.ts`      | Imports `WorkbookDbModule`                            |
 
 ### 4. Module Imports (3 files)
 
-| File | Usage |
-|------|-------|
-| `workbook.module.ts` | Imports and exports `WorkbookDbModule` |
-| `webflow-custom-actions.module.ts` | Imports `WorkbookDbModule` |
-| `workers.module.ts` | Imports `WorkbookDbModule` |
+| File                               | Usage                                  |
+| ---------------------------------- | -------------------------------------- |
+| `workbook.module.ts`               | Imports and exports `WorkbookDbModule` |
+| `webflow-custom-actions.module.ts` | Imports `WorkbookDbModule`             |
+| `workers.module.ts`                | Imports `WorkbookDbModule`             |
 
 ---
 
@@ -80,39 +80,39 @@ All endpoints are in `files.controller.ts` and call `FilesService` methods that 
 
 ### FilesController Endpoints
 
-| Method | Route | Service Method | Action |
-|--------|-------|----------------|--------|
-| GET | `/workbooks/:workbookId/files/list` | `listFiles()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/list/details` | `listFilesDetails()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/list/by-folder` | `listByFolderId()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/list/by-path` | `listByPath()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/by-path` | `getFileByPath()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/find` | `findFiles()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/grep` | `grepFiles()` | **Remove or migrate** |
-| PUT | `/workbooks/:workbookId/files/write-by-path` | `writeFileByPath()` | **Remove or migrate** |
-| PATCH | `/workbooks/:workbookId/files/by-path` | `updateFileByPath()` | **Remove or migrate** |
-| DELETE | `/workbooks/:workbookId/files/by-path` | `deleteFileByPath()` | **Remove or migrate** |
-| POST | `/workbooks/:workbookId/files` | `createFile()` | **Remove or migrate** |
-| GET | `/workbooks/:workbookId/files/:fileId` | `getFile()` | **Remove or migrate** |
-| PATCH | `/workbooks/:workbookId/files/:fileId` | `updateFile()` | **Remove or migrate** |
-| DELETE | `/workbooks/:workbookId/files/:fileId` | `deleteFile()` | **Remove or migrate** |
-| POST | `/workbooks/:workbookId/files/:fileId/copy` | `copyFile()` | **Remove or migrate** |
-| POST | `/workbooks/:workbookId/files/publish` | `publishFile()` | **Remove or migrate** |
+| Method | Route                                         | Service Method       | Action                |
+| ------ | --------------------------------------------- | -------------------- | --------------------- |
+| GET    | `/workbooks/:workbookId/files/list`           | `listFiles()`        | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/list/details`   | `listFilesDetails()` | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/list/by-folder` | `listByFolderId()`   | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/list/by-path`   | `listByPath()`       | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/by-path`        | `getFileByPath()`    | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/find`           | `findFiles()`        | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/grep`           | `grepFiles()`        | **Remove or migrate** |
+| PUT    | `/workbooks/:workbookId/files/write-by-path`  | `writeFileByPath()`  | **Remove or migrate** |
+| PATCH  | `/workbooks/:workbookId/files/by-path`        | `updateFileByPath()` | **Remove or migrate** |
+| DELETE | `/workbooks/:workbookId/files/by-path`        | `deleteFileByPath()` | **Remove or migrate** |
+| POST   | `/workbooks/:workbookId/files`                | `createFile()`       | **Remove or migrate** |
+| GET    | `/workbooks/:workbookId/files/:fileId`        | `getFile()`          | **Remove or migrate** |
+| PATCH  | `/workbooks/:workbookId/files/:fileId`        | `updateFile()`       | **Remove or migrate** |
+| DELETE | `/workbooks/:workbookId/files/:fileId`        | `deleteFile()`       | **Remove or migrate** |
+| POST   | `/workbooks/:workbookId/files/:fileId/copy`   | `copyFile()`         | **Remove or migrate** |
+| POST   | `/workbooks/:workbookId/files/publish`        | `publishFile()`      | **Remove or migrate** |
 
 ### FoldersController Endpoints
 
-| Method | Route | Service Method | Action |
-|--------|-------|----------------|--------|
-| POST | `/workbooks/:workbookId/folders` | `createFolder()` | **Remove or migrate** |
-| PATCH | `/workbooks/:workbookId/folders/:folderId` | `updateFolder()` | **Remove or migrate** |
+| Method | Route                                      | Service Method   | Action                |
+| ------ | ------------------------------------------ | ---------------- | --------------------- |
+| POST   | `/workbooks/:workbookId/folders`           | `createFolder()` | **Remove or migrate** |
+| PATCH  | `/workbooks/:workbookId/folders/:folderId` | `updateFolder()` | **Remove or migrate** |
 | DELETE | `/workbooks/:workbookId/folders/:folderId` | `deleteFolder()` | **Remove or migrate** |
 
 ### FilesPublicController Endpoints
 
-| Method | Route | Service Method | Action |
-|--------|-------|----------------|--------|
-| GET | `/workbook/public/:id/files/download` | `downloadFileAsMarkdownPublic()` | **Remove or migrate** |
-| GET | `/workbook/public/:id/folders/download` | `downloadFolderAsZipPublic()` | **Remove or migrate** |
+| Method | Route                                   | Service Method                   | Action                |
+| ------ | --------------------------------------- | -------------------------------- | --------------------- |
+| GET    | `/workbook/public/:id/files/download`   | `downloadFileAsMarkdownPublic()` | **Remove or migrate** |
+| GET    | `/workbook/public/:id/folders/download` | `downloadFolderAsZipPublic()`    | **Remove or migrate** |
 
 ---
 
@@ -150,12 +150,12 @@ foldersApi = {
 
 ### Shared Types (`packages/shared-types`)
 
-| File | Types to Remove |
-|------|-----------------|
-| `dto/workbook/file-details.dto.ts` | `FileDetailsResponseDto`, `CreateFileDto`, `UpdateFileDto`, `CopyFileDto` |
-| `dto/workbook/list-files.dto.ts` | `ListFileDto`, `ListFilesResponseDto`, `ListFilesDetailsResponseDto` |
-| `file-types.ts` | `FileDetailsEntity`, `FileOrFolderRefEntity`, `FileRefEntity` (verify usage) |
-| `ids.ts` | `FileId`, `FolderId` (verify if used elsewhere) |
+| File                               | Types to Remove                                                              |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `dto/workbook/file-details.dto.ts` | `FileDetailsResponseDto`, `CreateFileDto`, `UpdateFileDto`, `CopyFileDto`    |
+| `dto/workbook/list-files.dto.ts`   | `ListFileDto`, `ListFilesResponseDto`, `ListFilesDetailsResponseDto`         |
+| `file-types.ts`                    | `FileDetailsEntity`, `FileOrFolderRefEntity`, `FileRefEntity` (verify usage) |
+| `ids.ts`                           | `FileId`, `FolderId` (verify if used elsewhere)                              |
 
 ---
 
@@ -227,13 +227,13 @@ foldersApi = {
 
 ## Risk Assessment
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Data loss during migration | High | Full backups, staged rollout, rollback capability |
-| Breaking production file operations | High | Feature flags, A/B testing, comprehensive test coverage |
-| Client breaking changes | Medium | Version API endpoints, coordinate client updates |
-| Performance regression | Medium | Benchmark new implementation, monitor in staging |
-| Incomplete cleanup leaving dead code | Low | Thorough grep/search after removal, CI checks |
+| Risk                                 | Severity | Mitigation                                              |
+| ------------------------------------ | -------- | ------------------------------------------------------- |
+| Data loss during migration           | High     | Full backups, staged rollout, rollback capability       |
+| Breaking production file operations  | High     | Feature flags, A/B testing, comprehensive test coverage |
+| Client breaking changes              | Medium   | Version API endpoints, coordinate client updates        |
+| Performance regression               | Medium   | Benchmark new implementation, monitor in staging        |
+| Incomplete cleanup leaving dead code | Low      | Thorough grep/search after removal, CI checks           |
 
 ---
 

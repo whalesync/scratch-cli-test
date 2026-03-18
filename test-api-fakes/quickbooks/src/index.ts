@@ -1,9 +1,9 @@
-import express from 'express';
-import { store } from './store';
-import { authMiddleware } from './middleware/auth';
-import testAdminRouter from './routes/test-admin';
-import queryRouter from './routes/query';
-import entityRouter from './routes/entity';
+import express from "express";
+import { store } from "./store";
+import { authMiddleware } from "./middleware/auth";
+import testAdminRouter from "./routes/test-admin";
+import queryRouter from "./routes/query";
+import entityRouter from "./routes/entity";
 
 export function createApp(): express.Express {
   const app = express();
@@ -12,22 +12,22 @@ export function createApp(): express.Express {
 
   // Error simulation middleware — runs before auth and routes, but skips /test/ endpoints
   app.use((req, res, next) => {
-    if (req.path.startsWith('/test/')) {
+    if (req.path.startsWith("/test/")) {
       next();
       return;
     }
 
     const retryAfter = store.checkRateLimit();
     if (retryAfter !== null) {
-      res.set('Retry-After', String(retryAfter));
+      res.set("Retry-After", String(retryAfter));
       res.status(429).json({
         Fault: {
-          type: 'RateLimitFault',
+          type: "RateLimitFault",
           Error: [
             {
-              Message: 'Throttled',
-              Detail: 'Rate limit reached',
-              code: '3001',
+              Message: "Throttled",
+              Detail: "Rate limit reached",
+              code: "3001",
             },
           ],
         },
@@ -46,9 +46,9 @@ export function createApp(): express.Express {
 
   app.use(authMiddleware);
 
-  app.use('/test', testAdminRouter);
-  app.use('/', queryRouter);
-  app.use('/', entityRouter);
+  app.use("/test", testAdminRouter);
+  app.use("/", queryRouter);
+  app.use("/", entityRouter);
 
   return app;
 }

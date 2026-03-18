@@ -14,11 +14,11 @@ metadata that is visible to users but read-only from the CLI.
 
 ```ts
 // Keep old name for fallback reads during migration
-const LEGACY_SCHEMA_JSON_FILENAME = '.schema.json';
+const LEGACY_SCHEMA_JSON_FILENAME = ".schema.json";
 
 // New location
-export const SCRATCH_DIR = '.scratch';
-export const SCHEMA_FILENAME = 'schema.json';
+export const SCRATCH_DIR = ".scratch";
+export const SCHEMA_FILENAME = "schema.json";
 ```
 
 ### `writeSchemaToGit` (~line 261)
@@ -26,19 +26,20 @@ export const SCHEMA_FILENAME = 'schema.json';
 ```ts
 // Old: folderPath.replace(/^\//, '') + '/' + SCHEMA_JSON_FILENAME
 // New:
-const normalizedFolder = folderPath.replace(/^\//, '');
+const normalizedFolder = folderPath.replace(/^\//, "");
 const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
 ```
 
 ### `readSchemaFromGit` (~line 283) — add fallback
 
 ```ts
-const normalizedFolder = folderPath.replace(/^\//, '');
-const newGitPath  = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
+const normalizedFolder = folderPath.replace(/^\//, "");
+const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
 const legacyGitPath = `${normalizedFolder}/${LEGACY_SCHEMA_JSON_FILENAME}`;
 
-const file = await this.getRepoFile(repoId, MAIN_BRANCH, newGitPath)
-          ?? await this.getRepoFile(repoId, MAIN_BRANCH, legacyGitPath);
+const file =
+  (await this.getRepoFile(repoId, MAIN_BRANCH, newGitPath)) ??
+  (await this.getRepoFile(repoId, MAIN_BRANCH, legacyGitPath));
 if (!file) return null;
 ```
 
@@ -148,11 +149,13 @@ schemas from git. **Keep this window short** — deploy CLI immediately after se
 **`client/src/app/workbook/[id]/components/Sidebar/TreeNode.tsx`**
 
 In `TableNode` (~lines 755-778):
+
 - Remove `hiddenFileFolders` / `toggleHiddenFiles` store reads
 - Remove the "Show hidden files" context menu item (~lines 1068-1075)
 - Add `showHidden: boolean` prop to `TableNodeProps`
 
 In `ConnectionNode` (~line 245):
+
 - Read `showHiddenConnections` and `toggleHiddenFiles` from store
 - Compute: `const showHidden = connectorAccount ? showHiddenConnections.has(connectorAccount.id) : false`
 - Thread `showHidden` through `FolderTreeRenderer` → `TableNode`

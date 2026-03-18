@@ -91,7 +91,9 @@ describeIfPostgres("Files", () => {
       "--workspace",
       workspaceId,
     ]);
-    const blogPostsTable = tables.find((t) => t.displayName === "integration_blog_posts")!;
+    const blogPostsTable = tables.find(
+      (t) => t.displayName === "integration_blog_posts",
+    )!;
 
     const linked = cli.json<{ id: string }>(
       [

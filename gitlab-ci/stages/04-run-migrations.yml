@@ -40,5 +40,4 @@ run migrations on production environment:
     - popd
   rules:
     - !reference [.rules, on_merge_to_prod]
-
 #endregion

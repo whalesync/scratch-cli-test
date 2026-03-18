@@ -124,28 +124,28 @@ scratchmd syncs run <id>          # Execute a sync and wait for completion
 
 ### Common Flags
 
-| Flag | Scope | Description |
-|------|-------|-------------|
-| `--json` | most subcommands | Output as JSON (stdout) |
-| `--yes` | destructive commands | Skip confirmation prompts |
-| `--workspace <id>` | linked, syncs, connections | Override workspace auto-detection |
-| `--scratch-url <url>` | global | Override scratch server URL |
-| `--config <path>` | global | Config file path (default: `.scratchmd.config.yaml`) |
-| `-v, --verbose` | global | Enable verbose output |
-| `--no-browser` | auth login | Don't open browser automatically |
-| `--server <url>` | auth commands | Override the auth server URL |
-| `-o, --output <dir>` | workspaces init | Output directory for clone |
-| `--force` | workspaces init | Overwrite existing local copy |
-| `--sort-by` | workspaces list | Sort field (name, createdAt, updatedAt) |
-| `--sort-order` | workspaces list | Sort direction (asc, desc) |
-| `--connection-id` | linked add | Connection ID (non-interactive mode) |
-| `--table-id` | linked add | Table ID (non-interactive, repeatable) |
-| `--name` | linked add, connections add | Display name |
-| `--refresh` | linked available | Force refresh from connector |
-| `--service` | connections add | Service type (non-interactive mode) |
-| `--param` | connections add | Credential key=value (repeatable) |
-| `--config` | syncs create/update | JSON config (file path or inline) |
-| `--no-wait` | syncs run | Return job ID without waiting |
+| Flag                  | Scope                       | Description                                          |
+| --------------------- | --------------------------- | ---------------------------------------------------- |
+| `--json`              | most subcommands            | Output as JSON (stdout)                              |
+| `--yes`               | destructive commands        | Skip confirmation prompts                            |
+| `--workspace <id>`    | linked, syncs, connections  | Override workspace auto-detection                    |
+| `--scratch-url <url>` | global                      | Override scratch server URL                          |
+| `--config <path>`     | global                      | Config file path (default: `.scratchmd.config.yaml`) |
+| `-v, --verbose`       | global                      | Enable verbose output                                |
+| `--no-browser`        | auth login                  | Don't open browser automatically                     |
+| `--server <url>`      | auth commands               | Override the auth server URL                         |
+| `-o, --output <dir>`  | workspaces init             | Output directory for clone                           |
+| `--force`             | workspaces init             | Overwrite existing local copy                        |
+| `--sort-by`           | workspaces list             | Sort field (name, createdAt, updatedAt)              |
+| `--sort-order`        | workspaces list             | Sort direction (asc, desc)                           |
+| `--connection-id`     | linked add                  | Connection ID (non-interactive mode)                 |
+| `--table-id`          | linked add                  | Table ID (non-interactive, repeatable)               |
+| `--name`              | linked add, connections add | Display name                                         |
+| `--refresh`           | linked available            | Force refresh from connector                         |
+| `--service`           | connections add             | Service type (non-interactive mode)                  |
+| `--param`             | connections add             | Credential key=value (repeatable)                    |
+| `--config`            | syncs create/update         | JSON config (file path or inline)                    |
+| `--no-wait`           | syncs run                   | Return job ID without waiting                        |
 
 ---
 

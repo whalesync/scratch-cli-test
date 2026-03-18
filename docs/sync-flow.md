@@ -116,6 +116,7 @@ After all table mappings complete both phases:
 The transformer pipeline (`applyTransformerPipeline`) chains multiple transformers on a single field. Each column mapping can have one or more transformer configs. The output of transformer N becomes the input of transformer N+1.
 
 Key behaviors:
+
 - **Skip short-circuits the pipeline** — If any transformer returns `skip: true`, the pipeline stops immediately and the field is left unchanged.
 - **Failure short-circuits the pipeline** — If any transformer returns `success: false`, the pipeline stops and the error propagates up, causing the entire record to fail.
 - **Warnings accumulate** — Warnings from all steps are merged into the final result.

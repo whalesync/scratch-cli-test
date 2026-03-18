@@ -3,6 +3,7 @@
 ## Context
 
 The infrastructure for table discovery modes (LIST vs SEARCH) was added in a previous PR. All connectors default to LIST mode. Now we need to:
+
 1. Switch Notion to SEARCH mode (its `listTables()` is slow since it fetches all databases)
 2. Update the client's ChooseTablesModal to support search-based table discovery
 3. Update the CLI's `linked add` and `linked available` commands to support search
@@ -61,11 +62,13 @@ Add search mode alongside existing list mode:
 **File:** `scratch-cli/internal/cmd/linked.go`
 
 **`runLinkedAvailable`** (lines ~344-368):
+
 - Update to use `*api.TableList` return from `ListConnectionTables`
 - If `discoveryMode == "SEARCH"`: print message telling user to use `linked add` for interactive search
 - Otherwise: existing behavior (print table list)
 
 **`runLinkedAdd`** interactive mode (lines ~510-533):
+
 - Step 2: Call `ListConnectionTables` → get `*api.TableList`
 - Branch on `tableList.DiscoveryMode`:
   - **SEARCH:** Prompt for search term (`survey.Input`), call `SearchConnectionTables`, show `hasMore` message if applicable, use results as `tables`
@@ -74,12 +77,12 @@ Add search mode alongside existing list mode:
 
 ## Files Modified
 
-| # | File | Description |
-|---|------|-------------|
-| 1 | `server/src/remote-service/connectors/library/notion/notion-connector.ts` | SEARCH mode + `searchTables()` |
-| 2 | `client/src/app/workbook/[id]/components/shared/ChooseTablesModal.tsx` | Dual-mode UI |
-| 3 | `scratch-cli/internal/api/client_linked.go` | Types + `SearchConnectionTables` |
-| 4 | `scratch-cli/internal/cmd/linked.go` | Branch on discovery mode in `available` and `add` |
+| #   | File                                                                      | Description                                       |
+| --- | ------------------------------------------------------------------------- | ------------------------------------------------- |
+| 1   | `server/src/remote-service/connectors/library/notion/notion-connector.ts` | SEARCH mode + `searchTables()`                    |
+| 2   | `client/src/app/workbook/[id]/components/shared/ChooseTablesModal.tsx`    | Dual-mode UI                                      |
+| 3   | `scratch-cli/internal/api/client_linked.go`                               | Types + `SearchConnectionTables`                  |
+| 4   | `scratch-cli/internal/cmd/linked.go`                                      | Branch on discovery mode in `available` and `add` |
 
 ## Verification
 

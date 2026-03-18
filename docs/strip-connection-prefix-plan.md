@@ -21,13 +21,14 @@ create a new commit pointing at that tree. No blob data changes; only tree objec
 
 The three-branch state machine produces three cases:
 
-| Case | Condition | Action |
-|------|-----------|--------|
-| A | `main == dirty == merge_base` | One new commit; point all three refs to it |
-| B | `main == merge_base`, `dirty` is ahead | Two new commits (new-main, new-dirty); move merge_base tag |
-| C | `main != merge_base != dirty` (all differ) | Three new commits; move all three refs |
+| Case | Condition                                  | Action                                                     |
+| ---- | ------------------------------------------ | ---------------------------------------------------------- |
+| A    | `main == dirty == merge_base`              | One new commit; point all three refs to it                 |
+| B    | `main == merge_base`, `dirty` is ahead     | Two new commits (new-main, new-dirty); move merge_base tag |
+| C    | `main != merge_base != dirty` (all differ) | Three new commits; move all three refs                     |
 
 In all cases:
+
 - No blob objects are created — blobs are reused by OID
 - Only new tree objects (one per level of nesting removed) and commit objects are written
 - The old commits (and their trees) become unreachable garbage; git GC will collect them
@@ -121,6 +122,7 @@ update. This makes it easy to validate before writing.
 ### Migration script
 
 A standalone Node.js script (or yarn workspace command) that:
+
 1. Iterates all workbooks
 2. For each workbook, calls the migration endpoint
 3. Reports success/failure per workbook
@@ -140,13 +142,14 @@ intermediate path segments:
 ```typescript
 // Line 105-109
 function getIntermediateSegments(folderPath: string): string[] {
-  const segments = folderPath.replace(/^\//, '').split('/');
+  const segments = folderPath.replace(/^\//, "").split("/");
   if (segments.length <= 2) return [];
-  return segments.slice(1, -1);  // drops first and last
+  return segments.slice(1, -1); // drops first and last
 }
 ```
 
 For `/Supabase1/public/tableA`:
+
 - Before migration: segments = `["Supabase1", "public", "tableA"]` → intermediates = `["public"]` ✓
 - After migration: segments = `["public", "tableA"]` → intermediates = `[]` ✗ (loses "public" grouping)
 
@@ -159,21 +162,28 @@ equals the connection display name, the old format is in use.
 **Update `getIntermediateSegments`** to accept an optional `connectionName?: string`:
 
 ```typescript
-function getIntermediateSegments(folderPath: string, connectionName?: string): string[] {
-  const segments = folderPath.replace(/^\//, '').split('/');
+function getIntermediateSegments(
+  folderPath: string,
+  connectionName?: string,
+): string[] {
+  const segments = folderPath.replace(/^\//, "").split("/");
   // Drop the connection-name prefix if still present (old format)
-  const adjusted = (connectionName && segments[0] === connectionName)
-    ? segments.slice(1)   // old format: drop prefix, keep rest
-    : segments;           // new format: use as-is
+  const adjusted =
+    connectionName && segments[0] === connectionName
+      ? segments.slice(1) // old format: drop prefix, keep rest
+      : segments; // new format: use as-is
   if (adjusted.length <= 1) return [];
-  return adjusted.slice(0, -1);  // drop last segment (table name)
+  return adjusted.slice(0, -1); // drop last segment (table name)
 }
 ```
 
 **Update `buildFolderTree`** to pass `connectorDisplayName`:
 
 ```typescript
-function buildFolderTree(folders: DataFolder[], groupName: string): FolderTreeNode {
+function buildFolderTree(
+  folders: DataFolder[],
+  groupName: string,
+): FolderTreeNode {
   const root: FolderTreeNode = { folders: [], children: new Map() };
   for (const folder of folders) {
     const segments = getIntermediateSegments(
@@ -192,10 +202,10 @@ from `folder.path`:
 ```typescript
 // Current (line 765-769)
 const encodedFolderPath = (folder.path ?? folder.name)
-  .replace(/^\//, '')
-  .split('/')
+  .replace(/^\//, "")
+  .split("/")
   .map((s) => encodeURIComponent(s))
-  .join('/');
+  .join("/");
 ```
 
 This is safe as-is — it encodes `folder.path` from the DB, which will correctly reflect the new
@@ -207,10 +217,10 @@ or API client needed.
 
 ### Path in git vs path in DB after migration
 
-| | DB path | Git path |
-|-|---------|----------|
+|        | DB path                    | Git path                            |
+| ------ | -------------------------- | ----------------------------------- |
 | Before | `/Supabase1/public/tableA` | `Supabase1/public/tableA/file.json` |
-| After | `/public/tableA` | `public/tableA/file.json` |
+| After  | `/public/tableA`           | `public/tableA/file.json`           |
 
 These stay in sync because the server always strips the leading `/` before passing to git:
 `folder.path.replace(/^\//, '')` → `public/tableA` → lists `public/tableA/` in git.

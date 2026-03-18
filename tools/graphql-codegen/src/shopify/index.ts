@@ -5,4 +5,4 @@
  * and mutation code.
  */
 
-export * from './config';
+export * from "./config";

@@ -191,5 +191,4 @@ notify slack on success production environment:
     - !reference [.rules, on_merge_to_prod]
   when: on_success
   allow_failure: true
-
 #endregion

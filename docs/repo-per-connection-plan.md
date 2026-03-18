@@ -46,6 +46,7 @@ graph TD
 Currently the job data only carries `dataFolderIds`. The connection is enforced by the caller but not validated at the job level.
 
 Adding `connectorAccountId: string` to the pull job data would:
+
 - Make the single-connection intent explicit and self-documenting
 - Allow the handler to assert upfront that all folder IDs actually belong to the stated connection
 - Simplify connector account lookup — fetch once at the top of `run()` rather than per-folder
@@ -90,6 +91,7 @@ Flat composite ID `{orgId}--{workbookId}--{connAccountId}` is used. The Rust bac
 #### [NEW] [migration.service.ts](file:///Users/ijd/repos/spinner/server/src/scratch-git/migration.service.ts) ✅
 
 `migrateWorkbookToV2(workbookId)` steps:
+
 1. For each ConnectorAccount: init a new V2 repo, commit all main-branch files.
 2. Call `rebaseDirty` so dirty branches off new main HEAD (not the initial commit).
 3. Commit only dirty-delta files (files that differ between V1 dirty and V1 main).
@@ -115,6 +117,7 @@ Flat composite ID `{orgId}--{workbookId}--{connAccountId}` is used. The Rust bac
 #### [MODIFY] [scratch-git.controller.ts](file:///Users/ijd/repos/spinner/server/src/scratch-git/scratch-git.controller.ts) ✅ (partial)
 
 The following endpoints accept an optional `connectorAccountId` query param and call `resolveRepoId()`:
+
 - `listRepoFiles`, `getRepoFile`, `getGraph`, `rebaseDirty`, `getObjectCounts`, `runGitGc`
 
 #### [MODIFY] [workbook.service.ts](file:///Users/ijd/repos/spinner/server/src/workbook/workbook.service.ts) ✅
@@ -132,6 +135,7 @@ The following endpoints accept an optional `connectorAccountId` query param and 
 #### [MODIFY] [scratch-git.controller.ts](file:///Users/ijd/repos/spinner/server/src/scratch-git/scratch-git.controller.ts)
 
 The following endpoints still use plain `workbookId` with no V2 awareness:
+
 - `hasDirtyFiles` — **critical**: drives the red dot in the UI
 - `getRepoStatus` — used for diff count display
 - `getRepoStatusCount` — used for diff badge
@@ -278,13 +282,13 @@ graph LR
     P7["Phase 7: Dev page ✅"]
 ```
 
-| Phase | Status | Notes |
-| ----- | ------ | ----- |
-| 0 | ✅ Done | Pull jobs consolidated per-connection; connectorAccountId in job data pending |
-| 1 | ✅ Done | `version` field on Workbook |
-| 2 | ✅ Done | `getRepoId` / `resolveRepoId` helpers; composite ID format |
-| 3 | ✅ Done | Migration service + endpoint; dirty branch parent fix |
-| 4 | 🔶 Partial | Pull job ✅; publish & sync paths ❌; most scratch-git controller endpoints ✅; hasDirtyFiles/getRepoStatus/getFileDiff ❌ |
-| 5 | ❌ Not started | hasDirtyFiles aggregation across per-connection repos |
-| 6 | 🔶 Partial | Per-connection git tools in sidebar ✅; workbook-level DebugMenu not V2-aware ❌ |
-| 7 | ✅ Done | Full admin page with search, filters, migration button |
+| Phase | Status         | Notes                                                                                                                      |
+| ----- | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 0     | ✅ Done        | Pull jobs consolidated per-connection; connectorAccountId in job data pending                                              |
+| 1     | ✅ Done        | `version` field on Workbook                                                                                                |
+| 2     | ✅ Done        | `getRepoId` / `resolveRepoId` helpers; composite ID format                                                                 |
+| 3     | ✅ Done        | Migration service + endpoint; dirty branch parent fix                                                                      |
+| 4     | 🔶 Partial     | Pull job ✅; publish & sync paths ❌; most scratch-git controller endpoints ✅; hasDirtyFiles/getRepoStatus/getFileDiff ❌ |
+| 5     | ❌ Not started | hasDirtyFiles aggregation across per-connection repos                                                                      |
+| 6     | 🔶 Partial     | Per-connection git tools in sidebar ✅; workbook-level DebugMenu not V2-aware ❌                                           |
+| 7     | ✅ Done        | Full admin page with search, filters, migration button                                                                     |

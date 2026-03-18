@@ -1,4 +1,4 @@
-import { FakeAdminClient } from '../test-api-client';
+import { FakeAdminClient } from "../test-api-client";
 
 export interface SeedResult {
   /** IDs needed to link a DataFolder (e.g. [baseId, tableId] for Airtable) */
@@ -38,11 +38,17 @@ export interface ConnectorFixture {
   createConnectionCredentials(): Record<string, string>;
 
   /** Seed the fake with a table and records, return metadata for assertions */
-  seed(admin: FakeAdminClient, opts?: { recordCount?: number }): Promise<SeedResult>;
+  seed(
+    admin: FakeAdminClient,
+    opts?: { recordCount?: number },
+  ): Promise<SeedResult>;
 
   /** Seed the fake with a table that has linked-record fields (for FK tests) */
   seedWithReferences?(admin: FakeAdminClient): Promise<SeedResult>;
 
   /** Dump all records from the fake for a given table */
-  dumpRecords(admin: FakeAdminClient, seed: SeedResult): Promise<Array<{ id: string; fields: Record<string, unknown> }>>;
+  dumpRecords(
+    admin: FakeAdminClient,
+    seed: SeedResult,
+  ): Promise<Array<{ id: string; fields: Record<string, unknown> }>>;
 }

@@ -64,7 +64,10 @@ interface QueuedError {
 }
 
 class Store {
-  siteInfo: SiteInfo = { name: 'Test WordPress Site', url: 'http://localhost:4647' };
+  siteInfo: SiteInfo = {
+    name: "Test WordPress Site",
+    url: "http://localhost:4647",
+  };
   postTypes: Map<string, PostType> = new Map();
   taxonomies: Map<string, Taxonomy> = new Map();
   schemas: Map<string, EndpointSchema> = new Map();
@@ -77,7 +80,10 @@ class Store {
   rateLimitRetryAfterSeconds: number = 30;
 
   reset(): void {
-    this.siteInfo = { name: 'Test WordPress Site', url: 'http://localhost:4647' };
+    this.siteInfo = {
+      name: "Test WordPress Site",
+      url: "http://localhost:4647",
+    };
     this.postTypes.clear();
     this.taxonomies.clear();
     this.schemas.clear();
@@ -117,7 +123,11 @@ class Store {
     return this.records.get(tableId)?.get(recordId);
   }
 
-  updateRecord(tableId: string, recordId: string, fields: Record<string, unknown>): WordPressRecord | undefined {
+  updateRecord(
+    tableId: string,
+    recordId: string,
+    fields: Record<string, unknown>,
+  ): WordPressRecord | undefined {
     const record = this.records.get(tableId)?.get(recordId);
     if (!record) return undefined;
     Object.assign(record, fields);
@@ -138,7 +148,7 @@ class Store {
     return recordMap ? Array.from(recordMap.values()) : [];
   }
 
-  addMedia(media: Omit<MediaRecord, 'id'>): MediaRecord {
+  addMedia(media: Omit<MediaRecord, "id">): MediaRecord {
     const id = this.generateMediaId();
     const record: MediaRecord = Object.assign({ id } as MediaRecord, media);
     this.media.set(String(id), record);

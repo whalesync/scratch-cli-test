@@ -25,18 +25,19 @@ Validation runs from narrowest to broadest scope. Each level builds on the previ
 
 **File:** `../schema-validator.ts`
 
-The primitive question: *can a value of type A be assigned to a field of type B?*
+The primitive question: _can a value of type A be assigned to a field of type B?_
 
 Rules:
+
 - `Any` on either side → always compatible
 - Primitive equality: `string → string`, `number → number`, `boolean → boolean`, `object → object`
 - Union destination: `string` is compatible with `string | null` (i.e. `anyOf([String, Null])`)
 
 ```ts
-isTypeCompatible(Type.String(), Type.String())                        // true
-isTypeCompatible(Type.Number(), Type.String())                        // false
-isTypeCompatible(Type.String(), Type.Union([Type.String(), Type.Null()])) // true
-isTypeCompatible(Type.Any(), Type.Number())                           // true
+isTypeCompatible(Type.String(), Type.String()); // true
+isTypeCompatible(Type.Number(), Type.String()); // false
+isTypeCompatible(Type.String(), Type.Union([Type.String(), Type.Null()])); // true
+isTypeCompatible(Type.Any(), Type.Number()); // true
 ```
 
 This is the building block used by the higher levels.
