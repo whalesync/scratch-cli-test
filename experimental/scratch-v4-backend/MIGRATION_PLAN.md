@@ -1,0 +1,547 @@
+# Incremental Migration Plan
+
+Two milestones toward the long-term goal of Rust-driven business logic with SQLite-backed indexes.
+
+---
+
+## Ground rules (constraints that cannot be violated)
+
+1. **Both CLIs must work on the same workspace at any time.** A user can switch from the old Go CLI to the new Rust CLI mid-session — files, git history, and credential storage must be identical.
+2. **The NestJS server is unchanged in both milestones.** The Rust CLI calls the same API endpoints as the Go CLI. No server migration yet.
+3. **scratch-git-2 continues to work as an HTTP server** throughout. The CLI is additive, not a replacement.
+4. **V2 workspace only.** The Rust CLI does not need to support V1 (single git repo) workspaces. If someone hits a V1 workspace, fail fast with a clear error.
+
+---
+
+## Pre-work: read before touching any code
+
+Before writing a single line, read these files fully:
+
+- `scratch-git-2/src/git/repo.rs` — the GitRepo struct, what operations it supports
+- `scratch-git-2/src/git/merge.rs` — **this is already solved**: `merge_file_contents(base, ours, theirs)` with `Conflict::ResolveWithOurs`
+- `scratch-git-2/src/types.rs` — shared types
+- `scratch-cli/internal/cmd/workspaces.go` — V2 init flow in detail (directory naming, marker file format)
+- `scratch-cli/internal/cmd/files.go` — exact download/upload flow
+- `scratch-cli/internal/cmd/linked.go` — job polling behavior
+- `scratch-cli/internal/config/credentials.go` — credentials YAML format (must be replicated exactly)
+
+Assumptions to verify before coding:
+- [ ] What exact YAML format does `~/.scratchmd/credentials.yaml` use? (key names, nesting, token field name)
+- [ ] What exact fields are in each `.scratchmd` marker file? (workspace, connector, data-folder levels)
+- [ ] What does the V2 directory name look like? (is it `ConnectorDisplayName` or `ConnectorDisplayName-ConnectorId`?)
+- [ ] What does `files download` use as the "base" for three-way merge? (the last common commit? the server's main branch?)
+- [ ] Which NestJS endpoints does the Go CLI call for each command? (build a map before coding)
+- [ ] Does any existing scratch-git-2 git module code apply to CLI worktree operations, or is it all bare-repo specific? (Assumption: it's all bare-repo; CLI uses subprocess git)
+
+---
+
+## Milestone 1: Rust CLI in scratch-git-2
+
+### Architecture decision: two binaries, one crate
+
+`scratch-git-2/src/main.rs` is **not touched**. The server binary stays exactly as it is.
+A second binary target is added to `Cargo.toml`:
+
+```toml
+[[bin]]
+name = "scratch-git-2"   # existing server — zero changes to src/main.rs
+path = "src/main.rs"
+
+[[bin]]
+name = "scratchmd2"       # new CLI — separate entry point
+path = "src/main_cli.rs"
+```
+
+`src/main_cli.rs` is a new file with a clap entry point. It can import any module from the crate.
+The server binary is never touched. Both compile from the same crate and share the same modules.
+
+**Why not a separate crate/workspace?** A Rust workspace split is the right long-term architecture, but it adds friction to Milestone 1. Do the workspace split after both milestones are stable, not before.
+
+### New binary name
+
+During the transition period, ship as `scratchmd2` (not `scratchmd`). This lets both binaries coexist on the same machine during testing. Rename to `scratchmd` when the Go CLI is retired.
+
+### What the CLI actually shares with the server in Milestone 1
+
+Honest answer: almost nothing, and that's fine.
+
+The server operates on **bare repos** — its `git/` module (`repo.rs`, `tree_builder.rs`, `rebase.rs`, `compare.rs`) is built entirely around reading and writing git object trees in bare `.git` directories. None of that is useful for a CLI operating on a local worktree.
+
+The one genuinely shared piece is `git/merge.rs: merge_file_contents(base, ours, theirs)` — but that's a pure string function that doesn't touch git at all. It could live anywhere.
+
+So for Milestone 1, being in the same crate means:
+- Same repo (atomic commits across CLI and server changes)
+- Same `Cargo.toml` / dependency versions
+- One reused function (`merge_file_contents`)
+- Foundation set up for Milestone 2+ where real sharing happens
+
+**The real code sharing comes in Milestone 2+**, when business logic (`plan_publish`, `build_index`, `run_sync`) moves to Rust. That logic is pure — it operates on files and SQLite, not on git internals — and it shares cleanly between server and CLI regardless of bare vs. worktree.
+
+All git operations in the CLI (clone, fetch, commit, push, merge) use **subprocess `git` calls**. Reasons:
+- The server's `gix` features (`["merge", "blob-diff"]`) don't include async network access needed for clone/fetch/push
+- Adding those features just for the CLI would inflate the server binary for no benefit
+- subprocess git is reliable, battle-tested, handles all edge cases
+- Can be replaced with native gix calls later if needed
+
+**Requirement**: `git` must be on the user's PATH. This is true for all developers.
+
+### Module structure to add
+
+```
+scratch-git-2/src/
+├── main.rs              (modified: clap entry point)
+├── server/              (unchanged: existing server code)
+├── git/                 (unchanged: merge.rs, repo.rs, etc.)
+│
+├── cli/                 (NEW)
+│   ├── mod.rs
+│   ├── auth.rs          scratchmd2 auth {login,logout,status}
+│   ├── workspaces.rs    scratchmd2 workspaces {list,create,show,delete,init}
+│   ├── files.rs         scratchmd2 files {download,upload}
+│   ├── connections.rs   scratchmd2 connections {list,add,show,remove}
+│   ├── linked.rs        scratchmd2 linked {available,list,add,remove,show,pull,publish}
+│   └── syncs.rs         scratchmd2 syncs {list,show,create,update,delete,run,download}
+│
+├── api/                 (NEW: HTTP client calling the NestJS server)
+│   ├── mod.rs           base client (auth headers, base URL, error handling)
+│   ├── auth.rs          device code flow
+│   ├── workbooks.rs
+│   ├── connections.rs
+│   ├── linked.rs
+│   ├── syncs.rs
+│   └── jobs.rs          poll until complete
+│
+└── config/              (NEW: local state)
+    ├── mod.rs
+    ├── credentials.rs   read/write ~/.scratchmd/credentials.yaml
+    └── markers.rs       read/write .scratchmd marker files (workspace/connector/folder)
+```
+
+### New dependencies to add to Cargo.toml
+
+```toml
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# HTTP client for NestJS API calls
+reqwest = { version = "0.12", features = ["json"] }
+
+# YAML for .scratchmd markers and credentials
+serde_yaml = "0.9"
+
+# Open browser for device code auth
+open = "5"
+```
+
+---
+
+### Implementation steps
+
+#### Step 1.1 — Add clap and dual-mode entry point
+
+Modify `main.rs` to be clap-driven. The `Serve` subcommand runs the existing HTTP server. All other subcommands are stubs that print "not yet implemented".
+
+**What to check:**
+- `cargo build` succeeds with no warnings
+- `scratch-git-2 serve` (or `scratchmd2 serve`) still starts the HTTP server exactly as before
+- `scratchmd2 --help` shows all command groups
+- `scratchmd2 auth --help` shows expected subcommands
+- Deploy to staging: server still starts correctly
+
+---
+
+#### Step 1.2 — Config module: credentials and workspace markers
+
+Implement `config/credentials.rs`:
+- Reads and writes `~/.scratchmd/credentials.yaml`
+- **Must be byte-for-byte compatible** with the Go CLI's format
+- Test: write with Rust CLI, read back with Go CLI, no corruption
+
+Implement `config/markers.rs`:
+- Reads `.scratchmd` files from workspace, connector, and data folder levels
+- Writes `.scratchmd` files in V2 format
+- Context detection: walk up from current directory to find nearest `.scratchmd`
+- Distinguish workspace vs connector vs data-folder markers
+
+**Tricky case: YAML compatibility.** Go's `gopkg.in/yaml.v3` and Rust's `serde_yaml` may produce slightly different output (quote styles, field ordering, trailing newlines). Verify both can round-trip each other's output. If not, write a compatibility test that catches divergence early.
+
+**What to check:**
+- Write a `.scratchmd` with Rust CLI, open it with a text editor — matches Go CLI output exactly
+- Write credentials YAML with Rust CLI, run `scratchmd auth status` with OLD Go CLI — shows authenticated
+- Run `scratchmd auth status` with OLD Go CLI after login with NEW Rust CLI — works
+- Run `scratchmd2 auth status` after login with OLD Go CLI — works
+
+---
+
+#### Step 1.3 — API module and auth commands
+
+Implement `api/mod.rs`: base reqwest client with:
+- Bearer token from credentials
+- Configurable base URL (defaults to `https://api.scratch.md`, override via `--scratch-url` flag or `~/.scratchmd/credentials.yaml` server URL)
+- Common error handling: 401 → "not authenticated, run auth login"; 404 → clear message; 5xx → retry once
+
+Implement `api/auth.rs` + `cli/auth.rs`:
+- `auth login`: device code flow — POST to get code, open browser, poll for token, store in credentials
+- `auth logout`: delete token from credentials YAML
+- `auth status`: read credentials, show server + masked token
+
+**What to check:**
+- `scratchmd2 auth login` — opens browser, completes flow, token stored
+- `cat ~/.scratchmd/credentials.yaml` — same structure as after Go CLI login
+- `scratchmd auth status` (OLD CLI) — shows authenticated after Rust login
+- `scratchmd2 auth status` — shows authenticated after Go CLI login
+- `scratchmd2 auth logout` — clears token; `scratchmd auth status` (OLD CLI) shows not authenticated
+
+---
+
+#### Step 1.4 — Workspaces commands (except init)
+
+Implement `api/workbooks.rs` + `cli/workspaces.rs` for list, create, show, delete.
+
+These are pure API calls — no local git operations. Straightforward.
+
+**What to check:**
+- `scratchmd2 workspaces list` output matches `scratchmd workspaces list` output (same workbooks)
+- `scratchmd2 workspaces list --json` produces valid JSON with same fields
+- `scratchmd2 workspaces create "Test WS"` then `scratchmd workspaces list` shows it
+
+---
+
+#### Step 1.5 — `workspaces init`
+
+This is the most structurally important command. It establishes the workspace that both CLIs will share.
+
+V2 init flow:
+1. `GET /api/workbooks/{id}` → workbook name, version, connectors
+2. Assert version == 2 (fail clearly for V1)
+3. For each connector: get git clone URL (`GET /api/workbooks/{id}/git-url?connectorId={cid}` or equivalent endpoint)
+4. Create workspace directory: `{workbookName}/`
+5. Write workspace `.scratchmd` marker
+6. For each connector:
+   a. `git clone <url> <workspaceDir>/<connectorDisplayName>/ -b dirty` (subprocess)
+   b. Write connector-level `.scratchmd` marker inside the cloned dir
+   c. For each data folder in the connector: write folder-level `.scratchmd` markers
+
+**Critical: directory naming.** The Go CLI names the connector subdirectory using the connector's display name. Verify this exactly — if it appends the ID, the Rust CLI must do the same. One byte difference here breaks workspace sharing.
+
+**Critical: initial file state.** After `git clone`, the files are in the dirty branch state. The Go CLI may or may not do an initial `files download` as part of init. Check the exact behavior.
+
+**What to check:**
+- Run `scratchmd workspaces init <id>` (OLD CLI) and `scratchmd2 workspaces init <id>` (NEW CLI) on separate fresh dirs — directory structures are identical
+- `ls -la` both workspace roots: same files, same `.scratchmd` content
+- Open OLD workspace with NEW CLI: `scratchmd2 files download` works without error
+- Open NEW workspace with OLD CLI: `scratchmd files download` works without error
+- Connector `.git/` remote URL is identical in both
+
+---
+
+#### Step 1.6 — `files download` (three-way merge)
+
+This is the most algorithmically complex command. The logic:
+
+1. Detect current workspace (walk up from CWD for `.scratchmd`)
+2. If connector-level: operate on that connector's dir. If workspace-level: operate on all connectors.
+3. For each connector directory:
+   a. `git fetch origin` (subprocess)
+   b. Get the merge base: `git merge-base HEAD origin/dirty` (subprocess → commit OID)
+   c. For each file that differs between local and `origin/dirty`:
+      - `git show <merge-base>:<path>` → base content (subprocess)
+      - Read current local file → ours
+      - `git show origin/dirty:<path>` → theirs (subprocess)
+      - Call `merge_file_contents(base, ours, theirs)` from scratch-git-2's `git/merge.rs` ← reuse this!
+      - Write merged content to disk
+   d. Handle new files from remote (no local version): just write them
+   e. Handle files deleted on remote: delete locally (unless local also modified → local wins = keep)
+   f. `git add -A && git commit -m "files download" --allow-empty`
+
+**Note:** We reuse `merge_file_contents` directly from scratch-git-2's existing code. This is one of the main points of sharing code between the server and CLI.
+
+**Alternative if the above is too complex for Milestone 1:** Use `git merge origin/dirty -X ours` (subprocess) — git does the merge natively with "ours" strategy for conflicts. This is simpler but less transparent. Acceptable for initial implementation.
+
+**What to check:**
+- After `linked pull` job completes on server, run `scratchmd2 files download` — local files match server
+- Make local edit to file A, then `linked pull` changes file B on server, run `scratchmd2 files download` — file A local edit preserved, file B updated
+- Make local edit to file A, then `linked pull` also changes file A on server — local version wins
+- Run OLD CLI `files download` on a workspace where NEW CLI did `files download` — no double-merge
+- Run NEW CLI `files download` then OLD CLI `files download` — idempotent, no changes
+
+---
+
+#### Step 1.7 — `files upload`
+
+1. For each connector in scope:
+   a. `git add -A` (subprocess)
+   b. Check if there are changes: `git diff --cached --quiet` (subprocess)
+   c. If changes: `git commit -m "scratchmd upload"` (subprocess)
+   d. `git push origin dirty` (subprocess)
+2. Report: N files committed, N connectors pushed
+
+**What to check:**
+- Make local edit, run `scratchmd2 files upload`, then `scratchmd files download` on another machine → sees the change
+- Run with no changes → no commit, no push (clean output)
+- Run OLD CLI `files upload`, then NEW CLI `files upload` — idempotent
+
+---
+
+#### Step 1.8 — Connections, linked, syncs commands
+
+These are mostly API calls with job polling. Implement:
+
+`api/connections.rs`, `api/linked.rs`, `api/syncs.rs`, `api/jobs.rs`:
+- Jobs polling: `GET /api/jobs/{id}` every 2 seconds, timeout at 30 minutes, output dots to stderr while waiting (matching Go CLI UX)
+
+`cli/connections.rs`: list, add (no interactive — all via flags), show, remove
+
+`cli/linked.rs`:
+- `available`, `list`, `show`, `add`, `remove`: pure API calls
+- `pull`: POST to start pull job + poll via jobs.rs + `files download` after success
+- `publish`: POST to start publish job + poll via jobs.rs
+
+`cli/syncs.rs`: list, show, create, update, delete, run (triggers job + polls), download
+
+**What to check for each command:**
+- Output matches Go CLI output for same workspace (modulo interactive prompts)
+- `--json` flag produces valid JSON
+- `linked pull <id>` completes and local files are updated (run `files download` after)
+- `linked publish <id>` completes and remote service reflects changes
+- `syncs run <id>` completes, result visible in linked show
+- Old and new CLIs interleaved: linked pull with old, publish with new → works
+
+---
+
+#### Step 1.9 — Release: Milestone 1 complete
+
+At this point both CLIs work on the same workspace. Checklist:
+
+- [ ] All commands implemented and tested
+- [ ] Credentials compatible (cross-CLI auth)
+- [ ] Workspace structure compatible (cross-CLI workspace)
+- [ ] `scratchmd` (Go, old) and `scratchmd2` (Rust, new) can be swapped freely
+- [ ] New binary released via cargo-dist + Homebrew tap `whalesync/homebrew-scratch-cli-v2-test`
+- [ ] Internal testing: 1 week of dogfooding both CLIs
+- [ ] No data corruption reported
+
+---
+
+## Milestone 2: SQLite file index
+
+### Why
+
+The Postgres `FileIndex` and `FileReference` tables are the most expensive to maintain server-side. They represent a local cache of what's in git — data that logically belongs near the files. Moving this to SQLite:
+- Makes CLI-driven operations (plan-publish, local sync) possible without server roundtrips
+- Reduces Postgres write pressure
+- Sets up the foundation for fully local publish planning (which the experimental CLI already proves out)
+
+### What the SQLite replaces (in the CLI)
+
+| Postgres table | Purpose | CLI equivalent |
+|---|---|---|
+| `FileIndex` | `(folder, filename) → remoteId` | `file_index` SQLite table |
+| `FileReference` | FK dependencies between files | `file_references` SQLite table |
+
+**Important**: Milestone 2 does NOT remove Postgres FileIndex/FileReference. The server continues using them for server-driven operations (scheduled jobs, etc.). The SQLite is a client-side cache used by CLI-driven operations. They'll diverge temporarily and that's OK.
+
+### SQLite schema (copied almost exactly from experimental CLI)
+
+```sql
+CREATE TABLE file_index (
+    folder   TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    remote_id TEXT,                  -- NULL for pending (not yet published)
+    PRIMARY KEY (folder, filename)
+);
+
+CREATE TABLE file_references (
+    source_folder     TEXT NOT NULL,
+    source_filename   TEXT NOT NULL,
+    target_table_id   TEXT NOT NULL,
+    target_remote_id  TEXT NOT NULL
+    -- No PK: rebuilt from scratch on each full rebuild
+);
+```
+
+### Where the SQLite lives
+
+```
+workspace/
+├── .scratchmd
+├── ConnectorDisplayName/          ← connector dir
+│   ├── .scratchmd
+│   ├── .git/
+│   ├── .scratch/                  ← NEW (add to connector's .gitignore)
+│   │   └── index.db               ← SQLite file index for this connector
+│   └── TableName/*.json
+```
+
+The `.scratch/` directory at connector level mirrors the experimental CLI's pattern. Add `.scratch/` to `.gitignore` in each connector dir during `workspaces init` (or when first building the index). The `index.db` file is local only, never committed.
+
+### Where schemas come from
+
+**This is the hard part.** The `file_references` table requires knowing which fields are FK references — that information is in the table schema (`x-scratch-foreign-key` annotations). In the experimental CLI, schemas are stored at `.scratch/{folder}/schema.json` in the git repo (downloaded from the experimental server). In the current V2 workspace, schemas are NOT stored locally.
+
+**Solution:**
+1. Add a `GET /api/workbooks/{id}/schemas` endpoint to NestJS (or use existing endpoints to fetch per-DataFolder schema)
+2. During `workspaces init` and after `files download`, download schemas and write to `ConnectorDir/.scratch/{folderName}/schema.json`
+3. `build-index` reads from local `.scratch/{folderName}/schema.json`
+4. If schema not locally available: build `file_index` only (no `file_references`), log a warning
+
+This moves toward the long-term goal of having config in git — schemas are now stored locally in `.scratch/`.
+
+### When to rebuild the index (full rebuild)
+
+Rebuild after every operation that changes the authoritative state:
+
+| Operation | Why rebuild |
+|---|---|
+| `workspaces init` | Initial population |
+| `files download` (after server pull) | Server pulled new records from CRM; remote IDs and files changed |
+| `linked publish` (job completes) | Remote IDs assigned to pending records; `file_index` remote_id column updates |
+| `syncs run` (job completes) | New records may have been created in destination folders |
+| `build-index` command (explicit) | Manual / debug |
+
+**NOT needed after:**
+- `files upload` alone (files pushed but no remote ID changes; server publish job hasn't run)
+- `auth`, `workspaces list`, `connections list` etc. (no file changes)
+
+**Implementation:** After the relevant command succeeds, automatically call `build_index()` on the affected connector(s). Keep it synchronous for now — for large workspaces it adds a few seconds but that's acceptable. Log it: "Rebuilding file index for [ConnectorName]...".
+
+**Hook point for incremental rebuild (deferred to later):**
+After `files upload`, compare the new commit's diff to the previous commit. For each changed file: update `file_index` for that file, update `file_references` for that file's FK values. This can be added without changing the full-rebuild logic — just an alternative path that gets called when the full rebuild would be wasteful.
+
+### Implementation steps
+
+#### Step 2.1 — Add rusqlite and schema download
+
+Add to Cargo.toml:
+```toml
+rusqlite = { version = "0.31", features = ["bundled"] }
+```
+
+Copy the `build_index.rs` logic from the experimental CLI into `scratch-git-2/src/cli/index.rs`.
+Adapt it to the V2 workspace structure (read from connector worktree, not master worktree).
+
+Add `build-index` and `dump-index` as explicit CLI commands (matching experimental CLI):
+- `scratchmd2 build-index` — rebuild index for all connectors in current workspace
+- `scratchmd2 dump-index` — print index contents (for debugging)
+
+**What to check:**
+- `scratchmd2 build-index` creates `ConnectorDir/.scratch/index.db`
+- `scratchmd2 dump-index` shows records with correct remote IDs
+- `sqlite3 ConnectorDir/.scratch/index.db "SELECT * FROM file_index LIMIT 5"` — looks right
+- Index matches Postgres FileIndex for the same connector (spot check 10 records)
+
+---
+
+#### Step 2.2 — Add NestJS schema endpoint and local schema storage
+
+Add to NestJS: `GET /api/workbooks/{workbookId}/connectors/{connectorId}/schemas` → returns all DataFolder schemas for a connector.
+
+During `workspaces init` and `files download`:
+- Fetch schemas from this endpoint
+- Write to `ConnectorDir/.scratch/{folderSlug}/schema.json`
+
+`build-index` reads schemas from local files. If missing, builds `file_index` only.
+
+**What to check:**
+- After `workspaces init`, `ls ConnectorDir/.scratch/` shows folders with `schema.json`
+- `cat ConnectorDir/.scratch/Posts/schema.json` looks like a valid JSON schema
+- After `files download`, schemas are refreshed (in case table structure changed)
+- After full build-index: `SELECT * FROM file_references LIMIT 10` shows FK relationships
+
+---
+
+#### Step 2.3 — Wire index rebuild into CLI operations
+
+After each relevant command completes:
+```rust
+// In cli/linked.rs, after pull job completes:
+index::rebuild_connector_index(&connector_dir)?;
+
+// In cli/linked.rs, after publish job completes:
+index::rebuild_connector_index(&connector_dir)?;
+
+// In cli/syncs.rs, after sync job completes:
+index::rebuild_affected_connectors(&workspace_dir, &sync)?;
+```
+
+Add progress output: "Rebuilding file index for [ConnectorName] (N files)..."
+
+**What to check:**
+- `linked pull` auto-rebuilds index on success, not on failure
+- `linked publish` auto-rebuilds index on success
+- After rebuild: `dump-index` shows correct data including newly created records
+- Index rebuild doesn't break if `.scratch/` dir doesn't exist yet (first run)
+- Index rebuild is skipped if there's nothing to index (empty connector)
+
+---
+
+#### Step 2.4 — Use index in CLI operations (first consumer)
+
+The first place to consume the index is `plan-publish` (ported from experimental CLI). The experimental plan-publish reads from the SQLite index to:
+1. Get remote IDs for deleted files (`deleteIndex`)
+2. Find ref-clearing candidates (FK dependencies on deleted records)
+
+Port `plan-publish` from `experimental/scratch-v4-backend/scratch-git/src/commands/plan_publish.rs` to `scratch-git-2`. This is where the real business-logic sharing pays off: the plan-publish logic is pure, tested, and doesn't depend on the experimental workspace structure — it only needs:
+- Access to the git diff (dirty vs master)
+- Access to the SQLite index for remote IDs and FK paths
+
+At this point: `scratchmd2 plan-publish` works on a V2 workspace. The plan is stored locally and can be pushed to the server for execution.
+
+**What to check:**
+- `scratchmd2 plan-publish` produces a plan at `ConnectorDir/.scratch/publish-plans/{timestamp}/`
+- `cat plan.json` shows correct deleteIndex entries (remote IDs match Postgres FileIndex)
+- Edit + delete some records, plan-publish reflects correct phases
+- FK stripping works: records with references to deleted records get their refs cleared
+
+---
+
+#### Step 2.5 — Milestone 2 complete
+
+Checklist:
+- [ ] `build-index` and `dump-index` work
+- [ ] Schemas stored locally in `.scratch/{folder}/schema.json`
+- [ ] Index auto-rebuilds after pull, publish, sync
+- [ ] `plan-publish` uses local index (not Postgres)
+- [ ] Postgres FileIndex is still populated by server (no regression)
+- [ ] Old Go CLI unaffected (doesn't know about `.scratch/index.db`)
+- [ ] Index data accuracy: spot-check 20+ records against Postgres
+
+---
+
+## What's NOT in these two milestones
+
+Explicitly deferred:
+
+- **Moving user config to git** (ConnectorAccount, User, Schedule) — needs careful migration plan
+- **Replacing server-side Postgres FileIndex** — server continues using Postgres; SQLite is additive
+- **Local publish execution** (execute-publish) — the plan-publish exists after Step 2.4 but execution is still server-driven
+- **Incremental index rebuild** — full rebuild for now; hook point noted in Step 2.3
+- **V1 workspace support** — deliberately dropped
+- **Interactive commands** — deliberately dropped
+- **Rust workspace (multi-crate split)** — do this after both milestones are stable
+
+---
+
+## Key risks
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| YAML format mismatch between Go and Rust | High | Write a round-trip compatibility test immediately in Step 1.2, before any other work |
+| Directory naming differences in `workspaces init` | High | Read Go CLI source carefully; add integration test comparing both CLIs' init output |
+| `git` subprocess not available on PATH | Low | Almost all developers have git; document the requirement; not a concern for CLI users |
+| Schema endpoint doesn't exist on NestJS | Medium | Check first; if missing, build-index degrades gracefully (index without FK references) |
+| Index gets out of sync (partial failure) | Medium | Always rebuild from scratch (full rebuild); mark index with a "dirty" flag if interrupted |
+| `files download` three-way merge edge cases | Medium | Use `git merge -X ours` for Milestone 1 (simple, correct); custom gix merge later |
+| Large workspaces (100k+ records) make full rebuild slow | Low for now | Full rebuild is good enough for Milestone 2; document rebuild time; defer incremental |
+
+---
+
+## Challenged assumptions
+
+**"The CLI should share code with scratch-git-2"** — This is true for business logic (merge, plan-publish, build-index) but less true for transport. The CLI needs async HTTP client (reqwest) and subprocess git calls, neither of which scratch-git-2 currently uses. The "sharing" is mostly: same repo, same gix version, and reusing `merge_file_contents` directly. That's still worthwhile, but don't over-rotate on sharing everything.
+
+**"Keep CLI API close to current"** — The Go CLI has interactive prompts for `connections add` and `linked add`. Dropping these is a breaking change. Acceptable because: (a) automation/scripting use cases are better served without interactivity, (b) the new CLI targets developers comfortable with explicit flags. Document the migration: `scratchmd linked add` (interactive) → `scratchmd2 linked add --connection-id X --table-id Y` (explicit).
+
+**"Full rebuild is fine for Milestone 2"** — For 10k records it takes <1 second. For 100k records it may take 10+ seconds. This is acceptable for Milestone 2, but be sure the rebuild runs AFTER the user sees success feedback, not before. Don't block the main operation on the index build.
+
+**"Schemas not stored locally"** — Assumed we need to add a NestJS endpoint. But check: does `linked show` or any existing endpoint return the full schema? If yes, no new endpoint needed — just aggregate what's already available.

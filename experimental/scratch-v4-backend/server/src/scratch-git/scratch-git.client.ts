@@ -87,6 +87,11 @@ export class ScratchGitClient {
     return response.data;
   }
 
+  async deleteFiles(repoPath: string, folder: string, message: string, fileNames: string[]): Promise<void> {
+    this.logger.debug(`deleteFiles: ${repoPath} folder=${folder} files=${fileNames.length}`);
+    await this.http.post('/api/repos/delete-files', { repoPath, folder, message, fileNames });
+  }
+
   async readFiles(repoPath: string, branch: string, folderPath: string, fileNames: string[]): Promise<ReadFileEntry[]> {
     this.logger.debug(`readFiles: ${repoPath} ${branch}:${folderPath} (${fileNames.length} files)`);
     const response = await this.http.post<ReadFilesResult>('/api/repos/read-files', { repoPath, branch, folderPath, fileNames });

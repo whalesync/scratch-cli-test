@@ -27,8 +27,12 @@ scratchmdv4 validate-sync          // validate sync config against schemas
 scratchmdv4 run-sync               // apply sync: merge mapped fields into dest worktree
 scratchmdv4 push                   // commit dirty changes and push to remote bare repos
 scratchmdv4 plan-publish           // diff dirty vs master → write plan to {ConnName}/.scratch/publish-plans/
+scratchmdv4 push                   // push plan files to remote dirty branch (re-run push after plan-publish)
 scratchmdv4 delete-publish-plans   // (optional) clear all plans and re-plan
-# scratchmdv4 execute-publish      // coming soon
+# POST /publish/execute { connectionId, planId }   // execute plan: edit→create→delete→backfill→rename→rebaseDirty
+#   curl -X POST http://localhost:3010/publish/execute \
+#        -H 'Content-Type: application/json' \
+#        -d '{"connectionId":"<connId>","planId":"<planId>"}'
 ```
 
 Individual steps: `yarn test:clean` · `yarn test:setup` · `yarn test:poll` · `yarn test:clone`

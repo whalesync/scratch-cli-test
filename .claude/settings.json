@@ -25,7 +25,14 @@
       "Bash(sed -i '' 's/        Command::ValidateSync\\(args\\) => commands::validate_sync::run\\(args\\).await,/        Command::ValidateSync\\(args\\) => commands::validate_sync::run\\(args\\).await,\\\\n        Command::BuildIndex\\(args\\) => commands::build_index::run\\(args\\).await,/' /Users/ijd/repos/spinner/experimental/scratch-v4-backend/scratch-git/src/main.rs)",
       "Bash(sed -i '' 's/pub mod build_index;/pub mod build_index;\\\\npub mod dump_index;/' /Users/ijd/repos/spinner/experimental/scratch-v4-backend/scratch-git/src/commands/mod.rs)",
       "Bash(sed -i '' 's/    BuildIndex\\(commands::build_index::Args\\),/    BuildIndex\\(commands::build_index::Args\\),\\\\n\\\\n    \\\\/\\\\/\\\\/ Dump the contents of connection file indexes to the console\\\\n    DumpIndex\\(commands::dump_index::Args\\),/' /Users/ijd/repos/spinner/experimental/scratch-v4-backend/scratch-git/src/main.rs)",
-      "Bash(sed -i '' 's/        Command::BuildIndex\\(args\\) => commands::build_index::run\\(args\\).await,/        Command::BuildIndex\\(args\\) => commands::build_index::run\\(args\\).await,\\\\n        Command::DumpIndex\\(args\\) => commands::dump_index::run\\(args\\).await,/' /Users/ijd/repos/spinner/experimental/scratch-v4-backend/scratch-git/src/main.rs)"
+      "Bash(sed -i '' 's/        Command::BuildIndex\\(args\\) => commands::build_index::run\\(args\\).await,/        Command::BuildIndex\\(args\\) => commands::build_index::run\\(args\\).await,\\\\n        Command::DumpIndex\\(args\\) => commands::dump_index::run\\(args\\).await,/' /Users/ijd/repos/spinner/experimental/scratch-v4-backend/scratch-git/src/main.rs)",
+      "Bash(cargo test:*)",
+      "Bash(cargo run:*)",
+      "Bash(git -C /Users/ijd/repos/spinner remote get-url origin)",
+      "Bash(git clone:*)",
+      "Read(//Users/ijd/repos/spinner2/client/**)",
+      "Bash(yarn install:*)",
+      "Read(//Users/ijd/repos/spinner2/server/**)"
     ]
   },
   "hooks": {

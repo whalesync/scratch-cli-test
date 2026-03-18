@@ -73,19 +73,21 @@ export class WorkbookService {
 
     const repoPath = this.buildRepoPath(orgId, workbookId, connId);
 
+    const airtableApiKey = this.config.getAirtableApiKey();
     await this.db.client.connectorAccount.upsert({
       where: { id: connId },
-      create: { id: connId, workbookId, service: 'AIRTABLE', displayName: 'Airtable', repoPath },
-      update: { repoPath },
+      create: { id: connId, workbookId, service: 'AIRTABLE', displayName: 'Airtable', repoPath, credentials: { apiKey: airtableApiKey } },
+      update: { repoPath, credentials: { apiKey: airtableApiKey } },
     });
 
     const webflowConnId = this.config.getOrThrow('EXP_WEBFLOW_CONN_ID');
     const webflowRepoPath = this.buildRepoPath(orgId, workbookId, webflowConnId);
+    const webflowApiKey = this.config.getWebflowApiKey();
 
     await this.db.client.connectorAccount.upsert({
       where: { id: webflowConnId },
-      create: { id: webflowConnId, workbookId, service: 'WEBFLOW', displayName: 'Webflow', repoPath: webflowRepoPath },
-      update: { repoPath: webflowRepoPath },
+      create: { id: webflowConnId, workbookId, service: 'WEBFLOW', displayName: 'Webflow', repoPath: webflowRepoPath, credentials: { apiKey: webflowApiKey } },
+      update: { repoPath: webflowRepoPath, credentials: { apiKey: webflowApiKey } },
     });
 
     console.debug(`  org:               ${orgId}`);
