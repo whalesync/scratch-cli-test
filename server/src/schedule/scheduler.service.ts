@@ -20,7 +20,7 @@ export class SchedulerService {
     WSLogger.info({ source: 'SchedulerService', message: 'Schedule evaluator initializing...' });
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_10_SECONDS)
   async evaluateSchedules(): Promise<void> {
     WSLogger.debug({ source: 'SchedulerService', message: 'Starting schedule evaluation cycle' });
 

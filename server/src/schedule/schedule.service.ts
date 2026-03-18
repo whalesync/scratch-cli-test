@@ -228,6 +228,8 @@ export class ScheduleService {
         enabled: true,
         nextRunAt: { lte: new Date() },
       },
+      // Avoid starvation by ensuring we roundrobin when there's too many jobs.
+      orderBy: { nextRunAt: 'asc' },
     });
   }
 
