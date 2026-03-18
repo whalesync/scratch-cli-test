@@ -40,6 +40,8 @@ POST   /dev-tools/subscription/plan/cancel         # Cancel subscription (admin,
 GET    /dev-tools/connections/:id                  # Get connection details (admin)
 GET    /dev-tools/jobs                             # List jobs (admin)
 GET    /dev-tools/workbooks                        # List all workbooks (admin)
+GET    /dev-tools/workbooks/:id/export             # Export workbook (admin)
+POST   /dev-tools/workbooks/import                 # Import workbook (admin)
 POST   /dev-tools/jobs/sync-data-folders           # Trigger sync job (admin)
 POST   /dev-tools/connections/:id/move-repo        # Move connection repo (admin)
 ```
@@ -87,6 +89,7 @@ POST   /scratch-git/:id/checkpoint/revert         # Revert to checkpoint
 DELETE /scratch-git/:id/checkpoint/:name          # Delete checkpoint
 DELETE /scratch-git/:id/data-folder/files         # Delete data folder files from repo
 POST   /scratch-git/:id/migrate-to-v2             # Migrate repo to v2 format
+POST   /scratch-git/:id/strip-connection-prefix  # Strip connection prefix from files
 ```
 
 ### Code Migrations
@@ -111,7 +114,7 @@ GET    /workbooks/:workbookId/syncs/ai-context    # Get AI context for syncs
 ### Shopify Webhooks
 
 ```
-POST   /shopify/webhooks                          # Handle Shopify webhook events
+POST   /connectors/shopify/webhooks               # Handle Shopify webhook events
 ```
 
 ### WebSocket
@@ -472,6 +475,28 @@ POST /dev-tools/connections/:id/move-repo
 Moves a connection's git repository to a new location.
 
 **Response:** `204 No Content`
+
+### Export Workbook
+
+```
+GET /dev-tools/workbooks/:id/export
+```
+
+Exports a full workbook state including configuration and decrypted credentials. **Admin only.**
+
+**Response:** Workbook export JSON object.
+
+### Import Workbook
+
+```
+POST /dev-tools/workbooks/import
+```
+
+Imports a workbook from a JSON export. **Admin only.**
+
+**Request Body:** Workbook export JSON (as returned by the export endpoint).
+
+**Response:** Returns the imported workbook.
 
 ---
 
@@ -990,6 +1015,28 @@ Migrates a repository from the legacy format to the v2 repository structure.
 
 **Response:** `204 No Content`
 
+### Strip Connection Prefix
+
+```
+POST /scratch-git/:id/strip-connection-prefix
+```
+
+Migration utility to strip connection prefixes from file paths in the repository.
+
+**Query Parameters:**
+
+| Parameter            | Type   | Required | Description                                           |
+| -------------------- | ------ | -------- | ----------------------------------------------------- |
+| `connectorAccountId` | string | No       | Specific connection to strip (or all if not provided) |
+
+**Response:**
+
+```json
+{
+  "results": []
+}
+```
+
 ---
 
 ## Code Migrations
@@ -1126,7 +1173,7 @@ Returns contextual information about a workbook's syncs for use by AI features. 
 ### Handle Shopify Webhook
 
 ```
-POST /shopify/webhooks
+POST /connectors/shopify/webhooks
 ```
 
 Receives and processes webhook events from Shopify. Handles events such as product updates, order changes, and app uninstalls.

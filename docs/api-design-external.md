@@ -44,9 +44,16 @@ GET    /workbook/:id                              # Get workbook
 PATCH  /workbook/:id                              # Update workbook
 DELETE /workbook/:id                              # Delete workbook
 POST   /workbook/:id/pull-files                   # Trigger file pull from external sources
+POST   /workbook/:id/pull-assets                  # Trigger asset pull for a data folder
 POST   /workbook/:id/discard-changes              # Discard uncommitted changes
 POST   /workbook/:id/reset                        # Reset workbook
 GET    /workbook/:id/data-folders/list            # List data folders in workbook
+GET    /workbook/:id/permissions                  # List workbook permissions
+GET    /workbook/:id/invites                      # List workbook invites
+POST   /workbook/:id/permissions/add              # Add workbook permission
+PATCH  /workbook/:id/permission/:permissionId     # Update workbook permission
+DELETE /workbook/:id/permission/:permissionId     # Remove workbook permission
+DELETE /workbook/:id/invite/:inviteId             # Remove workbook invite
 ```
 
 ### Files
@@ -97,16 +104,19 @@ GET    /workbooks/:workbookId/connections/:connectorAccountId/tables/schema  # G
 ### Syncs
 
 ```
-POST   /workbooks/:workbookId/syncs                     # Create sync
-PATCH  /workbooks/:workbookId/syncs/:syncId             # Update sync
-GET    /workbooks/:workbookId/syncs                     # List syncs
-GET    /workbooks/:workbookId/syncs/:syncId             # Get sync
-DELETE /workbooks/:workbookId/syncs/:syncId             # Delete sync
-POST   /workbooks/:workbookId/syncs/:syncId/run         # Run sync
-POST   /workbooks/:workbookId/syncs/import-preview      # Preview sync import
-POST   /workbooks/:workbookId/syncs/preview-record      # Preview single record sync
-POST   /workbooks/:workbookId/syncs/validate-mapping    # Validate sync mapping
-POST   /sync/transformers/test                          # Test transformer
+POST   /workbooks/:workbookId/syncs                                 # Create sync
+PATCH  /workbooks/:workbookId/syncs/:syncId                         # Update sync
+GET    /workbooks/:workbookId/syncs                                 # List syncs
+GET    /workbooks/:workbookId/syncs/:syncId                         # Get sync
+DELETE /workbooks/:workbookId/syncs/:syncId                         # Delete sync
+POST   /workbooks/:workbookId/syncs/:syncId/run                     # Run sync
+POST   /workbooks/:workbookId/syncs/import-preview                  # Preview sync import
+POST   /workbooks/:workbookId/syncs/preview-record                  # Preview single record sync
+POST   /workbooks/:workbookId/syncs/validate-mapping                # Validate sync mapping
+POST   /workbooks/:workbookId/syncs/validate-mapping-type           # Validate single mapping type trace
+GET    /workbooks/:workbookId/syncs/:syncId/validate-mapping-types  # Validate all mapping types for sync
+GET    /workbooks/:workbookId/syncs/export                          # Export sync configuration
+POST   /sync/transformers/test                                      # Test transformer
 ```
 
 ### Schedules
@@ -118,6 +128,12 @@ GET    /workbooks/:workbookId/schedules/by-entity       # Get schedules by entit
 GET    /workbooks/:workbookId/schedules/:scheduleId     # Get schedule
 PATCH  /workbooks/:workbookId/schedules/:scheduleId     # Update schedule
 DELETE /workbooks/:workbookId/schedules/:scheduleId     # Delete schedule
+```
+
+### Connectors
+
+```
+GET    /connectors/metadata                            # Get connector metadata (public)
 ```
 
 ### Publish Pipeline
@@ -186,6 +202,7 @@ CLI Syncs:
 ```
 GET    /cli/v1/workbooks/:workbookId/syncs                                   # List syncs (CLI)
 POST   /cli/v1/workbooks/:workbookId/syncs                                   # Create sync (CLI)
+GET    /cli/v1/workbooks/:workbookId/syncs/export                            # Export syncs (CLI)
 GET    /cli/v1/workbooks/:workbookId/syncs/:syncId                           # Get sync (CLI)
 PATCH  /cli/v1/workbooks/:workbookId/syncs/:syncId                           # Update sync (CLI)
 DELETE /cli/v1/workbooks/:workbookId/syncs/:syncId                           # Delete sync (CLI)
@@ -561,6 +578,35 @@ Triggers a pull operation to sync files from external sources.
 }
 ```
 
+### Pull Assets
+
+```
+POST /workbook/:id/pull-assets
+```
+
+Triggers an asset pull for a specific data folder in the workbook.
+
+**Request Body:**
+
+```json
+{
+  "dataFolderId": "dfolder_abc"
+}
+```
+
+| Field          | Type   | Required | Description             |
+| -------------- | ------ | -------- | ----------------------- |
+| `dataFolderId` | string | Yes      | Data folder to pull for |
+
+**Response:**
+
+```json
+{
+  "jobId": "job_xyz",
+  "warning": "optional warning message"
+}
+```
+
 ### Discard Changes
 
 ```
@@ -605,6 +651,114 @@ Lists all folders in a workbook, grouped by connection.
   }
 ]
 ```
+
+### List Permissions
+
+```
+GET /workbook/:id/permissions
+```
+
+Lists all permissions for a workbook.
+
+**Response:**
+
+```json
+[
+  {
+    "id": "wpe_abc123",
+    "workbookId": "wkb_123",
+    "userId": "user_abc",
+    "role": "editor",
+    "createdAt": "2025-01-19T00:00:00.000Z"
+  }
+]
+```
+
+### List Invites
+
+```
+GET /workbook/:id/invites
+```
+
+Lists all pending invites for a workbook.
+
+**Response:**
+
+```json
+[
+  {
+    "id": "win_abc123",
+    "workbookId": "wkb_123",
+    "email": "invited@example.com",
+    "role": "editor",
+    "createdAt": "2025-01-19T00:00:00.000Z"
+  }
+]
+```
+
+### Add Permission
+
+```
+POST /workbook/:id/permissions/add
+```
+
+Adds a permission to a workbook. Provide either `userId` or `email` — if the user doesn't have an account, an invite is created instead.
+
+**Request Body:**
+
+```json
+{
+  "userId": "user_abc",
+  "email": "user@example.com",
+  "role": "editor"
+}
+```
+
+| Field    | Type   | Required | Description                           |
+| -------- | ------ | -------- | ------------------------------------- |
+| `userId` | string | No       | User ID (provide this or `email`)     |
+| `email`  | string | No       | User email (provide this or `userId`) |
+| `role`   | string | No       | Permission role                       |
+
+**Response:** Returns the created `WorkspacePermission` object, or `void` if an invite was created.
+
+### Update Permission
+
+```
+PATCH /workbook/:id/permission/:permissionId
+```
+
+Updates a permission's role on a workbook.
+
+**Request Body:**
+
+```json
+{
+  "role": "viewer"
+}
+```
+
+**Response:** Returns the updated `WorkspacePermission` object.
+
+### Remove Permission
+
+```
+DELETE /workbook/:id/permission/:permissionId
+```
+
+Removes a permission from a workbook.
+
+**Response:** `204 No Content`
+
+### Remove Invite
+
+```
+DELETE /workbook/:id/invite/:inviteId
+```
+
+Removes a pending invite from a workbook.
+
+**Response:** `204 No Content`
 
 ---
 
@@ -1398,6 +1552,96 @@ Validates column mappings between a source and destination folder before creatin
 }
 ```
 
+### Validate Mapping Type
+
+```
+POST /workbooks/:workbookId/syncs/validate-mapping-type
+```
+
+Traces a type through a single mapping's transformer pipeline. Returns the source type, each transformation step, the destination type, and any type compatibility errors.
+
+**Request Body:**
+
+```json
+{
+  "sourceFolderId": "dfolder_source",
+  "destFolderId": "dfolder_dest",
+  "sourceColumnId": "title",
+  "destinationColumnId": "name",
+  "transformers": []
+}
+```
+
+| Field                 | Type   | Required | Description                   |
+| --------------------- | ------ | -------- | ----------------------------- |
+| `sourceFolderId`      | string | Yes      | Source data folder ID         |
+| `destFolderId`        | string | Yes      | Destination data folder ID    |
+| `sourceColumnId`      | string | Yes      | Source column identifier      |
+| `destinationColumnId` | string | Yes      | Destination column identifier |
+| `transformers`        | array  | Yes      | Transformer pipeline to trace |
+
+**Response:**
+
+```json
+{
+  "sourceType": { "type": "string" },
+  "steps": [],
+  "destinationType": { "type": "string" },
+  "validation": []
+}
+```
+
+### Validate Sync Mapping Types
+
+```
+GET /workbooks/:workbookId/syncs/:syncId/validate-mapping-types
+```
+
+Runs type validation on every field mapping in a sync. Returns any type compatibility errors across all mappings.
+
+**Response:**
+
+```json
+{
+  "errors": []
+}
+```
+
+### Export Syncs
+
+```
+GET /workbooks/:workbookId/syncs/export
+```
+
+Exports sync configuration for a workbook.
+
+**Query Parameters:**
+
+| Parameter | Type   | Required | Description                                    |
+| --------- | ------ | -------- | ---------------------------------------------- |
+| `syncId`  | string | No       | Export only this sync (or all if not provided) |
+
+**Response:**
+
+```json
+[
+  {
+    "id": "syn_abc",
+    "displayName": "My Sync",
+    "mappings": {},
+    "validateMappings": true,
+    "schedule": "0 */6 * * *",
+    "publishAfterSync": false,
+    "_metadata": {
+      "syncState": "active",
+      "lastSyncTime": "2025-01-19T12:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-19T12:00:00.000Z"
+    }
+  }
+]
+```
+
 ### Test Transformer
 
 ```
@@ -1405,6 +1649,38 @@ POST /sync/transformers/test
 ```
 
 Tests a transformer configuration against sample data without running a full sync.
+
+---
+
+### Connectors
+
+### Get Connector Metadata
+
+```
+GET /connectors/metadata
+```
+
+Returns metadata for all available connectors. **No authentication required.**
+
+**Response:**
+
+```json
+{
+  "airtable": {
+    "displayName": "Airtable",
+    "table": "table",
+    "tables": "tables",
+    "record": "record",
+    "records": "records",
+    "base": "base",
+    "bases": "bases",
+    "logo": "https://static.scratch.md/connectors/airtable.svg",
+    "visible": true,
+    "pushOperationName": "Publish",
+    "pullOperationName": "Pull"
+  }
+}
+```
 
 ---
 
