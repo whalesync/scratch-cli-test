@@ -1,7 +1,6 @@
 import { Service } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
-import { useConnectorsMetadata } from './use-connectors-metadata';
-import { useScratchPadUser } from './useScratchpadUser';
+import { hasOAuth, useConnectorsMetadata } from './use-connectors-metadata';
 
 export type AuthMethod = 'user_provided_params' | 'oauth' | 'oauth_custom';
 
@@ -9,8 +8,9 @@ export type AuthMethod = 'user_provided_params' | 'oauth' | 'oauth_custom';
  * A utility hook for interacting with connectors and obtaingin connector specific config based on the current user.
  */
 export const useConnectors = () => {
-  const { user, isAdmin } = useScratchPadUser();
   const { metadata } = useConnectorsMetadata();
+
+  const webflowOAuthEnabled = hasOAuth(metadata, Service.WEBFLOW);
 
   const getDefaultAuthMethod = useCallback(
     (service: Service): AuthMethod => {
@@ -21,12 +21,12 @@ export const useConnectors = () => {
         Service.WIX_BLOG,
         Service.SUPABASE,
         Service.AIRTABLE,
+        Service.SHOPIFY,
       ];
 
-      if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
+      if (service === Service.WEBFLOW && webflowOAuthEnabled) {
         oauthSupportedServices.push(Service.WEBFLOW);
       }
-      oauthSupportedServices.push(Service.SHOPIFY);
 
       // Services that use generic parameters
       const genericParametersSupportedServices: string[] = [
@@ -49,7 +49,7 @@ export const useConnectors = () => {
         return 'oauth'; // Default fallback
       }
     },
-    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH],
+    [webflowOAuthEnabled],
   );
 
   const getSupportedAuthMethods = useCallback(
@@ -60,19 +60,19 @@ export const useConnectors = () => {
         Service.WIX_BLOG,
         Service.SUPABASE,
         Service.AIRTABLE,
+        Service.SHOPIFY,
       ];
 
-      if (service === Service.WEBFLOW && user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH) {
+      if (service === Service.WEBFLOW && webflowOAuthEnabled) {
         oauthSupportedServices.push(Service.WEBFLOW);
       }
-      oauthSupportedServices.push(Service.SHOPIFY);
 
       const userProvidedParamsSupportedServices: string[] = [
         Service.NOTION,
         Service.AIRTABLE,
         Service.WORDPRESS,
         Service.WEBFLOW,
-        ...(user?.experimentalFlags?.SHOPIFY_API_KEYS ? [Service.SHOPIFY] : []),
+        Service.SHOPIFY,
         Service.AUDIENCEFUL,
         Service.MOCO,
         Service.POSTGRES,
@@ -92,24 +92,19 @@ export const useConnectors = () => {
       }
       return methods;
     },
-    [user?.experimentalFlags?.ENABLE_WEBFLOW_OAUTH, user?.experimentalFlags?.SHOPIFY_API_KEYS],
+    [webflowOAuthEnabled],
   );
 
-  // For admins show all visible services. Dedupe in case of overlap between flags and metadata.
-  // In development, show all connectors without filtering.
+  // Show all connectors with visible=true. In development, show all connectors.
   const availableServices = useMemo(() => {
     if (process.env.NODE_ENV === 'development') {
       return Object.values(Service);
     }
-    const connectorListFromFlags = (user?.experimentalFlags?.CONNECTOR_LIST ?? []) as Service[];
-    if (!isAdmin) return connectorListFromFlags;
-    const visibleServices = metadata
-      ? (Object.entries(metadata)
-          .filter(([, m]) => m.visible)
-          .map(([s]) => s) as Service[])
-      : [];
-    return [...new Set([...connectorListFromFlags, ...visibleServices])];
-  }, [user?.experimentalFlags?.CONNECTOR_LIST, isAdmin, metadata]);
+    if (!metadata) return [];
+    return Object.entries(metadata)
+      .filter(([, m]) => m.visible)
+      .map(([s]) => s) as Service[];
+  }, [metadata]);
 
   return {
     getDefaultAuthMethod,

@@ -15,9 +15,6 @@ export enum SystemFeatureFlag {
 export enum UserFlag {
   DEV_TOOLBOX = 'DEV_TOOLBOX',
   SAMPLE_USER_FLAG = 'sample_user_flag',
-  CONNECTOR_LIST = 'CONNECTOR_LIST',
-  ENABLE_WEBFLOW_OAUTH = 'ENABLE_WEBFLOW_OAUTH',
-  SHOPIFY_API_KEYS = 'SHOPIFY_API_KEYS',
   ENABLE_CREATE_BUG_REPORT = 'ENABLE_CREATE_BUG_REPORT',
 }
 
@@ -36,10 +33,7 @@ export type AllFeatureFlags = SystemFeatureFlag | UserFlag;
 export const ClientUserFlags: Record<UserFlag, FlagDataType> = {
   // Special flags based on system flags or user role
   [UserFlag.DEV_TOOLBOX]: 'boolean',
-  [UserFlag.CONNECTOR_LIST]: 'array',
   // User-scoped feature flags
   [UserFlag.SAMPLE_USER_FLAG]: 'boolean',
-  [UserFlag.ENABLE_WEBFLOW_OAUTH]: 'boolean',
-  [UserFlag.SHOPIFY_API_KEYS]: 'boolean',
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: 'boolean',
 };
