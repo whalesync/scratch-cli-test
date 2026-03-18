@@ -201,7 +201,7 @@ retiring the Go CLI.
 
 ### Implementation steps
 
-#### Step 1.1 — Add clap and dual-mode entry point
+#### Step 1.1 [COMPLETED] — Add clap and dual-mode entry point
 
 Modify `main.rs` to be clap-driven. The `Serve` subcommand runs the existing HTTP server. All other subcommands are stubs that print "not yet implemented".
 
@@ -214,7 +214,7 @@ Modify `main.rs` to be clap-driven. The `Serve` subcommand runs the existing HTT
 
 ---
 
-#### Step 1.2 — Config module: credentials and workspace markers
+#### Step 1.2 [COMPLETED] — Config module: credentials and workspace markers
 
 Implement `config/credentials.rs`:
 - Reads and writes `~/.scratchmd/credentials.yaml`
@@ -237,7 +237,7 @@ Implement `config/markers.rs`:
 
 ---
 
-#### Step 1.3 — API module and auth commands
+#### Step 1.3 [COMPLETED] — API module and auth commands
 
 Implement `api/mod.rs`: base reqwest client with:
 - Bearer token from credentials
@@ -258,7 +258,7 @@ Implement `api/auth.rs` + `cli/auth.rs`:
 
 ---
 
-#### Step 1.4 — Workspaces commands (except init)
+#### Step 1.4 [COMPLETED] — Workspaces commands (except init)
 
 Implement `api/workbooks.rs` + `cli/workspaces.rs` for list, create, show, delete.
 
@@ -271,7 +271,7 @@ These are pure API calls — no local git operations. Straightforward.
 
 ---
 
-#### Step 1.5 — `workspaces init`
+#### Step 1.5 [COMPLETED] — `workspaces init`
 
 This is the most structurally important command. It establishes the workspace that both CLIs will share.
 
@@ -299,7 +299,7 @@ V2 init flow:
 
 ---
 
-#### Step 1.6 — `files download` (three-way merge)
+#### Step 1.6 [COMPLETED] — `files download` (three-way merge)
 
 This is the most algorithmically complex command. The logic:
 
@@ -331,7 +331,7 @@ This is the most algorithmically complex command. The logic:
 
 ---
 
-#### Step 1.7 — `files upload`
+#### Step 1.7 [COMPLETED] — `files upload`
 
 1. For each connector in scope:
    a. `git add -A` (subprocess)
@@ -347,7 +347,7 @@ This is the most algorithmically complex command. The logic:
 
 ---
 
-#### Step 1.8 — Connections, linked, syncs commands
+#### Step 1.8 [PARTIALLY COMPLETE] — Connections, linked, syncs commands
 
 These are mostly API calls with job polling. Implement:
 
@@ -370,6 +370,55 @@ These are mostly API calls with job polling. Implement:
 - `linked publish <id>` completes and remote service reflects changes
 - `syncs run <id>` completes, result visible in linked show
 - Old and new CLIs interleaved: linked pull with old, publish with new → works
+
+**Status:** `connections list/show/remove/add` complete and equivalence-tested. `linked` and `syncs` are stubs — all subcommands return "not yet implemented".
+
+---
+
+#### Step 1.8b — Complete `linked` and `syncs` + equivalence tests
+
+Finish the remaining stubs from Step 1.8 and expand `scratch-git-2/tests/equivalence/run.sh` to cover them.
+
+**`linked` commands to implement** (all currently stubbed):
+
+- `linked available [<connection-id>]` — `GET /workbooks/{id}/connections/{cid}/tables`
+- `linked list` — `GET /workbooks/{id}/linked`
+- `linked show <id>` — `GET /workbooks/{id}/linked/{id}`
+- `linked add --connection-id <id> --table-id <id>` — `POST /workbooks/{id}/linked`
+- `linked remove <id>` — `DELETE /workbooks/{id}/linked/{id}`
+- `linked pull <id>` — `POST /workbooks/{id}/linked/{id}/pull` + job poll + `files download`
+- `linked publish <id>` — `POST /workbooks/{id}/linked/{id}/publish` + job poll
+
+**`syncs` commands to implement** (all currently stubbed):
+
+- `syncs list` — `GET /workbooks/{id}/syncs`
+- `syncs show <id>` — `GET /workbooks/{id}/syncs/{id}`
+- `syncs create --config <path|json>` — `POST /workbooks/{id}/syncs`
+- `syncs update <id> --config <path|json>` — `PATCH /workbooks/{id}/syncs/{id}`
+- `syncs delete <id>` — `DELETE /workbooks/{id}/syncs/{id}`
+- `syncs run <id>` — `POST /workbooks/{id}/syncs/{id}/run` + job poll
+- `syncs download [--id <id>] [-o <dir>]` — `GET /workbooks/{id}/syncs/export`
+
+**Equivalence tests to add to `scratch-git-2/tests/equivalence/run.sh`:**
+
+The test script already has `LINKED_TABLE_ID` and `SYNC_ID` as optional env vars. Activate the skipped tests by implementing:
+
+| Test | Command pair | Notes |
+|---|---|---|
+| `linked list` | `scratchmd linked list` vs `scratchmd2 linked --workspace $WB list` | Compare JSON sorted by id |
+| `linked available (conn1)` | `scratchmd linked available $CONN1` vs `scratchmd2 linked --workspace $WB available $CONN1` | |
+| `linked available (conn2)` | same for conn2 | |
+| `linked show` | `scratchmd linked show $LT` vs `scratchmd2 linked --workspace $WB show $LT` | Requires `LINKED_TABLE_ID` env var |
+| `syncs list` | `scratchmd syncs list` vs `scratchmd2 syncs --workspace $WB list` | |
+| `syncs show` | `scratchmd syncs show $SYNC` vs `scratchmd2 syncs --workspace $WB show $SYNC` | Requires `SYNC_ID` env var |
+
+`linked pull` and `linked publish` are not added to the equivalence script (they trigger server jobs and mutate state). Test them manually per the Step 1.8 checklist.
+
+**What to check:**
+- All equivalence tests pass: `0 failed` with `linked` and `syncs` sections active
+- `linked pull <id>` with NEW CLI → `files download` shows updated files in BOTH Go and Rust clones
+- `linked publish <id>` with OLD CLI → result visible when `linked show` run with NEW CLI (and vice versa)
+- `syncs run <id>` with NEW CLI → job completes, `syncs show` output identical across CLIs
 
 ---
 
@@ -426,30 +475,52 @@ CREATE TABLE file_references (
 
 ### Where the SQLite lives
 
+The `.scratchmd` file at workspace and connector level is **never modified** — it stays a YAML file as today. A new sibling `.scratch/` directory holds all local-only metadata.
+
 ```
-workspace/
-├── .scratchmd
-├── ConnectorDisplayName/          ← connector dir
+WorkspaceName/
+├── .scratchmd                                  ← workspace marker file (unchanged)
+├── .scratch/                                   ← NEW: local-only metadata (gitignored at workspace level)
+│   └── connections/
+│       └── AIRTABLE - My Conn/                 ← mirrors connector dir name exactly
+│           ├── index.db                        ← SQLite file index for this connector
+│           └── master/                         ← master worktree (git worktree of main branch)
+│               └── TableName/*.json            ← published state of files
+├── AIRTABLE - My Conn/                         ← connector dir (dirty branch clone, unchanged)
 │   ├── .scratchmd
 │   ├── .git/
-│   ├── .scratch/                  ← NEW (add to connector's .gitignore)
-│   │   └── index.db               ← SQLite file index for this connector
 │   └── TableName/*.json
 ```
 
-The `.scratch/` directory at connector level mirrors the experimental CLI's pattern. Add `.scratch/` to `.gitignore` in each connector dir during `workspaces init` (or when first building the index). The `index.db` file is local only, never committed.
+The `.scratch/` directory is local-only and should be added to the workspace-level `.gitignore`. The `index.db` and `master/` worktree are never committed.
+
+### Master worktree
+
+The server-side bare repo has both `main` and `dirty` branches. The CLI currently only clones `dirty` (single-branch). To correctly build the file index (which represents **published/main state**, matching the server's Postgres `FileIndex`) and to support publish planning (diffing main vs dirty), a `master` worktree is needed locally.
+
+**During `workspaces init`**, after cloning the dirty branch, add a git worktree for `main`:
+
+```bash
+# Inside the connector dir (which has .git/ from the dirty clone):
+git fetch origin main
+git worktree add ../.scratch/connections/{connDirName}/master main
+```
+
+This creates a checked-out working tree of `main` at `.scratch/connections/{connDirName}/master/` without touching the dirty working tree.
+
+**During `files download`**, after merging remote dirty changes, also update the master worktree:
+
+```bash
+git -C .scratch/connections/{connDirName}/master pull origin main
+```
+
+The master worktree is what `build-index` reads from — matching the semantics of the server's `FileIndex` (which is populated from pulled/published main-branch content).
 
 ### Where schemas come from
 
-**This is the hard part.** The `file_references` table requires knowing which fields are FK references — that information is in the table schema (`x-scratch-foreign-key` annotations). In the experimental CLI, schemas are stored at `.scratch/{folder}/schema.json` in the git repo (downloaded from the experimental server). In the current V2 workspace, schemas are NOT stored locally.
+Schemas (`schema.json`) are already present in the connector repos — they live inside each data folder directory in the git repo (both dirty and main branches). No new NestJS endpoint is needed.
 
-**Solution:**
-1. Add a `GET /api/workbooks/{id}/schemas` endpoint to NestJS (or use existing endpoints to fetch per-DataFolder schema)
-2. During `workspaces init` and after `files download`, download schemas and write to `ConnectorDir/.scratch/{folderName}/schema.json`
-3. `build-index` reads from local `.scratch/{folderName}/schema.json`
-4. If schema not locally available: build `file_index` only (no `file_references`), log a warning
-
-This moves toward the long-term goal of having config in git — schemas are now stored locally in `.scratch/`.
+`build-index` reads schemas from `master/{folderName}/schema.json` to extract `x-scratch-foreign-key` annotations for building `file_references`.
 
 ### When to rebuild the index (full rebuild)
 
@@ -474,42 +545,53 @@ After `files upload`, compare the new commit's diff to the previous commit. For 
 
 ### Implementation steps
 
-#### Step 2.1 — Add rusqlite and schema download
+#### Step 2.1 — Add rusqlite, master worktree, and build-index
 
 Add to Cargo.toml:
 ```toml
 rusqlite = { version = "0.31", features = ["bundled"] }
 ```
 
-Copy the `build_index.rs` logic from the experimental CLI into `scratch-git-2/src/cli/index.rs`.
-Adapt it to the V2 workspace structure (read from connector worktree, not master worktree).
+**Update `workspaces init` (Step 1.5)** to also set up the master worktree for each connector:
+```bash
+git fetch origin main
+git worktree add .scratch/connections/{connDirName}/master main
+```
+Add `.scratch/` to the workspace-level `.gitignore`.
 
-Add `build-index` and `dump-index` as explicit CLI commands (matching experimental CLI):
+**Update `files download` (Step 1.6)** to also pull the master worktree after merging dirty:
+```bash
+git -C .scratch/connections/{connDirName}/master pull origin main
+```
+
+Port `build_index.rs` from the experimental CLI into `scratch-git-2/src/shared/index.rs`.
+Adapt it to read from `.scratch/connections/{connDirName}/master/` (not the dirty worktree).
+Schemas are read from `master/{folderName}/schema.json` — no download step needed.
+
+Add `build-index` and `dump-index` as explicit CLI commands:
 - `scratchmd2 build-index` — rebuild index for all connectors in current workspace
-- `scratchmd2 dump-index` — print index contents (for debugging)
+- `scratchmd2 dump-index [--connection name]` — print index contents (for debugging)
 
 **What to check:**
-- `scratchmd2 build-index` creates `ConnectorDir/.scratch/index.db`
+- After `workspaces init`, `.scratch/connections/{connDirName}/master/` exists with main-branch files
+- `scratchmd2 build-index` creates `.scratch/connections/{connDirName}/index.db`
 - `scratchmd2 dump-index` shows records with correct remote IDs
-- `sqlite3 ConnectorDir/.scratch/index.db "SELECT * FROM file_index LIMIT 5"` — looks right
+- `sqlite3 .scratch/connections/{connDirName}/index.db "SELECT * FROM file_index LIMIT 5"` — looks right
 - Index matches Postgres FileIndex for the same connector (spot check 10 records)
+- Master worktree updates after `files download` (re-run build-index, counts match)
 
 ---
 
-#### Step 2.2 — Add NestJS schema endpoint and local schema storage
+#### Step 2.2 — Wire index rebuild into CLI operations (replaces old schema endpoint step)
 
-Add to NestJS: `GET /api/workbooks/{workbookId}/connectors/{connectorId}/schemas` → returns all DataFolder schemas for a connector.
+Schemas are already present in the connector repos at `{folderName}/schema.json` in the `main` branch — no NestJS changes needed. The master worktree added in Step 2.1 provides them automatically.
 
-During `workspaces init` and `files download`:
-- Fetch schemas from this endpoint
-- Write to `ConnectorDir/.scratch/{folderSlug}/schema.json`
-
-`build-index` reads schemas from local files. If missing, builds `file_index` only.
+Wire `build_index()` into the CLI after each relevant operation (see Step 2.3 below). No separate schema download step is required.
 
 **What to check:**
-- After `workspaces init`, `ls ConnectorDir/.scratch/` shows folders with `schema.json`
-- `cat ConnectorDir/.scratch/Posts/schema.json` looks like a valid JSON schema
-- After `files download`, schemas are refreshed (in case table structure changed)
+- After `workspaces init`, `master/{folderName}/schema.json` exists and is valid JSON
+- `build-index` produces `file_references` entries (confirms schemas are being read)
+- After `files download`, master worktree is updated and re-index reflects new main state
 - After full build-index: `SELECT * FROM file_references LIMIT 10` shows FK relationships
 
 ---

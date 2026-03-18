@@ -311,6 +311,8 @@ pub struct Connection {
     pub health_status: Option<String>,
     #[serde(rename = "healthStatusMessage")]
     pub health_status_message: Option<String>,
+    #[serde(rename = "repoPath", default, skip_serializing_if = "String::is_empty")]
+    pub repo_path: String,
     #[serde(rename = "createdAt", default)]
     pub created_at: String,
     #[serde(rename = "updatedAt", default)]

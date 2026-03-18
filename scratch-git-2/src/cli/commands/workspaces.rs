@@ -4,25 +4,30 @@ use std::process::Command;
 
 use clap::Subcommand;
 
-use crate::api::{ApiClient, Workbook, WorkbookListResponse};
+use crate::api::{ApiClient, ConnectorAccount, Workbook, WorkbookListResponse};
 use crate::config::markers;
 
 /// JSON output shape matching the Go CLI exactly.
-/// The Go CLI omits `version` and `connectorAccounts`, and includes a null `dataFolders`.
+/// Includes a null `dataFolders` at workbook level (Go always serializes this as null).
 #[derive(serde::Serialize)]
 struct WorkbookOutput {
-    id: String,
-    name: String,
+    /// null when server omits the field (list endpoint), populated on show endpoint — matches Go nil-slice behaviour.
+    #[serde(rename = "connectorAccounts")]
+    connector_accounts: Option<Vec<ConnectorAccount>>,
     #[serde(rename = "createdAt")]
     created_at: String,
-    #[serde(rename = "updatedAt")]
-    updated_at: String,
-    #[serde(rename = "tableCount")]
-    table_count: i32,
+    /// Always null — Go CLI includes this field but the server never populates it at workbook level.
     #[serde(rename = "dataFolders")]
     data_folders: Option<Vec<serde_json::Value>>,
     #[serde(rename = "gitUrl")]
     git_url: String,
+    id: String,
+    name: String,
+    #[serde(rename = "tableCount")]
+    table_count: i32,
+    #[serde(rename = "updatedAt")]
+    updated_at: String,
+    version: i32,
 }
 
 #[derive(serde::Serialize)]
@@ -33,13 +38,15 @@ struct WorkbookListOutput {
 impl From<Workbook> for WorkbookOutput {
     fn from(wb: Workbook) -> Self {
         Self {
-            id: wb.id,
-            name: wb.name,
+            connector_accounts: if wb.connector_accounts.is_empty() { None } else { Some(wb.connector_accounts) },
             created_at: wb.created_at,
-            updated_at: wb.updated_at,
-            table_count: wb.table_count,
             data_folders: None,
             git_url: wb.git_url,
+            id: wb.id,
+            name: wb.name,
+            table_count: wb.table_count,
+            updated_at: wb.updated_at,
+            version: wb.version,
         }
     }
 }
@@ -314,6 +321,7 @@ fn git_clone(url: &str, target_dir: &Path, token: &str) -> anyhow::Result<()> {
             "-c",
             &format!("http.extraHeader={}", auth_header),
             "clone",
+            "--quiet",
             "--branch",
             "dirty",
             "--single-branch",
