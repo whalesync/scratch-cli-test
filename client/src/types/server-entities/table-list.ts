@@ -5,6 +5,10 @@ export interface TablePreview {
   displayName: string;
   disabled?: boolean;
   disabledCreates?: boolean;
+  /** Slash-separated path for grouping tables in the UI (e.g. "My Project/public") */
+  parentPath?: string;
+  /** Human-readable reason why this table is disabled or has creates disabled */
+  disabledReason?: string;
   metadata?: Record<string, unknown>;
 }
 

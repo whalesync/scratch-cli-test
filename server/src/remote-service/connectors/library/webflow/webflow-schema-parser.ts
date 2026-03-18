@@ -13,6 +13,7 @@ export class WebflowSchemaParser {
         remoteId: [site.id, collection.id],
       },
       displayName: `${collection.displayName}`,
+      parentPath: site.displayName,
       metadata: {
         siteId: site.id,
         siteName: site.displayName,

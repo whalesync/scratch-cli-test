@@ -1287,16 +1287,35 @@ Lists tables available from a specific connection.
 {
   "tables": [
     {
-      "id": "tbl_abc",
-      "name": "Blog Posts",
-      "siteId": "base_xyz",
-      "siteName": "Content Database",
-      "schema": {...},
-      "idField": "id"
+      "id": { "wsId": "blog-posts", "remoteId": ["base_xyz", "tbl_abc"] },
+      "displayName": "Blog Posts",
+      "parentPath": "Content Database",
+      "disabled": false,
+      "disabledCreates": false,
+      "disabledReason": null,
+      "metadata": { "baseName": "Content Database" }
     }
-  ]
+  ],
+  "discoveryMode": "LIST",
+  "supportsFilters": false,
+  "supportsFieldSelection": false,
+  "advancedSettings": []
 }
 ```
+
+| Field                      | Type     | Description                                                        |
+| -------------------------- | -------- | ------------------------------------------------------------------ |
+| `tables[].id`              | EntityId | Contains `wsId` (workspace identifier) and `remoteId` (path array) |
+| `tables[].displayName`     | string   | Table display name                                                 |
+| `tables[].parentPath`      | string?  | Slash-separated path for grouping (e.g. `"My Project/public"`)     |
+| `tables[].disabled`        | boolean? | If true, the table cannot be selected                              |
+| `tables[].disabledCreates` | boolean? | If true, creating new records in this table is not supported       |
+| `tables[].disabledReason`  | string?  | Human-readable explanation for disabled/disabledCreates            |
+| `tables[].metadata`        | object?  | Connector-specific metadata                                        |
+| `discoveryMode`            | string   | `LIST` (full list) or `SEARCH` (search-based discovery)            |
+| `supportsFilters`          | boolean  | Whether the connector supports filter expressions                  |
+| `supportsFieldSelection`   | boolean  | Whether the connector supports field/column selection              |
+| `advancedSettings`         | array    | Per-table advanced settings definitions                            |
 
 ### Search Tables
 
@@ -1666,7 +1685,7 @@ Returns metadata for all available connectors. **No authentication required.**
 
 ```json
 {
-  "airtable": {
+  "AIRTABLE": {
     "displayName": "Airtable",
     "table": "table",
     "tables": "tables",
@@ -1674,13 +1693,54 @@ Returns metadata for all available connectors. **No authentication required.**
     "records": "records",
     "base": "base",
     "bases": "bases",
-    "logo": "https://static.scratch.md/connectors/airtable.svg",
+    "logo": "https://static.scratch.md/connector-icons/airtable.svg",
     "visible": true,
     "pushOperationName": "Publish",
-    "pullOperationName": "Pull"
+    "pullOperationName": "Download",
+    "supportedAuthMethods": ["oauth", "user_provided_params"],
+    "defaultAuthMethod": "oauth",
+    "oauth": { "label": "OAuth" },
+    "credentialFields": {
+      "user_provided_params": [
+        {
+          "key": "apiKey",
+          "type": "password",
+          "label": "API Key",
+          "placeholder": "Enter API Key",
+          "required": true
+        }
+      ]
+    }
   }
 }
 ```
+
+| Field                     | Type     | Description                                                             |
+| ------------------------- | -------- | ----------------------------------------------------------------------- |
+| `displayName`             | string   | Human-readable connector name                                           |
+| `table` / `tables`        | string   | Terminology for tables (e.g. "collection"/"collections")                |
+| `record` / `records`      | string   | Terminology for records (e.g. "item"/"items")                           |
+| `base` / `bases`          | string?  | Terminology for bases/projects (null if not applicable)                 |
+| `logo`                    | string   | URL to connector icon                                                   |
+| `visible`                 | boolean  | Whether the connector is shown in the UI                                |
+| `pushOperationName`       | string   | Label for the publish operation (e.g. "Publish")                        |
+| `pullOperationName`       | string   | Label for the download operation (e.g. "Download")                      |
+| `supportedAuthMethods`    | string[] | Supported auth methods: `oauth`, `user_provided_params`, `oauth_custom` |
+| `defaultAuthMethod`       | string   | Default auth method for this connector                                  |
+| `oauth`                   | object?  | OAuth display labels (`label`, optional `privateLabel`)                 |
+| `credentialFields`        | object?  | Per-auth-method credential field definitions (see below)                |
+| `userProvidedParamsLabel` | string?  | Radio button label for API key auth (default: "API Key")                |
+
+**`credentialFields`** is keyed by auth method. Each entry is an array of field definitions:
+
+| Field         | Type     | Description                                            |
+| ------------- | -------- | ------------------------------------------------------ |
+| `key`         | string   | Field key sent to server (e.g. `apiKey`, `shopDomain`) |
+| `type`        | string   | `string`, `password`, or `boolean`                     |
+| `label`       | string   | Display label                                          |
+| `placeholder` | string?  | Input placeholder text                                 |
+| `description` | string?  | Help text shown below the input                        |
+| `required`    | boolean? | Whether the field is required for submission           |
 
 ---
 
@@ -2129,7 +2189,7 @@ Returns a single connection by ID.
 GET /cli/v1/workbooks/:workbookId/connections/:connectorAccountId/tables
 ```
 
-Lists tables available from a connection.
+Lists tables available from a connection. Response format matches the web API endpoint (see [List Tables](#list-tables)).
 
 ### Delete Connection (CLI)
 

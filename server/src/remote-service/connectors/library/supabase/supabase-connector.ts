@@ -395,14 +395,23 @@ export class SupabaseConnector extends Connector {
     const tableKey = `${t.table_schema}.${t.table_name}`;
     const hasUnique = tablesWithUnique ? tablesWithUnique.has(tableKey) : true;
     const hasAutoGenPK = tablesWithAutoGenPK ? tablesWithAutoGenPK.has(tableKey) : true;
+    const groupName = projectName || projectRef;
     return {
       id: {
-        wsId: sanitizeForTableWsId(`${projectName || projectRef}__${t.table_schema}__${t.table_name}`),
+        wsId: sanitizeForTableWsId(`${groupName}__${t.table_schema}__${t.table_name}`),
         remoteId: [projectRef, t.table_schema, t.table_name],
       },
       displayName,
-      ...(!hasUnique && { disabled: true as const }),
-      ...(hasUnique && !hasAutoGenPK && { disabledCreates: true as const }),
+      parentPath: `${groupName}/${t.table_schema}`,
+      ...(!hasUnique && {
+        disabled: true as const,
+        disabledReason: "This table doesn't have a unique value column (primary key).",
+      }),
+      ...(hasUnique &&
+        !hasAutoGenPK && {
+          disabledCreates: true as const,
+          disabledReason: "This table doesn't have an auto generated primary key, creates are not supported",
+        }),
       metadata: {
         schema: t.table_schema,
         projectRef: projectRef,

@@ -30,7 +30,7 @@ ConnectorsService.getConnector()
   → records stored as JSON files in git
 ```
 
-The `ConnectorsService` (`connectors.service.ts`) owns a switch statement mapping each `Service` enum value to its connector class. It validates credentials, handles OAuth token refresh, and returns a ready-to-use connector instance.
+The `ConnectorsService` (`connectors.service.ts`) uses the connector registry to look up connector factories by service key. It validates credentials, handles OAuth token refresh, and returns a ready-to-use connector instance.
 
 ### Pull Flow
 
@@ -99,6 +99,17 @@ type EntityId = {
   remoteId: string[]; // Path components in the remote service
 };
 
+// A table available for selection
+type TablePreview = {
+  id: EntityId;
+  displayName: string;
+  parentPath?: string; // Slash-separated grouping path (e.g. "My Base" or "Project/schema")
+  disabled?: true; // Table cannot be selected
+  disabledCreates?: true; // Creates not supported
+  disabledReason?: string; // Human-readable explanation for disabled state
+  metadata?: Record<string, unknown>; // Connector-specific metadata
+};
+
 // Full schema for a table
 type BaseJsonTableSpec = {
   id: EntityId;
@@ -136,7 +147,7 @@ export abstract class AuthParser<T extends Service> {
 }
 ```
 
-Register it in `ConnectorsService.getAuthParser()`.
+Register it via `createAuthParser` in your `connectorRegistry.register()` call.
 
 ## 4. Implementing Each Method
 
@@ -168,24 +179,44 @@ async testConnection(): Promise<void> {
 
 Return `TablePreview[]` where each entry has an `EntityId`. The `wsId` should be human-readable and stable; `remoteId` is the path the connector needs to locate the table.
 
+#### `parentPath` — Table Grouping
+
+Set `parentPath` on each `TablePreview` to control how tables are grouped in the UI. The client splits on `/` to create a group/subgroup hierarchy. If `parentPath` is omitted, tables render as a flat list.
+
 ```typescript
-// Airtable: bases contain tables — remoteId = [baseId, tableId]
+// Airtable: group by base name
 return tables.map((table) => ({
-  id: {
-    wsId: sanitizeForTableWsId(table.id),
-    remoteId: [baseId, table.id],
-  },
-  name: table.name,
+  id: { wsId: sanitizeForTableWsId(table.id), remoteId: [baseId, table.id] },
+  displayName: table.name,
+  parentPath: base.name, // → group header: "My Base"
 }));
 
-// Shopify: entity types are "tables" — remoteId = [entityType]
-return Object.entries(ENTITY_CONFIG).map(([entityType, config]) => ({
-  id: {
-    wsId: entityType,
-    remoteId: [entityType],
-  },
-  name: config.displayName,
+// Supabase: group by project and schema
+return tables.map((t) => ({
+  id: { wsId: sanitizeForTableWsId(...), remoteId: [projectRef, schema, tableName] },
+  displayName: t.table_name,
+  parentPath: `${projectName}/${t.table_schema}`, // → "My Project" > "public"
 }));
+
+// Shopify: flat list (no grouping)
+return Object.entries(ENTITY_CONFIG).map(([entityType, config]) => ({
+  id: { wsId: entityType, remoteId: [entityType] },
+  displayName: config.displayName,
+  // no parentPath → flat list
+}));
+```
+
+#### `disabledReason` — Explaining Disabled Tables
+
+When setting `disabled: true` or `disabledCreates: true`, also set `disabledReason` with a human-readable explanation. The client shows this as a tooltip.
+
+```typescript
+return {
+  id: { ... },
+  displayName: tableName,
+  disabled: true,
+  disabledReason: "This table doesn't have a unique value column (primary key).",
+};
 ```
 
 Use `sanitizeForTableWsId()` from `ids.ts` to ensure the `wsId` is safe for postgres and file paths.
@@ -435,20 +466,15 @@ When adding a new connector, touch all of these:
 
 ### Shared Types
 
-- [ ] Add to `Service` enum in `packages/shared-types/src/enums/enums.ts`
-
-### Server — Prisma
-
-- [ ] Add to `Service` enum in `server/prisma/schema.prisma`
-- [ ] Create and run a migration: `cd server && yarn run migrate`
+- [ ] Add to `Service` const in `packages/shared-types/src/enums/enums.ts` (this is a string const object, not a DB enum — no migration needed)
 
 ### Server — Connector Registration
 
 - [ ] Add connector class in `server/src/remote-service/connectors/library/<service-name>/`
-- [ ] Add `static readonly metadata` using `connectorMetadata()` — this defines display name, terminology, logo, visibility, and OAuth labels (see example below)
-- [ ] Add switch case in `ConnectorsService.getConnector()` (`connectors.service.ts`)
+- [ ] Add `static readonly metadata` using `connectorMetadata()` — this defines display name, terminology, logo, visibility, auth methods, credential fields, and OAuth labels (see example below)
+- [ ] Register via `connectorRegistry.register()` at the bottom of your connector file (see example below)
 - [ ] Add credential fields to `DecryptedCredentials` interface if needed (`packages/shared-types/src/connector-account-types.ts`)
-- [ ] Add `AuthParser` and register in `ConnectorsService.getAuthParser()` if auth pre-processing is needed
+- [ ] Add `AuthParser` and register via `createAuthParser` in your registration if auth pre-processing is needed
 
 ### Server — OAuth (if applicable)
 
@@ -460,10 +486,14 @@ When adding a new connector, touch all of these:
 
 The `connectorMetadata()` helper merges your overrides with sensible defaults (`table: 'table'`, `record: 'record'`, `base: null`, `visible: true`, `pushOperationName: 'Publish'`, `pullOperationName: 'Download'`). You must provide `displayName` and `logo`.
 
+**`credentialFields`** declares the form fields the client renders for each auth method. Keys must match the property names accepted by the server (e.g. `apiKey`, `connectionString`, `shopDomain`). Field types: `'string'` (text input), `'password'` (masked input), `'boolean'` (checkbox).
+
 ```typescript
 import { connectorMetadata } from '@spinner/shared-types';
+import { connectorRegistry } from '../../connector-registry';
 
-export class MyConnector extends Connector<typeof Service.MY_SERVICE> {
+export class MyConnector extends Connector {
+  readonly service = 'MY_SERVICE';
   static readonly displayName = 'My Service';
   static readonly metadata = connectorMetadata({
     displayName: 'My Service',
@@ -473,12 +503,30 @@ export class MyConnector extends Connector<typeof Service.MY_SERVICE> {
     records: 'items',
     logo: 'https://static.scratch.md/connector-icons/my-service.svg',
     oauth: { label: 'OAuth' }, // omit if no OAuth support
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
+      ],
+    },
   });
   // ...
 }
+
+// Self-register at import time (bottom of file)
+connectorRegistry.register({
+  service: 'MY_SERVICE',
+  metadata: MyConnector.metadata,
+  advancedSettings: [],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
+  async createConnector(ctx) {
+    const apiKey = ctx.decryptedCredentials?.apiKey;
+    if (!apiKey) throw new Error('Missing API key');
+    return new MyConnector(apiKey);
+  },
+});
 ```
 
-The metadata is served at `GET /connectors/metadata` and consumed by the client automatically — no client-side file changes are needed when adding a new connector.
+The metadata is served at `GET /connectors/metadata` and consumed by the client automatically — no client-side file changes are needed when adding a new connector. The connection modals dynamically render credential fields from `credentialFields`.
 
 ## 7. Common Patterns
 
@@ -499,27 +547,31 @@ For resumability, pass `connectorProgress` in the callback. Cursor and offset pa
 3. Always return `ErrorMessageTemplates.UNKNOWN_ERROR(displayName)` as a fallback
 4. The `ConnectorInstantiationError` is thrown by `ConnectorsService` when credentials are missing/invalid — you don't need to handle this in the connector itself
 
-### Credential Validation in `getConnector()`
+### Credential Validation in `createConnector()`
 
-When adding your switch case, validate required credentials and throw `ConnectorInstantiationError` if missing:
+Validate required credentials in the `createConnector` factory function of your registration and throw if missing:
 
 ```typescript
-case Service.MY_SERVICE: {
-  const apiKey = decryptedCredentials?.apiKey;
-  if (!apiKey) throw new ConnectorInstantiationError(Service.MY_SERVICE);
-  return new MyServiceConnector(apiKey);
-}
+connectorRegistry.register({
+  service: 'MY_SERVICE',
+  // ...
+  async createConnector(ctx) {
+    const apiKey = ctx.decryptedCredentials?.apiKey;
+    if (!apiKey) throw new Error('Missing API key for My Service');
+    return new MyServiceConnector(apiKey);
+  },
+});
 ```
 
 For OAuth services, get a valid access token first:
 
 ```typescript
-case Service.MY_SERVICE: {
-  const accessToken = decryptedCredentials?.apiKey
-    ?? (connectorAccount ? await this.oauthService.getValidAccessToken(connectorAccount.id) : null);
-  if (!accessToken) throw new ConnectorInstantiationError(Service.MY_SERVICE);
+async createConnector(ctx) {
+  const accessToken = ctx.decryptedCredentials?.apiKey
+    ?? (ctx.connectorAccount ? await ctx.getOAuthAccessToken(ctx.connectorAccount.id) : null);
+  if (!accessToken) throw new Error('Missing access token for My Service');
   return new MyServiceConnector(accessToken);
-}
+},
 ```
 
 ### EntityId Conventions

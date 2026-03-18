@@ -41,7 +41,7 @@ import type {
   DataFolderId,
   WorkbookId,
 } from '@spinner/shared-types';
-import { Service, TableDiscoveryMode } from '@spinner/shared-types';
+import { TableDiscoveryMode } from '@spinner/shared-types';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
@@ -54,8 +54,8 @@ type TableGroup = {
   }[];
 };
 
-function TableLabel({ table, service }: { table: TablePreview; service: Service }) {
-  const description = service === Service.QUICKBOOKS ? (table.metadata?.description as string | undefined) : undefined;
+function TableLabel({ table }: { table: TablePreview }) {
+  const description = table.metadata?.description as string | undefined;
   return (
     <Group gap={6} align="center" wrap="nowrap">
       <Stack gap={0}>
@@ -63,17 +63,12 @@ function TableLabel({ table, service }: { table: TablePreview; service: Service 
         {description && <Text12Regular c="dimmed">{description}</Text12Regular>}
       </Stack>
       {table.disabled && (
-        <Tooltip label={DISABLED_MESSAGES[service] ?? DEFAULT_DISABLED_MESSAGE} multiline maw={250} position="right">
+        <Tooltip label={table.disabledReason ?? 'Not available'} multiline maw={250} position="right">
           <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
         </Tooltip>
       )}
       {!table.disabled && table.disabledCreates && (
-        <Tooltip
-          label={DISABLED_CREATES_MESSAGES[service] ?? DEFAULT_DISABLED_CREATES_MESSAGE}
-          multiline
-          maw={250}
-          position="right"
-        >
+        <Tooltip label={table.disabledReason ?? 'Creates are not supported'} multiline maw={250} position="right">
           <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
         </Tooltip>
       )}
@@ -81,70 +76,38 @@ function TableLabel({ table, service }: { table: TablePreview; service: Service 
   );
 }
 
-function getGroupKeys(table: TablePreview, service: Service): { group: string; subGroup: string | null } | null {
-  switch (service) {
-    case Service.SUPABASE:
-      return {
-        group: (table.metadata?.projectName as string) || (table.metadata?.projectRef as string) || '',
-        subGroup: (table.metadata?.schema as string) || 'public',
-      };
-    case Service.AIRTABLE:
-      return {
-        group: (table.metadata?.baseName as string) || '',
-        subGroup: null,
-      };
-    case Service.WEBFLOW:
-      return {
-        group: (table.metadata?.siteName as string) || '',
-        subGroup: null,
-      };
-    default:
-      return null;
-  }
-}
-
-function groupTables(tables: TablePreview[], service: Service): TableGroup[] | null {
-  const first = tables[0];
-  if (!first || !getGroupKeys(first, service)) return null;
+/**
+ * Groups tables by their parentPath. Splits on "/" to create group/subgroup hierarchy.
+ * Returns null if no tables have a parentPath (flat list).
+ */
+function groupTables(tables: TablePreview[]): TableGroup[] | null {
+  if (!tables.some((t) => t.parentPath)) return null;
 
   const groupMap = new Map<string, Map<string, TablePreview[]>>();
 
   for (const table of tables) {
-    const keys = getGroupKeys(table, service)!;
-    const subKey = keys.subGroup ?? '';
+    const parts = (table.parentPath || '').split('/');
+    const group = parts[0] || '';
+    const subGroup = parts.length > 1 ? parts.slice(1).join('/') : '';
 
-    if (!groupMap.has(keys.group)) groupMap.set(keys.group, new Map());
-    const subMap = groupMap.get(keys.group)!;
-    if (!subMap.has(subKey)) subMap.set(subKey, []);
-    subMap.get(subKey)!.push(table);
+    if (!groupMap.has(group)) groupMap.set(group, new Map());
+    const subMap = groupMap.get(group)!;
+    if (!subMap.has(subGroup)) subMap.set(subGroup, []);
+    subMap.get(subGroup)!.push(table);
   }
 
-  // Always show group labels for services without sub-groups (Airtable, Webflow)
-  // For Supabase, only show when there are multiple projects (sub-groups provide context)
-  const alwaysShowGroupLabel = service === Service.AIRTABLE || service === Service.WEBFLOW;
-  const showGroupLabel = alwaysShowGroupLabel || groupMap.size > 1;
   const sorted = Array.from(groupMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
   return sorted.map(([groupKey, subMap]) => ({
-    groupLabel: showGroupLabel ? groupKey || 'Unknown' : null,
+    groupLabel: groupKey || null,
     subGroups: Array.from(subMap.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([subKey, subTables]) => ({
-        subGroupLabel: subMap.size > 1 ? subKey : null,
+        subGroupLabel: subMap.size > 1 ? subKey || null : null,
         tables: subTables.sort((a, b) => a.displayName.localeCompare(b.displayName)),
       })),
   }));
 }
-
-const DISABLED_MESSAGES: Partial<Record<Service, string>> = {
-  [Service.SUPABASE]: "This table doesn't have a unique value column (primary key).",
-};
-const DEFAULT_DISABLED_MESSAGE = 'Not available';
-
-const DISABLED_CREATES_MESSAGES: Partial<Record<Service, string>> = {
-  [Service.SUPABASE]: "This table doesn't have an auto generated primary key, creates are not supported",
-};
-const DEFAULT_DISABLED_CREATES_MESSAGE = 'Creates are not supported';
 
 function ConnectorSettingField({
   setting,
@@ -248,10 +211,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const [foldersToRemove, setFoldersToRemove] = useState<{ id: DataFolderId; name: string; tableId: string[] }[]>([]);
   const [dirtyFileCount, setDirtyFileCount] = useState(0);
 
-  const groupedTables = useMemo(
-    () => groupTables(availableTables, connectorAccount.service),
-    [availableTables, connectorAccount.service],
-  );
+  const groupedTables = useMemo(() => groupTables(availableTables), [availableTables]);
   const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
     new Map(),
   );
@@ -519,16 +479,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     [linkedFolders, selectedTableIds],
   );
 
-  const getTableLabel = useCallback(
-    (table: TablePreview) => {
-      const keys = getGroupKeys(table, connectorAccount.service);
-      if (keys?.group) {
-        return `${keys.group} / ${table.displayName}`;
-      }
-      return table.displayName;
-    },
-    [connectorAccount.service],
-  );
+  const getTableLabel = useCallback((table: TablePreview) => {
+    if (table.parentPath) {
+      return `${table.parentPath} / ${table.displayName}`;
+    }
+    return table.displayName;
+  }, []);
 
   // Tables that remain selected (both existing and new) for step 2 display
   const selectedTablesForStep2 = useMemo(() => {
@@ -720,7 +676,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                             return (
                               <Checkbox
                                 key={tableKey}
-                                label={<TableLabel table={table} service={connectorAccount.service} />}
+                                label={<TableLabel table={table} />}
                                 checked={isChecked}
                                 disabled={table.disabled}
                                 onChange={() => handleToggleTable(table)}
@@ -739,7 +695,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                   return (
                     <Checkbox
                       key={tableKey}
-                      label={<TableLabel table={table} service={connectorAccount.service} />}
+                      label={<TableLabel table={table} />}
                       checked={isChecked}
                       disabled={table.disabled}
                       onChange={() => handleToggleTable(table)}
@@ -834,7 +790,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                     return (
                       <Checkbox
                         key={tableKey}
-                        label={<TableLabel table={table} service={connectorAccount.service} />}
+                        label={<TableLabel table={table} />}
                         checked={isChecked}
                         disabled={table.disabled}
                         onChange={() => handleToggleTable(table)}
@@ -862,7 +818,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                   return (
                     <Checkbox
                       key={tableKey}
-                      label={<TableLabel table={table} service={connectorAccount.service} />}
+                      label={<TableLabel table={table} />}
                       checked={isChecked}
                       disabled={table.disabled}
                       onChange={() => handleToggleTable(table)}

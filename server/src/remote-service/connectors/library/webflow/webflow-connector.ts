@@ -106,6 +106,7 @@ export class WebflowConnector extends Connector {
         },
         displayName: `Assets`,
         disabledCreates: true,
+        parentPath: site.displayName,
         metadata: {
           siteId: site.id,
           siteName: site.displayName,

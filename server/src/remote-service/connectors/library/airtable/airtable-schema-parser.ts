@@ -10,6 +10,7 @@ export class AirtableSchemaParser {
         remoteId: [base.id, table.id],
       },
       displayName: table.name,
+      parentPath: base.name,
       metadata: {
         baseName: base.name,
       },
