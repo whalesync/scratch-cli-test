@@ -53,8 +53,8 @@ import {
   SquareIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
-import { useCallback, useState } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { PlanEntriesModal } from '../modals/PlanEntriesModal';
 
@@ -158,11 +158,37 @@ const getEffectiveState = (job: JobEntity): EffectiveState => {
 
 const getJobKey = (job: JobEntity): string => `${job.bullJobId}`;
 
+// NOTE! We don't really paginate, we just increase the page size when the user wants to see more. Feel free to improve this.
+const INITIAL_PAGE_SIZE = 50;
+const LOAD_MORE_PAGE_SIZE = 100;
+
+type RunsViewParams = {
+  limit: number;
+};
+
+function parseRunsViewParams(searchParams: URLSearchParams): RunsViewParams {
+  const rawLimit = Number(searchParams.get('limit'));
+  return {
+    limit: rawLimit >= INITIAL_PAGE_SIZE ? rawLimit : INITIAL_PAGE_SIZE,
+  };
+}
+
 export function RunsView() {
   const params = useParams<{ id: string }>();
   const workbookId = params.id as WorkbookId;
   const searchParams = useSearchParams();
-  const { jobs, error, isLoading, mutate, cancelJob } = useJobs(50, 0, workbookId);
+  const router = useRouter();
+  const runsParams = parseRunsViewParams(searchParams);
+
+  const { jobs, error, isLoading, mutate, cancelJob } = useJobs(runsParams.limit, 0, workbookId);
+  const hasMore = useMemo(() => jobs.length >= runsParams.limit, [jobs.length, runsParams.limit]);
+
+  const loadMore = useCallback(() => {
+    const nextLimit = runsParams.limit + LOAD_MORE_PAGE_SIZE;
+    const next = new URLSearchParams(searchParams.toString());
+    next.set('limit', String(nextLimit));
+    router.replace(`?${next.toString()}`, { scroll: false });
+  }, [runsParams.limit, searchParams, router]);
   const { isDevToolsEnabled } = useDevTools();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const [cancelingJobIds, setCancelingJobIds] = useState<Set<string>>(new Set());
@@ -306,6 +332,16 @@ export function RunsView() {
             </Table>
           )}
         </Box>
+
+        {hasMore && (
+          <Center py="md">
+            <UnstyledButton onClick={loadMore}>
+              <Text12Medium c="var(--fg-secondary)" style={{ textDecoration: 'underline' }}>
+                Load more
+              </Text12Medium>
+            </UnstyledButton>
+          </Center>
+        )}
       </ScrollArea>
     </Stack>
   );
