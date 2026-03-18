@@ -385,6 +385,7 @@ connectorRegistry.register({
   service: Service.POSTGRES,
   metadata: PostgresConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['user_provided_params'],
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

@@ -599,6 +599,7 @@ connectorRegistry.register({
   service: Service.WEBFLOW,
   metadata: WebflowConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['user_provided_params'],
   rateLimiterSpec: { points: 120, duration: 60 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

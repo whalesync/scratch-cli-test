@@ -308,6 +308,7 @@ connectorRegistry.register({
   service: Service.WORDPRESS,
   metadata: WordPressConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['user_provided_params'],
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

@@ -1,4 +1,4 @@
-import { ConnectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { AuthMethod, ConnectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { RateLimiter } from '../../rate-limiter/rate-limiter';
 import { RateLimiterSpec } from '../../rate-limiter/rate-limiter.types';
@@ -27,6 +27,8 @@ export interface ConnectorRegistration {
   metadata: ConnectorMetadata;
   /** Per-folder advanced settings exposed by this connector */
   advancedSettings: ConnectorSettingDefinition[];
+  /** Auth methods this connector supports */
+  supportedAuthMethods: AuthMethod[];
   /** Rate limiter spec, if this connector needs one */
   rateLimiterSpec?: RateLimiterSpec;
   /** Factory that creates a live connector instance */

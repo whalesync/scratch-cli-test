@@ -280,6 +280,7 @@ connectorRegistry.register({
   service: Service.YOUTUBE,
   metadata: YouTubeConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['oauth', 'oauth_custom'],
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for YouTube', Service.YOUTUBE);

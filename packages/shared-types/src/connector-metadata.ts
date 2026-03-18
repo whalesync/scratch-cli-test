@@ -1,3 +1,5 @@
+export type AuthMethod = 'oauth' | 'user_provided_params' | 'oauth_custom';
+
 export interface ConnectorMetadata {
   displayName: string;
   table: string;
@@ -10,6 +12,8 @@ export interface ConnectorMetadata {
   visible: boolean;
   pushOperationName: string;
   pullOperationName: string;
+  supportedAuthMethods: AuthMethod[];
+  defaultAuthMethod: AuthMethod;
   oauth?: {
     label: string;
     privateLabel?: string;
@@ -26,6 +30,8 @@ const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {
   visible: true,
   pushOperationName: 'Publish',
   pullOperationName: 'Download',
+  supportedAuthMethods: [],
+  defaultAuthMethod: 'oauth',
 };
 
 export function connectorMetadata(

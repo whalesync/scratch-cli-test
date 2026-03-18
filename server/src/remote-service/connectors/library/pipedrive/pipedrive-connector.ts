@@ -290,6 +290,7 @@ connectorRegistry.register({
   service: Service.PIPEDRIVE,
   metadata: PipedriveConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 10, duration: 2 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

@@ -13,7 +13,13 @@ export class ConnectorsMetadataController {
 
     // Enable Webflow OAuth on non-production environments for testing
     if (!this.config.isProductionEnvironment() && metadata[Service.WEBFLOW]) {
-      metadata[Service.WEBFLOW] = { ...metadata[Service.WEBFLOW], oauth: { label: 'OAuth' } };
+      const webflow = metadata[Service.WEBFLOW];
+      metadata[Service.WEBFLOW] = {
+        ...webflow,
+        oauth: { label: 'OAuth' },
+        supportedAuthMethods: ['oauth', ...webflow.supportedAuthMethods.filter((m) => m !== 'oauth')],
+        defaultAuthMethod: 'oauth',
+      };
     }
 
     return metadata;

@@ -747,6 +747,7 @@ connectorRegistry.register({
   service: Service.SUPABASE,
   metadata: SupabaseConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Supabase', Service.SUPABASE);

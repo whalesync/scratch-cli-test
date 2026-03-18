@@ -290,6 +290,7 @@ connectorRegistry.register({
   service: Service.AUDIENCEFUL,
   metadata: AudiencefulConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['user_provided_params'],
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

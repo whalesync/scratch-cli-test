@@ -298,6 +298,7 @@ connectorRegistry.register({
   service: Service.WIX_BLOG,
   metadata: WixBlogConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['oauth'],
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Wix', Service.WIX_BLOG);

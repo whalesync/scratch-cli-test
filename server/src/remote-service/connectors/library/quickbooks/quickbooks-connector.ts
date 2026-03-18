@@ -252,6 +252,7 @@ connectorRegistry.register({
   service: Service.QUICKBOOKS,
   metadata: QuickBooksConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['oauth'],
   rateLimiterSpec: { points: 450, duration: 60 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

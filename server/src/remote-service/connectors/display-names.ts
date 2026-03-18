@@ -31,12 +31,14 @@ export function getServiceMetadata(service: Service): ConnectorMetadata {
 }
 
 /**
- * Returns connector metadata for all registered services.
+ * Returns connector metadata for all registered services, with supportedAuthMethods from registrations.
  */
 export function getAllConnectorMetadata(): Record<string, ConnectorMetadata> {
   const result: Record<string, ConnectorMetadata> = {};
   for (const [service, reg] of connectorRegistry.getAll()) {
-    result[service] = reg.metadata;
+    const { supportedAuthMethods } = reg;
+    const defaultAuthMethod = supportedAuthMethods[0] ?? 'oauth';
+    result[service] = { ...reg.metadata, supportedAuthMethods, defaultAuthMethod };
   }
   return result;
 }

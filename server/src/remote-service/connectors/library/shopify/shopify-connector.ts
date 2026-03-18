@@ -461,6 +461,7 @@ connectorRegistry.register({
   service: Service.SHOPIFY,
   metadata: ShopifyConnector.metadata,
   advancedSettings: [],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 4, duration: 1 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

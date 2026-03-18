@@ -236,6 +236,7 @@ connectorRegistry.register({
   service: Service.AIRTABLE,
   metadata: AirtableConnector.metadata,
   advancedSettings: AirtableConnector.advancedSettings,
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 5, duration: 1 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

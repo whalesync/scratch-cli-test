@@ -59,7 +59,3 @@ export const getPushOperationName = (
   if (!service) return 'Save';
   return metadata?.[service]?.pushOperationName ?? 'Publish';
 };
-
-export const hasOAuth = (metadata: Record<Service, ConnectorMetadata> | undefined, service: Service): boolean => {
-  return metadata?.[service]?.oauth !== undefined;
-};
