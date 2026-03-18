@@ -69,6 +69,20 @@ smoke tests:
   extends: .smoke-tests
   rules:
     - !reference [.rules, skip_for_local_runner_users]
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes: !reference [.changes, smoke-tests]
-    - !reference [.rules, on_merge_to_master]
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled Tests"'
+
+notify slack on smoke test failure:
+  stage: build and test
+  dependencies: []
+  needs:
+    - job: smoke tests
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"❌ Smoke tests failed\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
+      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled Tests"'
+  when: on_failure
+  allow_failure: true
