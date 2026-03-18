@@ -15,6 +15,7 @@ import { useJobs } from '@/hooks/use-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { jobApi } from '@/lib/api/job';
 import { workbookApi } from '@/lib/api/workbook';
+import { useSyncStore } from '@/stores/sync-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { JobEntity } from '@/types/server-entities/job';
 import { timeAgo } from '@/utils/helpers';
@@ -51,6 +52,7 @@ import {
   ListIcon,
   RefreshCwIcon,
   SquareIcon,
+  XIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -164,12 +166,16 @@ const LOAD_MORE_PAGE_SIZE = 100;
 
 type RunsViewParams = {
   limit: number;
+  type?: string;
+  syncId?: string;
 };
 
 function parseRunsViewParams(searchParams: URLSearchParams): RunsViewParams {
   const rawLimit = Number(searchParams.get('limit'));
   return {
     limit: rawLimit >= INITIAL_PAGE_SIZE ? rawLimit : INITIAL_PAGE_SIZE,
+    type: searchParams.get('type') || undefined,
+    syncId: searchParams.get('syncId') || undefined,
   };
 }
 
@@ -179,9 +185,22 @@ export function RunsView() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const runsParams = parseRunsViewParams(searchParams);
+  const filter =
+    runsParams.type || runsParams.syncId ? { type: runsParams.type, syncId: runsParams.syncId } : undefined;
 
-  const { jobs, error, isLoading, mutate, cancelJob } = useJobs(runsParams.limit, 0, workbookId);
+  const { jobs, error, isLoading, mutate, cancelJob } = useJobs(runsParams.limit, 0, workbookId, filter);
   const hasMore = useMemo(() => jobs.length >= runsParams.limit, [jobs.length, runsParams.limit]);
+  const syncs = useSyncStore((state) => state.syncs);
+  const hasFilters = !!(runsParams.type || runsParams.syncId);
+
+  const removeFilter = useCallback(
+    (key: string) => {
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete(key);
+      router.replace(`?${next.toString()}`, { scroll: false });
+    },
+    [searchParams, router],
+  );
 
   const loadMore = useCallback(() => {
     const nextLimit = runsParams.limit + LOAD_MORE_PAGE_SIZE;
@@ -251,8 +270,12 @@ export function RunsView() {
       <Center h="100%">
         <Stack align="center" gap="xs">
           <ClockIcon size={24} color="var(--mantine-color-gray-5)" />
-          <Text c="dimmed">No runs yet</Text>
-          <Text12Regular c="dimmed">Jobs will appear here when you run syncs or publish changes</Text12Regular>
+          <Text c="dimmed">{hasFilters ? 'No matching runs' : 'No runs yet'}</Text>
+          <Text12Regular c="dimmed">
+            {hasFilters
+              ? 'Try removing a filter to see more results'
+              : 'Jobs will appear here when you run syncs or publish changes'}
+          </Text12Regular>
         </Stack>
       </Center>
     );
@@ -281,6 +304,38 @@ export function RunsView() {
           </IconButtonToolbar>
         </Group>
       </Group>
+
+      {/* Filter chips */}
+      {hasFilters && (
+        <Group px="md" py={8} gap="xs" style={{ borderBottom: '1px solid var(--fg-divider)', flexShrink: 0 }}>
+          {runsParams.type && (
+            <Badge
+              variant="light"
+              size="sm"
+              rightSection={
+                <ActionIcon variant="transparent" size={14} onClick={() => removeFilter('type')}>
+                  <XIcon size={10} />
+                </ActionIcon>
+              }
+            >
+              Type: {getTypeLabel(runsParams.type as JobType)}
+            </Badge>
+          )}
+          {runsParams.syncId && (
+            <Badge
+              variant="light"
+              size="sm"
+              rightSection={
+                <ActionIcon variant="transparent" size={14} onClick={() => removeFilter('syncId')}>
+                  <XIcon size={10} />
+                </ActionIcon>
+              }
+            >
+              Sync: {syncs.find((s) => s.id === runsParams.syncId)?.displayName || runsParams.syncId.slice(0, 8)}
+            </Badge>
+          )}
+        </Group>
+      )}
 
       {/* Table */}
       <ScrollArea style={{ flex: 1 }}>

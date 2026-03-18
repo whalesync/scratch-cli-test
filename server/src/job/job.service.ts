@@ -39,6 +39,7 @@ export class JobService {
     bullJobId?: string;
     workbookId?: string;
     dataFolderId?: string;
+    syncId?: string;
     progress?: Progress;
     runId?: RunId;
     runContext?: RunContext;
@@ -49,6 +50,7 @@ export class JobService {
         userId: params.userId,
         workbookId: params.workbookId,
         dataFolderId: params.dataFolderId,
+        syncId: params.syncId,
         type: params.type,
         data: params.data as any,
         bullJobId: params.bullJobId,
@@ -97,11 +99,31 @@ export class JobService {
     return job;
   }
 
-  async getJobsByUserId(userId: string, limit = 50, offset = 0, workbookId?: string): Promise<DbJob[]> {
+  /**
+   * Map grouped job type names (used by the client) to the actual DB type values.
+   */
+  private static readonly JOB_TYPE_MAP: Record<string, { in: string[] } | { contains: string }> = {
+    sync: { contains: 'sync' },
+    publish: { in: ['publish', 'publish-data-folder', 'run-pipeline'] },
+    pull: { in: ['refresh-records', 'pull-linked-folder-files'] },
+    rehost: { in: ['rehost-assets'] },
+  };
+
+  async getJobsByUserId(
+    userId: string,
+    limit = 50,
+    offset = 0,
+    workbookId?: string,
+    filter?: { type?: string; syncId?: string },
+  ): Promise<DbJob[]> {
+    const typeFilter = filter?.type ? JobService.JOB_TYPE_MAP[filter.type] : undefined;
+
     const jobs = await this.db.client.dbJob.findMany({
       where: {
         userId,
         ...(workbookId && { workbookId }),
+        ...(typeFilter && { type: typeFilter }),
+        ...(filter?.syncId && { syncId: filter.syncId }),
       },
       orderBy: { createdAt: 'desc' },
       take: limit,

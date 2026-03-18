@@ -10,6 +10,7 @@ import { getHumanReadableErrorMessage } from '@/lib/api/error';
 import { syncApi } from '@/lib/api/sync';
 import { useSyncStore } from '@/stores/sync-store';
 import { timeAgo } from '@/utils/helpers';
+import { RouteUrls } from '@/utils/route-urls';
 import { ActionIcon, Box, Group, Menu, Modal, Paper, ScrollArea, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -25,6 +26,7 @@ import {
   Trash2Icon,
   Wand2Icon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SyncScheduleModal, getScheduleLabel } from '../shared/SyncScheduleModal';
@@ -312,6 +314,16 @@ export function SyncToolbar({
           </DottedUnderlineButton>
         </Box>
 
+        {!isNew && (
+          <Link
+            href={RouteUrls.workbookRunsPageUrl(workbookId, { syncId: syncId as string })}
+            style={{ textDecoration: 'none' }}
+          >
+            <Text12Regular c="var(--fg-secondary)" style={{ whiteSpace: 'nowrap', textDecoration: 'underline' }}>
+              Recent runs
+            </Text12Regular>
+          </Link>
+        )}
         {!isNew && lastRunDisplay && (
           <Text12Regular c="var(--mantine-color-green-6)" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
             Last successful run {lastRunDisplay} {'\u2713'}

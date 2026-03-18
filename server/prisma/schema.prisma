@@ -275,6 +275,7 @@ model DbJob {
   cancelRequestedAt DateTime? // When cancellation was requested (checked by worker checkpoints)
   runId             String? // A grouping ID that links jobs that are part of the same run. use RunId type. Just used for indexing and filtering
   runContext        Json? // The context of the run that triggered this job, use RunContext type.
+  syncId            String? // Optional sync association for filtering
 
   @@index([userId])
   @@index([workbookId])
@@ -282,6 +283,7 @@ model DbJob {
   @@index([runId])
   @@index([status])
   @@index([type])
+  @@index([syncId])
   @@map("Job")
 }
 

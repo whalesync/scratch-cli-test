@@ -163,7 +163,7 @@ async function notifyCompletedJobs(workbookId: string, disappearedIds: string[])
     const label = getTypeLabel(jobType);
     const description = getJobDescription(job);
     const jobKey = `${job.bullJobId}`;
-    const runsUrl = RouteUrls.workbookRunsPageUrl(workbookId, jobKey);
+    const runsUrl = RouteUrls.workbookRunsPageUrl(workbookId, { jobId: jobKey });
 
     if (job.state === 'completed') {
       const progress = job.publicProgress as Record<string, unknown> | undefined;

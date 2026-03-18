@@ -33,8 +33,14 @@ export class RouteUrls {
     return `/workbook/${id}/review/${encoded}`;
   };
   static workbookSyncsPageUrl = (id: string) => `/workbook/${id}/syncs`;
-  static workbookRunsPageUrl = (id: string, jobKey?: string) =>
-    `/workbook/${id}/runs${jobKey ? `?jobId=${encodeURIComponent(jobKey)}` : ''}`;
+  static workbookRunsPageUrl = (id: string, params?: Record<string, string>) => {
+    const base = `/workbook/${id}/runs`;
+    if (!params) return base;
+    const search = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== ''),
+    ).toString();
+    return search ? `${base}?${search}` : base;
+  };
   static settingsPageUrl = '/settings';
   static settingsUserPageUrl = '/settings/user';
   static settingsApiKeyPageUrl = '/settings/api-key';

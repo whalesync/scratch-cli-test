@@ -149,6 +149,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
         data,
         bullJobId: id,
         workbookId,
+        syncId,
         runId: runContext.runId as RunId,
         runContext,
       },

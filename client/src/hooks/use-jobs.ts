@@ -4,10 +4,15 @@ import useSWR from 'swr';
 import { jobApi } from '../lib/api/job';
 import { JobEntity } from '../types/server-entities/job';
 
-export const useJobs = (limit?: number, offset?: number, workbookId?: string) => {
+export const useJobs = (
+  limit?: number,
+  offset?: number,
+  workbookId?: string,
+  filter?: { type?: string; syncId?: string },
+) => {
   const { data, error, isLoading, mutate } = useSWR<JobEntity[]>(
-    `jobs-${limit}-${offset}-${workbookId || 'all'}`,
-    () => jobApi.getJobs(limit, offset, workbookId),
+    `jobs-${limit}-${offset}-${workbookId || 'all'}-${filter?.type || 'all'}-${filter?.syncId || 'all'}`,
+    () => jobApi.getJobs(limit, offset, workbookId, filter),
     {
       refreshInterval: 5000, // Poll every 5 seconds
       revalidateOnFocus: false,
