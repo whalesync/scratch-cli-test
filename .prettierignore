@@ -1,0 +1,9 @@
+# Build artifacts
+.next/
+.next-dev/
+target/
+dist/
+node_modules/
+
+# Experimental
+experimental/
