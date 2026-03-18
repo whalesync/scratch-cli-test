@@ -15,7 +15,7 @@ export const useConnectors = () => {
   const getDefaultAuthMethod = useCallback(
     (service: Service): AuthMethod => {
       // Services that support OAuth
-      const oauthSupportedServices = [
+      const oauthSupportedServices: string[] = [
         Service.NOTION,
         Service.YOUTUBE,
         Service.WIX_BLOG,
@@ -29,7 +29,7 @@ export const useConnectors = () => {
       oauthSupportedServices.push(Service.SHOPIFY);
 
       // Services that use generic parameters
-      const genericParametersSupportedServices = [
+      const genericParametersSupportedServices: string[] = [
         Service.NOTION,
         Service.AIRTABLE,
         Service.WORDPRESS,
@@ -54,7 +54,7 @@ export const useConnectors = () => {
 
   const getSupportedAuthMethods = useCallback(
     (service: Service): AuthMethod[] => {
-      const oauthSupportedServices = [
+      const oauthSupportedServices: string[] = [
         Service.NOTION,
         Service.YOUTUBE,
         Service.WIX_BLOG,
@@ -67,7 +67,7 @@ export const useConnectors = () => {
       }
       oauthSupportedServices.push(Service.SHOPIFY);
 
-      const userProvidedParamsSupportedServices = [
+      const userProvidedParamsSupportedServices: string[] = [
         Service.NOTION,
         Service.AIRTABLE,
         Service.WORDPRESS,

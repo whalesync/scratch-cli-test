@@ -461,7 +461,7 @@ export class SyncService {
     for (const folder of dataFolders) {
       if (!folder.connectorAccountId || !folder.connectorAccount) continue;
 
-      const service = folder.connectorService ? (folder.connectorService as Service) : null;
+      const service = folder.connectorService ? folder.connectorService : null;
       if (service) allServices.add(service);
 
       const schemaJson = await this.readSchemaFromGit(workbookId, folder.connectorAccountId, folder.path);

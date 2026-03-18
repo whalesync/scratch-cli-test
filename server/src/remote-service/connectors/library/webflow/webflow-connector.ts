@@ -14,6 +14,8 @@ import {
   extractStandaloneEntity,
 } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
+import { connectorRegistry } from '../../connector-registry';
+import { ConnectorInstantiationError } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import {
   buildWebflowAssetsJsonTableSpec,
@@ -35,7 +37,7 @@ const WEBFLOW_RETRY_OPTS: WithRetryOpts = {
   },
 };
 
-export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
+export class WebflowConnector extends Connector {
   readonly service = Service.WEBFLOW;
   static readonly displayName = 'Webflow';
   static readonly metadata = connectorMetadata({
@@ -592,3 +594,25 @@ export class WebflowConnector extends Connector<typeof Service.WEBFLOW> {
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.WEBFLOW,
+  metadata: WebflowConnector.metadata,
+  advancedSettings: [],
+  rateLimiterSpec: { points: 120, duration: 60 },
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Webflow', Service.WEBFLOW);
+    }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new WebflowConnector(accessToken, { rateLimiter });
+    } else {
+      if (!ctx.decryptedCredentials?.apiKey) {
+        throw new ConnectorInstantiationError('API key is required for Webflow', Service.WEBFLOW);
+      }
+      return new WebflowConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
+    }
+  },
+});

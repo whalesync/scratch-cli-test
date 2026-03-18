@@ -3,7 +3,12 @@ import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { PipedriveApiClient, PipedriveError } from './pipedrive-api-client';
 import { buildPipedriveJsonTableSpec } from './pipedrive-json-schema';
@@ -19,7 +24,7 @@ import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES, PipedriveDownloadProgress, Pipedriv
  *
  * Uses the Pipedrive v2 API exclusively via the official SDK.
  */
-export class PipedriveConnector extends Connector<typeof Service.PIPEDRIVE, PipedriveDownloadProgress> {
+export class PipedriveConnector extends Connector<string, PipedriveDownloadProgress> {
   readonly service = Service.PIPEDRIVE;
   static readonly displayName = 'Pipedrive';
   static readonly metadata = connectorMetadata({
@@ -280,3 +285,25 @@ export class PipedriveConnector extends Connector<typeof Service.PIPEDRIVE, Pipe
     this.customFieldKeysCache.set(entityType, customKeys);
   }
 }
+
+connectorRegistry.register({
+  service: Service.PIPEDRIVE,
+  metadata: PipedriveConnector.metadata,
+  advancedSettings: [],
+  rateLimiterSpec: { points: 10, duration: 2 },
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Pipedrive', Service.PIPEDRIVE);
+    }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new PipedriveConnector(accessToken, { rateLimiter, authType: 'oauth' });
+    } else {
+      if (!ctx.decryptedCredentials?.apiKey) {
+        throw new ConnectorInstantiationError('API key is required for Pipedrive', Service.PIPEDRIVE);
+      }
+      return new PipedriveConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
+    }
+  },
+});

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Asset, Service } from '@prisma/client';
+import { Asset } from '@prisma/client';
+import { Service } from '@spinner/shared-types';
 import axios from 'axios';
 import { createHash } from 'crypto';
 import { AssetDownloadService, RehostResult } from '../asset-download.service';

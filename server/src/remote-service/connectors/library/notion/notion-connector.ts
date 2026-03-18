@@ -23,7 +23,8 @@ import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from '
 import { WSLogger } from 'src/logger';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
-import { ErrorMessageTemplates } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { createNotionBlockDiff } from './conversion/notion-block-diff';
 import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor';
@@ -62,7 +63,7 @@ function unwrapNotionProperty(value: unknown): unknown {
   return value;
 }
 
-export class NotionConnector extends Connector<typeof Service.NOTION, NotionDownloadProgress> {
+export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   readonly service = Service.NOTION;
   static displayName = 'Notion';
   static readonly metadata = connectorMetadata({
@@ -741,3 +742,23 @@ export class NotionConnector extends Connector<typeof Service.NOTION, NotionDown
     return true;
   }
 }
+
+connectorRegistry.register({
+  service: Service.NOTION,
+  metadata: NotionConnector.metadata,
+  advancedSettings: NotionConnector.advancedSettings,
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Notion', Service.NOTION);
+    }
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new NotionConnector(accessToken);
+    } else {
+      if (!ctx.decryptedCredentials?.apiKey) {
+        throw new ConnectorInstantiationError('API key is required for Notion', Service.NOTION);
+      }
+      return new NotionConnector(ctx.decryptedCredentials.apiKey);
+    }
+  },
+});

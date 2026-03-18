@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Service } from '@prisma/client';
-import { WorkbookId } from '@spinner/shared-types';
+import { Service, WorkbookId } from '@spinner/shared-types';
 import * as crypto from 'crypto';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';

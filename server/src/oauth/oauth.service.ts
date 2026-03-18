@@ -319,9 +319,9 @@ export class OAuthService {
       quickbooksSandbox?: boolean;
     },
   ) {
-    const serviceEnum = this.mapServiceStringToEnum(service);
-    const isShopify = serviceEnum === Service.SHOPIFY;
-    const isQuickBooks = serviceEnum === Service.QUICKBOOKS;
+    const serviceKey = service.toUpperCase();
+    const isShopify = serviceKey === Service.SHOPIFY;
+    const isQuickBooks = serviceKey === Service.QUICKBOOKS;
 
     // Load the workbook to get its organizationId (don't rely on actor's organizationId)
     const workbook = await this.db.client.workbook.findUniqueOrThrow({
@@ -344,12 +344,12 @@ export class OAuthService {
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(credentials);
 
     const numExistingDataSources = await this.db.client.connectorAccount.count({
-      where: { workbookId, service: serviceEnum },
+      where: { workbookId, service: serviceKey },
     });
 
     if (!canCreateDataSource(actor.subscriptionStatus, numExistingDataSources)) {
       throw new ForbiddenException(
-        `You have reached the maximum number of ${getServiceDisplayName(serviceEnum)} data sources for your subscription`,
+        `You have reached the maximum number of ${getServiceDisplayName(serviceKey)} data sources for your subscription`,
       );
     }
 
@@ -370,7 +370,7 @@ export class OAuthService {
         id: accountId,
         userId: actor.userId,
         workbookId: workbookId,
-        service: serviceEnum,
+        service: serviceKey,
         displayName:
           connectionInfo?.connectionName ??
           `${capitalize(service)} (${connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? 'Private OAuth' : 'OAuth'})`,
@@ -384,7 +384,7 @@ export class OAuthService {
     });
 
     this.posthogService.captureEvent(PostHogEventName.CONNECTOR_ACCOUNT_CREATED, actor, {
-      service: serviceEnum,
+      service: serviceKey,
       authType: AuthType.OAUTH,
       healthStatus: 'OK',
     });
@@ -457,32 +457,6 @@ export class OAuthService {
       authType: AuthType.OAUTH,
       healthStatus: 'OK',
     });
-  }
-
-  /**
-   * Map service string to Service enum.
-   */
-  private mapServiceStringToEnum(service: string): Service {
-    switch (service.toLowerCase()) {
-      case 'webflow':
-        return Service.WEBFLOW;
-      case 'notion':
-        return Service.NOTION;
-      case 'airtable':
-        return Service.AIRTABLE;
-      case 'youtube':
-        return Service.YOUTUBE; // For now, map Google to CUSTOM
-      case 'wix_blog':
-        return Service.WIX_BLOG;
-      case 'shopify':
-        return Service.SHOPIFY;
-      case 'supabase':
-        return Service.SUPABASE;
-      case 'quickbooks':
-        return Service.QUICKBOOKS;
-      default:
-        throw new BadRequestException(`Unsupported service: ${service}`);
-    }
   }
 
   /**

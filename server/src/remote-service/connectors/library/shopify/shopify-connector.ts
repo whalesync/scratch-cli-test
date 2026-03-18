@@ -6,13 +6,18 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, isShopifyConnectorExtras, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { ShopifyApiClient, ShopifyError } from './shopify-api-client';
@@ -86,7 +91,7 @@ const STRIP_ON_UPDATE_MAP: Partial<Record<EntityType, Set<string>>> = {
  * Read-only access for Customers, Orders, Files, Metaobjects.
  * Normalized child entities: Product Variants, Product Media, Order Line Items, Order Shipping Lines.
  */
-export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
+export class ShopifyConnector extends Connector {
   readonly service = Service.SHOPIFY;
   static readonly displayName = 'Shopify';
   static readonly metadata = connectorMetadata({
@@ -451,3 +456,29 @@ export class ShopifyConnector extends Connector<typeof Service.SHOPIFY> {
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.SHOPIFY,
+  metadata: ShopifyConnector.metadata,
+  advancedSettings: [],
+  rateLimiterSpec: { points: 4, duration: 1 },
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Shopify', Service.SHOPIFY);
+    }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (!isShopifyConnectorExtras(ctx.connectorAccount.extras)) {
+      throw new ConnectorInstantiationError('Shop domain is required for Shopify', Service.SHOPIFY);
+    }
+    const { shopDomain } = ctx.connectorAccount.extras;
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new ShopifyConnector({ shopDomain, accessToken }, { rateLimiter });
+    } else {
+      if (!ctx.decryptedCredentials?.apiKey) {
+        throw new ConnectorInstantiationError('Access token (API key) is required for Shopify', Service.SHOPIFY);
+      }
+      return new ShopifyConnector({ shopDomain, accessToken: ctx.decryptedCredentials.apiKey }, { rateLimiter });
+    }
+  },
+});

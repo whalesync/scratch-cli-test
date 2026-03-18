@@ -5,21 +5,29 @@
  * IMPORTANT: When adding/modifying enums in the Prisma schema, update this file accordingly.
  */
 
-export enum Service {
-  NOTION = 'NOTION',
-  AIRTABLE = 'AIRTABLE',
-  POSTGRES = 'POSTGRES',
-  YOUTUBE = 'YOUTUBE',
-  WORDPRESS = 'WORDPRESS',
-  WEBFLOW = 'WEBFLOW',
-  WIX_BLOG = 'WIX_BLOG',
-  AUDIENCEFUL = 'AUDIENCEFUL',
-  MOCO = 'MOCO',
-  SHOPIFY = 'SHOPIFY',
-  SUPABASE = 'SUPABASE',
-  QUICKBOOKS = 'QUICKBOOKS',
-  PIPEDRIVE = 'PIPEDRIVE',
-}
+/**
+ * Service is a string type. New connectors register via the connector registry
+ * and no longer require a DB migration to add a new enum value.
+ *
+ * The const object below provides backward-compatible constants (Service.AIRTABLE still works).
+ */
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const Service = {
+  NOTION: 'NOTION',
+  AIRTABLE: 'AIRTABLE',
+  POSTGRES: 'POSTGRES',
+  YOUTUBE: 'YOUTUBE',
+  WORDPRESS: 'WORDPRESS',
+  WEBFLOW: 'WEBFLOW',
+  WIX_BLOG: 'WIX_BLOG',
+  AUDIENCEFUL: 'AUDIENCEFUL',
+  MOCO: 'MOCO',
+  SHOPIFY: 'SHOPIFY',
+  SUPABASE: 'SUPABASE',
+  QUICKBOOKS: 'QUICKBOOKS',
+  PIPEDRIVE: 'PIPEDRIVE',
+} as const;
+export type Service = string;
 
 export enum AuthType {
   API_KEY = 'API_KEY',

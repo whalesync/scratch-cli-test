@@ -5,7 +5,12 @@ import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
@@ -17,7 +22,7 @@ interface AirtablePullOptions extends ConnectorPullOptions {
   view?: string | undefined;
 }
 
-export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
+export class AirtableConnector extends Connector {
   readonly service = Service.AIRTABLE;
   static readonly displayName = 'Airtable';
   static readonly metadata = connectorMetadata({
@@ -226,3 +231,25 @@ export class AirtableConnector extends Connector<typeof Service.AIRTABLE> {
     return true;
   }
 }
+
+connectorRegistry.register({
+  service: Service.AIRTABLE,
+  metadata: AirtableConnector.metadata,
+  advancedSettings: AirtableConnector.advancedSettings,
+  rateLimiterSpec: { points: 5, duration: 1 },
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Airtable', Service.AIRTABLE);
+    }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new AirtableConnector(accessToken, { rateLimiter });
+    } else {
+      if (!ctx.decryptedCredentials?.apiKey) {
+        throw new ConnectorInstantiationError('API key is required for Airtable', Service.AIRTABLE);
+      }
+      return new AirtableConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
+    }
+  },
+});

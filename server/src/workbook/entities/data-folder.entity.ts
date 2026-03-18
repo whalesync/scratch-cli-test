@@ -36,7 +36,7 @@ export class DataFolderEntity implements DataFolder {
     this.createdAt = dataFolder.createdAt.toISOString();
     this.updatedAt = dataFolder.updatedAt.toISOString();
     this.connectorAccountId = dataFolder.connectorAccountId;
-    this.connectorService = dataFolder.connectorService ? (dataFolder.connectorService as Service) : null;
+    this.connectorService = dataFolder.connectorService ? dataFolder.connectorService : null;
     this.connectorDisplayName = dataFolder.connectorAccount ? dataFolder.connectorAccount.displayName : null;
     this.parentId = dataFolder.parentId;
     this.path = dataFolder.path;
@@ -64,7 +64,7 @@ export class DataFolderGroupEntity implements DataFolderGroup {
     dataFolders: DataFolder[],
   ) {
     this.name = name;
-    this.service = connectorAccount ? (connectorAccount.service as Service) : null;
+    this.service = connectorAccount ? connectorAccount.service : null;
     this.dataFolders = dataFolders;
   }
 }

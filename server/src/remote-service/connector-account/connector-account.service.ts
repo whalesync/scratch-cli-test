@@ -277,7 +277,7 @@ export class ConnectorAccountService {
       entityId: account.id as ConnectorAccountId,
       organizationId: workbook.organizationId,
       context: {
-        service: account.service as Service,
+        service: account.service,
         authType: account.authType,
         changedFields: Object.keys(updateDto),
       },
@@ -451,10 +451,10 @@ export class ConnectorAccountService {
   async listTables(connectorAccountId: string, actor: Actor): Promise<TableList> {
     const account = await this.findOneById(connectorAccountId, actor);
 
-    let connector: Connector<Service, any>;
+    let connector: Connector<string, any>;
     try {
       connector = await this.connectorsService.getConnector({
-        service: account.service as Service,
+        service: account.service,
         connectorAccount: account,
         decryptedCredentials: account,
         userId: actor.userId,
@@ -474,7 +474,7 @@ export class ConnectorAccountService {
         discoveryMode: connector.tableDiscoveryMode,
         supportsFilters: connector.supportsFilters(),
         supportsFieldSelection: connector.supportsFieldSelection(),
-        advancedSettings: getServiceAdvancedSettings(account.service as Service),
+        advancedSettings: getServiceAdvancedSettings(account.service),
       };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
@@ -484,10 +484,10 @@ export class ConnectorAccountService {
   async searchTables(connectorAccountId: string, searchTerm: string, actor: Actor): Promise<TableSearchResult> {
     const account = await this.findOneById(connectorAccountId, actor);
 
-    let connector: Connector<Service, any>;
+    let connector: Connector<string, any>;
     try {
       connector = await this.connectorsService.getConnector({
-        service: account.service as Service,
+        service: account.service,
         connectorAccount: account,
         decryptedCredentials: account,
         userId: actor.userId,
@@ -521,10 +521,10 @@ export class ConnectorAccountService {
   ): Promise<TableSchemaPreview> {
     const account = await this.findOne(workbookId, connectorAccountId, actor);
 
-    let connector: Connector<Service, any>;
+    let connector: Connector<string, any>;
     try {
       connector = await this.connectorsService.getConnector({
-        service: account.service as Service,
+        service: account.service,
         connectorAccount: account,
         decryptedCredentials: account,
         userId: actor.userId,
@@ -577,10 +577,10 @@ export class ConnectorAccountService {
 
   async testConnection(workbookId: WorkbookId, id: string, actor: Actor): Promise<TestConnectionResponse> {
     const account = await this.findOne(workbookId, id, actor);
-    let connector: Connector<Service, any> | undefined;
+    let connector: Connector<string, any> | undefined;
     try {
       connector = await this.connectorsService.getConnector({
-        service: account.service as Service,
+        service: account.service,
         connectorAccount: account,
         decryptedCredentials: account,
       });

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Service, WorkbookId } from '@spinner/shared-types';
+import { WorkbookId } from '@spinner/shared-types';
 import { DbService } from '../db/db.service';
 
 import { WSLogger } from 'src/logger';
@@ -226,7 +226,7 @@ export class SchemaHelperService {
     );
 
     const connector = await this.connectorsService.getConnector({
-      service: account.service as Service,
+      service: account.service,
       connectorAccount: account,
       decryptedCredentials,
     });

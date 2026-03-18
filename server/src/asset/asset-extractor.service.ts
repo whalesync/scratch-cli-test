@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Service } from '@spinner/shared-types';
 import { Connector } from '../remote-service/connectors/connector';
 import { AssetExtractionInput, AssetIndexEntry } from './asset.types';
 
@@ -9,7 +8,7 @@ import { AssetExtractionInput, AssetIndexEntry } from './asset.types';
  */
 @Injectable()
 export class AssetExtractorService {
-  extractAssets(connector: Connector<Service>, input: AssetExtractionInput): AssetIndexEntry[] {
+  extractAssets(connector: Connector, input: AssetExtractionInput): AssetIndexEntry[] {
     const connectorResults = connector.extractAssets({
       recordContent: input.recordContent,
       schema: input.schema,

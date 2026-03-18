@@ -25,7 +25,6 @@ import {
   ChangeUserOrganizationDto,
   createSubscriptionId,
   ScratchPlanType,
-  Service,
   SyncId,
   UpdateDevSubscriptionDto,
   UpdateSettingsDto,
@@ -399,7 +398,7 @@ export class DevToolsController {
       const connections: AdminWorkbookConnectionDto[] = w.connectorAccounts.map((ca) => ({
         id: ca.id,
         displayName: ca.displayName,
-        service: ca.service as Service,
+        service: ca.service,
         createdAt: ca.createdAt.toISOString(),
         repoPath: ca.repoPath,
       }));

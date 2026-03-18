@@ -4,7 +4,7 @@ import { ConnectorAuthError } from '../../error';
 
 const PLACEHOLDER_PATTERN = /\[YOUR[_-]PASSWORD\]/i;
 
-export class SupabaseAuthParser extends AuthParser<typeof Service.SUPABASE> {
+export class SupabaseAuthParser extends AuthParser {
   readonly service = Service.SUPABASE;
 
   // eslint-disable-next-line @typescript-eslint/require-await

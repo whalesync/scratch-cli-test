@@ -12,6 +12,8 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { connectorMetadata, PostgresColumnType, Service, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
+import { connectorRegistry } from '../../connector-registry';
+import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
 import {
@@ -31,6 +33,7 @@ import {
   type InformationSchemaColumn,
 } from '../pg-common';
 import { SupabaseApiError } from './supabase-api-client';
+import { SupabaseAuthParser } from './supabase-auth-parser';
 import { extractProjectRef } from './supabase-setup-utils';
 import { SupabaseCredentials, SupabaseProjectConfig } from './supabase-types';
 
@@ -248,7 +251,7 @@ function mapPgType(
 // Connector
 // ---------------------------------------------------------------------------
 
-export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
+export class SupabaseConnector extends Connector {
   readonly service = Service.SUPABASE;
   static readonly displayName = 'Supabase';
   static readonly metadata = connectorMetadata({
@@ -739,3 +742,42 @@ export class SupabaseConnector extends Connector<typeof Service.SUPABASE> {
     // No-op: connections are automatically disposed after each operation via withPgClient()
   }
 }
+
+connectorRegistry.register({
+  service: Service.SUPABASE,
+  metadata: SupabaseConnector.metadata,
+  advancedSettings: [],
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Supabase', Service.SUPABASE);
+    }
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const supabaseProjects = ctx.decryptedCredentials?.supabaseProjects;
+      if (!supabaseProjects || supabaseProjects.length === 0) {
+        throw new ConnectorInstantiationError(
+          'Supabase projects not configured. Please reconnect your Supabase account.',
+          Service.SUPABASE,
+        );
+      }
+      const supabaseAccessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new SupabaseConnector({
+        projects: supabaseProjects.map((p) => ({
+          projectRef: p.projectRef,
+          projectName: p.projectName,
+          connectionString: p.connectionString,
+        })),
+        oauthAccessToken: supabaseAccessToken,
+      });
+    } else {
+      if (!ctx.decryptedCredentials?.connectionString) {
+        throw new ConnectorInstantiationError('Connection string is required for Supabase.', Service.SUPABASE);
+      }
+      return new SupabaseConnector({
+        connectionString: ctx.decryptedCredentials.connectionString,
+      });
+    }
+  },
+  createAuthParser() {
+    return new SupabaseAuthParser();
+  },
+});

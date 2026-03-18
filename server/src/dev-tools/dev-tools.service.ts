@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { AuthType, ScheduleAction, Service, SyncState } from '@prisma/client';
+import type { AuthType, ScheduleAction, SyncState } from '@prisma/client';
 import type { DecryptedCredentials } from '@spinner/shared-types';
 import {
   createConnectorAccountId,
@@ -235,7 +235,7 @@ export class DevToolsService {
             id: newId,
             workbookId: newWorkbookId,
             userId,
-            service: ca.service as Service,
+            service: ca.service,
             displayName: ca.displayName,
             authType: ca.authType as AuthType,
             encryptedCredentials: encryptedCredentials as object,
@@ -277,7 +277,7 @@ export class DevToolsService {
               connectorAccountId: df.connectorAccountId
                 ? (connectorAccountIdMap.get(df.connectorAccountId) ?? null)
                 : null,
-              connectorService: df.connectorService as Service | null,
+              connectorService: df.connectorService,
               parentId: df.parentId ? (dataFolderIdMap.get(df.parentId) ?? null) : null,
               path: df.path,
               version: df.version,

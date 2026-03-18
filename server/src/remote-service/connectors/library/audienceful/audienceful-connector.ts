@@ -2,7 +2,12 @@ import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/share
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AudiencefulApiClient, AudiencefulError } from './audienceful-api-client';
 import { buildAudiencefulJsonTableSpec } from './audienceful-json-schema';
@@ -16,7 +21,7 @@ import { AudiencefulField } from './audienceful-types';
  * - pullRecordFiles() for fetching records
  *
  */
-export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> {
+export class AudiencefulConnector extends Connector {
   readonly service = Service.AUDIENCEFUL;
   static readonly displayName = 'Audienceful';
   static readonly metadata = connectorMetadata({
@@ -280,3 +285,19 @@ export class AudiencefulConnector extends Connector<typeof Service.AUDIENCEFUL> 
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.AUDIENCEFUL,
+  metadata: AudiencefulConnector.metadata,
+  advancedSettings: [],
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Audienceful', Service.AUDIENCEFUL);
+    }
+    if (!ctx.decryptedCredentials?.apiKey) {
+      throw new ConnectorInstantiationError('API key is required for Audienceful', Service.AUDIENCEFUL);
+    }
+    return new AudiencefulConnector(ctx.decryptedCredentials.apiKey);
+  },
+});

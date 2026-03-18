@@ -5,11 +5,13 @@ import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/share
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
+import { connectorRegistry } from '../../connector-registry';
+import { ConnectorInstantiationError } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { YoutubeApiClient } from './youtube-api-client';
 import { buildYouTubeJsonTableSpec } from './youtube-json-schema';
 
-export class YouTubeConnector extends Connector<typeof Service.YOUTUBE> {
+export class YouTubeConnector extends Connector {
   readonly service = Service.YOUTUBE;
   static readonly displayName = 'YouTube';
   static readonly metadata = connectorMetadata({
@@ -273,3 +275,20 @@ export class YouTubeConnector extends Connector<typeof Service.YOUTUBE> {
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.YOUTUBE,
+  metadata: YouTubeConnector.metadata,
+  advancedSettings: [],
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for YouTube', Service.YOUTUBE);
+    }
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new YouTubeConnector(accessToken, ctx.connectorAccount as any);
+    } else {
+      throw new Error('YouTube only supports OAuth authentication');
+    }
+  },
+});

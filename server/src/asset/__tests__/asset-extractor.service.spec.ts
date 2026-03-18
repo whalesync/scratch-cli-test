@@ -10,8 +10,8 @@ import { AssetExtractionInput, ConnectorAssetExtractionInput, ConnectorAssetResu
  */
 function createMockConnector(
   extractAssetsFn: (input: ConnectorAssetExtractionInput) => ConnectorAssetResult[],
-): Connector<Service> {
-  return { extractAssets: extractAssetsFn } as unknown as Connector<Service>;
+): Connector {
+  return { extractAssets: extractAssetsFn } as unknown as Connector;
 }
 
 describe('AssetExtractorService', () => {

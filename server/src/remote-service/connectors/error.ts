@@ -1,5 +1,4 @@
 import { InternalServerErrorException } from '@nestjs/common';
-import { Service } from '@spinner/shared-types';
 import { AxiosError, HttpStatusCode } from 'axios';
 import _, { isString } from 'lodash';
 import { Connector } from './connector';
@@ -8,8 +7,8 @@ import { ConnectorErrorDetails } from './types';
 
 // Handled with exception filter in exception-filters module
 export class ConnectorInstantiationError extends Error {
-  public readonly service: Service;
-  constructor(message: string, service: Service, cause?: Error) {
+  public readonly service: string;
+  constructor(message: string, service: string, cause?: Error) {
     super(message, { cause });
     this.name = 'ConnectorInstantiationError';
     this.service = service;
@@ -19,8 +18,8 @@ export class ConnectorInstantiationError extends Error {
 // Handled with exception filter in exception-filters module
 export class ConnectorAuthError extends Error {
   public readonly userFriendlyMessage: string;
-  public readonly service: Service;
-  constructor(message: string, userFriendlyMessage: string, service: Service, cause?: Error) {
+  public readonly service: string;
+  constructor(message: string, userFriendlyMessage: string, service: string, cause?: Error) {
     super(message, { cause });
     this.name = 'ConnectorAuthError';
     this.userFriendlyMessage = userFriendlyMessage;
@@ -52,7 +51,7 @@ export class ErrorMessageTemplates {
 /** Utility function to throw a standardised exception for a connector error. */
 export function exceptionForConnectorError(
   error: unknown,
-  connector: Connector<Service, any>,
+  connector: Connector<string, any>,
 ): InternalServerErrorException {
   const details = connector.extractConnectorErrorDetails(error);
   return new InternalServerErrorException(details.userFriendlyMessage, {
@@ -76,7 +75,7 @@ function isContentLengthExceededError(error: AxiosError): boolean {
  * @returns A common object describing the error for the user. or null if no common details are found.
  */
 export function extractCommonDetailsFromAxiosError(
-  connector: Connector<Service>,
+  connector: Connector,
   error: AxiosError,
 ): ConnectorErrorDetails | null {
   if (error.response?.status === HttpStatusCode.Forbidden || error.response?.status === HttpStatusCode.Unauthorized) {
@@ -114,7 +113,7 @@ export function extractCommonDetailsFromAxiosError(
  * @returns The error message. or a default if no message is found.
  */
 export function extractErrorMessageFromAxiosError(
-  service: Service,
+  service: string,
   error: AxiosError,
   errorKeys: string[] = [],
 ): string {

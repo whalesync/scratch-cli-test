@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { FileDiffStatus, isScratchPendingPublishId, Service, WorkbookId } from '@spinner/shared-types';
+import { FileDiffStatus, isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
 import { AssetIndexService } from 'src/asset/asset-index.service';
@@ -646,7 +646,7 @@ export class PublishPlanBuildService {
     };
   }
 
-  private async resolveConnector(connectorAccountId: string): Promise<Connector<Service, any>> {
+  private async resolveConnector(connectorAccountId: string): Promise<Connector<string, any>> {
     const account = await this.db.client.connectorAccount.findUnique({
       where: { id: connectorAccountId },
     });
@@ -659,7 +659,7 @@ export class PublishPlanBuildService {
     );
 
     return this.connectorsService.getConnector({
-      service: account.service as Service,
+      service: account.service,
       connectorAccount: account,
       decryptedCredentials,
     });

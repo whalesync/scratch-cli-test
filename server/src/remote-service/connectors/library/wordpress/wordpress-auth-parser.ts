@@ -3,7 +3,7 @@ import { AuthParser } from '../../connector';
 import { ConnectorInstantiationError } from '../../error';
 import { WordPressHttpClient } from './wordpress-http-client';
 
-export class WordPressAuthParser extends AuthParser<typeof Service.WORDPRESS> {
+export class WordPressAuthParser extends AuthParser {
   readonly service = Service.WORDPRESS;
 
   /**

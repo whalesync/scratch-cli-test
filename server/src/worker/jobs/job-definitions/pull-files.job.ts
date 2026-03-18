@@ -202,7 +202,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
     }
 
     const connector = await this.connectorService.getConnector({
-      service: service as Service,
+      service: service,
       connectorAccount: decryptedConnectorAccount,
       decryptedCredentials: decryptedConnectorAccount,
       userId: data.userId,

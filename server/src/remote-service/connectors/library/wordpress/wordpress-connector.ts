@@ -5,8 +5,14 @@ import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/a
 import TurndownService from 'turndown';
 import { extractStandaloneEntity } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import { WordPressAuthParser } from './wordpress-auth-parser';
 import {
   WORDPRESS_BATCH_SIZE,
   WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS,
@@ -29,7 +35,7 @@ import {
   WordPressRecord,
 } from './wordpress-types';
 
-export class WordPressConnector extends Connector<typeof Service.WORDPRESS, WordPressDownloadProgress> {
+export class WordPressConnector extends Connector<string, WordPressDownloadProgress> {
   readonly service = Service.WORDPRESS;
   static readonly displayName = 'WordPress';
   static readonly metadata = connectorMetadata({
@@ -297,3 +303,32 @@ export class WordPressConnector extends Connector<typeof Service.WORDPRESS, Word
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.WORDPRESS,
+  metadata: WordPressConnector.metadata,
+  advancedSettings: [],
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for WordPress', Service.WORDPRESS);
+    }
+    if (!ctx.decryptedCredentials?.username) {
+      throw new ConnectorInstantiationError('Username is required for WordPress', Service.WORDPRESS);
+    }
+    if (!ctx.decryptedCredentials?.password) {
+      throw new ConnectorInstantiationError('Password is required for WordPress', Service.WORDPRESS);
+    }
+    if (!ctx.decryptedCredentials?.endpoint) {
+      throw new ConnectorInstantiationError('Endpoint is required for WordPress', Service.WORDPRESS);
+    }
+    return new WordPressConnector(
+      ctx.decryptedCredentials.username,
+      ctx.decryptedCredentials.password,
+      ctx.decryptedCredentials.endpoint,
+    );
+  },
+  createAuthParser() {
+    return new WordPressAuthParser();
+  },
+});

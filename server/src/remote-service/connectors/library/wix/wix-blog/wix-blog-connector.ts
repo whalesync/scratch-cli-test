@@ -8,6 +8,8 @@ import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, hashUrl } from '../../../asset-extraction-helpers';
 import { Connector } from '../../../connector';
+import { connectorRegistry } from '../../../connector-registry';
+import { ConnectorInstantiationError } from '../../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../../types';
 import { HtmlToWixConverter } from '../rich-content/html-to-ricos';
 import { createTurndownService } from '../rich-content/markdown-helpers';
@@ -17,7 +19,7 @@ import { WixBlogSchemaParser } from './wix-blog-schema-parser';
 
 export const WIX_DEFAULT_BATCH_SIZE = 100; // Wix API supports up to 100
 
-export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
+export class WixBlogConnector extends Connector {
   readonly service = Service.WIX_BLOG;
   static readonly displayName = 'Wix Blog';
   static readonly metadata = connectorMetadata({
@@ -291,3 +293,20 @@ export class WixBlogConnector extends Connector<typeof Service.WIX_BLOG> {
     };
   }
 }
+
+connectorRegistry.register({
+  service: Service.WIX_BLOG,
+  metadata: WixBlogConnector.metadata,
+  advancedSettings: [],
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Wix', Service.WIX_BLOG);
+    }
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new WixBlogConnector(accessToken);
+    } else {
+      throw new Error('Wix requires either OAuth or API key authentication');
+    }
+  },
+});

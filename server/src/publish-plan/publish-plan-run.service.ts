@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isScratchPendingPublishId, Service, WorkbookId } from '@spinner/shared-types';
+import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
 import { ParsedContent } from 'src/utils/objects';
@@ -456,7 +456,7 @@ export class PublishPlanRunService {
   /**
    * Resolve the connector instance for the given connector account.
    */
-  private async resolveConnector(connectorAccountId: string | null): Promise<Connector<Service, any>> {
+  private async resolveConnector(connectorAccountId: string | null): Promise<Connector<string, any>> {
     if (!connectorAccountId) {
       throw new Error('No connectorAccountId on plan — cannot resolve connector');
     }
@@ -473,7 +473,7 @@ export class PublishPlanRunService {
     );
 
     return this.connectorsService.getConnector({
-      service: account.service as Service,
+      service: account.service,
       connectorAccount: account,
       decryptedCredentials,
     });
@@ -503,7 +503,7 @@ export class PublishPlanRunService {
   private async processBatch(
     phase: string,
     entries: PublishOperation[], // Type explicitly if possible, but 'any' avoids circular dep issues for now
-    connector: Connector<Service, any>,
+    connector: Connector<string, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
@@ -560,7 +560,7 @@ export class PublishPlanRunService {
 
   private async dispatchAssetUploadBatch(
     entries: PublishOperation[],
-    connector: Connector<Service, any>,
+    connector: Connector<string, any>,
   ): Promise<void> {
     for (const entry of entries) {
       const content = entry.content as Record<string, unknown> | null;
@@ -613,7 +613,7 @@ export class PublishPlanRunService {
   private async dispatchUpdateBatch(
     phase: string,
     entries: PublishOperation[],
-    connector: Connector<Service, any>,
+    connector: Connector<string, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
@@ -694,7 +694,7 @@ export class PublishPlanRunService {
   private async dispatchCreateBatch(
     phase: string,
     entries: PublishOperation[],
-    connector: Connector<Service, any>,
+    connector: Connector<string, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
@@ -799,7 +799,7 @@ export class PublishPlanRunService {
 
   private async dispatchDeleteBatch(
     entries: PublishOperation[],
-    connector: Connector<Service, any>,
+    connector: Connector<string, any>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,

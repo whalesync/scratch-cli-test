@@ -3,7 +3,12 @@ import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { MocoApiClient, MocoError } from './moco-api-client';
 import { buildMocoJsonTableSpec } from './moco-json-schema';
@@ -31,7 +36,7 @@ const ENTITY_DISPLAY_NAMES: Record<MocoEntityType, string> = {
  * - Contacts (people associated with companies)
  * - Projects
  */
-export class MocoConnector extends Connector<typeof Service.MOCO> {
+export class MocoConnector extends Connector {
   readonly service = Service.MOCO;
   static readonly displayName = 'Moco CRM';
   static readonly metadata = connectorMetadata({
@@ -352,3 +357,22 @@ export class MocoConnector extends Connector<typeof Service.MOCO> {
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.MOCO,
+  metadata: MocoConnector.metadata,
+  advancedSettings: [],
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for Moco', Service.MOCO);
+    }
+    if (!ctx.decryptedCredentials?.domain) {
+      throw new ConnectorInstantiationError('Domain is required for Moco', Service.MOCO);
+    }
+    if (!ctx.decryptedCredentials?.apiKey) {
+      throw new ConnectorInstantiationError('API key is required for Moco', Service.MOCO);
+    }
+    return new MocoConnector({ domain: ctx.decryptedCredentials.domain, apiKey: ctx.decryptedCredentials.apiKey });
+  },
+});

@@ -30,22 +30,6 @@ enum TokenType {
   USER // For user API tokens
 }
 
-enum Service {
-  NOTION
-  AIRTABLE
-  CSV /// Deprecated.
-  POSTGRES
-  YOUTUBE
-  WORDPRESS
-  WEBFLOW
-  WIX_BLOG
-  AUDIENCEFUL
-  MOCO
-  SHOPIFY
-  SUPABASE
-  QUICKBOOKS
-  PIPEDRIVE
-}
 
 enum AuthType {
   API_KEY // Deprecated
@@ -136,7 +120,7 @@ model ConnectorAccount {
   userId                    String?
   workbookId                String
   workbook                  Workbook               @relation(fields: [workbookId], references: [id], onDelete: Cascade)
-  service                   Service
+  service                   String
   displayName               String
   authType                  AuthType               @default(USER_PROVIDED_PARAMS)
   repoPath                  String?
@@ -343,7 +327,7 @@ model DataFolder {
   connectorAccountId String?
 
   // Service type (required when linked to a connector, optional otherwise)
-  connectorService Service?
+  connectorService String?
 
   // @deprecated — schema is now stored in git (.schema.json). This column will be dropped in a future migration.
   schema              Json?
@@ -721,7 +705,7 @@ model Asset {
   dataFolder   DataFolder? @relation(fields: [dataFolderId], references: [id], onDelete: SetNull)
   dataFolderId String?
 
-  service       Service // AIRTABLE, NOTION, WEBFLOW, etc.
+  service       String // AIRTABLE, NOTION, WEBFLOW, etc.
   remoteAssetId String // Stable ID per connector (e.g. Airtable attachment id, URL hash, etc.)
 
   url          String? // Current URL (may be expired)

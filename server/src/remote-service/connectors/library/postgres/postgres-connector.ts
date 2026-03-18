@@ -2,6 +2,8 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { connectorMetadata, ConnectorPullOptions, PostgresColumnType, Service } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
+import { connectorRegistry } from '../../connector-registry';
+import { ConnectorInstantiationError } from '../../error';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { PostgresClient, PostgresClientError } from './postgres-client';
@@ -93,7 +95,7 @@ function mapScalarPgType(typeName: string): { schema: TSchema; pgType: PostgresC
  * - fetchJsonTableSpec() for schema discovery
  * - pullRecordFiles() for fetching records
  */
-export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
+export class PostgresConnector extends Connector {
   readonly service = Service.POSTGRES;
   static readonly displayName = 'PostgreSQL';
   static readonly metadata = connectorMetadata({
@@ -378,3 +380,19 @@ export class PostgresConnector extends Connector<typeof Service.POSTGRES> {
     await this.client.disconnect();
   }
 }
+
+connectorRegistry.register({
+  service: Service.POSTGRES,
+  metadata: PostgresConnector.metadata,
+  advancedSettings: [],
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for PostgreSQL', Service.POSTGRES);
+    }
+    if (!ctx.decryptedCredentials?.connectionString) {
+      throw new ConnectorInstantiationError('Connection string is required for PostgreSQL', Service.POSTGRES);
+    }
+    return new PostgresConnector({ connectionString: ctx.decryptedCredentials.connectionString });
+  },
+});

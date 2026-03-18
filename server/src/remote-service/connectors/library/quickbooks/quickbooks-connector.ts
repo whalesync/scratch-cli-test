@@ -1,9 +1,14 @@
-import { connectorMetadata, ConnectorPullOptions, Service } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorPullOptions, isQuickBooksConnectorExtras, Service } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { Connector } from '../../connector';
-import { extractCommonDetailsFromAxiosError, extractErrorMessageFromAxiosError } from '../../error';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { QuickBooksApiClient, QuickBooksError } from './quickbooks-api-client';
 import { buildQuickBooksJsonTableSpec } from './quickbooks-json-schema';
@@ -28,7 +33,7 @@ const PAGE_SIZE = 1000;
  *
  * This connector is read-only — create, update, and delete operations are not supported.
  */
-export class QuickBooksConnector extends Connector<typeof Service.QUICKBOOKS, QuickBooksDownloadProgress> {
+export class QuickBooksConnector extends Connector<string, QuickBooksDownloadProgress> {
   readonly service = Service.QUICKBOOKS;
   static readonly displayName = 'QuickBooks Online';
   static readonly metadata = connectorMetadata({
@@ -242,3 +247,26 @@ export class QuickBooksConnector extends Connector<typeof Service.QUICKBOOKS, Qu
     return this.fallbackErrorDetails(error);
   }
 }
+
+connectorRegistry.register({
+  service: Service.QUICKBOOKS,
+  metadata: QuickBooksConnector.metadata,
+  advancedSettings: [],
+  rateLimiterSpec: { points: 450, duration: 60 },
+  async createConnector(ctx) {
+    if (!ctx.connectorAccount) {
+      throw new ConnectorInstantiationError('Connector account is required for QuickBooks', Service.QUICKBOOKS);
+    }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    if (!isQuickBooksConnectorExtras(ctx.connectorAccount.extras)) {
+      throw new ConnectorInstantiationError('Realm ID is required for QuickBooks', Service.QUICKBOOKS);
+    }
+    const { realmId, sandbox } = ctx.connectorAccount.extras;
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new QuickBooksConnector({ accessToken, realmId }, { rateLimiter, sandbox: sandbox ?? false });
+    } else {
+      throw new ConnectorInstantiationError('QuickBooks only supports OAuth authentication', Service.QUICKBOOKS);
+    }
+  },
+});

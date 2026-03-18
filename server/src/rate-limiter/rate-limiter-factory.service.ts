@@ -1,11 +1,10 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Service } from '@spinner/shared-types';
 import IORedis from 'ioredis';
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
+import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import { RateLimiter } from './rate-limiter';
-import { RATE_LIMITER_SPECS } from './rate-limiter.types';
 
 const LOG_SOURCE = 'RateLimiterFactory';
 
@@ -42,9 +41,9 @@ export class RateLimiterFactory implements OnModuleInit, OnModuleDestroy {
    * Create a rate limiter for a specific service and connector account.
    * Returns undefined if the service has no rate limiter spec configured.
    */
-  createLimiter(params: { service: Service; connectorAccountId: string }): RateLimiter | undefined {
+  createLimiter(params: { service: string; connectorAccountId: string }): RateLimiter | undefined {
     const { service, connectorAccountId } = params;
-    const spec = RATE_LIMITER_SPECS[service];
+    const spec = connectorRegistry.get(service)?.rateLimiterSpec;
     if (!spec || !this.redis) {
       return undefined;
     }

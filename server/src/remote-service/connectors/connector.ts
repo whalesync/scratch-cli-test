@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorPullOptions, ConnectorSettingDefinition, Service, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorPullOptions, ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
@@ -10,7 +10,7 @@ import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, Tabl
  * This is usefule for services that need pre parsing of the user provided parameters for a better user experience.
  * For example: WordPress requires an endpoint and users most of the time will not have the exact one we need so we do a couple transformations to get the correct one.
  */
-export abstract class AuthParser<T extends Service> {
+export abstract class AuthParser<T extends string = string> {
   abstract readonly service: T;
 
   /**
@@ -26,7 +26,7 @@ export abstract class AuthParser<T extends Service> {
 /**
  * Defines a utility that abstracts the interaction with a data source.
  */
-export abstract class Connector<T extends Service, TConnectorProgress extends JsonSafeObject = JsonSafeObject> {
+export abstract class Connector<T extends string = string, TConnectorProgress extends JsonSafeObject = JsonSafeObject> {
   abstract readonly service: T;
 
   /**

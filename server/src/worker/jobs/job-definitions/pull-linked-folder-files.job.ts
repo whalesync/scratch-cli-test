@@ -264,7 +264,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     }
 
     const connector = await this.connectorService.getConnector({
-      service: service as Service,
+      service: service,
       connectorAccount: decryptedConnectorAccount,
       decryptedCredentials: decryptedConnectorAccount,
       userId: data.userId,

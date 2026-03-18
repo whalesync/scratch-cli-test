@@ -204,7 +204,7 @@ export class DataFolderService {
         throw new NotFoundException('Connector account not found');
       }
 
-      const service = connectorAccount.service as Service;
+      const service = connectorAccount.service;
 
       // Get connector and fetch table spec
       const connector = await this.connectorService.getConnector({
@@ -713,7 +713,7 @@ export class DataFolderService {
       }
 
       const connector = await this.connectorService.getConnector({
-        service: dataFolder.connectorService as Service,
+        service: dataFolder.connectorService,
         connectorAccount: connectorAccount as ConnectorAccount,
         decryptedCredentials: connectorAccount as unknown as DecryptedCredentials,
       });
