@@ -2,17 +2,11 @@ import { ScratchPlanType, SubscriptionPlan, SubscriptionPlanFeatures } from '@sp
 import { Plan, PlanFeatures } from '../plans';
 
 export class SubscriptionPlanFeaturesEntity implements SubscriptionPlanFeatures {
-  availableModels: string[];
   publishingLimit: number;
-  creditLimit: number;
-  allowPersonalKeys: boolean;
   dataSourcePerServiceLimit: number;
 
   constructor(features: PlanFeatures) {
-    this.availableModels = features.availableModels;
     this.publishingLimit = features.publishingLimit;
-    this.creditLimit = features.creditLimit;
-    this.allowPersonalKeys = features.allowPersonalKeys;
     this.dataSourcePerServiceLimit = features.dataSourcePerServiceLimit;
   }
 }

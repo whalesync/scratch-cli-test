@@ -12,16 +12,8 @@ export function getPlanTypeFromString(typeString: string): ScratchPlanType | und
 }
 
 export interface PlanFeatures {
-  // The limited set of models that the user can use. If the array is empty, all models are available.
-  availableModels: string[];
   // The maximum number of publishing actions that the user can perform. 0 means unlimited.
   publishingLimit: number;
-  // The maximum number of credits that the user can use. 0 means unlimited.
-  creditLimit: number;
-  // The frequency at which the user's credits are reset.
-  creditReset: 'daily' | 'weekly' | 'monthly' | 'never';
-  // Whether the user is allowed to use personal OpenRouter API keys and create custom credentials
-  allowPersonalKeys: boolean;
   // The maximum number of data sources per service that the user can use. 0 means unlimited.
   dataSourcePerServiceLimit: number;
 }
@@ -53,18 +45,7 @@ export const FREE_PLAN: Plan = {
   popular: false,
   hidden: false,
   features: {
-    availableModels: [
-      'x-ai/grok-4.1-fast',
-      'google/gemini-2.5-flash',
-      'openai/gpt-4o-mini',
-      'anthropic/claude-haiku-4.5',
-      'openai/gpt-oss-120b',
-      'google/gemini-3-pro-preview',
-    ],
     publishingLimit: 10,
-    creditLimit: 5,
-    creditReset: 'monthly',
-    allowPersonalKeys: false,
     dataSourcePerServiceLimit: 0,
   },
 };
@@ -83,11 +64,7 @@ export const PRO_PLAN: Plan = {
   popular: true,
   hidden: false,
   features: {
-    availableModels: [],
     publishingLimit: 0,
-    creditLimit: 10,
-    creditReset: 'monthly',
-    allowPersonalKeys: true,
     dataSourcePerServiceLimit: 0,
   },
 };
@@ -101,11 +78,7 @@ export const MAX_PLAN: Plan = {
   popular: false,
   hidden: false,
   features: {
-    availableModels: [],
     publishingLimit: 0,
-    creditLimit: 50,
-    creditReset: 'monthly',
-    allowPersonalKeys: true,
     dataSourcePerServiceLimit: 0,
   },
 };

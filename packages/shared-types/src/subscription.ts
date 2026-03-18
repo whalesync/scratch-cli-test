@@ -5,10 +5,7 @@ export enum ScratchPlanType {
 }
 
 export interface SubscriptionPlanFeatures {
-  availableModels: string[];
   publishingLimit: number;
-  creditLimit: number;
-  allowPersonalKeys: boolean;
   dataSourcePerServiceLimit: number;
 }
 
