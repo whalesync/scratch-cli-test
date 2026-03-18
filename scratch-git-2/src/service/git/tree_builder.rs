@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use gix::ObjectId;
 
-use crate::error::AppError;
-use crate::git::repo::GitRepo;
-use crate::types::{ChangeType, CommitStats, FileChange};
+use crate::service::error::AppError;
+use crate::service::git::repo::GitRepo;
+use crate::service::types::{ChangeType, CommitStats, FileChange};
 
 impl GitRepo {
     /// Apply a set of file changes to a tree, returning the new tree OID and stats

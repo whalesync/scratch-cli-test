@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use crate::config::Config;
-use crate::git::lock::WriteLockManager;
+use crate::service::config::Config;
+use crate::service::git::lock::WriteLockManager;
 
 // TODO(v2-routes): wire up V2 repo routing in the final phase
 // /// Separator used in V2 composite repo IDs: `{orgId}--{workbookId}--{connAccountId}`

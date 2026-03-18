@@ -2,6 +2,15 @@
 name = "scratch-git-2"
 version = "0.1.0"
 edition = "2021"
+default-run = "scratch-git-2"
+
+[[bin]]
+name = "scratch-git-2"
+path = "src/service/main.rs"
+
+[[bin]]
+name = "scratchmd2"
+path = "src/cli/main.rs"
 
 [dependencies]
 axum = { version = "0.8", features = ["macros"] }
@@ -18,3 +27,13 @@ dashmap = "6"
 imara-diff = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde_yaml = "0.9"
+open = "5"
+anyhow = "1"
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+urlencoding = "2"

@@ -85,37 +85,59 @@ All git operations in the CLI (clone, fetch, commit, push, merge) use **subproce
 
 **Requirement**: `git` must be on the user's PATH. This is true for all developers.
 
-### Module structure to add
+### Source layout: three top-level folders
+
+The crate is reorganised into three clearly separated top-level modules.
+Nothing moves inside `service/` — it is the existing code, renamed in place.
 
 ```
 scratch-git-2/src/
-├── main.rs              (modified: clap entry point)
-├── server/              (unchanged: existing server code)
-├── git/                 (unchanged: merge.rs, repo.rs, etc.)
 │
-├── cli/                 (NEW)
+├── main.rs              HTTP server entry point — untouched
+├── main_cli.rs          NEW: CLI entry point (clap)
+│
+├── service/             Everything that exists today, moved here unchanged
+│   ├── mod.rs
+│   ├── config.rs
+│   ├── envelope.rs
+│   ├── error.rs
+│   ├── state.rs
+│   ├── types.rs
+│   ├── git/             bare-repo git operations (repo.rs, merge.rs, rebase.rs, …)
+│   └── routes/          axum HTTP handlers
+│
+├── cli/                 NEW: CLI command implementations
 │   ├── mod.rs
 │   ├── auth.rs          scratchmd2 auth {login,logout,status}
 │   ├── workspaces.rs    scratchmd2 workspaces {list,create,show,delete,init}
 │   ├── files.rs         scratchmd2 files {download,upload}
 │   ├── connections.rs   scratchmd2 connections {list,add,show,remove}
 │   ├── linked.rs        scratchmd2 linked {available,list,add,remove,show,pull,publish}
-│   └── syncs.rs         scratchmd2 syncs {list,show,create,update,delete,run,download}
+│   ├── syncs.rs         scratchmd2 syncs {list,show,create,update,delete,run,download}
+│   ├── api/             HTTP client for NestJS calls
+│   │   ├── mod.rs       base client (auth headers, base URL, error handling)
+│   │   ├── auth.rs      device code flow
+│   │   ├── workbooks.rs
+│   │   ├── connections.rs
+│   │   ├── linked.rs
+│   │   ├── syncs.rs
+│   │   └── jobs.rs      job polling
+│   └── config/          local CLI state
+│       ├── mod.rs
+│       ├── credentials.rs   ~/.scratchmd/credentials.yaml
+│       └── markers.rs       .scratchmd marker files
 │
-├── api/                 (NEW: HTTP client calling the NestJS server)
-│   ├── mod.rs           base client (auth headers, base URL, error handling)
-│   ├── auth.rs          device code flow
-│   ├── workbooks.rs
-│   ├── connections.rs
-│   ├── linked.rs
-│   ├── syncs.rs
-│   └── jobs.rs          poll until complete
-│
-└── config/              (NEW: local state)
-    ├── mod.rs
-    ├── credentials.rs   read/write ~/.scratchmd/credentials.yaml
-    └── markers.rs       read/write .scratchmd marker files (workspace/connector/folder)
+└── shared/              NEW: pure business logic shared by both binaries
+    └── mod.rs           (empty in Milestone 1 — populated in Milestone 2+)
 ```
+
+**Why this separation matters:**
+- `service/` is the HTTP server — it only knows about bare repos and axum handlers. Never imports from `cli/`.
+- `cli/` is the user-facing binary — it only knows about local worktrees and the NestJS API. Never imports from `service/`.
+- `shared/` is where real sharing happens: `merge_file_contents` moves here in Milestone 1, followed by `plan_publish`, `build_index`, `run_sync` in Milestone 2+. Both `service/` and `cli/` import from `shared/`.
+
+In Milestone 1, `shared/` contains only `merge_file_contents`. It grows in Milestone 2.
+The three-way separation makes the eventual Rust workspace split (separate crates) a straightforward refactor.
 
 ### New dependencies to add to Cargo.toml
 
@@ -132,6 +154,48 @@ serde_yaml = "0.9"
 # Open browser for device code auth
 open = "5"
 ```
+
+### Testing: can we verify both CLIs match?
+
+The Go CLI has one test file: `scratch-cli/internal/cmd/v2_test.go`.
+It tests internal Go functions — marker loading, connector directory detection,
+result aggregation, filename sanitization. It cannot be run against the Rust CLI.
+
+There is **no existing cross-CLI test suite**. We need to build one.
+
+#### What to build: a compatibility test suite
+
+A shell script (or small Rust integration test binary) that runs the same sequence
+of commands against both CLIs and asserts the outputs and filesystem state match.
+Candidate: `scratch-cli/compat-tests/` as a standalone script that takes two
+binary paths as arguments: `./run.sh $(which scratchmd) $(which scratchmd2)`.
+
+**What it can test without a live server (pure local / unit-level):**
+
+| Test | How |
+|---|---|
+| Credential round-trip | Write creds with CLI A, read with CLI B (check same token and server URL) |
+| `.scratchmd` marker format | Write workspace marker with CLI A, parse with CLI B's config module |
+| Connector directory detection | Same fixture dir, both CLIs detect the same connectors |
+| Filename sanitization | Same inputs, same outputs |
+| `--json` output shape | Same workspace, both CLIs produce same JSON keys |
+
+The Go unit tests in `v2_test.go` serve as the **specification** for the Rust implementation.
+The exact YAML content in those tests (`version: "2"`, field names, nesting) is what the Rust
+`shared/markers.rs` must produce byte-for-byte. Treat those tests as a contract document.
+
+**What requires a live server (integration-level):**
+
+| Test | Trigger |
+|---|---|
+| `workspaces init` produces identical directory structure | Run both on same workspace ID, diff the result trees |
+| `files download` results in same local state | Pull with CLI A, pull with CLI B, diff working trees |
+| `files upload` pushes identical commits | Upload with CLI A, pull with CLI B (and vice versa) |
+| `linked pull` / `linked publish` complete without error | Manual for now |
+
+**Recommendation:** Start the compatibility suite in Step 1.2 (marker + credential format),
+expand it with each subsequent step. The suite is the primary acceptance gate before
+retiring the Go CLI.
 
 ---
 

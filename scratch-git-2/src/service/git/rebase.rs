@@ -1,7 +1,7 @@
-use crate::error::AppError;
-use crate::git::merge::merge_file_contents;
-use crate::git::repo::GitRepo;
-use crate::types::*;
+use crate::service::error::AppError;
+use crate::service::git::merge::merge_file_contents;
+use crate::service::git::repo::GitRepo;
+use crate::service::types::*;
 
 impl GitRepo {
     /// Full rebase of dirty branch onto main.

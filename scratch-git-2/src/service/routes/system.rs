@@ -2,8 +2,8 @@ use axum::extract::State;
 use axum::response::Response;
 use serde_json::json;
 
-use crate::envelope::envelope;
-use crate::state::AppState;
+use crate::service::envelope::envelope;
+use crate::service::state::AppState;
 
 pub async fn root(State(state): State<AppState>) -> Response {
     envelope(

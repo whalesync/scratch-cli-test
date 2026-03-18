@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use gix::ObjectId;
 
-use crate::error::AppError;
-use crate::git::repo::GitRepo;
-use crate::types::DirtyFile;
+use crate::service::error::AppError;
+use crate::service::git::repo::GitRepo;
+use crate::service::types::DirtyFile;
 
 impl GitRepo {
     /// Walk a commit's tree and return a map of path → blob OID (hex string).

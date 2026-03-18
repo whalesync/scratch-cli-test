@@ -1,7 +1,6 @@
-use crate::error::AppError;
-
 /// 3-way merge of file contents with conflict resolution using "ours" strategy.
-pub fn merge_file_contents(base: &str, ours: &str, theirs: &str) -> Result<String, AppError> {
+/// Returns the merged string, or an error message on failure.
+pub fn merge_file_contents(base: &str, ours: &str, theirs: &str) -> Result<String, String> {
     // Short-circuit cases
     if ours == base {
         return Ok(theirs.to_string());
@@ -32,8 +31,5 @@ pub fn merge_file_contents(base: &str, ours: &str, theirs: &str) -> Result<Strin
         },
     );
 
-    let merged = String::from_utf8(out)
-        .map_err(|e| AppError::internal(format!("Merge result not UTF-8: {}", e)))?;
-
-    Ok(merged)
+    String::from_utf8(out).map_err(|e| format!("Merge result not UTF-8: {}", e))
 }

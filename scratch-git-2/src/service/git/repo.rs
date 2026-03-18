@@ -4,8 +4,8 @@ use gix::date::Time;
 use gix::objs::tree::EntryKind;
 use gix::ObjectId;
 
-use crate::error::AppError;
-use crate::types::*;
+use crate::service::error::AppError;
+use crate::service::types::*;
 
 pub struct GitRepo {
     pub repo: gix::Repository,

@@ -7,10 +7,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY scratch-git-2/Cargo.toml scratch-git-2/Cargo.lock ./
 # Create a dummy main.rs to build dependencies first (for better caching)
-RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
+RUN mkdir -p src/service src/cli && echo "fn main() {}" > src/service/main.rs && echo "fn main() {}" > src/cli/main.rs && cargo build --release && rm -rf src
 COPY scratch-git-2/src ./src
-# Touch main.rs to ensure Cargo detects it's newer than the dummy main compilation
-RUN touch src/main.rs
+# Touch entry points to ensure Cargo detects them as newer than the dummy compilation
+RUN touch src/service/main.rs src/cli/main.rs
 RUN cargo build --release
 
 # --- Stage 2: Runner ---

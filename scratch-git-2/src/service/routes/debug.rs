@@ -4,10 +4,10 @@ use axum::extract::{Path, State};
 use axum::response::Response;
 use serde_json::json;
 
-use crate::envelope::{envelope_error, envelope_result};
-use crate::error::AppError;
-use crate::git::repo::GitRepo;
-use crate::state::AppState;
+use crate::service::envelope::{envelope_error, envelope_result};
+use crate::service::error::AppError;
+use crate::service::git::repo::GitRepo;
+use crate::service::state::AppState;
 
 pub async fn graph(
     State(state): State<AppState>,

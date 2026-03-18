@@ -1,31 +1,30 @@
-mod config;
-mod envelope;
-mod error;
-mod git;
-mod routes;
-mod state;
-mod types;
+pub mod config;
+pub mod envelope;
+pub mod error;
+pub mod git;
+pub mod routes;
+pub mod state;
+pub mod types;
 
+use axum::extract::Request;
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::Router;
+use std::time::Instant;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 use config::Config;
 use state::AppState;
 
-use axum::extract::Request;
-use axum::middleware::{self, Next};
-use axum::response::IntoResponse;
-use std::time::Instant;
-
 async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
     let start = Instant::now();
     let method = req.method().clone();
     let uri = req.uri().clone();
-    
+
     let response = next.run(req).await;
-    
+
     let duration = start.elapsed();
     if duration.as_millis() > 100 {
         tracing::warn!(
@@ -35,13 +34,11 @@ async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
             duration.as_millis()
         );
     }
-    
+
     response
 }
 
-#[tokio::main]
-async fn main() {
-    // Initialize tracing
+pub async fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -195,14 +192,17 @@ async fn main() {
     let git_app = Router::new()
         .route("/", get(routes::system::root))
         .route("/health", get(routes::system::health))
-        .route("/{*repo_id_and_path}", axum::routing::any(routes::smart_http::git_backend))
+        .route(
+            "/{*repo_id_and_path}",
+            axum::routing::any(routes::smart_http::git_backend),
+        )
         .layer(CorsLayer::permissive())
         .layer(middleware::from_fn(timing_middleware))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.port);
     let git_addr = format!("0.0.0.0:{}", config.git_backend_port);
-    
+
     tracing::info!(
         "ScratchGit API listening at http://localhost:{} (build: {}, repos: {}, env: {})",
         config.port,

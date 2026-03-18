@@ -2,8 +2,8 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::json;
 
-use crate::error::AppError;
-use crate::state::AppState;
+use crate::service::error::AppError;
+use crate::service::state::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct Envelope<T: Serialize> {

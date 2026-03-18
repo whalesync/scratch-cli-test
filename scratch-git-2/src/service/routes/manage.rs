@@ -5,11 +5,11 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::envelope::{envelope, envelope_error, envelope_result};
-use crate::error::AppError;
-use crate::git::repo::GitRepo;
-use crate::state::AppState;
-use crate::types::*;
+use crate::service::envelope::{envelope, envelope_error, envelope_result};
+use crate::service::error::AppError;
+use crate::service::git::repo::GitRepo;
+use crate::service::state::AppState;
+use crate::service::types::*;
 
 pub async fn init_repo(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     tracing::info!("[API] Initializing repo: {}", id);

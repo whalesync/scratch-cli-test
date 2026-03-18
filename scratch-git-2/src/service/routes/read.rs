@@ -7,11 +7,11 @@ use serde::Deserialize;
 use serde_json::json;
 use std::io::Write;
 
-use crate::envelope::{envelope_error, envelope_result};
-use crate::error::AppError;
-use crate::git::repo::GitRepo;
-use crate::state::AppState;
-use crate::types::*;
+use crate::service::envelope::{envelope_error, envelope_result};
+use crate::service::error::AppError;
+use crate::service::git::repo::GitRepo;
+use crate::service::state::AppState;
+use crate::service::types::*;
 
 #[derive(Deserialize)]
 pub struct ListQuery {

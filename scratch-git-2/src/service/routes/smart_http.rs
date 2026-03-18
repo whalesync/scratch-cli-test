@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio_util::io::ReaderStream;
 
-use crate::state::AppState;
+use crate::service::state::AppState;
 
 pub async fn git_backend(
     State(state): State<AppState>,
