@@ -514,6 +514,13 @@ export class PublishPlanBuildService {
         }
 
         const rawContent = dirtyMap.get(add.path);
+        if (!rawContent) {
+          WSLogger.warn({
+            source: 'PublishPlanService.buildPipeline',
+            message: `File detected as added in diff but content is null, skipping: ${add.path}`,
+            workbookId,
+          });
+        }
         if (rawContent) {
           const { folderPath, filename } = parsePath(add.path);
           const info = await getDataFolderInfo(folderPath);

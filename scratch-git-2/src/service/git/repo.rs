@@ -492,7 +492,10 @@ impl GitRepo {
                 }
 
                 if !found {
-                    return Ok(vec![]);
+                    return Err(AppError::not_found(format!(
+                        "Folder not found in tree: {}",
+                        folder_path
+                    )));
                 }
             }
             current_oid
@@ -686,4 +689,91 @@ pub struct CommitInfo {
     pub timestamp: gix::date::SecondsSinceUnixEpoch,
     pub author_name: String,
     pub author_email: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup_repo() -> (TempDir, GitRepo) {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+        (tmp, repo)
+    }
+
+    #[test]
+    fn read_blob_to_string_returns_committed_content() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "hello.txt".to_string(),
+                content: Some("hello world".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add file",
+        )
+        .unwrap();
+
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let entries = repo.read_tree_at_path(commit_oid, "").unwrap();
+        let (_, blob_oid, _) = entries.iter().find(|(name, _, _)| name == "hello.txt").unwrap();
+
+        let content = repo.read_blob_to_string(*blob_oid).unwrap();
+        assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn read_blob_to_string_returns_error_for_nonexistent_oid() {
+        let (_tmp, repo) = setup_repo();
+
+        // Fabricate an OID that doesn't exist in the object store
+        let bad_oid = gix::ObjectId::from_hex(b"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").unwrap();
+        let result = repo.read_blob_to_string(bad_oid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_tree_at_path_returns_error_for_nonexistent_folder() {
+        let (_tmp, repo) = setup_repo();
+
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let result = repo.read_tree_at_path(commit_oid, "nonexistent/folder");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_tree_at_path_lists_files_in_subfolder() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                FileChange {
+                    path: "docs/a.txt".to_string(),
+                    content: Some("aaa".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "docs/b.txt".to_string(),
+                    content: Some("bbb".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "add docs",
+        )
+        .unwrap();
+
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let entries = repo.read_tree_at_path(commit_oid, "docs").unwrap();
+        let names: Vec<&str> = entries.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"a.txt"));
+        assert!(names.contains(&"b.txt"));
+        assert_eq!(names.len(), 2);
+    }
 }

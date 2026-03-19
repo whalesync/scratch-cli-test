@@ -197,21 +197,19 @@ pub async fn files_from_folder(
                 .map(|(name, oid, _)| (name, oid))
                 .collect();
 
-            let results: Vec<_> = body
-                .filenames
-                .iter()
-                .map(|name| {
-                    let full_path = if folder.is_empty() {
-                        name.clone()
-                    } else {
-                        format!("{}/{}", folder, name)
-                    };
-                    let content = oid_map.get(name).and_then(|oid| {
-                        git_repo.read_blob_to_string(*oid).ok()
-                    });
-                    json!({ "path": full_path, "content": content })
-                })
-                .collect();
+            let mut results: Vec<serde_json::Value> = Vec::with_capacity(body.filenames.len());
+            for name in &body.filenames {
+                let full_path = if folder.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", folder, name)
+                };
+                let content = match oid_map.get(name.as_str()) {
+                    Some(oid) => Some(git_repo.read_blob_to_string(*oid)?),
+                    None => None,
+                };
+                results.push(json!({ "path": full_path, "content": content }));
+            }
 
             Ok::<_, AppError>(json!(results))
         }
@@ -274,8 +272,10 @@ pub async fn files(
                     
                     for filename in filenames {
                         let full_path = if folder.is_empty() { filename.clone() } else { format!("{}/{}", folder, filename) };
-                        let content = oid_map.get(filename.as_str())
-                            .and_then(|oid| git_repo.read_blob_to_string(*oid).ok());
+                        let content = match oid_map.get(filename.as_str()) {
+                            Some(oid) => Some(git_repo.read_blob_to_string(*oid)?),
+                            None => None,
+                        };
                         results_map.insert(full_path, content);
                     }
                 } else {
@@ -411,16 +411,14 @@ pub async fn blobs_by_oid(
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
 
-            let results: Vec<_> = body
-                .oids
-                .iter()
-                .map(|oid_str| {
-                    let content = gix::ObjectId::from_hex(oid_str.as_bytes())
-                        .ok()
-                        .and_then(|oid| git_repo.read_blob_to_string(oid).ok());
-                    json!({ "oid": oid_str, "content": content })
-                })
-                .collect();
+            let mut results: Vec<serde_json::Value> = Vec::with_capacity(body.oids.len());
+            for oid_str in &body.oids {
+                let content = match gix::ObjectId::from_hex(oid_str.as_bytes()) {
+                    Ok(oid) => Some(git_repo.read_blob_to_string(oid)?),
+                    Err(_) => None, // Invalid hex is a caller error, return null
+                };
+                results.push(json!({ "oid": oid_str, "content": content }));
+            }
 
             Ok::<_, AppError>(json!(results))
         }

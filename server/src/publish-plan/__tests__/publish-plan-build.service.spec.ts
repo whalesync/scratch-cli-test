@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AssetIndexService } from '../../asset/asset-index.service';
 import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
 import { DbService } from '../../db/db.service';
+import { WSLogger } from '../../logger';
 import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
@@ -219,6 +220,58 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
       expect(db.client.publishPlanOperation.createMany).not.toHaveBeenCalled();
+    });
+
+    it('logs a warning when an added file has null content', async () => {
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation();
+      const filePath = 'articles/ghost.json';
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'added' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content: null }]);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining(filePath) as string,
+        }),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('still creates other files when one file in the batch has null content', async () => {
+      const warnSpy = jest.spyOn(WSLogger, 'warn').mockImplementation();
+      const goodFile = 'articles/good.json';
+      const badFile = 'articles/bad.json';
+      const content = JSON.stringify({ title: 'Good Article' });
+
+      scratchGitService.getRepoStatus.mockResolvedValue([
+        { path: goodFile, status: 'added' },
+        { path: badFile, status: 'added' },
+      ]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([
+        { path: goodFile, content },
+        { path: badFile, content: null },
+      ]);
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
+
+      // The good file should still get a create operation
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{
+        phase: string;
+        filePath: string;
+      }>;
+      expect(saved.some((e) => e.phase === 'create' && e.filePath === goodFile)).toBe(true);
+      expect(saved.some((e) => e.filePath === badFile)).toBe(false);
+
+      // Warning should be logged for the bad file
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining(badFile) as string,
+        }),
+      );
+      warnSpy.mockRestore();
     });
   });
 
