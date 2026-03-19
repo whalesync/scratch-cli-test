@@ -113,3 +113,9 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "disk_source_snapshot" {
+  description = "Full snapshot self_link to restore the data disk from. When set, Terraform will destroy and recreate the disk and VM. Remove after restore is complete."
+  type        = string
+  default     = null
+}

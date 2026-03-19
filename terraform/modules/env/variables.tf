@@ -287,6 +287,12 @@ variable "scratch_git_snapshot_hours_in_cycle" {
   description = "Hours between each disk snapshot for the scratch-git data disk (1, 2, 3, 4, 6, 8, 12, or 24)."
 }
 
+variable "scratch_git_disk_source_snapshot" {
+  type        = string
+  default     = null
+  description = "Full snapshot self_link to restore the scratch-git data disk from. When set, Terraform will destroy and recreate the disk and VM. Remove after restore is complete."
+}
+
 variable "enable_static_assets_lb" {
   type        = bool
   default     = false

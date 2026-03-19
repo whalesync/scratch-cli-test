@@ -42,7 +42,7 @@ REMOTE_PORT=3100
 
 # Start the SSH tunnel.
 echo "Starting SSH tunnel to scratch-git VM for $ENVIRONMENT..."
-gcloud compute ssh scratch-git --project "${GCP_PROJECT}" --zone europe-west1-b --tunnel-through-iap -- -N -L "$LOCAL_PORT:$LOCAL_HOSTNAME:$REMOTE_PORT" &
+gcloud compute ssh scratch-git-snapshot-test --project "${GCP_PROJECT}" --zone europe-west1-b --tunnel-through-iap -- -N -L "$LOCAL_PORT:$LOCAL_HOSTNAME:$REMOTE_PORT" &
 # Remember the PID of the background process so we can kill it later.
 ssh_tunnel_pid=$!
 

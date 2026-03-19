@@ -318,6 +318,7 @@ module "scratch_git_gce" {
   vpc_cidr_ranges         = [for s in local.custom_subnetworks : s.ip_cidr_range]
   boot_disk_size_gb       = var.scratch_git_boot_disk_size_gb
   disk_size_gb            = var.scratch_git_disk_size_gb
+  disk_source_snapshot    = var.scratch_git_disk_source_snapshot
   snapshot_hours_in_cycle = var.scratch_git_snapshot_hours_in_cycle
   labels                  = merge(local.default_labels, local.vanta_user_data_labels)
 

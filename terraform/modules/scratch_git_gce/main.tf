@@ -10,11 +10,12 @@
 ## ---------------------------------------------------------------------------------------------------------------------
 
 resource "google_compute_disk" "data" {
-  name    = "${var.instance_name}-data"
-  type    = var.disk_type
-  zone    = var.zone
-  size    = var.disk_size_gb
-  project = var.gcp_project_id
+  name     = "${var.instance_name}-data"
+  type     = var.disk_type
+  zone     = var.zone
+  size     = var.disk_size_gb
+  project  = var.gcp_project_id
+  snapshot = var.disk_source_snapshot
 
   labels = merge(var.labels, {
     "service" = "scratch-git"
@@ -205,7 +206,8 @@ resource "google_compute_instance" "scratch_git" {
   }
 
   lifecycle {
-    ignore_changes = [metadata["ssh-keys"]]
+    ignore_changes  = [metadata["ssh-keys"]]
+    replace_triggered_by = [google_compute_disk.data.id]
   }
 }
 
