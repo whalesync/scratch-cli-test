@@ -64,6 +64,7 @@ pub async fn run() {
         "[API] Repos directory (v2) exists: {}",
         config.repos_v2_dir.exists()
     );
+    tracing::info!("[API] Index directory: {}", config.index_dir.display());
 
     let app = Router::new()
         // System
@@ -178,6 +179,15 @@ pub async fn run() {
         .route(
             "/api/repo/checkpoint/{id}/{name}",
             delete(routes::checkpoint::delete_checkpoint),
+        )
+        // Index
+        .route(
+            "/api/repo/index/{id}/build",
+            post(routes::index::build_index),
+        )
+        .route(
+            "/api/repo/index/{id}/dump",
+            get(routes::index::dump_index),
         )
         // Debug
         .route(

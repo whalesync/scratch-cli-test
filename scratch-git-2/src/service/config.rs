@@ -7,6 +7,7 @@ pub struct Config {
     pub git_backend_port: u16,
     pub repos_dir: PathBuf,
     pub repos_v2_dir: PathBuf,
+    pub index_dir: PathBuf,
     pub build_version: String,
 }
 
@@ -33,14 +34,16 @@ impl Config {
         };
 
         let repos_v2_dir = env::var("GIT_REPOS_V2_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("repos-v2"));
+            .ok()
+            .map(|p| {
+                let p = PathBuf::from(p);
+                if p.is_absolute() { p } else { env::current_dir().unwrap_or_default().join(p) }
+            })
+            .unwrap_or_else(|| repos_dir.clone());
 
-        let repos_v2_dir = if repos_v2_dir.is_absolute() {
-            repos_v2_dir
-        } else {
-            env::current_dir().unwrap_or_default().join(repos_v2_dir)
-        };
+        let index_dir = env::var("GIT_INDEX_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| repos_v2_dir.clone());
 
         let build_version =
             env::var("BUILD_VERSION").unwrap_or_else(|_| "0.0.0-local".to_string());
@@ -50,6 +53,7 @@ impl Config {
             git_backend_port,
             repos_dir,
             repos_v2_dir,
+            index_dir,
             build_version,
         }
     }

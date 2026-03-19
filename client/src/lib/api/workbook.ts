@@ -45,6 +45,24 @@ export interface GitFile {
   type: 'file' | 'directory';
 }
 
+export interface GitIndexFile {
+  folder: string;
+  filename: string;
+  remoteId: string | null;
+}
+
+export interface GitIndexReference {
+  sourceFolder: string;
+  sourceFilename: string;
+  targetTableId: string;
+  targetRemoteId: string;
+}
+
+export interface GitIndexDump {
+  files: GitIndexFile[];
+  references: GitIndexReference[];
+}
+
 export const workbookApi = {
   list: async (
     connectorAccountId?: string,
@@ -287,6 +305,34 @@ export const workbookApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to get object counts');
+      throw error;
+    }
+  },
+
+  buildIndex: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<{ count: number }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ count: number }>(
+        `/scratch-git/${workbookId}/index/build`,
+        {},
+        { params: { connectorAccountId } },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to build index');
+      throw error;
+    }
+  },
+
+  dumpIndex: async (workbookId: WorkbookId, connectorAccountId?: string): Promise<GitIndexDump> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<GitIndexDump>(`/scratch-git/${workbookId}/index/dump`, {
+        params: { connectorAccountId },
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to dump index');
       throw error;
     }
   },

@@ -12,6 +12,7 @@ import { DbService } from 'src/db/db.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { MigrationService, StripPrefixConnectionResult } from './migration.service';
+import { GitIndexDump } from './scratch-git.client';
 import { ScratchGitService } from './scratch-git.service';
 
 @Controller('scratch-git')
@@ -155,6 +156,30 @@ export class ScratchGitController {
     checkWorkspacePermissions(actor, workbookId);
     const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.rebaseDirty(repoId);
+  }
+
+  @Post(':id/index/build')
+  async buildIndex(
+    @Param('id') workbookId: WorkbookId,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<{ count: number }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    return this.scratchGitService.buildIndex(repoId);
+  }
+
+  @Get(':id/index/dump')
+  async dumpIndex(
+    @Param('id') workbookId: WorkbookId,
+    @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<GitIndexDump> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    return this.scratchGitService.dumpIndex(repoId);
   }
 
   @Get(':id/object-counts')

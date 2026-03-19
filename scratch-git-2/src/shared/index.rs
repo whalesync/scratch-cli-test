@@ -31,11 +31,11 @@ pub fn db_path(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
 
 // ── FK schema helpers ─────────────────────────────────────────────────────────
 
-struct FkField {
+pub struct FkField {
     /// Dot-notation path to the field in the record, e.g. "fields.Author".
-    field_path: String,
+    pub field_path: String,
     /// The `linkedTableId` from `x-scratch-foreign-key`.
-    target_table_id: String,
+    pub target_table_id: String,
 }
 
 /// Load FK field definitions from schema.json files stored in master_dir/.scratch/{folder}/schema.json.
@@ -82,7 +82,7 @@ fn collect_fk_fields(
 ///
 /// Schema format: `{ "schema": { "properties": { "fieldName": { "x-scratch-foreign-key": { "linkedTableId": "..." } } } } }`
 /// Falls back to reading `properties` directly if there is no `schema` wrapper.
-fn extract_fk_fields(outer: &Value) -> Vec<FkField> {
+pub fn extract_fk_fields(outer: &Value) -> Vec<FkField> {
     let mut result = Vec::new();
     // Navigate to the JSON Schema object (may be under a "schema" key)
     let json_schema = outer.get("schema").unwrap_or(outer);
@@ -102,7 +102,7 @@ fn extract_fk_fields(outer: &Value) -> Vec<FkField> {
     result
 }
 
-fn get_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+pub fn get_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     let mut current = value;
     for key in path.split('.') {
         current = current.get(key)?;
@@ -144,6 +144,67 @@ pub fn build(master_dir: &Path, db_path: &Path) -> anyhow::Result<usize> {
     let mut count = 0usize;
     index_dir(master_dir, master_dir, &conn, &fk_map, &mut count)?;
     Ok(count)
+}
+
+/// Build (or rebuild) the SQLite index from pre-processed entries.
+///
+/// Used by the git service, which reads file content directly from git objects
+/// rather than the filesystem.
+///
+/// `file_entries` — `(folder, filename, remote_id)` tuples
+/// `ref_entries`  — `(source_folder, source_filename, target_table_id, target_remote_id)` tuples
+/// `db_path`      — where to write `index.db` (parent dir is created if missing)
+pub fn build_from_entries(
+    file_entries: &[(String, String, Option<String>)],
+    ref_entries: &[(String, String, String, String)],
+    db_path: &Path,
+) -> anyhow::Result<()> {
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("failed to create index dir: {e}"))?;
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS file_index (
+            folder    TEXT NOT NULL,
+            filename  TEXT NOT NULL,
+            remote_id TEXT,
+            PRIMARY KEY (folder, filename)
+        );
+        CREATE TABLE IF NOT EXISTS file_references (
+            source_folder    TEXT NOT NULL,
+            source_filename  TEXT NOT NULL,
+            target_table_id  TEXT NOT NULL,
+            target_remote_id TEXT NOT NULL
+        );
+        DELETE FROM file_index;
+        DELETE FROM file_references;",
+    )
+    .map_err(|e| anyhow::anyhow!("failed to initialise tables: {e}"))?;
+
+    for (folder, filename, remote_id) in file_entries {
+        conn.execute(
+            "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
+            params![folder, filename, remote_id],
+        )
+        .map_err(|e| anyhow::anyhow!("failed to upsert {}/{}: {e}", folder, filename))?;
+    }
+
+    for (src_folder, src_filename, target_table_id, target_remote_id) in ref_entries {
+        conn.execute(
+            "INSERT INTO file_references \
+             (source_folder, source_filename, target_table_id, target_remote_id) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![src_folder, src_filename, target_table_id, target_remote_id],
+        )
+        .map_err(|e| {
+            anyhow::anyhow!("failed to insert reference for {}/{}: {e}", src_folder, src_filename)
+        })?;
+    }
+
+    Ok(())
 }
 
 fn index_dir(

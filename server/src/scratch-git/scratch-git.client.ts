@@ -292,6 +292,40 @@ export class ScratchGitClient {
       'POST',
     ) as Promise<StripPrefixResult>;
   }
+
+  async buildIndex(repoId: string): Promise<{ count: number }> {
+    return this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/build`, 'POST') as Promise<{ count: number }>;
+  }
+
+  async dumpIndex(repoId: string): Promise<GitIndexDump> {
+    return this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/dump`, 'GET') as Promise<GitIndexDump>;
+  }
+}
+
+export interface StripPrefixResult {
+  case: 'A' | 'B' | 'C' | 'empty';
+  prefixStripped?: string;
+  newMain?: string;
+  newDirty?: string;
+  newMergeBase?: string;
+}
+
+export interface GitIndexFile {
+  folder: string;
+  filename: string;
+  remoteId: string | null;
+}
+
+export interface GitIndexReference {
+  sourceFolder: string;
+  sourceFilename: string;
+  targetTableId: string;
+  targetRemoteId: string;
+}
+
+export interface GitIndexDump {
+  files: GitIndexFile[];
+  references: GitIndexReference[];
 }
 
 export interface StripPrefixResult {

@@ -13,7 +13,7 @@ import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
-import { workbookApi } from '@/lib/api/workbook';
+import { workbookApi, type GitIndexDump } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -70,6 +70,7 @@ import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
 import { GitGraphModal } from '../modals/GitGraphModal';
+import { GitIndexModal } from '../modals/GitIndexModal';
 import { GitObjectCountsModal } from '../modals/GitObjectCountsModal';
 import { MoveRepoModal } from '../modals/MoveRepoModal';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
@@ -342,6 +343,33 @@ export function ConnectionNode({
   const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
   const [isRebasing, setIsRebasing] = useState(false);
   const [moveRepoOpen, setMoveRepoOpen] = useState(false);
+  const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
+  const [indexModalOpen, setIndexModalOpen] = useState(false);
+  const [isBuildingIndex, setIsBuildingIndex] = useState(false);
+
+  const handleBuildIndex = async () => {
+    if (!connectorAccount) return;
+    setIsBuildingIndex(true);
+    try {
+      const result = await workbookApi.buildIndex(workbookId, connectorAccount.id);
+      notifications.show({ title: 'Success', message: `Index built: ${result.count} files`, color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to build index', color: 'red' });
+    } finally {
+      setIsBuildingIndex(false);
+    }
+  };
+
+  const handleViewIndex = async () => {
+    if (!connectorAccount) return;
+    try {
+      const result = await workbookApi.dumpIndex(workbookId, connectorAccount.id);
+      setIndexData(result);
+      setIndexModalOpen(true);
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to load index (build it first)', color: 'red' });
+    }
+  };
 
   const handleGitGc = async (aggressive: boolean = false) => {
     if (!connectorAccount) return;
@@ -673,6 +701,20 @@ export function ConnectionNode({
                         devtool: true,
                         onClick: () => setMoveRepoOpen(true),
                       },
+                      { type: 'divider' as const },
+                      {
+                        label: 'Build Index',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleBuildIndex(),
+                        disabled: isBuildingIndex,
+                      },
+                      {
+                        label: 'View Index',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleViewIndex(),
+                      },
                     ],
                   },
                 ]
@@ -762,6 +804,7 @@ export function ConnectionNode({
               currentRepoPath={connectorAccount.repoPath}
             />
           )}
+          <GitIndexModal opened={indexModalOpen} onClose={() => setIndexModalOpen(false)} data={indexData} />
         </>
       )}
     </>
@@ -1407,6 +1450,31 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
   const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
   const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
   const [isRebasing, setIsRebasing] = useState(false);
+  const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
+  const [indexModalOpen, setIndexModalOpen] = useState(false);
+  const [isBuildingIndex, setIsBuildingIndex] = useState(false);
+
+  const handleBuildIndex = async () => {
+    setIsBuildingIndex(true);
+    try {
+      const result = await workbookApi.buildIndex(workbookId, connectorAccount.id);
+      notifications.show({ title: 'Success', message: `Index built: ${result.count} files`, color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to build index', color: 'red' });
+    } finally {
+      setIsBuildingIndex(false);
+    }
+  };
+
+  const handleViewIndex = async () => {
+    try {
+      const result = await workbookApi.dumpIndex(workbookId, connectorAccount.id);
+      setIndexData(result);
+      setIndexModalOpen(true);
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to load index (build it first)', color: 'red' });
+    }
+  };
 
   const handleGitGc = async (aggressive: boolean = false) => {
     setIsGcing(true);
@@ -1675,6 +1743,20 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
                         onClick: () => void handleGitGc(true),
                         disabled: isGcing,
                       },
+                      { type: 'divider' as const },
+                      {
+                        label: 'Build Index',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleBuildIndex(),
+                        disabled: isBuildingIndex,
+                      },
+                      {
+                        label: 'View Index',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleViewIndex(),
+                      },
                     ],
                   },
                   {
@@ -1710,6 +1792,7 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
         onClose={() => setObjectCountsModalOpen(false)}
         data={objectCountsData}
       />
+      <GitIndexModal opened={indexModalOpen} onClose={() => setIndexModalOpen(false)} data={indexData} />
       <ConfirmDialog {...resetConnectionDialogProps} />
 
       {/* Choose Tables Modal */}

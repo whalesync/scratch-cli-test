@@ -9,7 +9,7 @@ import {
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
-import { ScratchGitClient } from './scratch-git.client';
+import { GitIndexDump, ScratchGitClient } from './scratch-git.client';
 
 // The object returned by listRepoFiles
 export interface RepoFileRef {
@@ -79,6 +79,14 @@ export class ScratchGitService {
 
   async getObjectCounts(repoId: string): Promise<GitObjectCountsResponse> {
     return this.scratchGitClient.getObjectCounts(repoId);
+  }
+
+  async buildIndex(repoId: string): Promise<{ count: number }> {
+    return this.scratchGitClient.buildIndex(repoId);
+  }
+
+  async dumpIndex(repoId: string): Promise<GitIndexDump> {
+    return this.scratchGitClient.dumpIndex(repoId);
   }
 
   async commitFilesToBranch(
