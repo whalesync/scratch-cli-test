@@ -24,13 +24,6 @@ enum UserRole {
   ADMIN
 }
 
-enum TokenType {
-  AGENT // For AI agents
-  WEBSOCKET // For client web socket connections
-  USER // For user API tokens
-}
-
-
 enum AuthType {
   API_KEY // Deprecated
   OAUTH
@@ -93,13 +86,13 @@ model User {
 }
 
 model ApiToken {
-  id        String    @id // type: APITokenId
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id // type: APITokenId
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
   token     String
-  createdAt DateTime  @default(now())
-  expiresAt DateTime  @updatedAt
-  type      TokenType @default(AGENT)
+  createdAt DateTime @default(now())
+  expiresAt DateTime @updatedAt
+  type      String   @default("USER")
   scopes    String[] // Optional list of scopes for the token like 'read:snapshots', 'write:snapshots', ...
 
   @@unique([token])

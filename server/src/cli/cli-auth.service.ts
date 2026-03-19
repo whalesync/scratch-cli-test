@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { TokenType } from '@prisma/client';
-import { createApiTokenId, createAuthorizationCodeId } from '@spinner/shared-types';
+import { createApiTokenId, createAuthorizationCodeId, TokenType } from '@spinner/shared-types';
 import { customAlphabet } from 'nanoid';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';

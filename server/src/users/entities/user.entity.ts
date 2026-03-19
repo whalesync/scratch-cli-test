@@ -1,5 +1,5 @@
-import { Subscription, TokenType, UserRole } from '@prisma/client';
-import { BillableActions, SubscriptionInfo, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
+import { Subscription, UserRole } from '@prisma/client';
+import { BillableActions, SubscriptionInfo, TokenType, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import { UserFlagValues } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
@@ -78,7 +78,7 @@ export class User {
 }
 
 export function findValidToken(user: UserCluster.User, type: TokenType): string | undefined {
-  return user.apiTokens.find((token) => token.expiresAt > new Date() && token.type === type)?.token;
+  return user.apiTokens.find((token) => token.expiresAt > new Date() && token.type === (type as string))?.token;
 }
 
 function buildFreePlanSubscriptionInfo(userId: string, billableActions: BillableActions): SubscriptionInfo {

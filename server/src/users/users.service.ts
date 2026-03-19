@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { TokenType, UserRole } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 import {
   createApiTokenId,
   createOrganizationId,
   createUserId,
   createWorkspacePermissionId,
+  TokenType,
   UpdateSettingsDto,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -70,7 +71,7 @@ export class UsersService {
       }
 
       // make sure the user has a websocket token
-      const existingWebsocketToken = user.apiTokens.find((token) => token.type === TokenType.WEBSOCKET);
+      const existingWebsocketToken = user.apiTokens.find((token) => token.type === (TokenType.WEBSOCKET as string));
       if (existingWebsocketToken) {
         // check expiry and if expired, update it
         if (existingWebsocketToken.expiresAt < new Date()) {
