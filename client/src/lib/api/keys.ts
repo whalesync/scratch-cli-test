@@ -60,6 +60,9 @@ export const SWR_KEYS = {
     hasDirty: (workbookId: WorkbookId) => ['dirty-files', 'has-dirty', workbookId] as const,
     count: (workbookId: WorkbookId) => ['dirty-files', 'count', workbookId] as const,
   },
+  schedules: {
+    list: (workbookId: WorkbookId) => ['schedules', 'list', workbookId] as const,
+  },
   dataFolders: {
     list: (workbookId: WorkbookId) => ['data-folders', 'list', workbookId] as const,
     detail: (dataFolderId: DataFolderId) => ['data-folders', 'detail', dataFolderId] as const,

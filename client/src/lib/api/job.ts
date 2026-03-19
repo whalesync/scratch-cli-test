@@ -7,12 +7,19 @@ export const jobApi = {
     limit?: number,
     offset?: number,
     workbookId?: string,
-    filter?: { type?: string; syncId?: string },
+    filter?: { type?: string; syncId?: string; dataFolderId?: string },
   ): Promise<JobEntity[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<JobEntity[]>('/jobs', {
-        params: { limit, offset, workbookId, type: filter?.type, syncId: filter?.syncId },
+        params: {
+          limit,
+          offset,
+          workbookId,
+          type: filter?.type,
+          syncId: filter?.syncId,
+          dataFolderId: filter?.dataFolderId,
+        },
       });
       return res.data;
     } catch (error) {

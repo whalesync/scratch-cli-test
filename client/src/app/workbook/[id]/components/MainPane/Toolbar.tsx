@@ -17,7 +17,8 @@ import { ConnectToCLIModal } from '../shared/ConnectToCLIModal';
 function getPageName(pathname: string): { label: string; id: string } {
   if (pathname.includes('/review')) return { label: 'Review & Publish', id: 'review' };
   if (pathname.includes('/syncs')) return { label: 'Syncs', id: 'syncs' };
-  if (pathname.includes('/runs')) return { label: 'Runs', id: 'runs' };
+  if (pathname.includes('/runs/scheduled')) return { label: 'Scheduled runs', id: 'runs/scheduled' };
+  if (pathname.includes('/runs')) return { label: 'Recent runs', id: 'runs' };
   return { label: 'Files', id: 'files' };
 }
 
@@ -46,6 +47,14 @@ export function Toolbar({ workbookId }: ToolbarProps) {
 
   const breadcrumbs = useMemo(() => {
     const items: { label: string; href: string }[] = [];
+
+    // Runs sub-pages get a "Runs" parent breadcrumb
+    if (page.id === 'runs' || page.id === 'runs/scheduled') {
+      items.push({
+        label: 'Runs',
+        href: `/workbook/${params.id}/runs`,
+      });
+    }
 
     const basePath = page.id === 'review' ? 'review' : page.id;
     items.push({

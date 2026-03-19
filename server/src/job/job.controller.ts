@@ -32,6 +32,7 @@ export class JobController {
     @Query('workbookId') workbookId?: string,
     @Query('type') type?: string,
     @Query('syncId') syncId?: string,
+    @Query('dataFolderId') dataFolderId?: string,
   ): Promise<JobEntity[]> {
     const actor = userToActor(req.user);
     if (workbookId) {
@@ -40,7 +41,7 @@ export class JobController {
     const userId = req.user.id;
     const limitNum = limit ? parseInt(limit, 10) : 50;
     const offsetNum = offset ? parseInt(offset, 10) : 0;
-    const filter = type || syncId ? { type, syncId } : undefined;
+    const filter = type || syncId || dataFolderId ? { type, syncId, dataFolderId } : undefined;
 
     const dbJobs = await this.jobService.getJobsByUserId(userId, limitNum, offsetNum, workbookId, filter);
     return dbJobs.map(dbJobToJobEntity);

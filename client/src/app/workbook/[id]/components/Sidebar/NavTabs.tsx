@@ -1,13 +1,13 @@
 'use client';
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { Text13Regular } from '@/app/components/base/text';
+import { Text12Regular, Text13Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import { Badge, Box, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
-import { FolderIcon, RefreshCwIcon, RocketIcon, SquareIcon } from 'lucide-react';
+import { CalendarIcon, FolderIcon, HistoryIcon, RefreshCwIcon, RocketIcon, SquareIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import useSWR from 'swr';
@@ -68,9 +68,32 @@ export function NavTabs() {
     },
   ];
 
+  const isOnRunsPage = pathname.includes('/runs');
+
+  const runsSubTabs: NavTab[] = [
+    {
+      id: 'runs-recent',
+      label: 'Recent runs',
+      icon: HistoryIcon,
+      href: `/workbook/${params.id}/runs`,
+    },
+    {
+      id: 'runs-scheduled',
+      label: 'Scheduled runs',
+      icon: CalendarIcon,
+      href: `/workbook/${params.id}/runs/scheduled`,
+    },
+  ];
+
   const isActive = (tab: NavTab) => {
     if (tab.id === 'files') {
       return pathname.includes('/files');
+    }
+    if (tab.id === 'runs-recent') {
+      return pathname.includes('/runs') && !pathname.includes('/runs/scheduled');
+    }
+    if (tab.id === 'runs-scheduled') {
+      return pathname.includes('/runs/scheduled');
     }
     return pathname.includes(`/${tab.id}`);
   };
@@ -168,9 +191,41 @@ export function NavTabs() {
           }
 
           return (
-            <Link key={tab.id} href={tab.href} style={{ textDecoration: 'none' }}>
-              {button}
-            </Link>
+            <Box key={tab.id}>
+              <Link href={tab.href} style={{ textDecoration: 'none' }}>
+                {button}
+              </Link>
+              {tab.id === 'runs' &&
+                isOnRunsPage &&
+                runsSubTabs.map((subTab) => {
+                  const subActive = isActive(subTab);
+                  return (
+                    <Link key={subTab.id} href={subTab.href} style={{ textDecoration: 'none' }}>
+                      <UnstyledButton
+                        px="sm"
+                        py={6}
+                        pl={36}
+                        style={{
+                          width: '100%',
+                          backgroundColor: subActive ? 'var(--bg-selected)' : 'transparent',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                        }}
+                      >
+                        <StyledLucideIcon
+                          Icon={subTab.icon}
+                          size="xs"
+                          c={subActive ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
+                        />
+                        <Text12Regular c={subActive ? 'var(--fg-primary)' : 'var(--fg-secondary)'}>
+                          {subTab.label}
+                        </Text12Regular>
+                      </UnstyledButton>
+                    </Link>
+                  );
+                })}
+            </Box>
           );
         })}
       </Stack>

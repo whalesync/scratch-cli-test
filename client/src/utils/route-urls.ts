@@ -33,6 +33,7 @@ export class RouteUrls {
     return `/workbook/${id}/review/${encoded}`;
   };
   static workbookSyncsPageUrl = (id: string) => `/workbook/${id}/syncs`;
+  static workbookScheduledRunsPageUrl = (id: string) => `/workbook/${id}/runs/scheduled`;
   static workbookRunsPageUrl = (id: string, params?: Record<string, string>) => {
     const base = `/workbook/${id}/runs`;
     if (!params) return base;

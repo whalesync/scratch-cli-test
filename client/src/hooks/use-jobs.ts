@@ -8,10 +8,10 @@ export const useJobs = (
   limit?: number,
   offset?: number,
   workbookId?: string,
-  filter?: { type?: string; syncId?: string },
+  filter?: { type?: string; syncId?: string; dataFolderId?: string },
 ) => {
   const { data, error, isLoading, mutate } = useSWR<JobEntity[]>(
-    `jobs-${limit}-${offset}-${workbookId || 'all'}-${filter?.type || 'all'}-${filter?.syncId || 'all'}`,
+    `jobs-${limit}-${offset}-${workbookId || 'all'}-${filter?.type || 'all'}-${filter?.syncId || 'all'}-${filter?.dataFolderId || 'all'}`,
     () => jobApi.getJobs(limit, offset, workbookId, filter),
     {
       refreshInterval: 5000, // Poll every 5 seconds

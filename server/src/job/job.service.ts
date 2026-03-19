@@ -114,7 +114,7 @@ export class JobService {
     limit = 50,
     offset = 0,
     workbookId?: string,
-    filter?: { type?: string; syncId?: string },
+    filter?: { type?: string; syncId?: string; dataFolderId?: string },
   ): Promise<DbJob[]> {
     const typeFilter = filter?.type ? JobService.JOB_TYPE_MAP[filter.type] : undefined;
 
@@ -124,6 +124,7 @@ export class JobService {
         ...(workbookId && { workbookId }),
         ...(typeFilter && { type: typeFilter }),
         ...(filter?.syncId && { syncId: filter.syncId }),
+        ...(filter?.dataFolderId && { dataFolderId: filter.dataFolderId }),
       },
       orderBy: { createdAt: 'desc' },
       take: limit,

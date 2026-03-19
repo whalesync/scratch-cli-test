@@ -1,15 +1,9 @@
 'use client';
 
 import { IconButtonToolbar } from '@/app/components/base/buttons';
-import {
-  Text12Medium,
-  Text12Regular,
-  Text13Medium,
-  Text13Regular,
-  TextMono12Regular,
-  TextTitle3,
-} from '@/app/components/base/text';
+import { Text12Medium, Text12Regular, Text13Regular, TextMono12Regular, TextTitle3 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useJobs } from '@/hooks/use-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
@@ -168,6 +162,7 @@ type RunsViewParams = {
   limit: number;
   type?: string;
   syncId?: string;
+  dataFolderId?: string;
 };
 
 function parseRunsViewParams(searchParams: URLSearchParams): RunsViewParams {
@@ -176,6 +171,7 @@ function parseRunsViewParams(searchParams: URLSearchParams): RunsViewParams {
     limit: rawLimit >= INITIAL_PAGE_SIZE ? rawLimit : INITIAL_PAGE_SIZE,
     type: searchParams.get('type') || undefined,
     syncId: searchParams.get('syncId') || undefined,
+    dataFolderId: searchParams.get('dataFolderId') || undefined,
   };
 }
 
@@ -186,12 +182,15 @@ export function RunsView() {
   const router = useRouter();
   const runsParams = parseRunsViewParams(searchParams);
   const filter =
-    runsParams.type || runsParams.syncId ? { type: runsParams.type, syncId: runsParams.syncId } : undefined;
+    runsParams.type || runsParams.syncId || runsParams.dataFolderId
+      ? { type: runsParams.type, syncId: runsParams.syncId, dataFolderId: runsParams.dataFolderId }
+      : undefined;
 
   const { jobs, error, isLoading, mutate, cancelJob } = useJobs(runsParams.limit, 0, workbookId, filter);
   const hasMore = useMemo(() => jobs.length >= runsParams.limit, [jobs.length, runsParams.limit]);
   const syncs = useSyncStore((state) => state.syncs);
-  const hasFilters = !!(runsParams.type || runsParams.syncId);
+  const { folders } = useDataFolders();
+  const hasFilters = !!(runsParams.type || runsParams.syncId || runsParams.dataFolderId);
 
   const removeFilter = useCallback(
     (key: string) => {
@@ -290,13 +289,12 @@ export function RunsView() {
       <Group
         h={48}
         px="md"
-        justify="space-between"
+        justify="flex-end"
         style={{
           borderBottom: '1px solid var(--fg-divider)',
           flexShrink: 0,
         }}
       >
-        <Text13Medium>Recent Runs</Text13Medium>
         <Group gap="xs">
           <Text12Regular c="dimmed">{jobs.length} jobs</Text12Regular>
           <IconButtonToolbar onClick={() => mutate()} title="Refresh">
@@ -332,6 +330,20 @@ export function RunsView() {
               }
             >
               Sync: {syncs.find((s) => s.id === runsParams.syncId)?.displayName || runsParams.syncId.slice(0, 8)}
+            </Badge>
+          )}
+          {runsParams.dataFolderId && (
+            <Badge
+              variant="light"
+              size="sm"
+              rightSection={
+                <ActionIcon variant="transparent" size={14} onClick={() => removeFilter('dataFolderId')}>
+                  <XIcon size={10} />
+                </ActionIcon>
+              }
+            >
+              Folder:{' '}
+              {folders.find((f) => f.id === runsParams.dataFolderId)?.name || runsParams.dataFolderId.slice(0, 8)}
             </Badge>
           )}
         </Group>
