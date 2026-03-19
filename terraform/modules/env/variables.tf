@@ -304,6 +304,30 @@ variable "langsmith_project" {
   description = "LangSmith project name for tracing (e.g., 'scratchmd', 'scratchmd-test')."
 }
 
+variable "use_opentelemetry_metrics" {
+  type        = bool
+  default     = false
+  description = "Whether to enable OpenTelemetry metrics collection with the otel-collector sidecar."
+}
+
+variable "otel_collector_image" {
+  type        = string
+  default     = "us-docker.pkg.dev/cloud-ops-agents-artifacts/google-cloud-opentelemetry-collector/otelcol-google:0.138.0"
+  description = "Docker image for the OpenTelemetry Collector sidecar container."
+}
+
+variable "opentelemetry_collector_cpu_limit" {
+  type        = string
+  default     = "0.08"
+  description = "CPU limit for the OpenTelemetry Collector sidecar container."
+}
+
+variable "opentelemetry_collector_memory_limit" {
+  type        = string
+  default     = "128Mi"
+  description = "Memory limit for the OpenTelemetry Collector sidecar container."
+}
+
 variable "vanta_contains_user_data" {
   type        = bool
   default     = false

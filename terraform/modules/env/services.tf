@@ -164,7 +164,9 @@ resource "google_cloud_run_v2_service" "api_service" {
     }
 
     containers {
-      image = "${local.artifact_registry_url}/spinner-server:latest"
+      name       = "app"
+      image      = "${local.artifact_registry_url}/spinner-server:latest"
+      depends_on = var.use_opentelemetry_metrics ? ["otel-collector"] : []
 
       resources {
         limits = {
@@ -261,6 +263,20 @@ resource "google_cloud_run_v2_service" "api_service" {
           value = local.force_reload_uuid
         }
       }
+      dynamic "env" {
+        for_each = var.use_opentelemetry_metrics ? [1] : []
+        content {
+          name  = "OTEL_EXPORTER_OTLP_ENDPOINT"
+          value = "http://localhost:4318"
+        }
+      }
+      dynamic "env" {
+        for_each = var.use_opentelemetry_metrics ? [1] : []
+        content {
+          name  = "USE_OPENTELEMETRY_METRICS"
+          value = "true"
+        }
+      }
 
       startup_probe {
         http_get {
@@ -278,6 +294,62 @@ resource "google_cloud_run_v2_service" "api_service" {
         }
         initial_delay_seconds = 3
         timeout_seconds       = 3
+      }
+    }
+
+    # OpenTelemetry Collector sidecar
+    dynamic "containers" {
+      for_each = var.use_opentelemetry_metrics ? [1] : []
+      content {
+        name  = "otel-collector"
+        image = var.otel_collector_image
+        args  = ["--config=/etc/otelcol-google/config.yaml"]
+
+        resources {
+          limits = {
+            cpu    = var.opentelemetry_collector_cpu_limit
+            memory = var.opentelemetry_collector_memory_limit
+          }
+          cpu_idle          = false
+          startup_cpu_boost = true
+        }
+
+        startup_probe {
+          http_get {
+            path = "/"
+            port = 13133
+          }
+          timeout_seconds = 30
+          period_seconds  = 30
+        }
+
+        liveness_probe {
+          http_get {
+            path = "/"
+            port = 13133
+          }
+          timeout_seconds = 30
+          period_seconds  = 30
+        }
+
+        volume_mounts {
+          name       = "config"
+          mount_path = "/etc/otelcol-google/"
+        }
+      }
+    }
+
+    dynamic "volumes" {
+      for_each = var.use_opentelemetry_metrics ? [1] : []
+      content {
+        name = "config"
+        secret {
+          secret = google_secret_manager_secret.OTEL_COLLECTOR_CONFIG[0].secret_id
+          items {
+            version = google_secret_manager_secret_version.OTEL_COLLECTOR_CONFIG[0].version
+            path    = "config.yaml"
+          }
+        }
       }
     }
   }
@@ -338,7 +410,9 @@ resource "google_cloud_run_v2_service" "cron_service" {
     }
 
     containers {
-      image = "${local.artifact_registry_url}/spinner-server:latest"
+      name       = "app"
+      image      = "${local.artifact_registry_url}/spinner-server:latest"
+      depends_on = var.use_opentelemetry_metrics ? ["otel-collector"] : []
 
       resources {
         limits = {
@@ -433,6 +507,20 @@ resource "google_cloud_run_v2_service" "cron_service" {
           value = local.force_reload_uuid
         }
       }
+      dynamic "env" {
+        for_each = var.use_opentelemetry_metrics ? [1] : []
+        content {
+          name  = "OTEL_EXPORTER_OTLP_ENDPOINT"
+          value = "http://localhost:4318"
+        }
+      }
+      dynamic "env" {
+        for_each = var.use_opentelemetry_metrics ? [1] : []
+        content {
+          name  = "USE_OPENTELEMETRY_METRICS"
+          value = "true"
+        }
+      }
 
       startup_probe {
         http_get {
@@ -450,6 +538,62 @@ resource "google_cloud_run_v2_service" "cron_service" {
         }
         initial_delay_seconds = 3
         timeout_seconds       = 3
+      }
+    }
+
+    # OpenTelemetry Collector sidecar
+    dynamic "containers" {
+      for_each = var.use_opentelemetry_metrics ? [1] : []
+      content {
+        name  = "otel-collector"
+        image = var.otel_collector_image
+        args  = ["--config=/etc/otelcol-google/config.yaml"]
+
+        resources {
+          limits = {
+            cpu    = var.opentelemetry_collector_cpu_limit
+            memory = var.opentelemetry_collector_memory_limit
+          }
+          cpu_idle          = false
+          startup_cpu_boost = true
+        }
+
+        startup_probe {
+          http_get {
+            path = "/"
+            port = 13133
+          }
+          timeout_seconds = 30
+          period_seconds  = 30
+        }
+
+        liveness_probe {
+          http_get {
+            path = "/"
+            port = 13133
+          }
+          timeout_seconds = 30
+          period_seconds  = 30
+        }
+
+        volume_mounts {
+          name       = "config"
+          mount_path = "/etc/otelcol-google/"
+        }
+      }
+    }
+
+    dynamic "volumes" {
+      for_each = var.use_opentelemetry_metrics ? [1] : []
+      content {
+        name = "config"
+        secret {
+          secret = google_secret_manager_secret.OTEL_COLLECTOR_CONFIG[0].secret_id
+          items {
+            version = google_secret_manager_secret_version.OTEL_COLLECTOR_CONFIG[0].version
+            path    = "config.yaml"
+          }
+        }
       }
     }
   }

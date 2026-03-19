@@ -39,13 +39,16 @@ module "eu_test" {
   api_service_min_instance_count = 2
   api_service_max_instance_count = 2
   worker_concurrency             = 10
-
+  
   # Static Assets
   enable_static_assets_lb = true
   static_assets_domain    = "test-static.scratch.md"
 
   # LangSmith
   langsmith_project = "scratchmd-test"
+
+  # Metrics
+  use_opentelemetry_metrics = true
 }
 
 variable "as_gitlab" {

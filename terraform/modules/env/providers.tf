@@ -3,7 +3,7 @@ provider "google" {
 
   add_terraform_attribution_label               = true
   terraform_attribution_label_addition_strategy = "PROACTIVE"
-  default_labels = local.default_labels
+  default_labels                                = local.default_labels
 
   impersonate_service_account = var.as_gitlab ? "${local.gitlab_service_account_name}@${var.gcp_project_id}.iam.gserviceaccount.com" : null
 }

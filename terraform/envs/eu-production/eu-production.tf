@@ -49,6 +49,9 @@ module "eu_production" {
 
   # LangSmith
   langsmith_project = "scratchmd"
+
+  # Metrics
+  use_opentelemetry_metrics = true
 }
 
 variable "as_gitlab" {

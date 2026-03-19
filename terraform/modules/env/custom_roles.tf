@@ -37,6 +37,9 @@ resource "google_project_iam_custom_role" "cloud_run_service_account_role" {
   description = "Custom Role for the Cloud Run default service account"
   permissions = [
     "aiplatform.endpoints.predict",
+    "monitoring.metricDescriptors.create",
+    "monitoring.metricDescriptors.list",
+    "monitoring.timeSeries.create",
     "artifactregistry.dockerimages.get",
     "artifactregistry.dockerimages.list",
     "artifactregistry.files.download",
