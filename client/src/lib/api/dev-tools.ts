@@ -87,6 +87,25 @@ export const devToolsApi = {
       handleAxiosError(error, 'Failed to get credentials for connection: ' + connectionId);
     }
   },
+  getWaitlistPending: async (): Promise<User[]> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<User[]>('/dev-tools/users/waitlist-pending');
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch waitlist pending users');
+    }
+  },
+
+  approveWaitlistUser: async (userId: string): Promise<void> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.patch(`/dev-tools/users/${userId}/waitlist-approved`);
+    } catch (error) {
+      handleAxiosError(error, 'Failed to approve waitlist user');
+    }
+  },
+
   getAllJobs: async (params?: {
     limit?: number;
     offset?: number;

@@ -4,43 +4,27 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { Text13Medium, Text13Regular, TextTitle2 } from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { useWorkbooks } from '@/hooks/use-workbooks';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
 import { Box, Center, Divider, Group, Stack, TextInput, UnstyledButton } from '@mantine/core';
 import type { Workbook } from '@spinner/shared-types';
 import { ChevronRightIcon, PlusIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 /**
- * Home page - redirects to a workbook or shows welcome/picker screen
+ * Home page - shows welcome/picker screen.
+ * Auto-redirect to lastWorkbookId is handled by ScratchPadUserProvider,
+ * so this page only renders when the user has no lastWorkbookId.
  */
 export default function HomePage() {
   const router = useRouter();
-  const { user, isLoading: isUserLoading } = useScratchPadUser();
   const { workbooks, isLoading: isWorkbooksLoading } = useWorkbooks();
   const [projectName, setProjectName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
-  const isLoading = isUserLoading || isWorkbooksLoading;
   const hasWorkbooks = workbooks && workbooks.length > 0;
-
-  // Redirect if user has a last workbook that they still have access to
-  const lastWorkbookIsAccessible =
-    !isWorkbooksLoading && !!user?.lastWorkbookId && workbooks?.some((wb) => wb.id === user.lastWorkbookId);
-  const shouldRedirect = !isUserLoading && !isWorkbooksLoading && lastWorkbookIsAccessible;
-  useEffect(() => {
-    if (shouldRedirect && user?.lastWorkbookId) {
-      router.replace(`/workbook/${user.lastWorkbookId}/files`);
-    }
-  }, [shouldRedirect, user?.lastWorkbookId, router]);
-
-  // Show loader while redirecting
-  if (shouldRedirect) {
-    return <FullPageLoader message="Loading your workspace..." />;
-  }
 
   const handleSelectWorkbook = async (workbook: Workbook) => {
     // Update last workbook and navigate
@@ -67,9 +51,8 @@ export default function HomePage() {
     }
   };
 
-  // Show loading only on initial fetch
-  if (isLoading && user === null) {
-    return <FullPageLoader message="Loading..." />;
+  if (isWorkbooksLoading) {
+    return <FullPageLoader />;
   }
 
   return (

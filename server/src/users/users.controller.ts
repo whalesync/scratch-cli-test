@@ -15,7 +15,10 @@ import {
 import { BillableActions, UpdateSettingsDto, ValidatedUpdateSettingsDto } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
+import { SlackFormatters } from 'src/slack/slack-formatters';
+import { SlackNotificationService } from 'src/slack/slack-notification.service';
 import { User } from './entities/user.entity';
 import { SubscriptionService } from './subscription.service';
 import { UsersService } from './users.service';
@@ -28,6 +31,7 @@ export class UsersController {
     private readonly usersService: UsersService,
     private readonly experimentsService: ExperimentsService,
     private readonly subscriptionService: SubscriptionService,
+    private readonly slackNotificationService: SlackNotificationService,
   ) {}
 
   @Get('current')
@@ -79,5 +83,16 @@ export class UsersController {
     }
 
     await this.usersService.updateLastWorkbook(req.user.id, body.workbookId);
+  }
+
+  @Post('current/request-access')
+  @HttpCode(204)
+  async requestAccess(@Req() req: RequestWithUser): Promise<void> {
+    if (!req.user) {
+      throw new UnauthorizedException();
+    }
+
+    const approveUrl = `${ScratchConfigService.getClientBaseUrl()}/settings/dev/waitlist`;
+    await this.slackNotificationService.sendMessage(SlackFormatters.waitlistAccessRequest(req.user, approveUrl));
   }
 }

@@ -12,6 +12,7 @@ import {
   DatabaseIcon,
   FolderSyncIcon,
   LayoutGridIcon,
+  ListChecksIcon,
   UserIcon,
   UsersIcon,
   WrenchIcon,
@@ -89,6 +90,12 @@ const devNavItems: NavItem[] = [
     label: 'Workbooks Admin',
     icon: BookOpenIcon,
     href: '/settings/dev/workbooks',
+  },
+  {
+    id: 'waitlist',
+    label: 'Waitlist',
+    icon: ListChecksIcon,
+    href: '/settings/dev/waitlist',
   },
 ];
 

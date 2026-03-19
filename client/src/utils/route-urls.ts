@@ -49,8 +49,12 @@ export class RouteUrls {
   static productCheckoutPage = (planType: string, returnPath?: string) =>
     `/subscription/checkout/${planType}${returnPath ? `?returnPath=${returnPath}` : ''}`;
 
+  // Waitlist
+  static waitlistPageUrl = '/waitlist';
+
   // Dev Tools routes (under settings)
   static devToolsPageUrl = '/settings/dev/user-info';
+  static devToolsWaitlistPageUrl = '/settings/dev/waitlist';
   static devToolsUserInfoPageUrl = '/settings/dev/user-info';
   static devToolsUsersPageUrl = '/settings/dev/users';
   static devToolsGalleryPageUrl = '/settings/dev/gallery';

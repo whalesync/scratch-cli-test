@@ -7,6 +7,7 @@ import { JobModule } from 'src/job/job.module';
 import { PaymentModule } from 'src/payment/payment.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
+import { SlackNotificationModule } from 'src/slack/slack-notification.module';
 import { UserModule } from 'src/users/users.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
@@ -27,6 +28,7 @@ import { DevToolsService } from './dev-tools.service';
     ConnectorAccountModule,
     AuditLogModule,
     ScratchGitModule,
+    SlackNotificationModule,
   ],
   exports: [], //export this service to use in other modules
   controllers: [DevToolsController],

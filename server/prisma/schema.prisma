@@ -73,6 +73,7 @@ model User {
   settings             Json?                 @default("{}") // UserSettings object
   lastWorkbookId       String?
   lastWorkbook         Workbook?             @relation("UserLastWorkbook", fields: [lastWorkbookId], references: [id], onDelete: SetNull)
+  waitlistApproved     Boolean               @default(false)
   apiTokens            ApiToken[]
   connectorAccounts    ConnectorAccount[]
   subscriptions        Subscription[]

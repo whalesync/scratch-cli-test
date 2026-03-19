@@ -32,6 +32,9 @@ export const SWR_KEYS = {
   users: {
     activeUser: () => ['users', 'activeUser'],
   },
+  devTools: {
+    waitlistPending: () => ['dev-tools', 'waitlist-pending'] as const,
+  },
   billing: {
     plans: () => ['billing', 'plans'],
   },

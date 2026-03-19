@@ -12,10 +12,13 @@ import { JSX, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 const JWT_TOKEN_REFRESH_MS = 10000; // 10 seconds
 
 /**
- * This component just makes sure the Scratch user is loaded from the server and that authentication is fully complete before loading protected pages
+ * Single gate for auth + routing. Shows one spinner while user data loads,
+ * then decides destination (waitlist / last workbook / render children).
  */
 export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): JSX.Element => {
   const scratchPadUser = useScratchPadUser();
+  const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
     if (scratchPadUser) {
@@ -23,8 +26,29 @@ export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): J
     }
   }, [scratchPadUser]);
 
-  if (scratchPadUser.isLoading) {
-    return <FullPageLoader message="Loading user data..." />;
+  const isReady = !scratchPadUser.isLoading && !!scratchPadUser.user;
+  const user = scratchPadUser.user;
+
+  const needsRedirect =
+    isReady &&
+    ((!user!.waitlistApproved && pathname !== RouteUrls.waitlistPageUrl) ||
+      (pathname === RouteUrls.homePageUrl && !!user!.lastWorkbookId));
+
+  useEffect(() => {
+    if (!isReady || !user) return;
+
+    if (!user.waitlistApproved && pathname !== RouteUrls.waitlistPageUrl) {
+      router.replace(RouteUrls.waitlistPageUrl);
+      return;
+    }
+
+    if (pathname === RouteUrls.homePageUrl && user.lastWorkbookId) {
+      router.replace(RouteUrls.workbookFilesPageUrl(user.lastWorkbookId));
+    }
+  }, [isReady, user, pathname, router]);
+
+  if (!isReady || needsRedirect) {
+    return <FullPageLoader />;
   }
 
   return <>{children}</>;
@@ -118,7 +142,7 @@ export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.El
      * Session not authorized and/or user is not yet identified, show a loading screen while we wait for that workflow
      *  to complete
      */
-    return <FullPageLoader message="Authenticating..." />;
+    return <FullPageLoader />;
   }
 
   /*

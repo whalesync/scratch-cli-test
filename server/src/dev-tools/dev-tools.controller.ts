@@ -37,11 +37,14 @@ import { hasAdminToolsPermission } from 'src/auth/permissions';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { getPlanTypeFromString } from 'src/payment/plans';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
+import { SlackFormatters } from 'src/slack/slack-formatters';
+import { SlackNotificationService } from 'src/slack/slack-notification.service';
 import { User } from 'src/users/entities/user.entity';
 import { userToActor } from 'src/users/types';
 import { UsersService } from 'src/users/users.service';
@@ -76,6 +79,7 @@ export class DevToolsController {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly jobService: JobService,
     private readonly scratchGitClient: ScratchGitClient,
+    private readonly slackNotificationService: SlackNotificationService,
   ) {}
 
   @Post('users/change-organization')
@@ -525,5 +529,44 @@ export class DevToolsController {
       oldRepoPath: account.repoPath,
       newRepoPath: body.newRepoPath,
     };
+  }
+
+  /* Waitlist management */
+  @Get('users/waitlist-pending')
+  async getWaitlistPending(@Req() req: RequestWithUser): Promise<User[]> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can view the waitlist');
+    }
+
+    const users = await this.dbService.client.user.findMany({
+      where: { waitlistApproved: false },
+      orderBy: { createdAt: 'desc' },
+      include: UserCluster._validator.include,
+    });
+
+    return users.map((user) => new User(user));
+  }
+
+  @Patch('users/:id/waitlist-approved')
+  @HttpCode(204)
+  async approveWaitlistUser(@Param('id') id: string, @Req() req: RequestWithUser): Promise<void> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can approve waitlist users');
+    }
+
+    const targetUser = await this.usersService.findOne(id);
+    if (!targetUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.dbService.client.user.update({
+      where: { id },
+      data: { waitlistApproved: true },
+    });
+
+    const adminUser = await this.usersService.findOne(req.user.id);
+    if (adminUser) {
+      await this.slackNotificationService.sendMessage(SlackFormatters.waitlistUserApproved(targetUser, adminUser));
+    }
   }
 }

@@ -39,6 +39,8 @@ export class User {
   // The ID of the last workbook the user was viewing (for quick redirect on home page)
   lastWorkbookId?: string;
 
+  waitlistApproved: boolean;
+
   serverBuildVersion: string;
 
   workspacePermissions?: WorkspacePermission[];
@@ -53,6 +55,7 @@ export class User {
     this.email = user.email || undefined;
     this.stripeCustomerId = user.stripeCustomerId || null;
     this.lastWorkbookId = user.lastWorkbookId || undefined;
+    this.waitlistApproved = user.waitlistApproved;
 
     if (user.apiTokens) {
       this.websocketToken = findValidToken(user, TokenType.WEBSOCKET);

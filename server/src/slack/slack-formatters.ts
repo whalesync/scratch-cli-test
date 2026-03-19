@@ -20,4 +20,16 @@ export class SlackFormatters {
   static userIdentifier(user: UserCluster.User, emoji: string = '👤', includeId: boolean = false): string {
     return `${emoji} ${user.email ?? user.name ?? user.id} ${includeId ? `(${user.id})` : ''}`;
   }
+
+  static waitlistAccessRequest(user: UserCluster.User, approveUrl: string): string {
+    const userInfo = user.email || user.name || user.id;
+    const link = SlackFormatters.formatLink('Approve in Dev Tools', approveUrl);
+    return `🙋 *Waitlist Access Request*\n👤 ${userInfo} (${user.id})\n🔗 ${link}`;
+  }
+
+  static waitlistUserApproved(user: UserCluster.User, approvedBy: UserCluster.User): string {
+    const userInfo = user.email || user.name || user.id;
+    const adminInfo = approvedBy.email || approvedBy.name || approvedBy.id;
+    return `✅ *Waitlist Approved*\n👤 ${userInfo} was approved by ${adminInfo}`;
+  }
 }
