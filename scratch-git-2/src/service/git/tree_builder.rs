@@ -168,7 +168,7 @@ impl GitRepo {
     }
 }
 
-fn entry_kind_from_mode(mode: gix::object::tree::EntryMode) -> gix::objs::tree::EntryKind {
+pub fn entry_kind_from_mode(mode: gix::object::tree::EntryMode) -> gix::objs::tree::EntryKind {
     if mode.is_tree() {
         gix::objs::tree::EntryKind::Tree
     } else if mode.is_link() {
@@ -177,5 +177,211 @@ fn entry_kind_from_mode(mode: gix::object::tree::EntryMode) -> gix::objs::tree::
         gix::objs::tree::EntryKind::BlobExecutable
     } else {
         gix::objs::tree::EntryKind::Blob
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::service::git::repo::GitRepo;
+    use crate::service::types::*;
+    use tempfile::TempDir;
+
+    fn setup_repo() -> (TempDir, GitRepo) {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+        (tmp, repo)
+    }
+
+    #[test]
+    fn add_single_file_to_empty_tree() {
+        let (_tmp, repo) = setup_repo();
+        let empty_tree = repo.write_empty_tree().unwrap();
+
+        let changes = vec![FileChange {
+            path: "hello.txt".to_string(),
+            content: Some("hello world".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }];
+
+        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        assert_ne!(new_tree, empty_tree);
+        assert_eq!(stats.created, vec!["hello.txt"]);
+        assert!(stats.updated.is_empty());
+        assert!(stats.unchanged.is_empty());
+    }
+
+    #[test]
+    fn add_nested_file_creates_subtree() {
+        let (_tmp, repo) = setup_repo();
+        let empty_tree = repo.write_empty_tree().unwrap();
+
+        let changes = vec![FileChange {
+            path: "folder/sub/file.txt".to_string(),
+            content: Some("nested content".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }];
+
+        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        assert_ne!(new_tree, empty_tree);
+        assert_eq!(stats.created, vec!["folder/sub/file.txt"]);
+
+        // Verify the file is actually readable via the tree
+        let commit_oid = repo.write_commit(new_tree, &[], "test").unwrap();
+        let content = repo.get_file_content_by_commit(commit_oid, "folder/sub/file.txt").unwrap();
+        assert_eq!(content.as_deref(), Some("nested content"));
+    }
+
+    #[test]
+    fn modify_existing_file() {
+        let (_tmp, repo) = setup_repo();
+
+        // Create initial tree with a file
+        let empty_tree = repo.write_empty_tree().unwrap();
+        let add_changes = vec![FileChange {
+            path: "file.txt".to_string(),
+            content: Some("original".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }];
+        let (tree_v1, _) = repo.apply_changes_to_tree(empty_tree, &add_changes, "").unwrap();
+
+        // Modify the file
+        let mod_changes = vec![FileChange {
+            path: "file.txt".to_string(),
+            content: Some("modified".to_string()),
+            oid: None,
+            change_type: ChangeType::Modify,
+        }];
+        let (tree_v2, stats) = repo.apply_changes_to_tree(tree_v1, &mod_changes, "").unwrap();
+
+        assert_ne!(tree_v1, tree_v2);
+        assert_eq!(stats.updated, vec!["file.txt"]);
+        assert!(stats.created.is_empty());
+    }
+
+    #[test]
+    fn modify_with_same_content_is_unchanged() {
+        let (_tmp, repo) = setup_repo();
+
+        let empty_tree = repo.write_empty_tree().unwrap();
+        let changes = vec![FileChange {
+            path: "file.txt".to_string(),
+            content: Some("same".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }];
+        let (tree_v1, _) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+
+        // "Modify" with identical content
+        let mod_changes = vec![FileChange {
+            path: "file.txt".to_string(),
+            content: Some("same".to_string()),
+            oid: None,
+            change_type: ChangeType::Modify,
+        }];
+        let (tree_v2, stats) = repo.apply_changes_to_tree(tree_v1, &mod_changes, "").unwrap();
+
+        assert_eq!(tree_v1, tree_v2); // Tree OID unchanged
+        assert_eq!(stats.unchanged, vec!["file.txt"]);
+    }
+
+    #[test]
+    fn delete_file() {
+        let (_tmp, repo) = setup_repo();
+
+        // Create tree with two files
+        let empty_tree = repo.write_empty_tree().unwrap();
+        let add_changes = vec![
+            FileChange {
+                path: "keep.txt".to_string(),
+                content: Some("keep".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            },
+            FileChange {
+                path: "remove.txt".to_string(),
+                content: Some("remove".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            },
+        ];
+        let (tree_v1, _) = repo.apply_changes_to_tree(empty_tree, &add_changes, "").unwrap();
+
+        // Delete one file
+        let del_changes = vec![FileChange {
+            path: "remove.txt".to_string(),
+            content: None,
+            oid: None,
+            change_type: ChangeType::Delete,
+        }];
+        let (tree_v2, _) = repo.apply_changes_to_tree(tree_v1, &del_changes, "").unwrap();
+
+        assert_ne!(tree_v1, tree_v2);
+
+        // Verify only keep.txt remains
+        let commit_oid = repo.write_commit(tree_v2, &[], "test").unwrap();
+        assert!(repo.get_file_content_by_commit(commit_oid, "keep.txt").unwrap().is_some());
+        assert!(repo.get_file_content_by_commit(commit_oid, "remove.txt").unwrap().is_none());
+    }
+
+    #[test]
+    fn multiple_files_in_same_directory() {
+        let (_tmp, repo) = setup_repo();
+        let empty_tree = repo.write_empty_tree().unwrap();
+
+        let changes = vec![
+            FileChange {
+                path: "dir/a.txt".to_string(),
+                content: Some("aaa".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            },
+            FileChange {
+                path: "dir/b.txt".to_string(),
+                content: Some("bbb".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            },
+        ];
+
+        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        assert_eq!(stats.created.len(), 2);
+
+        let commit_oid = repo.write_commit(new_tree, &[], "test").unwrap();
+        assert_eq!(
+            repo.get_file_content_by_commit(commit_oid, "dir/a.txt").unwrap().as_deref(),
+            Some("aaa")
+        );
+        assert_eq!(
+            repo.get_file_content_by_commit(commit_oid, "dir/b.txt").unwrap().as_deref(),
+            Some("bbb")
+        );
+    }
+
+    #[test]
+    fn add_file_via_oid_reuse() {
+        let (_tmp, repo) = setup_repo();
+        let empty_tree = repo.write_empty_tree().unwrap();
+
+        // Write a blob manually and reference it by OID
+        let blob_oid = repo.write_blob(b"blob content").unwrap();
+
+        let changes = vec![FileChange {
+            path: "file.txt".to_string(),
+            content: None,
+            oid: Some(blob_oid.to_string()),
+            change_type: ChangeType::Add,
+        }];
+
+        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        assert_eq!(stats.created, vec!["file.txt"]);
+
+        let commit_oid = repo.write_commit(new_tree, &[], "test").unwrap();
+        assert_eq!(
+            repo.get_file_content_by_commit(commit_oid, "file.txt").unwrap().as_deref(),
+            Some("blob content")
+        );
     }
 }

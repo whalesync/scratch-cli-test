@@ -267,3 +267,236 @@ impl GitRepo {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::service::git::repo::GitRepo;
+    use crate::service::types::*;
+    use tempfile::TempDir;
+
+    fn setup_repo() -> (TempDir, GitRepo) {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+        (tmp, repo)
+    }
+
+    /// Helper: commit a set of file changes to main and return the commit OID.
+    fn commit_files(
+        repo: &GitRepo,
+        changes: &[FileChange],
+        message: &str,
+    ) -> gix::ObjectId {
+        repo.commit_changes_to_ref(MAIN_BRANCH, changes, message).unwrap().0
+    }
+
+    #[test]
+    fn identical_commits_have_no_diff() {
+        let (_tmp, repo) = setup_repo();
+        let oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let diff = repo.compare_commits(oid, oid).unwrap();
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn detect_added_file() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: "new.txt".to_string(),
+                content: Some("content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add file",
+        );
+
+        let diff = repo.compare_commits(oid_a, oid_b).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].path, "new.txt");
+        assert_eq!(diff[0].status, "added");
+    }
+
+    #[test]
+    fn detect_modified_file() {
+        let (_tmp, repo) = setup_repo();
+
+        let oid_a = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: Some("v1".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "v1",
+        );
+
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: Some("v2".to_string()),
+                oid: None,
+                change_type: ChangeType::Modify,
+            }],
+            "v2",
+        );
+
+        let diff = repo.compare_commits(oid_a, oid_b).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].path, "file.txt");
+        assert_eq!(diff[0].status, "modified");
+    }
+
+    #[test]
+    fn detect_deleted_file() {
+        let (_tmp, repo) = setup_repo();
+
+        let oid_a = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: Some("content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add",
+        );
+
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: None,
+                oid: None,
+                change_type: ChangeType::Delete,
+            }],
+            "delete",
+        );
+
+        let diff = repo.compare_commits(oid_a, oid_b).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].path, "file.txt");
+        assert_eq!(diff[0].status, "deleted");
+    }
+
+    #[test]
+    fn detect_nested_changes() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        let oid_b = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: "dir/a.txt".to_string(),
+                    content: Some("aaa".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "dir/sub/b.txt".to_string(),
+                    content: Some("bbb".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "add nested",
+        );
+
+        let diff = repo.compare_commits(oid_a, oid_b).unwrap();
+        assert_eq!(diff.len(), 2);
+        let paths: Vec<&str> = diff.iter().map(|d| d.path.as_str()).collect();
+        assert!(paths.contains(&"dir/a.txt"));
+        assert!(paths.contains(&"dir/sub/b.txt"));
+    }
+
+    #[test]
+    fn dotfiles_are_skipped() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = repo.resolve_ref(MAIN_BRANCH).unwrap();
+
+        let oid_b = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: ".hidden".to_string(),
+                    content: Some("secret".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "visible.txt".to_string(),
+                    content: Some("hello".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "add files",
+        );
+
+        let diff = repo.compare_commits(oid_a, oid_b).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].path, "visible.txt");
+    }
+
+    #[test]
+    fn get_tree_files_returns_all_blobs() {
+        let (_tmp, repo) = setup_repo();
+
+        let oid = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: "a.txt".to_string(),
+                    content: Some("aaa".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "dir/b.txt".to_string(),
+                    content: Some("bbb".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "add files",
+        );
+
+        let files = repo.get_tree_files(oid).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.contains_key("a.txt"));
+        assert!(files.contains_key("dir/b.txt"));
+    }
+
+    #[test]
+    fn get_tree_files_skips_dotfiles() {
+        let (_tmp, repo) = setup_repo();
+
+        let oid = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: ".gitignore".to_string(),
+                    content: Some("*.log".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "readme.txt".to_string(),
+                    content: Some("hi".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "add files",
+        );
+
+        let files = repo.get_tree_files(oid).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.contains_key("readme.txt"));
+    }
+}

@@ -132,3 +132,241 @@ struct EditInfo {
     content: Option<String>,
     base_content: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::service::git::repo::GitRepo;
+    use crate::service::types::*;
+    use tempfile::TempDir;
+
+    fn setup_repo() -> (TempDir, GitRepo) {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+        (tmp, repo)
+    }
+
+    #[test]
+    fn rebase_no_user_edits_fast_forwards() {
+        let (_tmp, repo) = setup_repo();
+
+        // Add a file to main (simulating a pull)
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "from-main.txt".to_string(),
+                content: Some("main content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "main commit",
+        )
+        .unwrap();
+
+        // Rebase — dirty has no edits, so it should fast-forward
+        let (success, conflicts) = repo.rebase_dirty("ours").unwrap();
+        assert!(success);
+        assert!(conflicts.is_empty());
+
+        // dirty should now see the file from main
+        let content = repo.get_file_content(DIRTY_BRANCH, "from-main.txt").unwrap();
+        assert_eq!(content.as_deref(), Some("main content"));
+    }
+
+    #[test]
+    fn rebase_preserves_user_edits() {
+        let (_tmp, repo) = setup_repo();
+
+        // User edits a file on dirty
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[FileChange {
+                path: "user-file.txt".to_string(),
+                content: Some("user content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "user edit",
+        )
+        .unwrap();
+
+        // Meanwhile, main gets a different file
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "main-file.txt".to_string(),
+                content: Some("main content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "main commit",
+        )
+        .unwrap();
+
+        let (success, conflicts) = repo.rebase_dirty("ours").unwrap();
+        assert!(success);
+        assert!(conflicts.is_empty());
+
+        // dirty should have both files
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "user-file.txt").unwrap().as_deref(),
+            Some("user content")
+        );
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "main-file.txt").unwrap().as_deref(),
+            Some("main content")
+        );
+    }
+
+    #[test]
+    fn rebase_user_delete_is_preserved() {
+        let (_tmp, repo) = setup_repo();
+
+        // Add a file on both branches via main
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "to-delete.txt".to_string(),
+                content: Some("content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add file",
+        )
+        .unwrap();
+
+        // Sync dirty to main
+        let (success, _) = repo.rebase_dirty("ours").unwrap();
+        assert!(success);
+
+        // User deletes the file on dirty
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[FileChange {
+                path: "to-delete.txt".to_string(),
+                content: None,
+                oid: None,
+                change_type: ChangeType::Delete,
+            }],
+            "user delete",
+        )
+        .unwrap();
+
+        // Rebase again — the deletion should be preserved
+        let (success, _) = repo.rebase_dirty("ours").unwrap();
+        assert!(success);
+
+        assert!(repo.get_file_content(DIRTY_BRANCH, "to-delete.txt").unwrap().is_none());
+    }
+
+    #[test]
+    fn rebase_diff3_merges_non_conflicting_edits() {
+        let (_tmp, repo) = setup_repo();
+
+        // Start with a multi-line file
+        let initial_content = "line1\nline2\nline3\nline4\nline5\n";
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "shared.txt".to_string(),
+                content: Some(initial_content.to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "initial",
+        )
+        .unwrap();
+
+        // Sync dirty
+        repo.rebase_dirty("ours").unwrap();
+
+        // User edits line 1 on dirty
+        let user_content = "USER\nline2\nline3\nline4\nline5\n";
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[FileChange {
+                path: "shared.txt".to_string(),
+                content: Some(user_content.to_string()),
+                oid: None,
+                change_type: ChangeType::Modify,
+            }],
+            "user edit",
+        )
+        .unwrap();
+
+        // Main edits line 5
+        let main_content = "line1\nline2\nline3\nline4\nMAIN\n";
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "shared.txt".to_string(),
+                content: Some(main_content.to_string()),
+                oid: None,
+                change_type: ChangeType::Modify,
+            }],
+            "main edit",
+        )
+        .unwrap();
+
+        // Rebase with diff3 strategy
+        let (success, _) = repo.rebase_dirty("diff3").unwrap();
+        assert!(success);
+
+        let result = repo.get_file_content(DIRTY_BRANCH, "shared.txt").unwrap().unwrap();
+        // Both edits should be merged
+        assert!(result.contains("USER"), "user edit should be preserved");
+        assert!(result.contains("MAIN"), "main edit should be preserved");
+    }
+
+    #[test]
+    fn rebase_creates_dirty_if_missing() {
+        let (_tmp, _repo) = setup_repo();
+
+        // Create a repo with only a main branch (no dirty)
+        let tmp2 = TempDir::new().unwrap();
+        let repo_path = tmp2.path().join("test2.git");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        let gix_repo = gix::init_bare(&repo_path).unwrap();
+
+        // Create just a main branch
+        let tree = gix::objs::Tree::empty();
+        let tree_oid: gix::ObjectId = gix_repo.write_object(&tree).unwrap().into();
+        let time = gix::date::Time::now_local_or_utc();
+        let author = gix::actor::SignatureRef {
+            name: "Test".into(),
+            email: "test@test.com".into(),
+            time,
+        };
+        let commit = gix::objs::Commit {
+            tree: tree_oid,
+            parents: vec![].into(),
+            author: author.to_owned(),
+            committer: author.to_owned(),
+            encoding: None,
+            message: "init".into(),
+            extra_headers: vec![],
+        };
+        let commit_oid: gix::ObjectId = gix_repo.write_object(&commit).unwrap().into();
+        gix_repo
+            .reference(
+                "refs/heads/main",
+                commit_oid,
+                gix::refs::transaction::PreviousValue::Any,
+                "init",
+            )
+            .unwrap();
+        drop(gix_repo);
+
+        // Open via GitRepo (which doesn't auto-create dirty)
+        let repo2 = GitRepo::open(tmp2.path(), "test2").unwrap();
+
+        // rebase_dirty should create the dirty branch
+        let (success, conflicts) = repo2.rebase_dirty("ours").unwrap();
+        assert!(success);
+        assert!(conflicts.is_empty());
+
+        // dirty should now exist and point to main
+        let dirty_oid = repo2.resolve_ref(DIRTY_BRANCH).unwrap();
+        let main_oid = repo2.resolve_ref(MAIN_BRANCH).unwrap();
+        assert_eq!(dirty_oid, main_oid);
+    }
+}
