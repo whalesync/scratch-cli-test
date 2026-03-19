@@ -24,6 +24,11 @@ export default function OAuthCallbackPage() {
   const { metadata } = useConnectorsMetadata();
 
   useEffect(() => {
+    // Wait for metadata to load before processing the callback
+    if (!metadata) {
+      return;
+    }
+
     // Prevent multiple executions
     if (hasExecuted.current) {
       return;
@@ -115,7 +120,7 @@ export default function OAuthCallbackPage() {
 
     handleOAuthCallback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [metadata]);
 
   const extractServiceFromState = (): Service | null => {
     try {
