@@ -13,6 +13,7 @@ import { DevToolsModule } from './dev-tools/dev-tools.module';
 import { ExperimentsModule } from './experiments/experiments.module';
 import { HealthModule } from './health/health.module';
 import { JobModule } from './job/job.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { JsonBodyMiddleware, RawBodyMiddleware } from './middleware';
 import { OAuthModule } from './oauth/oauth.module';
 import { PaymentModule } from './payment/payment.module';
@@ -34,6 +35,7 @@ import { WorkerModule } from './worker/workers.module';
   imports: [
     ScratchConfigModule, // Load first so static environment variables are available
     PosthogModule,
+    MetricsModule,
     AuditLogModule,
     ExperimentsModule,
     HealthModule,

@@ -173,6 +173,22 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('GCS_PROJECT_ID');
   }
 
+  getUseOpenTelemetryMetrics(): boolean {
+    return this.getOptionalFlagVariable('USE_OPENTELEMETRY_METRICS', false);
+  }
+
+  getRunningInCloud(): boolean {
+    return this.runningInCloudRun;
+  }
+
+  getFriendlyServiceName(): string {
+    return `scratch-${this.serviceTypes.join('-')}`;
+  }
+
+  getBuildVersion(): string {
+    return this.getOptionalEnvVariable<string>('BUILD_VERSION') ?? 'local';
+  }
+
   private getEnvVariable<T>(envVariable: string): T {
     const returnedVar: T | undefined = this.configService.get<T>(envVariable);
     if (returnedVar === undefined) {

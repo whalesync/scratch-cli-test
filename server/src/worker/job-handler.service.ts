@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { AssetDownloadService } from 'src/asset/asset-download.service';
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
@@ -46,6 +47,7 @@ export class JobHandlerService {
     private readonly pipelineRunService: PublishPlanRunService,
     private readonly dbService: DbService,
     private readonly postHogService: PostHogService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -105,6 +107,7 @@ export class JobHandlerService {
           this.bullEnqueuerService,
           this.pipelinePlanService,
           this.postHogService,
+          this.metricsService,
         ) as JobHandler<JobDefinition>;
 
       case 'rehost-assets':

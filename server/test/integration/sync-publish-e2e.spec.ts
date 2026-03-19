@@ -37,6 +37,7 @@ import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { StubMetricsService } from 'src/metrics/stub-metrics.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncDataFoldersJobHandler } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
 
@@ -895,6 +896,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       {} as BullEnqueuerService,
       publishPlanService,
       { trackSyncCompleted: jest.fn() } as unknown as PostHogService,
+      new StubMetricsService(),
     );
 
     const noopCheckpoint = jest.fn().mockResolvedValue(undefined);
