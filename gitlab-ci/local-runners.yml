@@ -172,6 +172,14 @@ local build and test scratch-cli:
 # Scratch Git
 # -----------------------------------------------------------------------------
 
+local build and test scratch-git:
+  extends:
+    - .build-and-test-scratch-git
+    - .local-runner-defaults
+  rules:
+    - if: *local-user-if
+      changes: !reference [.changes, scratch-git]
+
 local build scratch-git docker image:
   extends:
     - .build-scratch-git-docker-image

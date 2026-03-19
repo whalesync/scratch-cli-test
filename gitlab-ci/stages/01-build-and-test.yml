@@ -286,6 +286,23 @@ build and test scratch-cli:
 # SCRATCH-GIT SUBPROJECT
 # =============================================================================
 
+.build-and-test-scratch-git:
+  stage: build and test
+  image: rust:slim-bookworm
+  interruptible: true
+  script:
+    - apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+    - cd scratch-git-2
+    - cargo test
+
+build and test scratch-git:
+  extends: .build-and-test-scratch-git
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, scratch-git]
+    - !reference [.rules, on_merge_to_master]
+
 .build-scratch-git-docker-image:
   stage: build and test
   extends:
