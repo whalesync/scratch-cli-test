@@ -12,10 +12,8 @@ push master to prod:
     - git config user.name "ci-bot"
     - git remote set-url origin https://oauth2:$CICD_ACCESS_TOKEN@gitlab.com/whalesync/spinner.git
     - git fetch --all --prune
-    - git checkout master
-    - git pull origin master
-    - git checkout prod
-    - git pull origin prod
+    - git checkout -B master origin/master
+    - git checkout -B prod origin/prod
     - git merge -m "(Auto) Merge branch 'master' into prod" --no-ff -X theirs master
     - git push origin prod
     - echo "Successfully merged master into prod"
