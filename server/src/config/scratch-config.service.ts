@@ -251,6 +251,21 @@ export class ScratchConfigService {
     return `https://${env}.scratch.md`;
   }
 
+  public static getApiBaseUrl(): string {
+    const env = ScratchConfigService.getScratchEnvironment();
+    if (env === 'development') {
+      const port = process.env.PORT ?? 3010;
+      return `http://localhost:${port}`;
+    }
+
+    if (env === 'production') {
+      return 'https://api.scratch.md';
+    }
+
+    // Otherwise, test or staging
+    return `https://${env}-api.scratch.md`;
+  }
+
   public static getServiceTypes(): MicroserviceType[] {
     const raw = process.env.SERVICE_TYPE;
     if (!raw || raw.length === 0) {
