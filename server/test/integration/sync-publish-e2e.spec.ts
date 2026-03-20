@@ -20,6 +20,7 @@ import { SchemaHelperService } from 'server/src/publish-plan/schema-helper.servi
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
+import { StubMetricsService } from 'src/metrics/stub-metrics.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexEntry, FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
@@ -37,7 +38,6 @@ import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
-import { StubMetricsService } from 'src/metrics/stub-metrics.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncDataFoldersJobHandler } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
 

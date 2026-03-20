@@ -335,14 +335,13 @@ export default function FilesPage() {
                 <DecorativeBoxedIcon Icon={LinkIcon} size="sm" c={GREEN} />
                 <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
                   <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
-                    Step 2: Share this URL with your AI agent
+                    Step 2: Tell your AI agent to look at this
                   </Text13Medium>
                   <Text13Regular c="var(--fg-secondary)">
-                    Paste this URL into your AI agent (e.g. Claude Code, Cursor). The agent will discover how to use the
-                    Scratch API automatically.
+                    Copy this into your AI agent (e.g. Claude Code, Cursor). It will figure out the rest.
                   </Text13Regular>
                   <Box pt={4}>
-                    <CommandBlock command={DISCOVER_URL} />
+                    <CommandBlock command={`Look at this: ${DISCOVER_URL}`} />
                   </Box>
                 </Stack>
               </Group>
