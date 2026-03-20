@@ -11,7 +11,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { connectorMetadata, PostgresColumnType, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
@@ -656,6 +656,11 @@ export class SupabaseConnector extends Connector {
         await client.deleteMany(schema, tableName, ids, pk);
       }
     }, resolved.connectionString);
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId, titlePath);
   }
 
   // -------------------------------------------------------------------------

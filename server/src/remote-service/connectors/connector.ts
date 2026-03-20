@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { ConnectorPullOptions, ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
+import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
@@ -229,6 +230,14 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   }
 
   /**
+   * Suggest human-friendly filenames for pulled records.
+   * Returns an array parallel to `records` where each element is either a suggested
+   * filename string (without extension) or undefined to fall back to the record's ID.
+   * These suggestions are only used for initial naming — once set, filenames don't change.
+   */
+  abstract getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[];
+
+  /**
    * Evaluate the error object in the context of the connector and return some standardised error details that can be return to a user or logged.
    * @param error - The error to evaluate.
    * @returns The connector error details.
@@ -247,4 +256,27 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
       description: errorMessage,
     };
   }
+}
+
+/**
+ * Helper for connectors with simple record structures.
+ * Tries each lodash dot-path in order, returning the first non-empty string value found.
+ * Connectors with complex record structures (e.g. Notion rich text) should implement
+ * getSuggestedRecordFileNames directly instead of using this helper.
+ */
+export function suggestFileNamesFromFieldPaths(
+  records: ConnectorFile[],
+  ...fieldPaths: (string | undefined)[]
+): (string | undefined)[] {
+  const paths = fieldPaths.filter((p): p is string => !!p);
+  if (paths.length === 0) {
+    return records.map(() => undefined);
+  }
+  return records.map((record) => {
+    for (const path of paths) {
+      const value = _.get(record, path);
+      if (typeof value === 'string' && value.trim()) return value;
+    }
+    return undefined;
+  });
 }

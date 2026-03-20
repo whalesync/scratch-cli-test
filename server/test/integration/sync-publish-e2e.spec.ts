@@ -109,11 +109,11 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idColumnRemoteId: 'id' },
-          '/dest-tags': { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
+          '/dest-tags': { idColumnRemoteId: 'id', slugFieldPath: 'slug' },
           '/src-posts': { idColumnRemoteId: 'id' },
           '/dest-posts': {
             idColumnRemoteId: 'id',
-            slugColumnRemoteId: 'slug',
+            slugFieldPath: 'slug',
             schema: {
               type: 'object',
               properties: {
@@ -1196,11 +1196,11 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idColumnRemoteId: 'id' },
-          '/dest-tags': { idColumnRemoteId: 'id', slugColumnRemoteId: 'slug' },
+          '/dest-tags': { idColumnRemoteId: 'id', slugFieldPath: 'slug' },
           '/src-posts': { idColumnRemoteId: 'id' },
           '/dest-posts': {
             idColumnRemoteId: 'id',
-            slugColumnRemoteId: 'slug',
+            slugFieldPath: 'slug',
             schema: {
               type: 'object',
               properties: {

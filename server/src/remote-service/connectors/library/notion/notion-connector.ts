@@ -21,9 +21,10 @@ import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
+import { REMOTE_FIELD_ID } from '../../json-schema';
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { createNotionBlockDiff } from './conversion/notion-block-diff';
@@ -192,6 +193,58 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     const [databaseId] = id.remoteId;
     const database = (await this.client.databases.retrieve({ database_id: databaseId })) as DatabaseObjectResponse;
     return buildNotionJsonTableSpec(id, database);
+  }
+
+  /**
+   * Suggest filenames from the Notion page title property.
+   * Notion pages store titles as rich text arrays: { properties: { "Title": { type: "title", title: [{ plain_text }] } } }
+   */
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePropertyName = this.resolveTitlePropertyName(tableSpec);
+    if (!titlePropertyName) {
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+    }
+    return records.map((record) => {
+      const titleProp = _.get(record, ['properties', titlePropertyName]) as unknown;
+      if (!titleProp || typeof titleProp !== 'object') return undefined;
+      // Notion wraps the title array: { id, type: "title", title: [{ plain_text }] }
+      const obj = titleProp as Record<string, unknown>;
+      const titleArray = Array.isArray(titleProp) ? titleProp : obj.title;
+      if (!Array.isArray(titleArray)) return undefined;
+      const text = (titleArray as Record<string, unknown>[]).map((t) => (t.plain_text as string) ?? '').join('');
+      return text.trim() || undefined;
+    });
+  }
+
+  /**
+   * Resolve the title property name for filename extraction.
+   * Handles both the nameFieldOverride case (single-element titleColumnRemoteId)
+   * and the normal case (2-element [databaseId, propertyId]).
+   */
+  private resolveTitlePropertyName(tableSpec: BaseJsonTableSpec): string | undefined {
+    if (!tableSpec.titleColumnRemoteId || tableSpec.titleColumnRemoteId.length === 0) {
+      return undefined;
+    }
+
+    // nameFieldOverride sets titleColumnRemoteId to a single-element array with the property name
+    if (tableSpec.titleColumnRemoteId.length === 1) {
+      return tableSpec.titleColumnRemoteId[0];
+    }
+
+    // Normal case: [databaseId, propertyId] — look up property name from schema
+    const targetPropertyId = tableSpec.titleColumnRemoteId[1];
+    const schema = tableSpec.schema as Record<string, unknown> | undefined;
+    const topProps = schema?.properties as Record<string, Record<string, unknown>> | undefined;
+    const propertiesSchema = topProps?.properties?.properties as Record<string, Record<string, unknown>> | undefined;
+    if (!propertiesSchema) {
+      return undefined;
+    }
+    for (const [name, propSchema] of Object.entries(propertiesSchema)) {
+      if (propSchema[REMOTE_FIELD_ID] === targetPropertyId) {
+        return name;
+      }
+    }
+    return undefined;
   }
 
   async pullRecordFiles(

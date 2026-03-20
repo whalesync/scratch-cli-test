@@ -94,7 +94,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   describe('buildGitFilesFromConnectorFiles', () => {
     const createMockTableSpec = (overrides?: Partial<BaseJsonTableSpec>): BaseJsonTableSpec => ({
       idColumnRemoteId: 'id',
-      slugColumnRemoteId: 'slug',
+      slugFieldPath: 'slug',
       titleColumnRemoteId: ['title'],
       id: { remoteId: ['example'], wsId: '' },
       slug: 'example',
@@ -104,83 +104,47 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       ...overrides,
     });
 
-    describe('file naming priority', () => {
-      it('should use slug when available', () => {
+    describe('file naming from suggested names', () => {
+      it('should use suggested filename when provided', () => {
         const tableSpec = createMockTableSpec();
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec1',
-            slug: 'my-blog-post',
-            title: 'My Blog Post',
-          },
-        ];
+        const records: ConnectorFile[] = [{ id: 'rec1' }];
+        const suggested = ['my-blog-post'];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), suggested);
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('my-blog-post.json');
       });
 
-      it('should use title when slug is missing', () => {
+      it('should fall back to id when suggested name is undefined', () => {
         const tableSpec = createMockTableSpec();
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec1',
-            title: 'My Blog Post',
-          },
-        ];
+        const records: ConnectorFile[] = [{ id: 'rec-12345' }];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
-
-        expect(result).toHaveLength(1);
-        expect(result[0].path).toContain('my-blog-post.json');
-      });
-
-      it('should use id when slug and title are missing', () => {
-        const tableSpec = createMockTableSpec();
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec-12345',
-          },
-        ];
-
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [undefined]);
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('rec-12345.json');
       });
 
-      it('should ignore empty slug and fall back to title', () => {
+      it('should fall back to id when suggested name is empty', () => {
         const tableSpec = createMockTableSpec();
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec1',
-            slug: '',
-            title: 'Fallback Title',
-          },
-        ];
+        const records: ConnectorFile[] = [{ id: 'rec1' }];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), ['']);
 
         expect(result).toHaveLength(1);
-        expect(result[0].path).toContain('fallback-title.json');
+        expect(result[0].path).toContain('rec1.json');
       });
 
-      it('should handle dot-path slug access (nested properties)', () => {
-        const tableSpec = createMockTableSpec({ slugColumnRemoteId: 'metadata.slug' });
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec1',
-            metadata: {
-              slug: 'nested-slug-value',
-            },
-          },
-        ];
+      it('should normalize suggested filenames', () => {
+        const tableSpec = createMockTableSpec();
+        const records: ConnectorFile[] = [{ id: 'rec1' }];
+        const suggested = ['My Blog Post!'];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), suggested);
 
         expect(result).toHaveLength(1);
-        expect(result[0].path).toContain('nested-slug-value.json');
+        expect(result[0].path).toContain('my-blog-post.json');
       });
     });
 
@@ -199,7 +163,10 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, usedFileNames, new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, usedFileNames, new Map(), [
+          'Same Title',
+          'Same Title',
+        ]);
 
         expect(result).toHaveLength(2);
         expect(result[0].path).toContain('same-title.json');
@@ -216,7 +183,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             title: 'Post',
           },
         ];
-        const result1 = buildGitFilesFromConnectorFiles('/', batch1, tableSpec, usedFileNames, new Map());
+        const result1 = buildGitFilesFromConnectorFiles('/', batch1, tableSpec, usedFileNames, new Map(), ['Post']);
 
         const batch2: ConnectorFile[] = [
           {
@@ -224,7 +191,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             title: 'Post',
           },
         ];
-        const result2 = buildGitFilesFromConnectorFiles('/', batch2, tableSpec, usedFileNames, new Map());
+        const result2 = buildGitFilesFromConnectorFiles('/', batch2, tableSpec, usedFileNames, new Map(), ['Post']);
 
         expect(result1[0].path).toContain('post.json');
         expect(result2[0].path).toContain('post-rec2.json');
@@ -241,7 +208,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('/my-folder', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/my-folder', records, tableSpec, new Set(), new Map(), [
+          'test-file',
+        ]);
 
         expect(result[0].path).toBe('/my-folder/test-file.json');
       });
@@ -255,7 +224,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), ['test-file']);
 
         expect(result[0].path).toBe('/test-file.json');
       });
@@ -269,7 +238,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('', records, tableSpec, new Set(), new Map(), ['test-file']);
 
         expect(result[0].path).toBe('/test-file.json');
       });
@@ -288,7 +257,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [undefined]);
 
         expect(result[0].content).toEqual(`{
   "name": "Test",
@@ -313,7 +282,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         };
         const records: ConnectorFile[] = [testRecord];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), ['test']);
 
         const parsedContent = JSON.parse(result[0].content);
         expect(parsedContent).toEqual(testRecord);
@@ -331,7 +300,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [undefined]);
 
         // Verify JSON is valid and can be parsed
         const parsed = JSON.parse(result[0].content);
@@ -362,7 +331,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           },
         ];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [
+          'first-post',
+          'second-post',
+          'third-post',
+        ]);
 
         expect(result).toHaveLength(3);
         expect(result[0].path).toContain('first-post.json');
@@ -374,38 +347,32 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         const tableSpec = createMockTableSpec();
         const records: ConnectorFile[] = [];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), []);
 
         expect(result).toHaveLength(0);
       });
     });
 
     describe('filename normalization', () => {
-      it('should normalize slug with special characters', () => {
+      it('should normalize suggested name with special characters', () => {
         const tableSpec = createMockTableSpec();
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec1',
-            slug: 'Hello World! @Special #Chars',
-          },
-        ];
+        const records: ConnectorFile[] = [{ id: 'rec1' }];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [
+          'Hello World! @Special #Chars',
+        ]);
 
         // normalizeFileName should lowercase, remove special chars, replace spaces with hyphens
         expect(result[0].path).toMatch(/hello-world-special-chars\.json/);
       });
 
-      it('should handle accented characters in title', () => {
+      it('should handle accented characters in suggested name', () => {
         const tableSpec = createMockTableSpec();
-        const records: ConnectorFile[] = [
-          {
-            id: 'rec1',
-            title: 'Café Français',
-          },
-        ];
+        const records: ConnectorFile[] = [{ id: 'rec1' }];
 
-        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map());
+        const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [
+          'Café Français',
+        ]);
 
         // Accents should be removed, spaces converted to hyphens
         expect(result[0].path).toMatch(/cafe-francais\.json/);
@@ -416,7 +383,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   describe('run', () => {
     const defaultTableSpec: BaseJsonTableSpec = {
       idColumnRemoteId: 'id',
-      slugColumnRemoteId: 'slug',
+      slugFieldPath: 'slug',
       titleColumnRemoteId: ['title'],
       id: { remoteId: ['tbl_abc'], wsId: 'tbl_abc' },
       slug: 'example',
@@ -446,6 +413,12 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     const createMockConnector = (tableSpecOverrides?: Partial<BaseJsonTableSpec>) => ({
       fetchJsonTableSpec: jest.fn().mockResolvedValue({ ...defaultTableSpec, ...tableSpecOverrides }),
       pullRecordFiles: jest.fn(),
+      getSuggestedRecordFileNames: jest.fn().mockImplementation((records: ConnectorFile[]) =>
+        records.map((r) => {
+          const slug = r['slug'] as string | undefined;
+          return slug && slug.trim() ? slug : undefined;
+        }),
+      ),
       extractAssets: jest.fn(),
       extractConnectorErrorDetails: jest.fn().mockReturnValue({
         userFriendlyMessage: 'An error occurred',

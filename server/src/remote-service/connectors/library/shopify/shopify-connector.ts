@@ -11,7 +11,7 @@ import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -219,7 +219,7 @@ export class ShopifyConnector extends Connector {
       | { slug?: string; title?: readonly string[]; mainContent?: readonly string[] }
       | undefined;
     if (columns?.slug) {
-      spec.slugColumnRemoteId = columns.slug;
+      spec.slugFieldPath = columns.slug;
     }
     if (columns?.title) {
       spec.titleColumnRemoteId = [...columns.title];
@@ -453,6 +453,10 @@ export class ShopifyConnector extends Connector {
     }
 
     return result;
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
   }
 
   /**

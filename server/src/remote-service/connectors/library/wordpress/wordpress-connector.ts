@@ -4,7 +4,7 @@ import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
 import { extractStandaloneEntity } from '../../asset-extraction-helpers';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -312,6 +312,10 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     // WordPress media table is a standalone asset entity
     const standalone = extractStandaloneEntity(input);
     return standalone ? [standalone] : [];
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

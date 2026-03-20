@@ -2,7 +2,7 @@ import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -219,6 +219,11 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
       const entityId = parseInt(String(file.id), 10);
       await this.client.deleteEntity(entityType, entityId);
     }
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    return suggestFileNamesFromFieldPaths(records, titlePath);
   }
 
   /**

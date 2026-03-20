@@ -1,7 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { connectorMetadata, ConnectorPullOptions, PostgresColumnType } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
@@ -180,7 +180,7 @@ export class PostgresConnector extends Connector {
 
     const schemaProperties: Record<string, TSchema> = {};
     let titleColumnRemoteId: string[] | undefined;
-    let slugColumnRemoteId: string | undefined;
+    let slugFieldPath: string | undefined;
 
     const titleCandidates = ['name', 'title', 'display_name', 'label'];
 
@@ -206,7 +206,7 @@ export class PostgresConnector extends Connector {
 
       // Slug heuristic: column named "slug"
       if (col.column_name === 'slug') {
-        slugColumnRemoteId = 'slug';
+        slugFieldPath = 'slug';
       }
     }
 
@@ -222,7 +222,7 @@ export class PostgresConnector extends Connector {
       schema: tableSchema,
       idColumnRemoteId: primaryKey,
       titleColumnRemoteId,
-      slugColumnRemoteId,
+      slugFieldPath,
       basePath: id.remoteId[0] ? [id.remoteId[0]] : ['public'],
       generatedAt: new Date().toISOString(),
     };
@@ -325,6 +325,11 @@ export class PostgresConnector extends Connector {
     for (const file of files) {
       await this.client.deleteRow(tableName, pkColumn, file[pkColumn]);
     }
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, titlePath);
   }
 
   /**

@@ -5,7 +5,7 @@ import { ConnectorAccount } from '@prisma/client';
 import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
@@ -271,6 +271,10 @@ export class YouTubeConnector extends Connector {
   //   };
   //   return sanitizedRecord;
   // }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    return suggestFileNamesFromFieldPaths(records, 'snippet.title');
+  }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
     return this.fallbackErrorDetails(error);

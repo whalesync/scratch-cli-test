@@ -2,7 +2,7 @@ import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -344,6 +344,11 @@ export class MocoConnector extends Connector {
     fields: Record<string, unknown>,
   ): Record<string, unknown> {
     return this.transformToCreateRequest(entityType, fields);
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    return suggestFileNamesFromFieldPaths(records, titlePath);
   }
 
   /**

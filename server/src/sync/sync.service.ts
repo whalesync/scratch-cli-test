@@ -1024,9 +1024,8 @@ export class SyncService {
             }
 
             // Resolve filename: prefer slug from destination schema, fall back to temp ID
-            const slugValue = destinationTableSpec?.slugColumnRemoteId
-              ? (get(transformedFields, destinationTableSpec.slugColumnRemoteId) as string | undefined)
-              : undefined;
+            const slugPath = destinationTableSpec?.slugFieldPath ?? destinationTableSpec?.slugColumnRemoteId;
+            const slugValue = slugPath ? (get(transformedFields, slugPath) as string | undefined) : undefined;
             const baseName = resolveBaseFileName({ slugValue, idValue: tempId });
             const fileName = deduplicateFileName(baseName, '.json', usedDestFileNames, tempId);
             destinationPath = destinationFolderPath ? `${destinationFolderPath}/${fileName}` : fileName;

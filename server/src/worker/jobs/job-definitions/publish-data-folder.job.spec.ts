@@ -28,7 +28,7 @@ describe('PublishDataFolderJobHandler', () => {
 
   const defaultTableSpec: BaseJsonTableSpec = {
     idColumnRemoteId: 'id',
-    slugColumnRemoteId: 'slug',
+    slugFieldPath: 'slug',
     titleColumnRemoteId: ['title'],
     id: { remoteId: ['tbl_abc'], wsId: 'tbl_abc' },
     slug: 'example',

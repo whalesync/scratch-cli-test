@@ -326,12 +326,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       // TODO: Validate files against the table schema before publishing.
       // Build git file payloads from connector files
+      const suggestedFileNames = connector.getSuggestedRecordFileNames(files, tableSpec);
       const builtFiles = buildGitFilesFromConnectorFiles(
         dataFolder.path ?? '',
         files,
         tableSpec,
         usedFileNames,
         existingFileNames,
+        suggestedFileNames,
       );
 
       // Sync to Git (Commit to main + Rebase dirty)

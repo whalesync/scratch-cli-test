@@ -7,7 +7,7 @@ import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/a
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, hashUrl } from '../../../asset-extraction-helpers';
-import { Connector } from '../../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../../connector';
 import { connectorRegistry } from '../../../connector-registry';
 import { ConnectorInstantiationError } from '../../../error';
 import { Service } from '../../../service-constants';
@@ -218,6 +218,10 @@ export class WixBlogConnector extends Connector {
       height: typeof imageData['height'] === 'number' ? imageData['height'] : undefined,
       mediaType: 'image',
     };
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'title');
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

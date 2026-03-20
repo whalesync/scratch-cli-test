@@ -229,12 +229,14 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         batchRecordIds,
       );
 
+      const suggestedFileNames = connector.getSuggestedRecordFileNames(files, tableSpec);
       const builtFiles = buildGitFilesFromConnectorFiles(
         dataFolder.path ?? '',
         files,
         tableSpec,
         usedFileNames,
         existingFileNames,
+        suggestedFileNames,
       );
 
       if (builtFiles.length > 0) {

@@ -1,7 +1,7 @@
 import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -258,6 +258,10 @@ export class AudiencefulConnector extends Connector {
   } {
     // Update uses the same format as create
     return this.transformToCreateRequest(fields);
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'email');
   }
 
   /**

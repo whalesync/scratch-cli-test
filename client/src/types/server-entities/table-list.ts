@@ -33,5 +33,7 @@ export interface TableSchemaPreview {
   idColumnRemoteId: string;
   titleColumnRemoteId?: string[];
   mainContentColumnRemoteId?: string[];
+  slugFieldPath?: string;
+  /** @deprecated Use slugFieldPath */
   slugColumnRemoteId?: string;
 }

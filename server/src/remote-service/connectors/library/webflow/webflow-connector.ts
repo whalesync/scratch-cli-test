@@ -13,7 +13,7 @@ import {
   extractFromAnnotatedSchema,
   extractStandaloneEntity,
 } from '../../asset-extraction-helpers';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { Service } from '../../service-constants';
@@ -573,6 +573,10 @@ export class WebflowConnector extends Connector {
       extractUrl: (item) => (typeof item['url'] === 'string' ? item['url'] : undefined),
       resolveFieldValue: defaultResolveFieldValue,
     });
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

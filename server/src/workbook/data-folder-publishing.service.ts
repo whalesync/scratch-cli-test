@@ -255,9 +255,8 @@ export class DataFolderPublishingService {
           // Calculate new path: prefer slug, fall back to remoteId
           const remoteIdStr = typeof remoteId === 'string' ? remoteId : JSON.stringify(remoteId);
           const folder = originalFile.path.substring(0, originalFile.path.lastIndexOf('/'));
-          const slugValue = tableSpec.slugColumnRemoteId
-            ? (_.get(updatedContent, tableSpec.slugColumnRemoteId) as string | undefined)
-            : undefined;
+          const slugPath = tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId;
+          const slugValue = slugPath ? (_.get(updatedContent, slugPath) as string | undefined) : undefined;
           const baseName = resolveBaseFileName({ slugValue, idValue: remoteIdStr });
           const newFileName = deduplicateFileName(baseName, '.json', usedFileNames, remoteIdStr);
           const newPath = `${folder}/${newFileName}`;

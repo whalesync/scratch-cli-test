@@ -1,16 +1,18 @@
 import { connectorMetadata, ConnectorPullOptions, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { RateLimiter, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema } from '../../asset-extraction-helpers';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import { REMOTE_FIELD_ID } from '../../json-schema';
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
@@ -93,6 +95,52 @@ export class AirtableConnector extends Connector {
     }
 
     return buildAirtableJsonTableSpec(id, base, table);
+  }
+
+  /**
+   * Suggest filenames from the Airtable primary field (display name).
+   * Airtable records have shape: { id, fields: { "Field Name": value }, createdTime }
+   */
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const primaryFieldName = this.resolvePrimaryFieldName(tableSpec);
+    if (!primaryFieldName) {
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+    }
+    return records.map((record) => {
+      const value = _.get(record, ['fields', primaryFieldName]) as unknown;
+      return typeof value === 'string' && value.trim() ? value : undefined;
+    });
+  }
+
+  /**
+   * Resolve the primary field name for filename extraction.
+   * Handles both the nameFieldOverride case (single-element titleColumnRemoteId)
+   * and the normal case (3-element [baseId, tableId, fieldId]).
+   */
+  private resolvePrimaryFieldName(tableSpec: BaseJsonTableSpec): string | undefined {
+    if (!tableSpec.titleColumnRemoteId || tableSpec.titleColumnRemoteId.length === 0) {
+      return undefined;
+    }
+
+    // nameFieldOverride sets titleColumnRemoteId to a single-element array with the field name
+    if (tableSpec.titleColumnRemoteId.length === 1) {
+      return tableSpec.titleColumnRemoteId[0];
+    }
+
+    // Normal case: [baseId, tableId, fieldId] — look up field name from schema
+    const targetFieldId = tableSpec.titleColumnRemoteId[2];
+    const schema = tableSpec.schema as Record<string, unknown> | undefined;
+    const topProps = schema?.properties as Record<string, Record<string, unknown>> | undefined;
+    const fieldsSchema = topProps?.fields?.properties as Record<string, Record<string, unknown>> | undefined;
+    if (!fieldsSchema) {
+      return undefined;
+    }
+    for (const [name, fieldSchema] of Object.entries(fieldsSchema)) {
+      if (fieldSchema[REMOTE_FIELD_ID] === targetFieldId) {
+        return name;
+      }
+    }
+    return undefined;
   }
 
   async pullRecordFiles(

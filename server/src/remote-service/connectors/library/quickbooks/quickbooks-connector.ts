@@ -2,7 +2,7 @@ import { connectorMetadata, ConnectorPullOptions, isQuickBooksConnectorExtras } 
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
-import { Connector } from '../../connector';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
   ConnectorInstantiationError,
@@ -218,6 +218,11 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
       400,
       'READ_ONLY',
     );
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    return suggestFileNamesFromFieldPaths(records, titlePath);
   }
 
   /**
