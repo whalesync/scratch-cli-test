@@ -35,7 +35,7 @@ The `ConnectorsService` (`connectors.service.ts`) uses the connector registry to
 ### Pull Flow
 
 1. **Pull job** (`worker/jobs/job-definitions/pull-linked-folder-files.job.ts`) creates a connector
-2. Calls `connector.pullRecordFiles(tableSpec, callback, progress)`
+2. Calls `connector.pullRecordFiles(tableSpec, callback, progress, options)`
 3. Connector paginates through the remote API, calling `callback` with each batch of records
 4. Callback converts records to git files, commits them to the main branch, and rebases the dirty branch
 5. After all pages: files present in main but not pulled are deleted (removals)
@@ -54,7 +54,7 @@ The `ConnectorsService` (`connectors.service.ts`) uses the connector registry to
 
 ```typescript
 export abstract class Connector<
-  T extends Service,
+  T extends string = string,
   TConnectorProgress extends JsonSafeObject = JsonSafeObject,
 >
 ```
@@ -63,32 +63,42 @@ export abstract class Connector<
 
 | Parameter            | Purpose                                                                                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `T extends Service`  | The `Service` enum value this connector handles (e.g., `Service.AIRTABLE`)                                                                      |
+| `T extends string`   | A service identifier string (e.g., `'AIRTABLE'`). The `Service` type is just `string` — convenience constants are in `service-constants.ts`.    |
 | `TConnectorProgress` | Connector-specific progress state for resumable pulls. Defaults to `JsonSafeObject`. Example: `{ nextCursor: string \| undefined }` for Notion. |
 
 ### Required Abstract Members
 
-| Member                                           | Signature                                                                                                                                                                                                      | Purpose                                                                                                               |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `service`                                        | `abstract readonly service: T`                                                                                                                                                                                 | The Service enum value                                                                                                |
-| `displayName`                                    | `static readonly displayName: string`                                                                                                                                                                          | Human-readable name (e.g., `'Airtable'`)                                                                              |
-| `metadata`                                       | `static readonly metadata: ConnectorMetadata`                                                                                                                                                                  | Connector metadata (display name, terminology, logo, visibility, OAuth labels). Use the `connectorMetadata()` helper. |
-| `testConnection()`                               | `abstract testConnection(): Promise<void>`                                                                                                                                                                     | Validate credentials. Throw on failure, resolve silently on success.                                                  |
-| `listTables()`                                   | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                               | Return all available tables/collections                                                                               |
-| `fetchJsonTableSpec(id)`                         | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                        | Build the full JSON schema for a table                                                                                |
-| `pullRecordFiles(tableSpec, callback, progress)` | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress): Promise<void>` | Stream all records via batched callbacks                                                                              |
-| `getBatchSize(operation)`                        | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                   | Max batch size per CRUD operation (must be > 0)                                                                       |
-| `createRecords(tableSpec, files)`                | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                       | Create records, return files with remote IDs assigned                                                                 |
-| `updateRecords(tableSpec, files, changedKeys?)`  | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] \| undefined)[]): Promise<void>`                                                                         | Update existing records (see [Partial Field Updates](#partial-field-updates-changedkeys))                             |
-| `deleteRecords(tableSpec, files)`                | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                  | Delete records                                                                                                        |
-| `extractConnectorErrorDetails(error)`            | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                 | Translate service errors to user-friendly messages                                                                    |
+| Member                                                    | Signature                                                                                                                                                                                                                                     | Purpose                                                                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `service`                                                 | `abstract readonly service: T`                                                                                                                                                                                                                | The service identifier string                                                                                         |
+| `displayName`                                             | `static readonly displayName: string`                                                                                                                                                                                                         | Human-readable name (e.g., `'Airtable'`)                                                                              |
+| `metadata`                                                | `static readonly metadata: ConnectorMetadata`                                                                                                                                                                                                 | Connector metadata (display name, terminology, logo, visibility, OAuth labels). Use the `connectorMetadata()` helper. |
+| `testConnection()`                                        | `abstract testConnection(): Promise<void>`                                                                                                                                                                                                    | Validate credentials. Throw on failure, resolve silently on success.                                                  |
+| `listTables()`                                            | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                                                              | Return all available tables/collections                                                                               |
+| `fetchJsonTableSpec(id)`                                  | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                                                       | Build the full JSON schema for a table                                                                                |
+| `pullRecordFiles(tableSpec, callback, progress, options)` | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress, options: ConnectorPullOptions): Promise<void>` | Stream all records via batched callbacks                                                                              |
+| `pullRecordFilesByIds(tableSpec, ids, callback)`          | `abstract pullRecordFilesByIds(tableSpec: BaseJsonTableSpec, ids: string[], callback: (params: { files: ConnectorFile[] }) => Promise<void>): Promise<void>`                                                                                  | Fetch specific records by ID (bulk where supported, silently skip 404s)                                               |
+| `getBatchSize(operation)`                                 | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                                                  | Max batch size per CRUD operation (must be > 0)                                                                       |
+| `createRecords(tableSpec, files)`                         | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                                                      | Create records, return files with remote IDs assigned                                                                 |
+| `updateRecords(tableSpec, files, changedKeys?)`           | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] \| undefined)[]): Promise<void>`                                                                                                        | Update existing records (see [Partial Field Updates](#partial-field-updates-changedkeys))                             |
+| `deleteRecords(tableSpec, files)`                         | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                                                 | Delete records                                                                                                        |
+| `getSuggestedRecordFileNames(records, tableSpec)`         | `abstract getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string \| undefined)[]`                                                                                                                       | Suggest human-friendly filenames for pulled records (without extension). Return `undefined` per record to use its ID. |
+| `extractConnectorErrorDetails(error)`                     | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                                                | Translate service errors to user-friendly messages                                                                    |
 
-### Optional Methods
+### Optional Methods & Properties
 
-| Method                             | Purpose                                                                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `getNewFile(tableSpec)`            | Return a default template for new records. Default: `{}`. Override to pre-populate fields (e.g., Webflow sets `isDraft: true`).             |
-| `validateFiles?(tableSpec, files)` | Optional pre-publish validation. Return validation results with `publishable` boolean and optional `errors`, or `undefined` if unsupported. |
+| Member                                              | Purpose                                                                                                                                                                                                          |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getNewFile(tableSpec)`                             | Return a default template for new records. Default: `{}`. Override to pre-populate fields (e.g., Webflow sets `isDraft: true`).                                                                                  |
+| `validateFiles?(tableSpec, files)`                  | Optional pre-publish validation. Return validation results with `publishable` boolean and optional `errors`, or `undefined` if unsupported.                                                                      |
+| `tableDiscoveryMode`                                | Getter returning `TableDiscoveryMode.LIST` (default) or `TableDiscoveryMode.SEARCH`. Use SEARCH for slow list APIs (e.g. Notion).                                                                                |
+| `searchTables(searchTerm)`                          | Search tables by name. Required when `tableDiscoveryMode` is `SEARCH`. Returns `{ tables: TablePreview[]; hasMore: boolean }`.                                                                                   |
+| `supportsFilters()`                                 | Whether the connector supports filter expressions for pulling records. Default: `false`.                                                                                                                         |
+| `supportsFieldSelection()`                          | Whether the connector supports field/column selection when adding tables. Default: `false`.                                                                                                                      |
+| `supportsFileUpload`                                | Property indicating whether the connector supports `uploadFile()`. Default: `false`.                                                                                                                             |
+| `uploadFile(buffer, filename, mimeType, metadata?)` | Upload a file to the remote service and return asset metadata. Default: throws. Override alongside `supportsFileUpload = true`.                                                                                  |
+| `extractAssets(input)`                              | Extract asset metadata from a record's content and schema. Default: `[]`. Override for connectors with asset fields. See [Asset Extraction](#asset-extraction).                                                  |
+| `fallbackErrorDetails(error)`                       | Protected helper that returns a `ConnectorErrorDetails` including the actual error message. Use as the final fallback in `extractConnectorErrorDetails()` (see [Error Handling](#extractconnectorerrordetails)). |
 
 ### Key Types
 
@@ -119,7 +129,9 @@ type BaseJsonTableSpec = {
   idColumnRemoteId: string; // Field used as record ID
   titleColumnRemoteId?: EntityId['remoteId'];
   mainContentColumnRemoteId?: EntityId['remoteId'];
-  slugColumnRemoteId?: string; // Dot-path for filename slug
+  slugFieldPath?: string; // Lodash dot-path for filename slug (e.g. 'fieldData.slug')
+  basePath?: string[]; // Root path grouping (e.g. site name, base name)
+  generatedAt?: string; // ISO 8601 timestamp of schema generation
 };
 
 // A record — just a plain JSON object
@@ -138,7 +150,7 @@ type ConnectorErrorDetails = {
 If the connector requires pre-processing of user-provided credentials (e.g., WordPress discovers the REST API endpoint from a site URL), implement an `AuthParser`:
 
 ```typescript
-export abstract class AuthParser<T extends Service> {
+export abstract class AuthParser<T extends string = string> {
   abstract readonly service: T;
   abstract parseUserProvidedParams(params: { userProvidedParams: Record<string, string | undefined> }): Promise<{
     credentials: Record<string, string>;
@@ -228,7 +240,7 @@ Build a `BaseJsonTableSpec` with a TypeBox JSON Schema describing every field. P
 Key considerations:
 
 - Set `idColumnRemoteId` to the field that uniquely identifies records (e.g., `'id'`, `'recordId'`)
-- Optionally set `titleColumnRemoteId` (display name), `mainContentColumnRemoteId` (markdown body), `slugColumnRemoteId` (filename slug)
+- Optionally set `titleColumnRemoteId` (display name), `mainContentColumnRemoteId` (markdown body), `slugFieldPath` (lodash dot-path for filename slug, e.g. `'fieldData.slug'`)
 - Annotate fields with `x-scratch-*` extensions (see [Section 5](#5-json-schema-extensions))
 
 ### `pullRecordFiles()`
@@ -242,6 +254,7 @@ async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
   callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
   progress: NotionDownloadProgress,
+  options: ConnectorPullOptions,
 ): Promise<void> {
   let cursor: string | undefined = progress.nextCursor;
   do {
@@ -265,6 +278,7 @@ async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
   callback: (params: { files: ConnectorFile[]; connectorProgress?: WordPressDownloadProgress }) => Promise<void>,
   progress: WordPressDownloadProgress,
+  options: ConnectorPullOptions,
 ): Promise<void> {
   let offset = progress.nextOffset ?? 0;
   let hasMore = true;
@@ -285,6 +299,7 @@ async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
   callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   progress: JsonSafeObject,
+  options: ConnectorPullOptions,
 ): Promise<void> {
   for await (const rawRecords of this.client.listRecords(baseId, tableId)) {
     const files = rawRecords.map((record) => this.recordToFile(record));
@@ -317,6 +332,49 @@ for (const product of products) {
 ```
 
 Hydrate before passing to the callback — the stored file should contain the complete record.
+
+### `pullRecordFilesByIds()`
+
+Fetch specific records by their IDs. Used for targeted re-pulls (e.g., after a publish). Use bulk API endpoints where available, falling back to individual fetches otherwise. Silently skip records that return 404 (already deleted).
+
+```typescript
+async pullRecordFilesByIds(
+  tableSpec: BaseJsonTableSpec,
+  ids: string[],
+  callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+): Promise<void> {
+  // Bulk fetch where possible, skip 404s
+  const files: ConnectorFile[] = [];
+  for (const id of ids) {
+    try {
+      const record = await this.client.getRecord(tableSpec.id.remoteId, id);
+      files.push(this.recordToFile(record));
+    } catch (error) {
+      if (error.status === 404) continue;
+      throw error;
+    }
+  }
+  if (files.length > 0) {
+    await callback({ files });
+  }
+}
+```
+
+### `getSuggestedRecordFileNames()`
+
+Return human-friendly filenames for pulled records (without extension). The array must be parallel to `records` — return `undefined` for entries that should fall back to the record's ID. These suggestions are only used for initial file naming; once set, filenames don't change.
+
+Use the `suggestFileNamesFromFieldPaths()` helper for connectors with simple record structures:
+
+```typescript
+import { suggestFileNamesFromFieldPaths } from '../connector';
+
+getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+  return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'name', 'title');
+}
+```
+
+The helper tries each lodash dot-path in order and returns the first non-empty string. Connectors with complex record structures (e.g., Notion rich text titles) should implement this method directly.
 
 ### `createRecords()` / `updateRecords()` / `deleteRecords()`
 
@@ -397,7 +455,7 @@ extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
     }
   }
 
-  return { userFriendlyMessage: ErrorMessageTemplates.UNKNOWN_ERROR('MyService') };
+  return this.fallbackErrorDetails(error);
 }
 ```
 
@@ -452,7 +510,7 @@ fieldSchema[FOREIGN_KEY_OPTIONS] = {
 
 ### `x-scratch-suggested-transformer`
 
-Hint that the system should auto-apply a transformation when displaying/editing this field.
+Hint that the system should auto-apply a transformation when this field is selected as a **source** in the sync editor.
 
 ```typescript
 import { SUGGESTED_TRANSFORMER } from '../json-schema';
@@ -460,13 +518,82 @@ import { SUGGESTED_TRANSFORMER } from '../json-schema';
 fieldSchema[SUGGESTED_TRANSFORMER] = { type: 'notion_to_html' };
 ```
 
+### `x-scratch-suggested-in-transformer`
+
+Hint that the system should auto-apply a transformation when this field is selected as a **destination** in the sync editor.
+
+```typescript
+import { SUGGESTED_IN_TRANSFORMER } from '../json-schema';
+
+fieldSchema[SUGGESTED_IN_TRANSFORMER] = { type: 'html_to_notion' };
+```
+
+### `x-scratch-remote-field-id`
+
+Store the remote field ID from the external service (e.g., Airtable `fldXXX`, Webflow hex hash, Notion property ID).
+
+```typescript
+import { REMOTE_FIELD_ID } from '../json-schema';
+
+fieldSchema[REMOTE_FIELD_ID] = 'fld12345abc';
+```
+
+### `x-scratch-virtual-fields`
+
+Define human-readable shortcuts for complex nested fields. Each virtual field provides a display label and a pre-configured transformer.
+
+```typescript
+import { VIRTUAL_FIELDS } from '../json-schema';
+import { VirtualFieldDef } from '../json-schema';
+
+fieldSchema[VIRTUAL_FIELDS] = [
+  {
+    displayLabel: 'Title (plain text)',
+    type: 'string',
+    suggestedTransformer: { type: 'notion_title_to_plain_text' },
+  },
+] satisfies VirtualFieldDef[];
+```
+
+### `x-scratch-asset-field`
+
+Mark a field as containing file/media assets that should be indexed. Used by the asset extraction system.
+
+```typescript
+import { ASSET_FIELD, AssetFieldOptions } from '../json-schema';
+
+fieldSchema[ASSET_FIELD] = {
+  idPath: 'id', // JSONPath to stable ID within each item (null = use URL hash)
+  urlExpires: true, // Whether the asset URL expires (e.g. Airtable ~2hr)
+} satisfies AssetFieldOptions;
+```
+
+### `x-scratch-asset-table`
+
+Mark a table whose records ARE assets (e.g., WordPress media, Webflow Assets). Unlike `x-scratch-asset-field`, this annotates the entire table spec rather than individual fields.
+
+```typescript
+import { ASSET_TABLE, AssetTableOptions } from '../json-schema';
+
+tableSpec[ASSET_TABLE] = {
+  urlPath: 'source_url',
+  filenamePath: 'title.rendered',
+  mimeTypePath: 'mime_type',
+  sizePath: 'media_details.filesize',
+  widthPath: 'media_details.width',
+  heightPath: 'media_details.height',
+  altTextPath: 'alt_text',
+  urlExpires: false,
+} satisfies AssetTableOptions;
+```
+
 ## 6. Registration Checklist
 
 When adding a new connector, touch all of these:
 
-### Shared Types
+### Server — Service Constant
 
-- [ ] Add to `Service` const in `packages/shared-types/src/enums/enums.ts` (this is a string const object, not a DB enum — no migration needed)
+- [ ] Add to `Service` const in `server/src/remote-service/connectors/service-constants.ts` (convenience constant — the `Service` type is just `string` in `@spinner/shared-types`, so no migration or shared-types change is needed)
 
 ### Server — Connector Registration
 
@@ -484,9 +611,11 @@ When adding a new connector, touch all of these:
 
 ### Connector Metadata Example
 
-The `connectorMetadata()` helper merges your overrides with sensible defaults (`table: 'table'`, `record: 'record'`, `base: null`, `visible: true`, `pushOperationName: 'Publish'`, `pullOperationName: 'Download'`). You must provide `displayName` and `logo`.
+The `connectorMetadata()` helper (from `@spinner/shared-types`) merges your overrides with sensible defaults (`table: 'table'`, `record: 'record'`, `base: null`, `bases: null`, `visible: true`, `pushOperationName: 'Publish'`, `pullOperationName: 'Download'`, `defaultAuthMethod: 'oauth'`). You must provide `displayName` and `logo`.
 
-**`credentialFields`** declares the form fields the client renders for each auth method. Keys must match the property names accepted by the server (e.g. `apiKey`, `connectionString`, `shopDomain`). Field types: `'string'` (text input), `'password'` (masked input), `'boolean'` (checkbox).
+**`credentialFields`** declares the form fields the client renders for each auth method. It is a `Partial<Record<AuthMethod, ConnectorSettingDefinition[]>>` — keys are auth methods (`'oauth'`, `'user_provided_params'`, `'oauth_custom'`), values are arrays of `ConnectorSettingDefinition`. Field types: `'string'` (text input), `'password'` (masked input), `'boolean'` (checkbox).
+
+**`supportedAuthMethods`** and **`defaultAuthMethod`** on the metadata control which auth options the client shows. Note that `supportedAuthMethods` also appears in the `connectorRegistry.register()` call.
 
 ```typescript
 import { connectorMetadata } from '@spinner/shared-types';
@@ -518,10 +647,12 @@ connectorRegistry.register({
   metadata: MyConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['oauth', 'user_provided_params'],
+  rateLimiterSpec: { points: 5, duration: 1 }, // optional — rate limit to 5 requests/second
   async createConnector(ctx) {
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount?.id ?? 'default');
     const apiKey = ctx.decryptedCredentials?.apiKey;
     if (!apiKey) throw new Error('Missing API key');
-    return new MyConnector(apiKey);
+    return new MyConnector(apiKey, { rateLimiter });
   },
 });
 ```
@@ -544,8 +675,22 @@ For resumability, pass `connectorProgress` in the callback. Cursor and offset pa
 
 1. Use `extractCommonDetailsFromAxiosError()` for HTTP-based APIs — it handles common status codes
 2. Handle service-specific error types (SDK errors, API error codes)
-3. Always return `ErrorMessageTemplates.UNKNOWN_ERROR(displayName)` as a fallback
+3. Always call `this.fallbackErrorDetails(error)` as the final fallback — it includes the actual error message and service name
 4. The `ConnectorInstantiationError` is thrown by `ConnectorsService` when credentials are missing/invalid — you don't need to handle this in the connector itself
+
+### `ConnectorFactoryContext`
+
+The `createConnector` factory receives a context object with:
+
+```typescript
+interface ConnectorFactoryContext {
+  connectorAccount: { id: string; authType: string; extras: Record<string, unknown> | null } | null;
+  decryptedCredentials: DecryptedCredentials | null;
+  userId?: string;
+  getOAuthAccessToken: (connectorAccountId: string) => Promise<string>;
+  createRateLimiter: (connectorAccountId: string) => RateLimiter | undefined;
+}
+```
 
 ### Credential Validation in `createConnector()`
 
@@ -619,6 +764,40 @@ async updateRecords(
 
 > **Legacy behavior (do not replicate):** Several existing connectors silently strip read-only fields before sending data to the API. This masks user errors and should be removed. With `changedKeys` now available on `updateRecords`, connectors can send only the fields the user actually changed, avoiding API rejections from unchanged read-only fields without silently masking real edits.
 
+### Asset Extraction
+
+Connectors that store file/media assets can participate in the asset indexing system by:
+
+1. **Annotating schema fields** with `x-scratch-asset-field` or `x-scratch-asset-table` (see [Section 5](#5-json-schema-extensions))
+2. **Overriding `extractAssets()`** to extract asset metadata from record content
+
+The `asset-extraction-helpers.ts` module provides shared utilities:
+
+| Helper                         | Purpose                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `extractFromAnnotatedSchema()` | Schema-driven extraction — walks the schema looking for `x-scratch-asset-field` annotations |
+| `extractStandaloneEntity()`    | For asset tables (entire record IS an asset) — reads `x-scratch-asset-table` options        |
+| `hashUrl(url)`                 | SHA-256 hash of the full URL (for permanent URLs)                                           |
+| `hashUrlPath(url)`             | SHA-256 hash of URL path only (for expiring URLs with rotating query params)                |
+| `stripQueryParams(url)`        | Remove query params from a URL                                                              |
+| `inferMediaType(url)`          | Determine media type (image/video/audio/document/file) from URL extension                   |
+| `inferMediaTypeFromMime(mime)` | Determine media type from MIME type string                                                  |
+
+```typescript
+// Simple case: use schema-driven extraction (works for most connectors)
+extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+  return extractFromAnnotatedSchema(input);
+}
+
+// Asset table: the record itself IS an asset (e.g. WordPress media)
+extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+  const result = extractStandaloneEntity(input);
+  return result ? [result] : [];
+}
+```
+
+For connectors that support file uploads, also override `uploadFile()` and set `supportsFileUpload = true`.
+
 ### File Organization
 
 Follow the established pattern for your connector directory:
@@ -630,5 +809,6 @@ server/src/remote-service/connectors/library/<service-name>/
 ├── <service-name>-api-client.ts      # API client wrapper (if needed)
 ├── <service-name>-auth-parser.ts     # AuthParser (if needed)
 ├── <service-name>-types.ts           # Service-specific types
+├── conversion/                       # Field type conversion utilities (if needed)
 └── __tests__/                        # Tests
 ```
