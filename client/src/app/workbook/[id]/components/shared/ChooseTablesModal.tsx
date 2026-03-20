@@ -1,7 +1,7 @@
 'use client';
 
 import { Badge } from '@/app/components/base/badge';
-import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
+import { ButtonPrimaryLight, ButtonSecondaryInline, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
@@ -348,6 +348,40 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     });
   };
 
+  const handleSelectAll = useCallback(
+    (tables: TablePreview[]) => {
+      const enabledTables = tables.filter((t) => !t.disabled);
+      setSelectedTableIds((prev) => {
+        const next = new Set(prev);
+        enabledTables.forEach((t) => next.add(t.id.remoteId.join('/')));
+        return next;
+      });
+      setSelectedTableMap((prev) => {
+        const next = new Map(prev);
+        enabledTables.forEach((t) => next.set(t.id.remoteId.join('/'), t));
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleDeselectAll = useCallback(
+    (tables: TablePreview[]) => {
+      const enabledTables = tables.filter((t) => !t.disabled);
+      setSelectedTableIds((prev) => {
+        const next = new Set(prev);
+        enabledTables.forEach((t) => next.delete(t.id.remoteId.join('/')));
+        return next;
+      });
+      setSelectedTableMap((prev) => {
+        const next = new Map(prev);
+        enabledTables.forEach((t) => next.delete(t.id.remoteId.join('/')));
+        return next;
+      });
+    },
+    [],
+  );
+
   const handleFilterChange = useCallback((tableKey: string, value: string) => {
     setFilterValues((prev) => {
       const next = new Map(prev);
@@ -634,12 +668,28 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   const modalTitle = showConfirmation ? 'Confirm removal' : connectorTitle;
 
+  // Check if all enabled tables are selected (for Select All / Deselect All toggle)
+  const enabledTables = useMemo(() => availableTables.filter((t) => !t.disabled), [availableTables]);
+  const allEnabledSelected = useMemo(
+    () => enabledTables.length > 0 && enabledTables.every((t) => selectedTableIds.has(t.id.remoteId.join('/'))),
+    [enabledTables, selectedTableIds],
+  );
+
   // Step 1: Table selection (LIST mode)
   const renderStep1List = () => (
     <Stack gap="md">
       <Group justify="space-between" align="center">
         <Text13Regular c="dimmed">Pick the tables from {connectionName} to make available in Scratch.</Text13Regular>
-        <Text12Regular c="dimmed">Step 1 of 2</Text12Regular>
+        <Group gap="sm" align="center">
+          {!tablesLoading && enabledTables.length > 1 && (
+            <ButtonSecondaryInline
+              onClick={() => (allEnabledSelected ? handleDeselectAll(enabledTables) : handleSelectAll(enabledTables))}
+            >
+              {allEnabledSelected ? 'Deselect all' : 'Select all'}
+            </ButtonSecondaryInline>
+          )}
+          <Text12Regular c="dimmed">Step 1 of 2</Text12Regular>
+        </Group>
       </Group>
 
       {tablesLoading ? (
@@ -655,12 +705,28 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         <ScrollArea.Autosize mah={400}>
           <Stack gap="xs">
             {groupedTables
-              ? groupedTables.map((group, gi) => (
+              ? groupedTables.map((group, gi) => {
+                  const groupEnabledTables = group.subGroups.flatMap((sg) => sg.tables.filter((t) => !t.disabled));
+                  const allGroupSelected =
+                    groupEnabledTables.length > 0 &&
+                    groupEnabledTables.every((t) => selectedTableIds.has(t.id.remoteId.join('/')));
+                  return (
                   <Box key={group.groupLabel ?? gi}>
                     {group.groupLabel && (
-                      <Text13Medium mb={4} mt={gi > 0 ? 'sm' : 0}>
-                        {group.groupLabel}
-                      </Text13Medium>
+                      <Group gap="xs" align="center" mb={4} mt={gi > 0 ? 'sm' : 0}>
+                        <Text13Medium>{group.groupLabel}</Text13Medium>
+                        {groupEnabledTables.length > 1 && (
+                          <ButtonSecondaryInline
+                            onClick={() =>
+                              allGroupSelected
+                                ? handleDeselectAll(groupEnabledTables)
+                                : handleSelectAll(groupEnabledTables)
+                            }
+                          >
+                            {allGroupSelected ? 'Deselect all' : 'Select all'}
+                          </ButtonSecondaryInline>
+                        )}
+                      </Group>
                     )}
                     {group.subGroups.map((sg, si) => (
                       <Box key={sg.subGroupLabel ?? si} ml={group.groupLabel ? 'xs' : 0}>
@@ -687,7 +753,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                       </Box>
                     ))}
                   </Box>
-                ))
+                  );
+                })
               : availableTables.map((table) => {
                   const tableKey = table.id.remoteId.join('/');
                   const isChecked = selectedTableIds.has(tableKey);
