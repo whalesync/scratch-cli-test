@@ -22,8 +22,12 @@ describe('permissions', () => {
       authSource,
       stripeCustomerId: null,
       organizationId: 'org_123',
-      refCode: null,
-      firstTimeUser: false,
+      apiTokens: [],
+      workspacePermissions: [],
+      organization: null,
+      settings: null,
+      lastWorkbookId: null,
+      waitlistApproved: false,
     });
 
     describe('ADMIN users', () => {
@@ -36,16 +40,6 @@ describe('permissions', () => {
         const user = createTestUser(UserRole.ADMIN, 'api-token');
         expect(hasAdminToolsPermission(user)).toBe(true);
       });
-
-      it('should return false for ADMIN with agent-token auth', () => {
-        const user = createTestUser(UserRole.ADMIN, 'agent-token');
-        expect(hasAdminToolsPermission(user)).toBe(false);
-      });
-
-      it('should return true for ADMIN with jwt and agent authSource', () => {
-        const user = createTestUser(UserRole.ADMIN, 'jwt', 'agent');
-        expect(hasAdminToolsPermission(user)).toBe(true);
-      });
     });
 
     describe('USER role (non-admin)', () => {
@@ -56,11 +50,6 @@ describe('permissions', () => {
 
       it('should return false for USER with api-token auth', () => {
         const user = createTestUser(UserRole.USER, 'api-token');
-        expect(hasAdminToolsPermission(user)).toBe(false);
-      });
-
-      it('should return false for USER with agent-token auth', () => {
-        const user = createTestUser(UserRole.USER, 'agent-token');
         expect(hasAdminToolsPermission(user)).toBe(false);
       });
     });
@@ -96,10 +85,8 @@ describe('permissions', () => {
       }> = [
         { role: UserRole.ADMIN, authType: 'jwt', expected: true, description: 'ADMIN + jwt' },
         { role: UserRole.ADMIN, authType: 'api-token', expected: true, description: 'ADMIN + api-token' },
-        { role: UserRole.ADMIN, authType: 'agent-token', expected: false, description: 'ADMIN + agent-token' },
         { role: UserRole.USER, authType: 'jwt', expected: false, description: 'USER + jwt' },
         { role: UserRole.USER, authType: 'api-token', expected: false, description: 'USER + api-token' },
-        { role: UserRole.USER, authType: 'agent-token', expected: false, description: 'USER + agent-token' },
       ];
 
       testCases.forEach(({ role, authType, expected, description }) => {

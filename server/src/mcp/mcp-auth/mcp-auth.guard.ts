@@ -37,7 +37,7 @@ export class McpAuthGuard implements CanActivate {
     (request as Request & { user: AuthenticatedUser }).user = {
       ...user,
       authType: 'api-token',
-      authSource: 'user',
+      authSource: 'mcp',
       apiToken: mcpToken,
     };
 

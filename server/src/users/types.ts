@@ -22,7 +22,7 @@ export interface WorkspacePermission {
   role: WorkspacePermissionRole;
 }
 
-export type AuthSource = 'user' | 'agent' | 'cli';
+export type AuthSource = 'user' | 'cli' | 'mcp';
 
 /**
  *

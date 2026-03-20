@@ -9,8 +9,8 @@ import { UserCluster } from 'src/db/cluster-types';
  * of authentication used along with packaging in any special clerk data like organizations or name.
  */
 export type AuthenticatedUser = UserCluster.User & {
-  authType: 'api-token' | 'agent-token' | 'jwt';
-  authSource: 'user' | 'agent' | 'cli';
+  authType: 'api-token' | 'jwt';
+  authSource: 'user' | 'cli' | 'mcp';
   clerkUser?: ClerkUser;
   apiToken?: ApiToken;
 };

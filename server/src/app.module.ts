@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditLogModule } from './audit/audit-log.module';
 import { AuthModule } from './auth/auth.module';
 import { BugReportModule } from './bug-report/bug-report.module';
@@ -13,6 +14,7 @@ import { DevToolsModule } from './dev-tools/dev-tools.module';
 import { DiscoverModule } from './discover/discover.module';
 import { ExperimentsModule } from './experiments/experiments.module';
 import { HealthModule } from './health/health.module';
+import { ApiRequestMetricsInterceptor } from './interceptors/api-request-metrics.interceptor';
 import { JobModule } from './job/job.module';
 import { McpModule } from './mcp/mcp.module';
 import { MetricsModule } from './metrics/metrics.module';
@@ -66,7 +68,12 @@ import { WorkerModule } from './worker/workers.module';
     ...(ScratchConfigService.isCronService() ? [CronModule] : []),
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ApiRequestMetricsInterceptor,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   public configure(consumer: MiddlewareConsumer): void {

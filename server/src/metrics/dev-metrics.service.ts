@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import { WSLogger } from 'src/logger';
 import { CustomMetric } from './custom-metrics';
 import { CustomMetricsService } from './custom-metrics-service';
@@ -8,6 +7,12 @@ import { CustomMetricDimensionValue } from './types';
 export class DevMetricsService implements CustomMetricsService {
   logValue(metric: CustomMetric, value: number, dimension?: CustomMetricDimensionValue): void {
     // Do nothing.
+    WSLogger.info({
+      source: 'DevMetricsService',
+      message: metric,
+      value: value,
+      dimension: dimension,
+    });
   }
 
   async withLoggedExecTime<T>(metric: CustomMetric, closure: () => Promise<T>): Promise<T> {

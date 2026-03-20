@@ -3,6 +3,7 @@ export enum CustomMetricDimension {
   TABLE_NAME = 'tableName',
   CONNECTOR_TYPE = 'connectorType',
   JOB_TYPE = 'jobType',
+  AUTH_SOURCE = 'authSource',
 }
 
 /** Value for a dimension. */
