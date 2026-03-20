@@ -11,6 +11,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
+import { getConfigRepoId } from 'src/workbook/workbook-config.service';
 import { MigrationService, StripPrefixConnectionResult } from './migration.service';
 import { GitIndexDump } from './scratch-git.client';
 import { ScratchGitService } from './scratch-git.service';
@@ -48,11 +49,15 @@ export class ScratchGitController {
     @Query('branch') branch = 'main',
     @Query('folder') folder = '',
     @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Query('useConfigRepo') useConfigRepo: string | undefined,
     @Req() req: RequestWithUser,
   ): Promise<any[]> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    const repoId =
+      useConfigRepo === 'true'
+        ? getConfigRepoId(actor.organizationId, workbookId)
+        : await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.listRepoFiles(repoId, branch, folder);
   }
 
@@ -62,11 +67,15 @@ export class ScratchGitController {
     @Query('branch') branch = 'main',
     @Query('path') path: string,
     @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Query('useConfigRepo') useConfigRepo: string | undefined,
     @Req() req: RequestWithUser,
   ): Promise<{ content: string } | null> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    const repoId =
+      useConfigRepo === 'true'
+        ? getConfigRepoId(actor.organizationId, workbookId)
+        : await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.getRepoFile(repoId, branch, path);
   }
 
@@ -138,11 +147,15 @@ export class ScratchGitController {
   async getGraph(
     @Param('id') workbookId: WorkbookId,
     @Query('connectorAccountId') connectorAccountId: string | undefined,
+    @Query('useConfigRepo') useConfigRepo: string | undefined,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    const repoId =
+      useConfigRepo === 'true'
+        ? getConfigRepoId(actor.organizationId, workbookId)
+        : await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
     return this.scratchGitService.getGraph(repoId);
   }
 

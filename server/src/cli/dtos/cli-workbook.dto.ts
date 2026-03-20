@@ -60,6 +60,7 @@ export class CliWorkbookResponseDto {
   readonly tableCount?: number;
   readonly version?: number;
   readonly connectorAccounts?: CliConnectorAccountDto[];
+  readonly configGitUrl?: string;
 }
 
 /**

@@ -8,11 +8,13 @@ import { trackToggleDisplayMode } from '@/lib/posthog';
 import { useLayoutManagerStore } from '@/stores/layout-manager-store';
 import { Box, Breadcrumbs, Group, Tooltip, useMantineColorScheme } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { WorkbookId } from '@spinner/shared-types';
 import { BugIcon, ChevronRightIcon, MoonIcon, SunIcon, TerminalIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import { useMemo } from 'react';
 import { ConnectToCLIModal } from '../shared/ConnectToCLIModal';
+import { DebugMenu } from './DebugMenu';
 
 function getPageName(pathname: string): { label: string; id: string } {
   if (pathname.includes('/review')) return { label: 'Review & Publish', id: 'review' };
@@ -147,6 +149,7 @@ export function Toolbar({ workbookId }: ToolbarProps) {
             <StyledLucideIcon Icon={colorScheme === 'light' ? MoonIcon : SunIcon} size="sm" />
           </IconButtonToolbar>
         </Tooltip>
+        <DebugMenu workbookId={workbookId as WorkbookId} />
       </Group>
 
       <ConnectToCLIModal opened={cliModalOpened} onClose={closeCLIModal} workbookId={workbookId} />

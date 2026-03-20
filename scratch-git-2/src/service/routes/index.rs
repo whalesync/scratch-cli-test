@@ -172,6 +172,76 @@ pub async fn dump_index(State(state): State<AppState>, Path(id): Path<String>) -
     }
 }
 
+/// Incrementally update the SQLite index for one file after it is committed to main.
+///
+/// Reads the schema for the file's folder from the git tree at `main` to get FK fields.
+/// No-ops gracefully if the index DB does not exist yet (full build hasn't run).
+pub fn index_single_file_on_main(
+    state: &AppState,
+    id: &str,
+    file_path: &str,
+    file_content: &str,
+) -> Result<(), crate::service::error::AppError> {
+    let file_path = file_path.strip_prefix('/').unwrap_or(file_path);
+    let (folder, filename) = match file_path.rfind('/') {
+        Some(i) => (&file_path[..i], &file_path[i + 1..]),
+        None => ("", file_path),
+    };
+    if filename == "schema.json" || !filename.ends_with(".json") {
+        return Ok(());
+    }
+
+    let db_path = state.index_db_path(id);
+    let fk_fields = load_fk_fields_for_folder(state, id, folder).unwrap_or_default();
+
+    idx::upsert_single_file(&db_path, folder, filename, file_content, &fk_fields)
+        .map_err(|e| crate::service::error::AppError::internal(e.to_string()))
+}
+
+/// Remove a file from the SQLite index (called when a file is deleted from main).
+pub fn remove_file_from_index(
+    state: &AppState,
+    id: &str,
+    file_path: &str,
+) -> Result<(), crate::service::error::AppError> {
+    let file_path = file_path.strip_prefix('/').unwrap_or(file_path);
+    let (folder, filename) = match file_path.rfind('/') {
+        Some(i) => (&file_path[..i], &file_path[i + 1..]),
+        None => ("", file_path),
+    };
+    let db_path = state.index_db_path(id);
+    idx::remove_single_file(&db_path, folder, filename)
+        .map_err(|e| crate::service::error::AppError::internal(e.to_string()))
+}
+
+/// Read FK field definitions for a specific folder from the main branch in git.
+fn load_fk_fields_for_folder(
+    state: &AppState,
+    id: &str,
+    folder: &str,
+) -> anyhow::Result<Vec<idx::FkField>> {
+    let git_repo = GitRepo::open(&state.repos_dir, id)?;
+    let commit_oid = git_repo.resolve_ref("main")?;
+    let tree_oid = git_repo.get_commit_tree_oid(commit_oid)?;
+    let blobs = collect_blobs(&git_repo.repo, tree_oid)?;
+
+    let schema_path = if folder.is_empty() {
+        ".scratch/schema.json".to_string()
+    } else {
+        format!(".scratch/{}/schema.json", folder)
+    };
+
+    for (path, oid) in &blobs {
+        if path == &schema_path {
+            let content = git_repo.read_blob(*oid)?;
+            let text = std::str::from_utf8(&content)?;
+            let schema: serde_json::Value = serde_json::from_str(text)?;
+            return Ok(idx::extract_fk_fields(&schema));
+        }
+    }
+    Ok(vec![])
+}
+
 /// Recursively collect all blob (file) entries from a git tree as `(path, ObjectId)` pairs.
 ///
 /// Uses an iterative DFS with a stack to avoid borrow-checker conflicts from recursive

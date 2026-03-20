@@ -17,6 +17,8 @@ import {
   DatabaseIcon,
   EllipsisVertical,
   FileJsonIcon,
+  FolderOpenIcon,
+  GitBranchIcon,
   LinkIcon,
   ListRestartIcon,
   ServerCrashIcon,
@@ -27,6 +29,8 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { mutate } from 'swr';
 import { FileIndexModal } from '../modals/FileIndexModal';
+import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
+import { GitGraphModal } from '../modals/GitGraphModal';
 import { RefIndexModal } from '../modals/RefIndexModal';
 import { WorkspacePermissionsModal } from '../modals/WorkspacePermissionsModal';
 
@@ -39,6 +43,8 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
   const [fileIndexOpen, setFileIndexOpen] = useState(false);
   const [refIndexOpen, setRefIndexOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [configRepoBrowserOpen, setConfigRepoBrowserOpen] = useState(false);
+  const [configRepoGraphOpen, setConfigRepoGraphOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportJson, setExportJson] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
@@ -159,6 +165,33 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
                   </Menu.Item>
                 </Menu.Dropdown>
               </Menu>
+              <Menu trigger="hover" position="left-start" offset={0} withinPortal>
+                <Menu.Target>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitBranchIcon size={16} />}
+                    rightSection={<ChevronRightIcon size={14} />}
+                  >
+                    Git
+                  </Menu.Item>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<FolderOpenIcon size={16} />}
+                    onClick={() => setConfigRepoBrowserOpen(true)}
+                  >
+                    Browse
+                  </Menu.Item>
+                  <Menu.Item
+                    data-devtool
+                    leftSection={<GitBranchIcon size={16} />}
+                    onClick={() => setConfigRepoGraphOpen(true)}
+                  >
+                    Tree
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
               <Menu.Item
                 data-devtool
                 leftSection={<ServerCrashIcon size={16} />}
@@ -180,6 +213,18 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       </Menu>
 
       <FileIndexModal opened={fileIndexOpen} onClose={() => setFileIndexOpen(false)} workbookId={workbookId} />
+      <GitFileBrowserModal
+        opened={configRepoBrowserOpen}
+        onClose={() => setConfigRepoBrowserOpen(false)}
+        workbookId={workbookId}
+        useConfigRepo
+      />
+      <GitGraphModal
+        opened={configRepoGraphOpen}
+        onClose={() => setConfigRepoGraphOpen(false)}
+        workbookId={workbookId}
+        useConfigRepo
+      />
 
       <RefIndexModal opened={refIndexOpen} onClose={() => setRefIndexOpen(false)} workbookId={workbookId} />
 

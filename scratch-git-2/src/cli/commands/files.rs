@@ -72,11 +72,20 @@ fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
                 println!("Downloading {}...", dir.file_name().unwrap_or_default().to_string_lossy());
             }
             results.push(download_single_repo(dir, &token)?);
-            // Update master worktree to reflect latest main branch
+            // Update master worktree and rebuild index
             let conn_dir_name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-            let _ = update_master_worktree(dir, &wb_dir, &conn_dir_name, &token);
+            if update_master_worktree(dir, &wb_dir, &conn_dir_name, &token).is_ok() {
+                rebuild_index_for_conn(&wb_dir, &conn_dir_name, json);
+            }
         }
         let agg = aggregate_download(&results);
+
+        // Refresh docs after download
+        if let markers::Marker::Workspace(m) = &marker {
+            let wb_name = if m.workbook.name.is_empty() { m.workbook.id.as_str() } else { m.workbook.name.as_str() };
+            let _ = super::generate_docs::write_docs(&wb_dir, wb_name);
+        }
+
         print_download_result(&agg, json)
     }
 }
@@ -133,9 +142,14 @@ pub async fn download_workbook(_base_url: &str, token: &str, workbook_id: &str) 
     let conn_dirs = find_connector_dirs(&wb_dir);
     if conn_dirs.is_empty() {
         download_single_repo(&wb_dir, token)?;
+        // V1: no master worktree / index support
     } else {
         for dir in &conn_dirs {
             download_single_repo(dir, token)?;
+            let conn_dir_name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if update_master_worktree(dir, &wb_dir, &conn_dir_name, token).is_ok() {
+                rebuild_index_for_conn(&wb_dir, &conn_dir_name, false);
+            }
         }
     }
     Ok(())
@@ -880,6 +894,36 @@ fn print_upload_result(result: &UploadResult, json: bool) -> anyhow::Result<()> 
         println!("Warning: {}", msg);
     }
     Ok(())
+}
+
+// ── Index rebuild ─────────────────────────────────────────────────────────────
+
+/// Rebuild the SQLite index for one connector after master is updated.
+/// Silently skips if master worktree or db parent dir doesn't exist.
+pub fn rebuild_index_for_conn(workspace_dir: &Path, conn_dir_name: &str, quiet: bool) {
+    let master = crate::shared::index::master_dir(workspace_dir, conn_dir_name);
+    if !master.exists() {
+        return;
+    }
+    let db = crate::shared::index::db_path(workspace_dir, conn_dir_name);
+    if let Some(parent) = db.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if !quiet {
+        eprint!("  Rebuilding index for {}... ", conn_dir_name);
+    }
+    match crate::shared::index::build(&master, &db) {
+        Ok(n) => {
+            if !quiet {
+                eprintln!("{n} file(s)");
+            }
+        }
+        Err(e) => {
+            if !quiet {
+                eprintln!("warning: index rebuild failed: {e}");
+            }
+        }
+    }
 }
 
 // ── Master worktree update ────────────────────────────────────────────────────

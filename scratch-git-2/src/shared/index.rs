@@ -302,6 +302,120 @@ fn index_file(
     Ok(())
 }
 
+// ── Incremental update ────────────────────────────────────────────────────────
+
+/// Create the index tables if they don't exist yet.
+/// Safe to call on every write — is a no-op if tables are present.
+fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS file_index (
+            folder    TEXT NOT NULL,
+            filename  TEXT NOT NULL,
+            remote_id TEXT,
+            PRIMARY KEY (folder, filename)
+        );
+        CREATE TABLE IF NOT EXISTS file_references (
+            source_folder    TEXT NOT NULL,
+            source_filename  TEXT NOT NULL,
+            target_table_id  TEXT NOT NULL,
+            target_remote_id TEXT NOT NULL
+        );",
+    )
+    .map_err(|e| anyhow::anyhow!("failed to ensure index schema: {e}"))
+}
+
+/// Incrementally upsert one file into the index.
+///
+/// - Opens (or creates) `db_path`
+/// - Upserts one row in `file_index`
+/// - Deletes + re-inserts `file_references` rows for this file
+/// - Never touches other rows
+///
+/// `fk_fields` — FK field definitions for this file's folder (pass empty slice if none).
+pub fn upsert_single_file(
+    db_path: &Path,
+    folder: &str,
+    filename: &str,
+    json_content: &str,
+    fk_fields: &[FkField],
+) -> anyhow::Result<()> {
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    ensure_schema(&conn)?;
+
+    let value: Value = serde_json::from_str(json_content)
+        .map_err(|e| anyhow::anyhow!("failed to parse JSON for {}/{}: {e}", folder, filename))?;
+
+    let remote_id = value
+        .get("id")
+        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+
+    conn.execute(
+        "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
+        params![folder, filename, remote_id],
+    )
+    .map_err(|e| anyhow::anyhow!("failed to upsert index row for {}/{}: {e}", folder, filename))?;
+
+    // Delete old references for this file, then re-insert
+    conn.execute(
+        "DELETE FROM file_references WHERE source_folder = ?1 AND source_filename = ?2",
+        params![folder, filename],
+    )
+    .map_err(|e| anyhow::anyhow!("failed to delete old references for {}/{}: {e}", folder, filename))?;
+
+    for fk in fk_fields {
+        if let Some(ref_val) = get_by_path(&value, &fk.field_path) {
+            let targets: Vec<String> = match ref_val {
+                Value::String(s) => vec![s.clone()],
+                Value::Number(n) => vec![n.to_string()],
+                Value::Array(arr) => arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Number(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            for target_id in targets {
+                conn.execute(
+                    "INSERT INTO file_references \
+                     (source_folder, source_filename, target_table_id, target_remote_id) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![folder, filename, fk.target_table_id, target_id],
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to insert reference for {}/{}: {e}", folder, filename)
+                })?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove a file from the index (called when a file is deleted from main).
+pub fn remove_single_file(db_path: &Path, folder: &str, filename: &str) -> anyhow::Result<()> {
+    if !db_path.exists() {
+        return Ok(());
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    conn.execute(
+        "DELETE FROM file_index WHERE folder = ?1 AND filename = ?2",
+        params![folder, filename],
+    )?;
+    conn.execute(
+        "DELETE FROM file_references WHERE source_folder = ?1 AND source_filename = ?2",
+        params![folder, filename],
+    )?;
+    Ok(())
+}
+
 // ── Index dump ────────────────────────────────────────────────────────────────
 
 pub struct IndexRow {

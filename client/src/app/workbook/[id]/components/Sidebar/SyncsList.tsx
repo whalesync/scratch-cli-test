@@ -3,14 +3,16 @@
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { useDevTools } from '@/hooks/use-dev-tools';
+import { workbookApi } from '@/lib/api/workbook';
 import { useSyncStore } from '@/stores/sync-store';
 import { Box, Group, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { notifications } from '@mantine/notifications';
 import type { Sync, WorkbookId } from '@spinner/shared-types';
-import { ClockIcon, DownloadIcon, PlayIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
+import { ClockIcon, DownloadIcon, GitBranchIcon, PlayIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { WhalesyncImportModal } from '../modals/WhalesyncImportModal';
 
 interface SyncsListProps {
@@ -27,10 +29,31 @@ export function SyncsList({ workbookId }: SyncsListProps) {
   const router = useRouter();
   const { isDevToolsEnabled } = useDevTools();
   const [importModalOpened, { open: openImportModal, close: closeImportModal }] = useDisclosure(false);
+  const [isPushingToGit, setIsPushingToGit] = useState(false);
 
   useEffect(() => {
     fetchSyncs(workbookId);
   }, [workbookId, fetchSyncs]);
+
+  const handlePushSyncsToGit = async () => {
+    setIsPushingToGit(true);
+    try {
+      const result = await workbookApi.pushSyncsToGit(workbookId);
+      notifications.show({
+        title: 'Syncs pushed to git',
+        message: `${result.count} sync${result.count !== 1 ? 's' : ''} written to the workbook config repo`,
+        color: 'green',
+      });
+    } catch {
+      notifications.show({
+        title: 'Failed to push syncs',
+        message: 'Could not write syncs to git. Please try again.',
+        color: 'red',
+      });
+    } finally {
+      setIsPushingToGit(false);
+    }
+  };
 
   const handleCreateNew = () => {
     router.push(`/workbook/${workbookId}/syncs/new`);
@@ -62,6 +85,26 @@ export function SyncsList({ workbookId }: SyncsListProps) {
             <Text12Regular c="var(--mantine-color-blue-6)">New Sync</Text12Regular>
           </Group>
         </UnstyledButton>
+
+        {/* Push syncs to git button (admin-only) */}
+        {isDevToolsEnabled && (
+          <Tooltip label="Write all syncs as portable JSON to the workbook config git repo" position="right">
+            <UnstyledButton
+              onClick={handlePushSyncsToGit}
+              disabled={isPushingToGit}
+              px="sm"
+              py={6}
+              style={{ width: '100%', backgroundColor: 'transparent', opacity: isPushingToGit ? 0.5 : 1 }}
+            >
+              <Group gap={6} wrap="nowrap">
+                <StyledLucideIcon Icon={GitBranchIcon} size="sm" c="var(--mantine-color-devTool-9)" />
+                <Text12Regular c="var(--mantine-color-devTool-9)">
+                  {isPushingToGit ? 'Pushing...' : 'Push syncs to git'}
+                </Text12Regular>
+              </Group>
+            </UnstyledButton>
+          </Tooltip>
+        )}
 
         {/* Import from Whalesync button (admin-only) */}
         {isDevToolsEnabled && (

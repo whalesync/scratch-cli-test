@@ -18,8 +18,11 @@ import type { SyncId, ValidateSyncMappingTypesResponse, WorkbookId } from '@spin
 import {
   BracesIcon,
   CheckIcon,
+  ChevronRightIcon,
   CloudUploadIcon,
   EllipsisVertical,
+  FolderOpenIcon,
+  GitBranchIcon,
   ListChecksIcon,
   PlayIcon,
   RefreshCwIcon,
@@ -29,6 +32,8 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
+import { GitGraphModal } from '../modals/GitGraphModal';
 import { SyncScheduleModal, getScheduleLabel } from '../shared/SyncScheduleModal';
 
 interface SyncToolbarProps {
@@ -98,6 +103,9 @@ export function SyncToolbar({
   const [validateResult, setValidateResult] = useState<ValidateSyncMappingTypesResponse | { error: string } | null>(
     null,
   );
+
+  const [configRepoBrowserOpen, setConfigRepoBrowserOpen] = useState(false);
+  const [configRepoGraphOpen, setConfigRepoGraphOpen] = useState(false);
 
   // Inline title editing — new syncs start in edit mode
   const [isEditingTitle, setIsEditingTitle] = useState(isNew);
@@ -421,6 +429,34 @@ export function SyncToolbar({
                     Validate
                   </Menu.Item>
                 )}
+                <Menu.Divider />
+                <Menu trigger="hover" position="left-start" offset={0} withinPortal>
+                  <Menu.Target>
+                    <Menu.Item
+                      leftSection={<GitBranchIcon size={16} />}
+                      rightSection={<ChevronRightIcon size={14} />}
+                      color="var(--mantine-color-devTool-9)"
+                    >
+                      Git
+                    </Menu.Item>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item
+                      leftSection={<FolderOpenIcon size={16} />}
+                      onClick={() => setConfigRepoBrowserOpen(true)}
+                      color="var(--mantine-color-devTool-9)"
+                    >
+                      Browse
+                    </Menu.Item>
+                    <Menu.Item
+                      leftSection={<GitBranchIcon size={16} />}
+                      onClick={() => setConfigRepoGraphOpen(true)}
+                      color="var(--mantine-color-devTool-9)"
+                    >
+                      Tree
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
               </>
             )}
           </Menu.Dropdown>
@@ -435,6 +471,18 @@ export function SyncToolbar({
         onSave={onScheduleChange}
       />
       <ConfirmDialog {...dialogProps} />
+      <GitFileBrowserModal
+        opened={configRepoBrowserOpen}
+        onClose={() => setConfigRepoBrowserOpen(false)}
+        workbookId={workbookId}
+        useConfigRepo
+      />
+      <GitGraphModal
+        opened={configRepoGraphOpen}
+        onClose={() => setConfigRepoGraphOpen(false)}
+        workbookId={workbookId}
+        useConfigRepo
+      />
 
       <Modal
         opened={validateResultModalOpened}

@@ -273,6 +273,10 @@ fn init_v1(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
 fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> anyhow::Result<i64> {
     std::fs::create_dir_all(target_dir)?;
+    // Canonicalize to absolute path so git worktree add resolves correctly
+    // regardless of which directory git commands are run from.
+    let target_dir = target_dir.canonicalize()?;
+    let target_dir = target_dir.as_path();
     markers::write_workspace(target_dir, &wb.id, &wb.name, server_url)?;
 
     // Write .gitignore to exclude .scratch/ from any parent git repo
@@ -297,9 +301,11 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
         git_clone(&ca.git_url, &conn_dir, token)?;
 
-        // Set up master worktree for index building
+        // Set up master worktree and build initial index
         let _ = git_fetch_main(&conn_dir, token);
-        let _ = setup_master_worktree(&wb.id, &conn_dir, target_dir, &dir_name);
+        if setup_master_worktree(&wb.id, &conn_dir, target_dir, &dir_name).is_ok() {
+            super::files::rebuild_index_for_conn(target_dir, &dir_name, true);
+        }
 
         markers::write_connector(
             &conn_dir,
@@ -320,6 +326,10 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
         total += count_files(&conn_dir);
     }
+
+    let wb_name = if wb.name.is_empty() { wb.id.as_str() } else { wb.name.as_str() };
+    let _ = super::generate_docs::write_docs(target_dir, wb_name);
+
     Ok(total)
 }
 

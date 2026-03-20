@@ -375,7 +375,7 @@ These are mostly API calls with job polling. Implement:
 
 ---
 
-#### Step 1.8b — Complete `linked` and `syncs` + equivalence tests
+#### Step 1.8b [COMPLETED] — Complete `linked` and `syncs` + equivalence tests
 
 Finish the remaining stubs from Step 1.8 and expand `scratch-git-2/tests/equivalence/run.sh` to cover them.
 
@@ -445,14 +445,18 @@ The Postgres `FileIndex` and `FileReference` tables are the most expensive to ma
 - Reduces Postgres write pressure
 - Sets up the foundation for fully local publish planning (which the experimental CLI already proves out)
 
+### Current state (as of Milestone 2 start)
+
+A SQLite index already exists server-side and is triggerable from the UI. During Milestone 2, both the Postgres `FileIndex` and the SQLite index will be maintained in parallel — double-indexing is intentional and expected. Postgres is not removed until a later milestone once the SQLite index is proven accurate.
+
 ### What the SQLite replaces (in the CLI)
 
-| Postgres table | Purpose | CLI equivalent |
+| Postgres table | Purpose | CLI/server SQLite equivalent |
 |---|---|---|
 | `FileIndex` | `(folder, filename) → remoteId` | `file_index` SQLite table |
 | `FileReference` | FK dependencies between files | `file_references` SQLite table |
 
-**Important**: Milestone 2 does NOT remove Postgres FileIndex/FileReference. The server continues using them for server-driven operations (scheduled jobs, etc.). The SQLite is a client-side cache used by CLI-driven operations. They'll diverge temporarily and that's OK.
+**Double-indexing period**: Both Postgres and SQLite are written during Milestone 2. Postgres remains the authoritative source for server-driven operations. SQLite is additive. They will diverge temporarily — that's acceptable.
 
 ### SQLite schema (copied almost exactly from experimental CLI)
 
@@ -522,30 +526,44 @@ Schemas (`schema.json`) are already present in the connector repos — they live
 
 `build-index` reads schemas from `master/{folderName}/schema.json` to extract `x-scratch-foreign-key` annotations for building `file_references`.
 
-### When to rebuild the index (full rebuild)
+### When to rebuild the index
 
-Rebuild after every operation that changes the authoritative state:
+#### Local CLI — full rebuild only (user's CPU, acceptable)
 
-| Operation | Why rebuild |
+| Trigger | Scope |
 |---|---|
-| `workspaces init` | Initial population |
-| `files download` (after server pull) | Server pulled new records from CRM; remote IDs and files changed |
-| `linked publish` (job completes) | Remote IDs assigned to pending records; `file_index` remote_id column updates |
-| `syncs run` (job completes) | New records may have been created in destination folders |
-| `build-index` command (explicit) | Manual / debug |
+| `workspaces init` | All connectors — initial population from master worktree |
+| `files download` | Affected connectors — master worktree updated, full rebuild |
+| `linked publish` (job completes) | Affected connector — new remote IDs assigned on main |
+| `build-index` command (explicit) | All or named connector — manual / debug |
 
-**NOT needed after:**
-- `files upload` alone (files pushed but no remote ID changes; server publish job hasn't run)
-- `auth`, `workspaces list`, `connections list` etc. (no file changes)
+**NOT triggered locally by:**
+- `files upload` alone — files pushed to dirty, no remote IDs changed yet
+- `linked pull` — local files change via `files download` which handles it
+- `auth`, `workspaces list`, `connections list` etc.
 
-**Implementation:** After the relevant command succeeds, automatically call `build_index()` on the affected connector(s). Keep it synchronous for now — for large workspaces it adds a few seconds but that's acceptable. Log it: "Rebuilding file index for [ConnectorName]...".
+#### Server-side — full rebuild + incremental (server CPU, must be efficient)
 
-**Hook point for incremental rebuild (deferred to later):**
-After `files upload`, compare the new commit's diff to the previous commit. For each changed file: update `file_index` for that file, update `file_references` for that file's FK values. This can be added without changing the full-rebuild logic — just an alternative path that gets called when the full rebuild would be wasteful.
+| Trigger | Strategy | Why |
+|---|---|---|
+| Full pull (all records from CRM) | **Full rebuild** | All files replaced; incremental is not cheaper |
+| Full push (all dirty files published) | **Full rebuild** | All remote IDs potentially updated |
+| Single-file pull (one record updated from CRM) | **Incremental** | Only one file changed; update that row in `file_index` + its `file_references` |
+| Single-file push (one record published) | **Incremental** | Only one remote ID assigned; update that row |
+| UI-triggered manual rebuild | **Full rebuild** | Explicit user action, correctness over speed |
+
+**Incremental logic (server, single file):**
+1. Identify the affected `(folder, filename)`
+2. Read the file content from git (or the new content from the push payload)
+3. Extract `id` field → upsert one row in `file_index`
+4. Delete existing `file_references` rows for this `(source_folder, source_filename)`
+5. Re-extract FK fields from content using folder's schema → insert new `file_references` rows
+
+This is O(1) per file instead of O(N) for the full connector. Critical for large workspaces where a single record edit should not trigger a full reindex of 100k files.
 
 ### Implementation steps
 
-#### Step 2.1 — Add rusqlite, master worktree, and build-index
+#### Step 2.1 [COMPLETED] — Add rusqlite, master worktree, and build-index
 
 Add to Cargo.toml:
 ```toml
@@ -596,32 +614,52 @@ Wire `build_index()` into the CLI after each relevant operation (see Step 2.3 be
 
 ---
 
-#### Step 2.3 — Wire index rebuild into CLI operations
+#### Step 2.3 [COMPLETED] — Wire local full rebuild into CLI operations
 
-After each relevant command completes:
+After each relevant CLI command completes, auto-rebuild the index for affected connectors:
+
 ```rust
-// In cli/linked.rs, after pull job completes:
-index::rebuild_connector_index(&connector_dir)?;
+// In cli/files.rs, after files download updates master worktree:
+index::rebuild_connector_index(&scratch_dir, &conn_dir_name)?;
 
 // In cli/linked.rs, after publish job completes:
-index::rebuild_connector_index(&connector_dir)?;
-
-// In cli/syncs.rs, after sync job completes:
-index::rebuild_affected_connectors(&workspace_dir, &sync)?;
+index::rebuild_connector_index(&scratch_dir, &conn_dir_name)?;
 ```
 
 Add progress output: "Rebuilding file index for [ConnectorName] (N files)..."
 
 **What to check:**
-- `linked pull` auto-rebuilds index on success, not on failure
-- `linked publish` auto-rebuilds index on success
-- After rebuild: `dump-index` shows correct data including newly created records
-- Index rebuild doesn't break if `.scratch/` dir doesn't exist yet (first run)
-- Index rebuild is skipped if there's nothing to index (empty connector)
+- `files download` auto-rebuilds index after master worktree is updated
+- `linked publish` auto-rebuilds index on success, not on failure
+- After rebuild: `dump-index` shows correct data including newly published remote IDs
+- Index rebuild is a no-op (graceful) if `.scratch/` dir doesn't exist yet
 
 ---
 
-#### Step 2.4 — Use index in CLI operations (first consumer)
+#### Step 2.4 [CODED, needs service restart] — Server-side incremental indexing for single-file operations
+
+The server already has a SQLite index triggerable from the UI (full rebuild). Add incremental update hooks for single-file pull and single-file push operations.
+
+**Where to add in NestJS:**
+
+- `single-file pull job` → after writing the new file content to git, call `index.upsertFile(workbookId, connectorId, folder, filename, content)`
+- `single-file push job` → after the remote service returns the new remote ID, call `index.upsertFile(workbookId, connectorId, folder, filename, content)`
+
+**`upsertFile` logic:**
+1. Extract `id` field from file content → upsert row in `file_index`
+2. Delete existing `file_references` rows for `(source_folder, source_filename)`
+3. Load `schema.json` for the folder (cached in memory per job run)
+4. Extract FK field values from content → insert new `file_references` rows
+
+**What to check:**
+- Edit one record via CRM, trigger single-file pull → `file_index` row updated, Postgres FileIndex also updated (double-index verified)
+- Publish one new record → `file_index` row gets `remote_id` populated
+- Full rebuild after incremental: counts match (no drift)
+- Large workspace (10k+ files): single-file pull completes in <100ms (no full scan)
+
+---
+
+#### Step 2.5 — Use index in CLI operations (first consumer)
 
 The first place to consume the index is `plan-publish` (ported from experimental CLI). The experimental plan-publish reads from the SQLite index to:
 1. Get remote IDs for deleted files (`deleteIndex`)
@@ -641,16 +679,18 @@ At this point: `scratchmd2 plan-publish` works on a V2 workspace. The plan is st
 
 ---
 
-#### Step 2.5 — Milestone 2 complete
+#### Step 2.6 — Milestone 2 complete
 
 Checklist:
-- [ ] `build-index` and `dump-index` work
-- [ ] Schemas stored locally in `.scratch/{folder}/schema.json`
-- [ ] Index auto-rebuilds after pull, publish, sync
-- [ ] `plan-publish` uses local index (not Postgres)
-- [ ] Postgres FileIndex is still populated by server (no regression)
-- [ ] Old Go CLI unaffected (doesn't know about `.scratch/index.db`)
-- [ ] Index data accuracy: spot-check 20+ records against Postgres
+- [ ] `build-index` and `dump-index` work locally
+- [ ] Master worktree created during `workspaces init`, updated during `files download`
+- [ ] Local index auto-rebuilds after `files download` and `linked publish`
+- [ ] Server SQLite index updated incrementally on single-file pull/push
+- [ ] Server SQLite full rebuild still works (UI trigger) and matches incremental state
+- [ ] Double-indexing verified: Postgres FileIndex and SQLite agree on spot-check of 20+ records
+- [ ] `plan-publish` uses local SQLite index (not Postgres)
+- [ ] Old Go CLI unaffected (doesn't know about `.scratch/`)
+- [ ] Postgres FileIndex still populated by server (no regression)
 
 ---
 
@@ -659,9 +699,9 @@ Checklist:
 Explicitly deferred:
 
 - **Moving user config to git** (ConnectorAccount, User, Schedule) — needs careful migration plan
-- **Replacing server-side Postgres FileIndex** — server continues using Postgres; SQLite is additive
-- **Local publish execution** (execute-publish) — the plan-publish exists after Step 2.4 but execution is still server-driven
-- **Incremental index rebuild** — full rebuild for now; hook point noted in Step 2.3
+- **Replacing server-side Postgres FileIndex** — double-indexing continues; Postgres removed in a later milestone once SQLite accuracy is proven
+- **Local publish execution** (execute-publish) — the plan-publish exists after Step 2.5 but execution is still server-driven
+- **Local incremental index rebuild** — full rebuild on local CLI is acceptable (user's CPU); server does incremental (Step 2.4)
 - **V1 workspace support** — deliberately dropped
 - **Interactive commands** — deliberately dropped
 - **Rust workspace (multi-crate split)** — do this after both milestones are stable

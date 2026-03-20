@@ -39,6 +39,8 @@ normalize() {
       if type == "object"
       then
         del(.createdAt, .updatedAt, .lastSyncTime, .initializedAt, .expiresAt)
+        | del(.metadata, .disabled, .disabledCreates)
+        | del(.displayOrder, .syncStateLastChanged)
         | if has("messages") and .messages == null then .messages = [] else . end
       else .
       end
@@ -179,11 +181,11 @@ else
   GO_WB_DIR="$GO_TMP/$WB_NAME"
   RUST_WB_DIR="$RUST_TMP/$WB_NAME"
 
-  # Compare file trees (paths relative to workbook dir, excluding .git internals)
-  go_tree=$(find "$GO_WB_DIR"   ! -path '*/.git/*' ! -path '*/.git' \
-            | sed "s|^$GO_WB_DIR/\{0,1\}||" | grep -v '^$' | sort)
-  rust_tree=$(find "$RUST_WB_DIR" ! -path '*/.git/*' ! -path '*/.git' \
-              | sed "s|^$RUST_WB_DIR/\{0,1\}||" | grep -v '^$' | sort)
+  # Compare file trees (paths relative to workbook dir, excluding .git internals and .scratch/)
+  go_tree=$(find "$GO_WB_DIR"   ! -path '*/.git/*' ! -path '*/.git' ! -path '*/.scratch*' \
+            | sed "s|^$GO_WB_DIR/\{0,1\}||" | grep -v '^$' | grep -v '^\.gitignore$' | sort)
+  rust_tree=$(find "$RUST_WB_DIR" ! -path '*/.git/*' ! -path '*/.git' ! -path '*/.scratch*' \
+              | sed "s|^$RUST_WB_DIR/\{0,1\}||" | grep -v '^$' | grep -v '^\.gitignore$' | sort)
   compare_text "workbooks init file tree" "$go_tree" "$rust_tree"
 fi
 
@@ -309,22 +311,51 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Tests: linked  (skip until implemented in Rust)
+# Tests: linked
+# Note: Go CLI uses --workbook, Rust CLI uses --workspace on the subcommand group
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== linked ==="
 
-skip_test "linked list"
-skip_test "linked available (conn1)"
-skip_test "linked available (conn2)"
+run_test "linked list" \
+  "linked list --workspace $WB" \
+  "linked --workspace $WB list"
+
+run_test "linked available (conn1)" \
+  "linked available $CONN1 --workspace $WB" \
+  "linked --workspace $WB available $CONN1"
+
+run_test "linked available (conn2)" \
+  "linked available $CONN2 --workspace $WB" \
+  "linked --workspace $WB available $CONN2"
+
+# linked show requires a linked table ID
+if [[ -n "${LINKED_TABLE_ID:-}" ]]; then
+  run_test "linked show" \
+    "linked show $LINKED_TABLE_ID --workspace $WB" \
+    "linked --workspace $WB show $LINKED_TABLE_ID"
+else
+  skip_test "linked show" "LINKED_TABLE_ID not set"
+fi
 
 # ---------------------------------------------------------------------------
-# Tests: syncs  (skip until implemented in Rust)
+# Tests: syncs
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== syncs ==="
 
-skip_test "syncs list"
+run_test "syncs list" \
+  "syncs list --workspace $WB" \
+  "syncs --workspace $WB list"
+
+# syncs show requires a sync ID
+if [[ -n "${SYNC_ID:-}" ]]; then
+  run_test "syncs show" \
+    "syncs show $SYNC_ID --workspace $WB" \
+    "syncs --workspace $WB show $SYNC_ID"
+else
+  skip_test "syncs show" "SYNC_ID not set"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

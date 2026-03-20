@@ -25,6 +25,7 @@ import { WorkbookEventService } from './workbook-event.service';
 import { Schedule } from '@prisma/client';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
+import { WorkbookConfigService } from './workbook-config.service';
 
 @Injectable()
 export class WorkbookService {
@@ -38,6 +39,7 @@ export class WorkbookService {
     private readonly scratchGitService: ScratchGitService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
+    private readonly workbookConfigService: WorkbookConfigService,
   ) {}
 
   async create(createWorkbookDto: ValidatedCreateWorkbookDto, actor: Actor): Promise<WorkbookCluster.Workbook> {
@@ -104,6 +106,9 @@ export class WorkbookService {
         });
       }
     }
+
+    // Delete workbook config git repo (best-effort)
+    await this.workbookConfigService.deleteConfigRepo(workbook.organizationId, id);
 
     // Cleanup index and references
     await this.fileIndexService.deleteForWorkbook(id);

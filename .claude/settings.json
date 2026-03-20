@@ -24,7 +24,11 @@
       "Bash(cargo run:*)",
       "Bash(git clone:*)",
       "Bash(yarn install:*)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(lsof -iTCP -sTCP:LISTEN)",
+      "Bash(lsof -iTCP:3100 -sTCP:LISTEN)",
+      "Bash(scratchmd2 --version)",
+      "Bash(./target/release/scratchmd2 syncs:*)"
     ]
   },
   "hooks": {

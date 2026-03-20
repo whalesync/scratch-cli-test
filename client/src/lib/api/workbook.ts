@@ -199,11 +199,12 @@ export const workbookApi = {
     branch = 'main',
     folder = '',
     connectorAccountId?: string,
+    useConfigRepo?: boolean,
   ): Promise<GitFile[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<GitFile[]>(`/scratch-git/${workbookId}/list`, {
-        params: { branch, folder, connectorAccountId },
+        params: { branch, folder, connectorAccountId, useConfigRepo: useConfigRepo ? 'true' : undefined },
       });
       return res.data;
     } catch (error) {
@@ -216,11 +217,12 @@ export const workbookApi = {
     path: string,
     branch = 'main',
     connectorAccountId?: string,
+    useConfigRepo?: boolean,
   ): Promise<{ content: string }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<{ content: string }>(`/scratch-git/${workbookId}/file`, {
-        params: { branch, path, connectorAccountId },
+        params: { branch, path, connectorAccountId, useConfigRepo: useConfigRepo ? 'true' : undefined },
       });
       return res.data;
     } catch (error) {
@@ -256,11 +258,12 @@ export const workbookApi = {
   getGraph: async (
     workbookId: WorkbookId,
     connectorAccountId?: string,
+    useConfigRepo?: boolean,
   ): Promise<{ commits: unknown[]; refs: unknown[] }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<{ commits: unknown[]; refs: unknown[] }>(`/scratch-git/${workbookId}/graph`, {
-        params: { connectorAccountId },
+        params: { connectorAccountId, useConfigRepo: useConfigRepo ? 'true' : undefined },
       });
       return res.data;
     } catch (error) {
@@ -721,6 +724,18 @@ export const workbookApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to import workspace');
+      throw error;
+    }
+  },
+
+  pushSyncsToGit: async (workbookId: WorkbookId): Promise<{ count: number }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      await axios.post(`/cli/v1/workbooks/${workbookId}/config/init`);
+      const res = await axios.post<{ count: number }>(`/cli/v1/workbooks/${workbookId}/config/push-syncs`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to push syncs to git');
       throw error;
     }
   },

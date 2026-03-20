@@ -12,7 +12,6 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { CreateConnectionModal } from '../shared/CreateConnectionModal';
-import { DebugMenu } from './DebugMenu';
 
 interface FilesSubToolbarProps {
   workbookId: string;
@@ -100,8 +99,6 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
         >
           Pull all
         </ButtonSecondaryOutline>
-
-        <DebugMenu workbookId={workbookId as WorkbookId} />
       </Group>
 
       {/* Connection Modal */}

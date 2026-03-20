@@ -121,10 +121,17 @@ async fn main() {
             Err(e) => Err(e),
         },
 
-        Commands::Syncs { workspace, command } => match build_client(&server_url) {
-            Ok(client) => syncs::run(command, &client, workspace.as_deref(), cli.json).await,
-            Err(e) => Err(e),
-        },
+        Commands::Syncs { workspace, command } => {
+            // Local commands don't need an API client
+            if matches!(command, syncs::SyncsCommands::ValidateLocal { .. } | syncs::SyncsCommands::RunLocal { .. }) {
+                syncs::run_local_cmd(command, cli.json)
+            } else {
+                match build_client(&server_url) {
+                    Ok(client) => syncs::run(command, &client, workspace.as_deref(), cli.json).await,
+                    Err(e) => Err(e),
+                }
+            }
+        }
 
         Commands::BuildIndex { workspace } => index::build_command(&workspace),
         Commands::DumpIndex { workspace, connection } => index::dump_command(&workspace, connection.as_deref()),

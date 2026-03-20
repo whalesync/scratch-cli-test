@@ -8,6 +8,7 @@ import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SyncModule } from 'src/sync/sync.module';
+import { WorkbookConfigService } from 'src/workbook/workbook-config.service';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { CliAuthController } from './cli-auth.controller';
@@ -38,7 +39,7 @@ import { CliWorkbookController } from './cli-workbook.controller';
     CliLinkedController,
     CliSyncController,
   ],
-  providers: [CliAuthService],
+  providers: [CliAuthService, WorkbookConfigService],
   exports: [CliAuthService],
 })
 export class CliModule {}

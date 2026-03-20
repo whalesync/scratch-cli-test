@@ -10,6 +10,7 @@ import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { WorkbookConfigService } from '../workbook-config.service';
 import { WorkbookEventService } from '../workbook-event.service';
 import { WorkbookService } from '../workbook.service';
 
@@ -90,6 +91,9 @@ describe('WorkbookService', () => {
     const configService = {} as jest.Mocked<ScratchConfigService>;
     const workbookEventService = {} as jest.Mocked<WorkbookEventService>;
     const bullEnqueuerService = {} as jest.Mocked<BullEnqueuerService>;
+    const workbookConfigService = {
+      deleteConfigRepo: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<WorkbookConfigService>;
 
     service = new WorkbookService(
       dbService,
@@ -101,6 +105,7 @@ describe('WorkbookService', () => {
       scratchGitService,
       fileIndexService,
       fileReferenceService,
+      workbookConfigService,
     );
   });
 

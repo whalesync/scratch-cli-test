@@ -25,6 +25,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
+import { WorkbookConfigService, getConfigRepoId } from 'src/workbook/workbook-config.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { Readable } from 'stream';
 import {
@@ -53,6 +54,7 @@ export class CliWorkbookController {
     private readonly posthogService: PostHogService,
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly workbookConfigService: WorkbookConfigService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
   }
@@ -130,7 +132,8 @@ export class CliWorkbookController {
       dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name })),
     }));
 
-    return this.toCliResponse(workbook, baseUrl, connectorAccounts);
+    const configGitUrl = `${baseUrl}/cli/v1/workbooks/${id}/config/git`;
+    return this.toCliResponse(workbook, baseUrl, connectorAccounts, configGitUrl);
   }
 
   /**
@@ -307,6 +310,7 @@ export class CliWorkbookController {
     },
     baseUrl?: string,
     connectorAccounts?: CliConnectorAccountDto[],
+    configGitUrl?: string,
   ): CliWorkbookResponseDto {
     return {
       id: workbook.id,
@@ -316,6 +320,65 @@ export class CliWorkbookController {
       tableCount: workbook.snapshotTables?.length ?? 0,
       version: workbook.version ?? 2,
       connectorAccounts,
+      configGitUrl,
     };
+  }
+
+  // ── Workbook config repo endpoints ──────────────────────────────────────────
+
+  /**
+   * Initialize the workbook config git repo (idempotent).
+   * Creates the repo at org/{orgId}/{workbookId}/{workbookId}.git
+   */
+  @Post(':id/config/init')
+  async initConfigRepo(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ success: boolean }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id as WorkbookId);
+    await this.workbookConfigService.initConfigRepo(actor.organizationId, id as WorkbookId);
+    return { success: true };
+  }
+
+  /**
+   * Push all Postgres syncs for this workbook to the config git repo as JSON files.
+   * Converts from Postgres SyncMapping format to portable v4 format.
+   */
+  @Post(':id/config/push-syncs')
+  async pushSyncsToGit(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ count: number }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id as WorkbookId);
+    return this.workbookConfigService.pushSyncs(actor.organizationId, id as WorkbookId, actor);
+  }
+
+  /**
+   * Git HTTP proxy for the workbook config repo.
+   * Allows `git clone/fetch/push` of the config repo from the CLI.
+   */
+  @All(':id/config/git/*path')
+  async configGitProxy(
+    @Req() req: RequestWithUser & Request,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id as WorkbookId);
+
+    const workbook = await this.workbookService.findOne(id as WorkbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    const repoId = getConfigRepoId(actor.organizationId, id as WorkbookId);
+    const gitPath = req.url.replace(`/cli/v1/workbooks/${id}/config/git`, '');
+    const targetUrl = `${this.gitBackendUrl}/${repoId}.git${gitPath}`;
+
+    WSLogger.info({
+      source: 'CliWorkbookController.configGitProxy',
+      message: 'Proxying config git request',
+      method: req.method,
+      targetUrl,
+      workbookId: id,
+    });
+
+    await this.proxyToGitBackend(targetUrl, id as WorkbookId, req, res);
   }
 }
