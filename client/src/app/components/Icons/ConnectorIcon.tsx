@@ -24,6 +24,7 @@ export function ConnectorIcon(
       bd={withBorder ? '0.5px solid var(--mantine-color-gray-4)' : 'none'}
       bg={withBorder ? 'var(--bg-base)' : 'transparent'}
       p={p ?? '3.5px'}
+      fit="contain"
       {...rest}
     />
   );

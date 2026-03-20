@@ -85,11 +85,7 @@ export class FakeAdminClient {
     await this.client.post("/test/reset");
   }
 
-  async setup(data: {
-    bases?: any[];
-    tables?: any[];
-    records?: any[];
-  }): Promise<void> {
+  async setup(data: Record<string, any>): Promise<void> {
     await this.client.post("/test/setup", data);
   }
 

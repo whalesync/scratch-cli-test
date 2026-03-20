@@ -609,6 +609,62 @@ When adding a new connector, touch all of these:
 - [ ] Register provider in `OAuthModule` (`server/src/oauth/oauth.module.ts`)
 - [ ] Add to `OAuthService` constructor providers map (`server/src/oauth/oauth.service.ts`)
 
+### Fake API (Recommended for HTTP-Based Connectors)
+
+Most connectors communicate with external services over HTTP. Adding a fake API enables local development and automated testing without hitting real APIs.
+
+- [ ] Create a fake API server in `test-api-fakes/<service-name>/` following the established pattern:
+
+```
+test-api-fakes/<service-name>/
+├── src/
+│   ├── index.ts              # Express app with error simulation + auth middleware
+│   ├── store.ts              # In-memory Map-based data store with reset/seed/CRUD
+│   ├── middleware/
+│   │   └── auth.ts           # Validate auth headers (skip /test/ routes)
+│   └── routes/
+│       ├── test-admin.ts     # /test/health, /test/reset, /test/setup, /test/dump,
+│       │                     #   /test/simulate-rate-limit, /test/simulate-error
+│       └── <api-routes>.ts   # Routes mirroring the real API's HTTP contract
+├── package.json
+├── tsconfig.json
+└── Dockerfile
+```
+
+Key patterns:
+
+- The **store** uses `Map`-based in-memory storage with `reset()`, `add*()`, `list*()`, and CRUD methods
+- **Error simulation middleware** runs before auth — checks an error queue and rate-limit counter, returning queued errors/429s before real routes handle the request. Skips `/test/` routes.
+- **Test admin routes** (`/test/*`) are unauthenticated and provide: health checks, state reset, data seeding, state dump, error/rate-limit simulation
+- **API routes** replicate the real service's HTTP contract (same paths, methods, request/response shapes, pagination)
+- Pick the next available port (check `server/localdev/docker-compose.yml` for current allocations)
+
+After creating the fake:
+
+- [ ] Add service to `server/localdev/docker-compose.yml` (for local dev)
+- [ ] Add URL override to `start-dev-v2-fakes.sh`: startup/shutdown commands, health check port, seed data, `API_URL_OVERRIDES` mapping, and status display
+- [ ] Verify the fake builds: `cd test-api-fakes/<service-name> && yarn install && yarn build`
+
+The URL override system (`server/src/remote-service/connectors/api-url-overrides.ts`) rewrites connector HTTP requests via an Axios interceptor — connectors don't need any code changes to use fakes. Set `API_URL_OVERRIDES=https://real-api.com=http://localhost:<port>` and the interceptor handles the rest.
+
+### Smoke Tests (Recommended When a Fake API Exists)
+
+If you've added a fake API, wire it into the smoke test infrastructure so your connector is exercised in CI.
+
+- [ ] Add service to `smoke-tests/docker-compose.smoke-test.yml`:
+  - Add a `fake-<service-name>` service with a health check
+  - Add its URL override to the server's `API_URL_OVERRIDES` env var
+  - Add `FAKE_<SERVICE>_URL` env var to the `test-runner` service
+  - Add the fake to `depends_on` for both `server` and `test-runner`
+- [ ] Create a connector fixture in `smoke-tests/helpers/connector-fixtures/<service-name>.fixture.ts` implementing the `ConnectorFixture` interface:
+  - `createAdminClient()` — return a `FakeAdminClient` pointed at the fake's URL
+  - `createConnectionCredentials()` — return credentials the server will use
+  - `seed()` — reset the fake, seed test data via `/test/setup`, return `SeedResult`
+  - `dumpRecords()` — fetch current state via `/test/dump` for assertions
+- [ ] Add your fixture to the `fixtures` array in relevant smoke test specs (e.g., `pull/pull-basic.spec.ts`, `publish/publish-happy-path.spec.ts`) to include your connector in the parameterized test matrix
+
+See `smoke-tests/helpers/connector-fixtures/airtable.fixture.ts` for a complete reference implementation.
+
 ### Connector Metadata Example
 
 The `connectorMetadata()` helper (from `@spinner/shared-types`) merges your overrides with sensible defaults (`table: 'table'`, `record: 'record'`, `base: null`, `bases: null`, `visible: true`, `pushOperationName: 'Publish'`, `pullOperationName: 'Download'`, `defaultAuthMethod: 'oauth'`). You must provide `displayName` and `logo`.

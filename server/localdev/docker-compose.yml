@@ -36,6 +36,10 @@ services:
     build: ../../test-api-fakes/audienceful
     ports:
       - '4651:4651'
+  fake-memberstack:
+    build: ../../test-api-fakes/memberstack
+    ports:
+      - '4652:4652'
 
 volumes:
   mongodb_data:

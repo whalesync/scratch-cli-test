@@ -160,7 +160,7 @@ cleanup() {
 
     # Stop fake API containers
     echo -e "${MAGENTA}Stopping fake API containers...${NC}"
-    (cd "$SCRIPT_DIR/server/localdev" && docker compose stop fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful 2>/dev/null) || true
+    (cd "$SCRIPT_DIR/server/localdev" && docker compose stop fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful fake-memberstack 2>/dev/null) || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -186,7 +186,7 @@ fi
 
 # Start fake connector APIs
 echo -e "${MAGENTA}[FAKES]${NC} Starting fake connector APIs..."
-(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d --build fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful 2>&1) || {
+(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d --build fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful fake-memberstack 2>&1) || {
     echo -e "${RED}Failed to start fake API containers${NC}"
     exit 1
 }
@@ -194,7 +194,7 @@ echo -e "${GREEN}Fake connector APIs started${NC}"
 
 # Wait for all fakes to be ready
 echo -e "${MAGENTA}[FAKES]${NC} Waiting for fake APIs to be ready..."
-for port in 4646 4647 4648 4649 4651; do
+for port in 4646 4647 4648 4649 4651 4652; do
     for i in $(seq 1 30); do
         if curl -s -o /dev/null "http://localhost:$port/test/health" 2>/dev/null; then
             break
@@ -376,10 +376,54 @@ curl -s -X POST http://localhost:4651/test/setup -H 'Content-Type: application/j
   ]
 }' > /dev/null
 echo -e "${GREEN}Fake Audienceful seeded (2 fields, 2 people)${NC}"
+
+# Seed fake Memberstack with starter data
+echo -e "${MAGENTA}[FAKE-MEMBERSTACK]${NC} Seeding starter data..."
+curl -s -X POST http://localhost:4652/test/setup -H 'Content-Type: application/json' -d '{
+  "members": [
+    {
+      "id": "mem_dev001",
+      "auth": { "email": "alice@example.com" },
+      "customFields": { "first_name": "Alice", "company": "Acme Corp" },
+      "metaData": { "source": "website" },
+      "json": {},
+      "planConnections": [{ "id": "plnc_001", "active": true, "status": "active", "planId": "pln_free", "planName": "Free Plan", "type": "free", "payment": null }],
+      "loginRedirect": "/dashboard",
+      "permissions": ["member"],
+      "verified": true,
+      "createdAt": "2025-01-15T10:00:00Z"
+    },
+    {
+      "id": "mem_dev002",
+      "auth": { "email": "bob@example.com" },
+      "customFields": { "first_name": "Bob", "company": "Globex Inc" },
+      "metaData": { "source": "invite" },
+      "json": { "preferences": { "theme": "dark" } },
+      "planConnections": [{ "id": "plnc_002", "active": true, "status": "active", "planId": "pln_pro", "planName": "Pro Plan", "type": "free", "payment": null }],
+      "loginRedirect": "/dashboard",
+      "permissions": ["member", "admin"],
+      "verified": true,
+      "createdAt": "2025-02-20T14:30:00Z"
+    },
+    {
+      "id": "mem_dev003",
+      "auth": { "email": "carol@example.com" },
+      "customFields": { "first_name": "Carol" },
+      "metaData": {},
+      "json": {},
+      "planConnections": [],
+      "loginRedirect": "",
+      "permissions": [],
+      "verified": false,
+      "createdAt": "2025-03-10T09:15:00Z"
+    }
+  ]
+}' > /dev/null
+echo -e "${GREEN}Fake Memberstack seeded (3 members)${NC}"
 echo ""
 
 # Set URL overrides so the server redirects connector API calls to fakes
-export API_URL_OVERRIDES="https://api.airtable.com=http://localhost:4646,https://test.wp.local=http://localhost:4647,https://quickbooks.api.intuit.com=http://localhost:4648,https://sandbox-quickbooks.api.intuit.com=http://localhost:4648,https://test.mocoapp.com=http://localhost:4649,https://app.audienceful.com=http://localhost:4651"
+export API_URL_OVERRIDES="https://api.airtable.com=http://localhost:4646,https://test.wp.local=http://localhost:4647,https://quickbooks.api.intuit.com=http://localhost:4648,https://sandbox-quickbooks.api.intuit.com=http://localhost:4648,https://test.mocoapp.com=http://localhost:4649,https://app.audienceful.com=http://localhost:4651,https://admin.memberstack.com=http://localhost:4652"
 
 # Start Client (Next.js on port 3000)
 echo -e "${BLUE}[CLIENT]${NC} Starting Next.js dev server on port 3000..."
@@ -417,6 +461,7 @@ echo -e "  ${MAGENTA}Fake WordPress${NC}:    http://localhost:4647"
 echo -e "  ${MAGENTA}Fake QuickBooks${NC}:   http://localhost:4648"
 echo -e "  ${MAGENTA}Fake Moco${NC}:         http://localhost:4649"
 echo -e "  ${MAGENTA}Fake Audienceful${NC}:  http://localhost:4651"
+echo -e "  ${MAGENTA}Fake Memberstack${NC}: http://localhost:4652"
 echo -e ""
 echo -e "  ${MAGENTA}API overrides${NC}:  All connectors → localhost fakes"
 echo -e "  ${YELLOW}Test domains${NC}:  WordPress=test.wp.local  Moco=test.mocoapp.com"

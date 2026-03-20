@@ -21,4 +21,5 @@ export const Service = {
   SUPABASE: 'SUPABASE',
   QUICKBOOKS: 'QUICKBOOKS',
   PIPEDRIVE: 'PIPEDRIVE',
+  MEMBERSTACK: 'MEMBERSTACK',
 } as const;

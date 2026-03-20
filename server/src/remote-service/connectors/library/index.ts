@@ -3,6 +3,7 @@
 
 import './airtable/airtable-connector';
 import './audienceful/audienceful-connector';
+import './memberstack/memberstack-connector';
 import './moco/moco-connector';
 import './notion/notion-connector';
 import './pipedrive/pipedrive-connector';
