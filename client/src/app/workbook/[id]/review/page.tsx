@@ -6,99 +6,50 @@ import {
   Text13Medium,
   Text13Regular,
   Text16Regular,
-  TextMono12Regular,
 } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
+import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
-import { filesApi } from '@/lib/api/files';
+import { useFileByPath } from '@/hooks/use-file-path';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
+import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { RouteUrls } from '@/utils/route-urls';
+import { json } from '@codemirror/lang-json';
+import { unifiedMergeView } from '@codemirror/merge';
+import { EditorView } from '@codemirror/view';
 import { Box, Group, Loader, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import type { DataFolder, FileDiffStatus, Service, WorkbookId } from '@spinner/shared-types';
-import { CheckCircle2Icon, ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon, RotateCcwIcon } from 'lucide-react';
-
+import CodeMirror from '@uiw/react-codemirror';
+import {
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CloudUploadIcon,
+  ExternalLinkIcon,
+  RotateCcwIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { useSWRConfig } from 'swr';
 
-// ── Diff helpers ──────────────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
 
-interface DiffStats {
-  linesChanged: number;
-  firstOriginalLine: string | null;
-  firstModifiedLine: string | null;
-}
+const FILES_PER_PAGE = 100;
 
-function computeDiffStats(original: string | null, modified: string | null): DiffStats {
-  const origLines = (original ?? '').split('\n');
-  const modLines = (modified ?? '').split('\n');
+const STATUS_COLOR: Record<FileDiffStatus, string> = {
+  added: 'var(--mantine-color-green-7)',
+  deleted: 'var(--mantine-color-red-6)',
+  modified: 'var(--mantine-color-orange-6)',
+};
 
-  let linesChanged = 0;
-  let firstOriginalLine: string | null = null;
-  let firstModifiedLine: string | null = null;
-  const maxLen = Math.max(origLines.length, modLines.length);
-
-  for (let i = 0; i < maxLen; i++) {
-    const origLine = origLines[i] ?? undefined;
-    const modLine = modLines[i] ?? undefined;
-    if (origLine !== modLine) {
-      linesChanged++;
-      if (firstOriginalLine === null && firstModifiedLine === null) {
-        firstOriginalLine = origLine?.trim() ?? null;
-        firstModifiedLine = modLine?.trim() ?? null;
-      }
-    }
-  }
-
-  return { linesChanged, firstOriginalLine, firstModifiedLine };
-}
-
-/** Extract common prefix/suffix and the changed middle portions. */
-function wordDiff(
-  original: string,
-  modified: string,
-): { prefix: string; removed: string; added: string; suffix: string } {
-  let prefixLen = 0;
-  const minLen = Math.min(original.length, modified.length);
-  while (prefixLen < minLen && original[prefixLen] === modified[prefixLen]) {
-    prefixLen++;
-  }
-
-  let suffixLen = 0;
-  while (
-    suffixLen < minLen - prefixLen &&
-    original[original.length - 1 - suffixLen] === modified[modified.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
-
-  return {
-    prefix: original.substring(0, prefixLen),
-    removed: original.substring(prefixLen, original.length - suffixLen),
-    added: modified.substring(prefixLen, modified.length - suffixLen),
-    suffix: original.substring(original.length - suffixLen),
-  };
-}
-
-interface FileCacheEntry {
-  loading: boolean;
-  stats: DiffStats | null;
-  originalContent: string | null;
-  modifiedContent: string | null;
-}
-
-interface FileStatsCache {
-  [path: string]: FileCacheEntry;
-}
-
-// ── Source grouping ───────────────────────────────────────────────────────────
+// ── Source grouping ──────────────────────────────────────────────────────────
 
 interface SourceGroup {
   key: string;
@@ -134,183 +85,6 @@ function groupFilesBySource(dirtyFiles: DirtyFile[], folders: DataFolder[]): Sou
   return Array.from(groupMap.values());
 }
 
-// ── Inline diff component ───────────────────────────────────────────────────
-
-const STATUS_COLOR: Record<FileDiffStatus, string> = {
-  added: 'var(--mantine-color-green-7)',
-  deleted: 'var(--mantine-color-red-6)',
-  modified: 'var(--mantine-color-orange-6)',
-};
-
-const DIFF_REMOVED_STYLE: React.CSSProperties = {
-  backgroundColor: 'rgba(248, 81, 73, 0.15)',
-  borderRadius: 2,
-  padding: '0 2px',
-  textDecoration: 'line-through',
-};
-
-const DIFF_ADDED_STYLE: React.CSSProperties = {
-  backgroundColor: 'rgba(63, 185, 80, 0.15)',
-  borderRadius: 2,
-  padding: '0 2px',
-};
-
-function InlineDiff({ status, stats }: { status: FileDiffStatus; stats: DiffStats | null }) {
-  if (!stats) return null;
-
-  if (status === 'added' && stats.firstModifiedLine) {
-    return (
-      <TextMono12Regular truncate component="span" c="var(--fg-secondary)">
-        <span style={DIFF_ADDED_STYLE}>{stats.firstModifiedLine}</span>
-      </TextMono12Regular>
-    );
-  }
-
-  if (status === 'deleted' && stats.firstOriginalLine) {
-    return (
-      <TextMono12Regular truncate component="span" c="var(--fg-secondary)">
-        <span style={DIFF_REMOVED_STYLE}>{stats.firstOriginalLine}</span>
-      </TextMono12Regular>
-    );
-  }
-
-  if (status === 'modified' && stats.firstOriginalLine && stats.firstModifiedLine) {
-    const { prefix, removed, added, suffix } = wordDiff(stats.firstOriginalLine, stats.firstModifiedLine);
-    return (
-      <TextMono12Regular truncate component="span" c="var(--fg-secondary)">
-        {prefix}
-        {removed && <span style={DIFF_REMOVED_STYLE}>{removed}</span>}
-        {added && <span style={DIFF_ADDED_STYLE}>{added}</span>}
-        {suffix}
-      </TextMono12Regular>
-    );
-  }
-
-  return null;
-}
-
-// ── Expanded diff view ──────────────────────────────────────────────────────
-
-interface DiffDisplayLine {
-  type: 'context' | 'added' | 'removed' | 'separator';
-  content: string;
-}
-
-const CONTEXT_LINES = 2;
-
-function computeDisplayLines(original: string | null, modified: string | null): DiffDisplayLine[] {
-  const origLines = (original ?? '').split('\n');
-  const modLines = (modified ?? '').split('\n');
-  const maxLen = Math.max(origLines.length, modLines.length);
-
-  // Find which indices differ
-  const changed = new Set<number>();
-  for (let i = 0; i < maxLen; i++) {
-    if ((origLines[i] ?? '') !== (modLines[i] ?? '')) {
-      changed.add(i);
-    }
-  }
-
-  if (changed.size === 0) return [];
-
-  // Determine which indices to show (changed + context)
-  const visible = new Set<number>();
-  for (const idx of changed) {
-    for (let c = Math.max(0, idx - CONTEXT_LINES); c <= Math.min(maxLen - 1, idx + CONTEXT_LINES); c++) {
-      visible.add(c);
-    }
-  }
-
-  const sorted = Array.from(visible).sort((a, b) => a - b);
-  const lines: DiffDisplayLine[] = [];
-  let lastIdx = -1;
-
-  for (const idx of sorted) {
-    if (lastIdx !== -1 && idx > lastIdx + 1) {
-      lines.push({ type: 'separator', content: '' });
-    }
-    lastIdx = idx;
-
-    if (changed.has(idx)) {
-      const origLine = origLines[idx];
-      const modLine = modLines[idx];
-      if (origLine !== undefined && origLine !== '') {
-        lines.push({ type: 'removed', content: origLine });
-      }
-      if (modLine !== undefined && modLine !== '') {
-        lines.push({ type: 'added', content: modLine });
-      }
-    } else {
-      // Context line — use whichever side has it
-      const line = modLines[idx] ?? origLines[idx] ?? '';
-      lines.push({ type: 'context', content: line });
-    }
-  }
-
-  return lines;
-}
-
-const DIFF_LINE_STYLES: Record<DiffDisplayLine['type'], React.CSSProperties> = {
-  context: {},
-  added: { backgroundColor: 'rgba(63, 185, 80, 0.12)' },
-  removed: { backgroundColor: 'rgba(248, 81, 73, 0.12)', textDecoration: 'line-through' },
-  separator: { textAlign: 'center', color: 'var(--fg-muted)', padding: '2px 0' },
-};
-
-const DIFF_LINE_PREFIX: Record<DiffDisplayLine['type'], string> = {
-  context: '  ',
-  added: '+ ',
-  removed: '- ',
-  separator: '',
-};
-
-function ExpandedDiff({ original, modified }: { original: string | null; modified: string | null }) {
-  const lines = useMemo(() => computeDisplayLines(original, modified), [original, modified]);
-
-  if (lines.length === 0) return null;
-
-  return (
-    <Box
-      mx="md"
-      mb={4}
-      style={{
-        borderRadius: 3,
-        border: '0.5px solid var(--fg-divider)',
-        overflow: 'hidden',
-        fontSize: 11,
-        fontFamily: 'var(--mantine-font-family-monospace)',
-        lineHeight: 1.6,
-      }}
-    >
-      {lines.map((line, i) => {
-        if (line.type === 'separator') {
-          return (
-            <Box key={i} px={8} style={DIFF_LINE_STYLES.separator}>
-              ···
-            </Box>
-          );
-        }
-
-        return (
-          <Box
-            key={i}
-            px={8}
-            style={{
-              ...DIFF_LINE_STYLES[line.type],
-              whiteSpace: 'pre',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            <span style={{ color: 'var(--fg-muted)', userSelect: 'none' }}>{DIFF_LINE_PREFIX[line.type]}</span>
-            {line.content}
-          </Box>
-        );
-      })}
-    </Box>
-  );
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatFilePath(path: string) {
@@ -327,7 +101,293 @@ function countByStatus(files: DirtyFile[]) {
   return result;
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+function computeDiffCounts(original: string | null, modified: string | null): { added: number; removed: number } {
+  const origLines = (original ?? '').split('\n');
+  const modLines = (modified ?? '').split('\n');
+  const origSet = new Map<string, number>();
+  for (const line of origLines) {
+    origSet.set(line, (origSet.get(line) ?? 0) + 1);
+  }
+  const modSet = new Map<string, number>();
+  for (const line of modLines) {
+    modSet.set(line, (modSet.get(line) ?? 0) + 1);
+  }
+
+  let removed = 0;
+  for (const [line, count] of origSet) {
+    removed += Math.max(0, count - (modSet.get(line) ?? 0));
+  }
+  let added = 0;
+  for (const [line, count] of modSet) {
+    added += Math.max(0, count - (origSet.get(line) ?? 0));
+  }
+
+  return { added, removed };
+}
+
+// ── ReviewFileRow ────────────────────────────────────────────────────────────
+
+interface ReviewFileRowProps {
+  file: DirtyFile;
+  workbookId: WorkbookId;
+  folders: DataFolder[];
+  onDiscard: (filePath: string) => void;
+}
+
+const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, onDiscard }: ReviewFileRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+
+  // Only fetch file content when expanded
+  const { file: fileResponse, isLoading: fileLoading } = useFileByPath(workbookId, expanded ? file.path : null);
+
+  const originalContent = fileResponse?.file?.originalContent ?? null;
+  const modifiedContent = fileResponse?.file?.content ?? null;
+
+  const { folder, filename } = formatFilePath(file.path);
+  const href = RouteUrls.workbookReviewFileUrl(workbookId, file.path);
+  const borderColor = STATUS_COLOR[file.status] ?? 'transparent';
+
+  const diffCounts = useMemo(() => {
+    if (!expanded || fileLoading || !fileResponse) return null;
+    return computeDiffCounts(originalContent, modifiedContent);
+  }, [expanded, fileLoading, fileResponse, originalContent, modifiedContent]);
+
+  const extensions = useMemo(() => {
+    if (!expanded || !fileResponse) return [];
+    return [
+      json(),
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+      unifiedMergeView({
+        original: originalContent ?? '',
+        mergeControls: false,
+        highlightChanges: true,
+      }),
+    ];
+  }, [expanded, fileResponse, originalContent]);
+
+  const handlePublish = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setIsPublishing(true);
+      try {
+        const dataFolder = findDataFolderForFile(folders, file.path);
+        if (!dataFolder || !dataFolder.connectorAccountId) {
+          ScratchpadNotifications.error({ message: 'Could not resolve connection for this file' });
+          return;
+        }
+        const result = await workbookApi.planPublishV2(
+          workbookId,
+          dataFolder.connectorAccountId,
+          true,
+          undefined,
+          file.path,
+        );
+        if (result?.jobId) {
+          useActiveJobsStore.getState().trackJobIds([result.jobId]);
+          useActiveJobsStore.getState().refreshJobs();
+          ScratchpadNotifications.info({ message: 'Publishing file...' });
+        }
+      } catch (error) {
+        console.debug('Failed to publish file:', error);
+        ScratchpadNotifications.error({ message: 'Failed to publish file' });
+      } finally {
+        setIsPublishing(false);
+      }
+    },
+    [workbookId, folders, file.path],
+  );
+
+  const handleDiscard = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDiscard(file.path);
+    },
+    [file.path, onDiscard],
+  );
+
+  return (
+    <Box style={{ borderBottom: '0.5px solid var(--fg-divider)' }}>
+      <Group
+        wrap="nowrap"
+        gap="sm"
+        pr="md"
+        pl={6}
+        py={7}
+        className="review-file-row"
+        style={{
+          borderLeft: `3px solid ${borderColor}`,
+          cursor: 'pointer',
+        }}
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        {/* Expand chevron */}
+        <Box style={{ flexShrink: 0, color: 'var(--fg-muted)', display: 'flex' }}>
+          {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+        </Box>
+
+        {/* Path + filename */}
+        <Group gap={0} wrap="nowrap" style={{ minWidth: 0, flexShrink: 1 }}>
+          {folder && (
+            <Text12Regular c="var(--fg-muted)" truncate style={{ flexShrink: 1 }}>
+              {folder}
+            </Text12Regular>
+          )}
+          <Text12Medium
+            c="var(--fg-primary)"
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+          >
+            {filename}
+          </Text12Medium>
+        </Group>
+
+        <Box style={{ flex: 1 }} />
+
+        {/* Diff stats when expanded */}
+        {diffCounts && (diffCounts.added > 0 || diffCounts.removed > 0) && (
+          <Text12Regular c="var(--fg-muted)" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+            {diffCounts.added > 0 && <span style={{ color: 'var(--mantine-color-green-7)' }}>+{diffCounts.added}</span>}
+            {diffCounts.added > 0 && diffCounts.removed > 0 && ' / '}
+            {diffCounts.removed > 0 && <span style={{ color: 'var(--mantine-color-red-6)' }}>-{diffCounts.removed}</span>}
+          </Text12Regular>
+        )}
+
+        {/* Publish button (hover) */}
+        <Box
+          className="review-file-actions"
+          style={{ flexShrink: 0, opacity: 0 }}
+          onClick={handlePublish}
+        >
+          <Tooltip label="Publish" position="left">
+            <UnstyledButton
+              disabled={isPublishing}
+              style={{ padding: 2, borderRadius: 3, display: 'flex', color: 'var(--mantine-color-green-7)' }}
+            >
+              {isPublishing ? <Loader size={12} /> : <CloudUploadIcon size={12} />}
+            </UnstyledButton>
+          </Tooltip>
+        </Box>
+
+        {/* Discard button (hover) */}
+        <Box
+          className="review-file-actions"
+          style={{ flexShrink: 0, opacity: 0 }}
+          onClick={handleDiscard}
+        >
+          <Tooltip label="Discard" position="left">
+            <UnstyledButton
+              style={{ padding: 2, borderRadius: 3, display: 'flex', color: 'var(--mantine-color-red-6)' }}
+            >
+              <RotateCcwIcon size={12} />
+            </UnstyledButton>
+          </Tooltip>
+        </Box>
+
+        {/* Open full view */}
+        <Tooltip label="Open full diff" position="left">
+          <Link
+            href={href}
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            style={{ flexShrink: 0, display: 'flex', color: 'var(--fg-muted)', padding: 2 }}
+          >
+            <ExternalLinkIcon size={12} />
+          </Link>
+        </Tooltip>
+      </Group>
+
+      {/* Expanded: CodeMirror unified diff */}
+      {expanded && (
+        <Box mx="md" mb={4} style={{ border: '0.5px solid var(--fg-divider)', borderRadius: 3, overflow: 'hidden' }}>
+          {fileLoading ? (
+            <Box p="sm" style={{ display: 'flex', justifyContent: 'center' }}>
+              <Loader size={14} />
+            </Box>
+          ) : (
+            <CodeMirror
+              key={file.path}
+              value={modifiedContent ?? ''}
+              extensions={extensions}
+              editable={false}
+              basicSetup={{
+                lineNumbers: true,
+                foldGutter: false,
+                highlightActiveLine: false,
+                highlightActiveLineGutter: false,
+              }}
+              style={{ fontSize: '12px' }}
+            />
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+});
+
+// ── SourceGroupSection ───────────────────────────────────────────────────────
+
+interface SourceGroupSectionProps {
+  group: SourceGroup;
+  workbookId: WorkbookId;
+  folders: DataFolder[];
+  onDiscard: (filePath: string) => void;
+}
+
+function SourceGroupSection({ group, workbookId, folders, onDiscard }: SourceGroupSectionProps) {
+  const [visibleCount, setVisibleCount] = useState(FILES_PER_PAGE);
+  const displayedFiles = group.files.slice(0, visibleCount);
+  const hasMore = group.files.length > visibleCount;
+
+  return (
+    <Box>
+      {/* Group header */}
+      <Group
+        gap="sm"
+        px="md"
+        py={8}
+        style={{
+          backgroundColor: 'var(--bg-panel)',
+          borderBottom: '0.5px solid var(--fg-divider)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 1,
+        }}
+      >
+        <ConnectorIcon connector={group.service} size={16} p={0} />
+        <Text12Medium c="var(--fg-primary)">{group.displayName}</Text12Medium>
+        <Text12Regular c="var(--fg-muted)">
+          {group.files.length} {group.files.length === 1 ? 'file' : 'files'}
+        </Text12Regular>
+      </Group>
+
+      {/* Files */}
+      {displayedFiles.map((file) => (
+        <ReviewFileRow
+          key={file.path}
+          file={file}
+          workbookId={workbookId}
+          folders={folders}
+          onDiscard={onDiscard}
+        />
+      ))}
+
+      {/* Load more */}
+      {hasMore && (
+        <Box py={6} px="md">
+          <Text12Regular
+            c="var(--mantine-color-blue-6)"
+            style={{ cursor: 'pointer' }}
+            onClick={() => setVisibleCount((prev) => prev + FILES_PER_PAGE)}
+          >
+            Load more... ({group.files.length - visibleCount} remaining)
+          </Text12Regular>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+// ── Main page ────────────────────────────────────────────────────────────────
 
 export default function ReviewPage() {
   const params = useParams<{ id: string }>();
@@ -335,53 +395,9 @@ export default function ReviewPage() {
   const { dirtyFiles, isLoading, refresh } = useDirtyFiles(workbookId);
   const { folders } = useDataFolders(workbookId);
   const { mutate } = useSWRConfig();
-  const [statsCache, setStatsCache] = useState<FileStatsCache>({});
-  const [discardingPath, setDiscardingPath] = useState<string | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const { open: openConfirmDialog, dialogProps } = useConfirmDialog();
 
-  const toggleExpanded = useCallback((path: string) => {
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
-
-  // Fetch file contents for diff stats
-  useEffect(() => {
-    if (dirtyFiles.length === 0) return;
-
-    for (const file of dirtyFiles) {
-      if (statsCache[file.path]) continue;
-
-      setStatsCache((prev) => ({
-        ...prev,
-        [file.path]: { loading: true, stats: null, originalContent: null, modifiedContent: null },
-      }));
-
-      filesApi
-        .getFileByPath(workbookId, file.path)
-        .then((response) => {
-          const orig = response.file.originalContent;
-          const mod = response.file.content;
-          const stats = computeDiffStats(orig, mod);
-          setStatsCache((prev) => ({
-            ...prev,
-            [file.path]: { loading: false, stats, originalContent: orig, modifiedContent: mod },
-          }));
-        })
-        .catch(() => {
-          setStatsCache((prev) => ({
-            ...prev,
-            [file.path]: { loading: false, stats: null, originalContent: null, modifiedContent: null },
-          }));
-        });
-    }
-  }, [dirtyFiles, workbookId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleDiscardFile = useCallback(
+  const handleDiscard = useCallback(
     (filePath: string) => {
       openConfirmDialog({
         title: 'Discard Changes',
@@ -389,19 +405,9 @@ export default function ReviewPage() {
         confirmLabel: 'Discard',
         variant: 'danger',
         onConfirm: async () => {
-          setDiscardingPath(filePath);
-          try {
-            await workbookApi.discardChanges(workbookId, filePath);
-            refresh();
-            mutate(SWR_KEYS.dirtyFiles.hasDirty(workbookId));
-            setStatsCache((prev) => {
-              const next = { ...prev };
-              delete next[filePath];
-              return next;
-            });
-          } finally {
-            setDiscardingPath(null);
-          }
+          await workbookApi.discardChanges(workbookId, filePath);
+          refresh();
+          mutate(SWR_KEYS.dirtyFiles.hasDirty(workbookId));
         },
       });
     },
@@ -410,17 +416,6 @@ export default function ReviewPage() {
 
   const totalCounts = useMemo(() => countByStatus(dirtyFiles), [dirtyFiles]);
   const sourceGroups = useMemo(() => groupFilesBySource(dirtyFiles, folders), [dirtyFiles, folders]);
-
-  const totalLinesChanged = useMemo(() => {
-    let total = 0;
-    for (const entry of Object.values(statsCache)) {
-      if (entry.stats) total += entry.stats.linesChanged;
-    }
-    return total;
-  }, [statsCache]);
-
-  const allStatsLoaded =
-    dirtyFiles.length > 0 && dirtyFiles.every((f) => statsCache[f.path] && !statsCache[f.path].loading);
 
   if (isLoading) {
     return (
@@ -473,9 +468,6 @@ export default function ReviewPage() {
           {totalCounts.deleted > 0 && (
             <Text12Regular c="var(--mantine-color-red-6)">{totalCounts.deleted} deleted</Text12Regular>
           )}
-          {allStatsLoaded && totalLinesChanged > 0 && (
-            <Text12Regular c="var(--fg-muted)">{totalLinesChanged} lines</Text12Regular>
-          )}
         </Group>
       </Box>
 
@@ -483,132 +475,13 @@ export default function ReviewPage() {
       <ScrollArea style={{ flex: 1 }} type="auto">
         <Stack gap={0}>
           {sourceGroups.map((group) => (
-            <Box key={group.key}>
-              {/* Group header */}
-              <Group
-                gap="sm"
-                px="md"
-                py={8}
-                style={{
-                  backgroundColor: 'var(--bg-panel)',
-                  borderBottom: '0.5px solid var(--fg-divider)',
-                  position: 'sticky',
-                  top: 0,
-                  zIndex: 1,
-                }}
-              >
-                <ConnectorIcon connector={group.service} size={16} p={0} />
-                <Text12Medium c="var(--fg-primary)">{group.displayName}</Text12Medium>
-                <Text12Regular c="var(--fg-muted)">
-                  {group.files.length} {group.files.length === 1 ? 'file' : 'files'}
-                </Text12Regular>
-              </Group>
-
-              {/* Files in group */}
-              {group.files.map((file) => {
-                const { folder, filename } = formatFilePath(file.path);
-                const cached = statsCache[file.path];
-                const href = RouteUrls.workbookReviewFileUrl(workbookId, file.path);
-                const isDiscarding = discardingPath === file.path;
-                const borderColor = STATUS_COLOR[file.status] ?? 'transparent';
-                const isExpanded = expandedPaths.has(file.path);
-
-                return (
-                  <Box key={file.path} style={{ borderBottom: '0.5px solid var(--fg-divider)' }}>
-                    <Group
-                      wrap="nowrap"
-                      gap="sm"
-                      pr="md"
-                      pl={6}
-                      py={7}
-                      className="review-file-row"
-                      style={{
-                        borderLeft: `3px solid ${borderColor}`,
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => toggleExpanded(file.path)}
-                    >
-                      {/* Expand chevron */}
-                      <Box style={{ flexShrink: 0, color: 'var(--fg-muted)', display: 'flex' }}>
-                        {isExpanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-                      </Box>
-
-                      {/* Path + filename */}
-                      <Group gap={0} wrap="nowrap" style={{ minWidth: 0, flexShrink: 1 }}>
-                        {folder && (
-                          <Text12Regular c="var(--fg-muted)" truncate style={{ flexShrink: 1 }}>
-                            {folder}
-                          </Text12Regular>
-                        )}
-                        <Text12Medium
-                          c="var(--fg-primary)"
-                          style={{
-                            flexShrink: 0,
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {filename}
-                        </Text12Medium>
-                      </Group>
-
-                      {/* Inline diff preview (hidden when expanded) */}
-                      {!isExpanded && (
-                        <Box style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                          {cached?.loading ? (
-                            <Loader size={10} />
-                          ) : (
-                            <InlineDiff status={file.status} stats={cached?.stats ?? null} />
-                          )}
-                        </Box>
-                      )}
-                      {isExpanded && <Box style={{ flex: 1 }} />}
-
-                      {/* Line count */}
-                      {cached?.stats && cached.stats.linesChanged > 0 && (
-                        <Text12Regular c="var(--fg-muted)" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
-                          +{cached.stats.linesChanged}
-                        </Text12Regular>
-                      )}
-
-                      {/* Open full view */}
-                      <Tooltip label="Open full diff" position="left">
-                        <Link
-                          href={href}
-                          onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                          style={{ flexShrink: 0, display: 'flex', color: 'var(--fg-muted)', padding: 2 }}
-                        >
-                          <ExternalLinkIcon size={12} />
-                        </Link>
-                      </Tooltip>
-
-                      {/* Discard (hover) */}
-                      <Box
-                        className="review-file-actions"
-                        style={{ flexShrink: 0, opacity: 0 }}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          handleDiscardFile(file.path);
-                        }}
-                      >
-                        <Tooltip label="Discard" position="left">
-                          <UnstyledButton
-                            disabled={isDiscarding}
-                            style={{ padding: 2, borderRadius: 3, display: 'flex', color: 'var(--fg-muted)' }}
-                          >
-                            {isDiscarding ? <Loader size={12} /> : <RotateCcwIcon size={12} />}
-                          </UnstyledButton>
-                        </Tooltip>
-                      </Box>
-                    </Group>
-
-                    {/* Expanded diff */}
-                    {isExpanded && cached && !cached.loading && (
-                      <ExpandedDiff original={cached.originalContent} modified={cached.modifiedContent} />
-                    )}
-                  </Box>
-                );
-              })}
-            </Box>
+            <SourceGroupSection
+              key={group.key}
+              group={group}
+              workbookId={workbookId}
+              folders={folders}
+              onDiscard={handleDiscard}
+            />
           ))}
         </Stack>
       </ScrollArea>
