@@ -32,9 +32,9 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
 
 fn get_token(server_url: &str) -> anyhow::Result<String> {
     let creds = crate::config::credentials::get(server_url)
-        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd2 auth login` first."))?;
+        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
     if creds.api_token.is_empty() {
-        anyhow::bail!("Not authenticated. Run `scratchmd2 auth login` first.");
+        anyhow::bail!("Not authenticated. Run `scratchmd auth login` first.");
     }
     Ok(creds.api_token)
 }

@@ -105,7 +105,7 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
     if connections.is_empty() {
         println!("No connections found in this workspace.");
         println!();
-        println!("Add a connection with: scratchmd2 connections add --service AIRTABLE --param apiKey=<token>");
+        println!("Add a connection with: scratchmd connections add --service AIRTABLE --param apiKey=<token>");
         return Ok(());
     }
 
@@ -151,7 +151,7 @@ async fn add(
     if params.is_empty() {
         anyhow::bail!(
             "No credentials provided. Use --param key=value for each credential field.\n\
-             Example: scratchmd2 connections add --service AIRTABLE --param apiKey=<token>"
+             Example: scratchmd connections add --service AIRTABLE --param apiKey=<token>"
         );
     }
 

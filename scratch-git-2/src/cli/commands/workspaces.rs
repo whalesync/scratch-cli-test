@@ -54,7 +54,14 @@ impl From<Workbook> for WorkbookOutput {
 #[derive(Subcommand)]
 pub enum WorkspacesCommands {
     /// List all workspaces
-    List,
+    List {
+        /// Sort by field (name, createdAt, updatedAt)
+        #[arg(long, default_value = "createdAt")]
+        sort_by: String,
+        /// Sort order (asc, desc)
+        #[arg(long, default_value = "desc")]
+        sort_order: String,
+    },
     /// Create a new workspace
     Create {
         /// Workspace name
@@ -85,7 +92,7 @@ pub enum WorkspacesCommands {
 
 pub async fn run(cmd: WorkspacesCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
     match cmd {
-        WorkspacesCommands::List => list(server_url, json).await,
+        WorkspacesCommands::List { sort_by, sort_order } => list(server_url, &sort_by, &sort_order, json).await,
         WorkspacesCommands::Create { name } => create(server_url, &name, json).await,
         WorkspacesCommands::Show { id } => show(server_url, &id, json).await,
         WorkspacesCommands::Delete { id } => delete(server_url, &id).await,
@@ -97,12 +104,13 @@ pub async fn run(cmd: WorkspacesCommands, server_url: &str, json: bool) -> anyho
 
 fn get_client(server_url: &str) -> anyhow::Result<ApiClient> {
     ApiClient::from_credentials(server_url)
-        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd2 auth login` first."))
+        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))
 }
 
-async fn list(server_url: &str, json: bool) -> anyhow::Result<()> {
+async fn list(server_url: &str, sort_by: &str, sort_order: &str, json: bool) -> anyhow::Result<()> {
     let client = get_client(server_url)?;
-    let resp: WorkbookListResponse = client.get("workbooks").await?;
+    let query = format!("sortBy={}&sortOrder={}", sort_by, sort_order);
+    let resp: WorkbookListResponse = client.get_query("workbooks", &query).await?;
 
     if json {
         let output = WorkbookListOutput {

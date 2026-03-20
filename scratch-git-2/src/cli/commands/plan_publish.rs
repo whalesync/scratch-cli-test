@@ -1,4 +1,4 @@
-//! `scratchmd2 plan-publish` — build a local publish plan by diffing dirty vs master.
+//! `scratchmd plan-publish` — build a local publish plan by diffing dirty vs master.
 //!
 //! Plan phases mirror the server:
 //!   edit      — update existing record (stripped dirty content + changedFields)
@@ -109,7 +109,7 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
     let conn_dirs = find_connector_dirs(&workspace);
     if conn_dirs.is_empty() {
         anyhow::bail!(
-            "No connector directories found in {}. Run 'scratchmd2 workspaces init' first.",
+            "No connector directories found in {}. Run 'scratchmd workspaces init' first.",
             workspace.display()
         );
     }
@@ -136,7 +136,7 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
 
         if !master_dir.exists() {
             eprintln!("  {conn_name}: master worktree not found at {}, skipping", master_dir.display());
-            eprintln!("    Run 'scratchmd2 workspaces init' to set up the master worktree.");
+            eprintln!("    Run 'scratchmd workspaces init' to set up the master worktree.");
             continue;
         }
 
@@ -181,7 +181,7 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
 
     let conn_dirs = find_connector_dirs(&workspace);
     if conn_dirs.is_empty() {
-        anyhow::bail!("No connector directories found. Run 'scratchmd2 workspaces init' first.");
+        anyhow::bail!("No connector directories found. Run 'scratchmd workspaces init' first.");
     }
 
     let mut any_triggered = false;
@@ -204,7 +204,7 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
         let plan_dir = match std::fs::read_dir(&plans_dir).ok().and_then(|mut d| d.next()) {
             Some(Ok(e)) if e.path().is_dir() => e.path(),
             _ => {
-                eprintln!("  {conn_name}: no publish plan found — run 'scratchmd2 plan-publish' first");
+                eprintln!("  {conn_name}: no publish plan found — run 'scratchmd plan-publish' first");
                 continue;
             }
         };

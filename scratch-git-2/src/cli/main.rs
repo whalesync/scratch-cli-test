@@ -10,12 +10,13 @@ use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
 use commands::{auth, connections, files, index, linked, plan_publish, syncs, workspaces};
+use config::project_config;
 
 #[derive(Parser)]
 #[command(
-    name = "scratchmd2",
+    name = "scratchmd",
     version,
-    about = "Scratch content management CLI (v2)"
+    about = "Scratch content management CLI"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,6 +25,14 @@ struct Cli {
     /// Override the Scratch server URL
     #[arg(long, global = true, env = "SCRATCH_URL")]
     scratch_url: Option<String>,
+
+    /// Path to config file (default: scratchmd.config.yaml in current directory)
+    #[arg(long, global = true)]
+    config: Option<String>,
+
+    /// Enable verbose output
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
 
     /// Output as JSON
     #[arg(long, global = true)]
@@ -34,6 +43,9 @@ struct Cli {
 enum Commands {
     /// Manage authentication
     Auth {
+        /// Override the Scratch server URL (alias for global --scratch-url)
+        #[arg(long)]
+        server: Option<String>,
         #[command(subcommand)]
         command: auth::AuthCommands,
     },
@@ -106,16 +118,22 @@ enum Commands {
 
 fn build_client(server_url: &str) -> anyhow::Result<ApiClient> {
     ApiClient::from_credentials(server_url)
-        .with_context(|| "Not authenticated. Run `scratchmd2 auth login` first.")
+        .with_context(|| "Not authenticated. Run `scratchmd auth login` first.")
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let server_url = cli.scratch_url.unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());
+    // Priority: --scratch-url / SCRATCH_URL  >  scratchmd.config.yaml  >  compiled default
+    let server_url = cli.scratch_url
+        .or_else(|| project_config::load_server_url(cli.config.as_deref()))
+        .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());
 
     let result = match cli.command {
-        Commands::Auth { command } => auth::run(command, &server_url).await,
+        Commands::Auth { command, server } => {
+            let url = server.as_deref().unwrap_or(&server_url).to_string();
+            auth::run(command, &url).await
+        }
 
         Commands::Workspaces { command } => {
             workspaces::run(command, &server_url, cli.json).await

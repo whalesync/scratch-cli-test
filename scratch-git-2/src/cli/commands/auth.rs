@@ -34,7 +34,7 @@ async fn login(server_url: &str, no_browser: bool) -> anyhow::Result<()> {
         if !creds.email.is_empty() {
             print!(" as {}", creds.email);
         }
-        println!(".\nRun `scratchmd2 auth logout` to log out first.");
+        println!(".\nRun `scratchmd auth logout` to log out first.");
         return Ok(());
     }
 
@@ -123,11 +123,11 @@ fn status(server_url: &str) -> anyhow::Result<()> {
             if !c.expires_at.is_empty() {
                 println!("  Token expires: {}", c.expires_at);
             }
-            println!("\nRun `scratchmd2 auth logout` to log out.");
+            println!("\nRun `scratchmd auth logout` to log out.");
         }
         _ => {
             println!("  Status: Not logged in");
-            println!("\nRun `scratchmd2 auth login` to authenticate.");
+            println!("\nRun `scratchmd auth login` to authenticate.");
         }
     }
     println!();

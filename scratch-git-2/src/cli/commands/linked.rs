@@ -11,6 +11,9 @@ pub enum LinkedCommands {
     Available {
         /// Connection ID (optional — lists connections if omitted)
         connection_id: Option<String>,
+        /// Force refresh from connector (accepted for compatibility; server decides caching)
+        #[arg(long)]
+        refresh: bool,
     },
     /// List linked tables in the workspace
     List,
@@ -65,7 +68,7 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let workbook_id = config::resolve_workspace_id(workspace)?;
     match cmd {
-        LinkedCommands::Available { connection_id } => {
+        LinkedCommands::Available { connection_id, refresh: _ } => {
             available(client, &workbook_id, connection_id.as_deref(), json).await
         }
         LinkedCommands::List => list(client, &workbook_id, json).await,
@@ -116,7 +119,7 @@ async fn available(
             println!("  - {} ({})  ID: {}", c.display_name, c.service, c.id);
         }
         println!();
-        println!("To list tables for a connection, run: scratchmd2 linked available <connection-id>");
+        println!("To list tables for a connection, run: scratchmd linked available <connection-id>");
         return Ok(());
     }
 
@@ -129,7 +132,7 @@ async fn available(
         } else {
             println!();
             println!("This connection uses search-based table discovery.");
-            println!("Use `scratchmd2 linked add` to interactively link tables.");
+            println!("Use `scratchmd linked add` to interactively link tables.");
             println!();
         }
         return Ok(());
@@ -171,7 +174,7 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
     if total == 0 {
         println!("No linked tables found in this workspace.");
         println!();
-        println!("Link a table with: scratchmd2 linked add --connection-id <id> --table-id <id> --name <name>");
+        println!("Link a table with: scratchmd linked add --connection-id <id> --table-id <id> --name <name>");
         return Ok(());
     }
 
@@ -202,7 +205,7 @@ async fn add(
     if table_ids.is_empty() {
         anyhow::bail!(
             "No table IDs provided. Use --table-id <id> (repeatable).\n\
-             Run `scratchmd2 linked available {}` to list tables.",
+             Run `scratchmd linked available {}` to list tables.",
             connection_id
         );
     }

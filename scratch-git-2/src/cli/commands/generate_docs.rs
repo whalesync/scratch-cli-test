@@ -166,7 +166,7 @@ mkdir -p .scratch/workbook/syncs
 # .scratch/workbook/syncs/posts-airtable-to-webflow.json
 ```
 
-> **Note:** `scratchmd2 syncs create` (the server-backed command) is kept for
+> **Note:** `scratchmd syncs create` (the server-backed command) is kept for
 > backwards compatibility with V1 workbooks. For V2 local workbooks, just drop
 > a JSON file in the syncs folder — that is the entire create operation. Do not
 > run anything else after creating the file.
@@ -174,9 +174,9 @@ mkdir -p .scratch/workbook/syncs
 ## Running a sync
 
 ```bash
-scratchmd2 syncs run-local
+scratchmd syncs run-local
 # or a specific sync file:
-scratchmd2 syncs run-local --sync .scratch/workbook/syncs/posts.json
+scratchmd syncs run-local --sync .scratch/workbook/syncs/posts.json
 ```
 
 After running, check the destination connection folder for new/updated files.
@@ -185,7 +185,7 @@ After running, check the destination connection folder for new/updated files.
 
 ```bash
 # Commit dirty changes and push to remote
-scratchmd2 files upload
+scratchmd files upload
 
 # Publish changed records to the destination CMS (via web UI or API)
 # Open the workbook in the browser -> Files tab -> Publish

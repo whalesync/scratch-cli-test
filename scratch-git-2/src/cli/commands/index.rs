@@ -1,4 +1,4 @@
-//! `scratchmd2 build-index` and `scratchmd2 dump-index` commands.
+//! `scratchmd build-index` and `scratchmd dump-index` commands.
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
 
     if conn_dirs.is_empty() {
         anyhow::bail!(
-            "No connector directories found in {}. Run 'scratchmd2 workspaces init' first.",
+            "No connector directories found in {}. Run 'scratchmd workspaces init' first.",
             workspace_dir.display()
         );
     }
@@ -25,7 +25,7 @@ pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
 
         if !master.exists() {
             eprintln!("  {} — master worktree not found at {}, skipping", conn_dir_name, master.display());
-            eprintln!("    Run 'scratchmd2 workspaces init' to set up the master worktree.");
+            eprintln!("    Run 'scratchmd workspaces init' to set up the master worktree.");
             continue;
         }
 
@@ -74,7 +74,7 @@ pub fn dump_command(workspace_start: &std::path::Path, filter: Option<&str>) -> 
         let db = index::db_path(&workspace_dir, &conn_dir_name);
 
         if !db.exists() {
-            println!("[{conn_dir_name}] no index.db — run `scratchmd2 build-index` first");
+            println!("[{conn_dir_name}] no index.db — run `scratchmd build-index` first");
             continue;
         }
 

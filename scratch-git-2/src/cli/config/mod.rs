@@ -1,5 +1,6 @@
 pub mod credentials;
 pub mod markers;
+pub mod project_config;
 
 /// Resolve workspace ID from an explicit flag value or the nearest .scratchmd marker.
 pub fn resolve_workspace_id(explicit: Option<&str>) -> anyhow::Result<String> {

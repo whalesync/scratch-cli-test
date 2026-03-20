@@ -9,7 +9,7 @@ name = "scratch-git-2"
 path = "src/service/main.rs"
 
 [[bin]]
-name = "scratchmd2"
+name = "scratchmd"
 path = "src/cli/main.rs"
 
 [dependencies]
@@ -30,7 +30,7 @@ futures = "0.3"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 serde_yaml = "0.9"
 open = "5"
 anyhow = "1"

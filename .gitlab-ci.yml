@@ -10,4 +10,4 @@ include:
   - "/gitlab-ci/stages/04-run-migrations.yml"
   - "/gitlab-ci/stages/05-deploy.yml"
   - "/gitlab-ci/stages/06-environment-tests.yml"
-  - "scratch-cli/.gitlab-ci-release.yml"
+  - "scratch-git-2/.gitlab-ci-release.yml"

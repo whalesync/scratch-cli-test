@@ -115,7 +115,7 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
     if syncs.is_empty() {
         println!("No syncs found in this workspace.");
         println!();
-        println!("Create one with: scratchmd2 syncs create --config sync-config.json");
+        println!("Create one with: scratchmd syncs create --config sync-config.json");
         return Ok(());
     }
 
@@ -352,7 +352,7 @@ async fn download(
         match config::find_workspace_dir(workbook_id) {
             Some(wb_dir) => wb_dir.join("syncs"),
             None => anyhow::bail!(
-                "Workspace {} is not initialized locally. Run 'scratchmd2 workspaces init {}' first, \
+                "Workspace {} is not initialized locally. Run 'scratchmd workspaces init {}' first, \
                  or use --output to specify a directory.",
                 workbook_id,
                 workbook_id
@@ -405,7 +405,7 @@ async fn download(
         }
         println!();
         println!("To update a sync from a downloaded config:");
-        println!("  scratchmd2 syncs update <sync-id> --config <file>");
+        println!("  scratchmd syncs update <sync-id> --config <file>");
         println!();
     }
     Ok(())
@@ -512,7 +512,7 @@ fn validate_local(sync_path: Option<&str>, _json: bool) -> anyhow::Result<()> {
     let syncs_dir = wb_dir.join(".scratch/workbook/syncs");
     if !syncs_dir.exists() {
         anyhow::bail!(
-            "syncs directory not found at {}. Run `scratchmd2 files download` first.",
+            "syncs directory not found at {}. Run `scratchmd files download` first.",
             syncs_dir.display()
         );
     }
@@ -752,7 +752,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
     let syncs_dir = wb_dir.join(".scratch/workbook/syncs");
     if !syncs_dir.exists() {
         anyhow::bail!(
-            "syncs directory not found at {}. Run `scratchmd2 files download` first.",
+            "syncs directory not found at {}. Run `scratchmd files download` first.",
             syncs_dir.display()
         );
     }

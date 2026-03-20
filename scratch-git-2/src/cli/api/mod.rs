@@ -2,11 +2,16 @@ use reqwest::{Client, Method, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
-pub const DEFAULT_SERVER_URL: &str = "http://localhost:3010";
+/// Default server URL. Override at build time by setting SCRATCH_DEFAULT_URL env var.
+/// The release scripts set this to https://api.scratch.md (prod) or https://test-api.scratch.md (test).
+pub const DEFAULT_SERVER_URL: &str = match option_env!("SCRATCH_DEFAULT_URL") {
+    Some(url) => url,
+    None => "http://localhost:3010",
+};
 
 #[derive(Debug, Error)]
 pub enum ApiError {
-    #[error("Not authenticated. Run `scratchmd2 auth login` first.")]
+    #[error("Not authenticated. Run `scratchmd auth login` first.")]
     Unauthorized,
     #[error("Not found: {0}")]
     NotFound(String),
@@ -62,7 +67,7 @@ impl ApiClient {
             .client
             .request(method, &url)
             .header("Authorization", format!("API-Token {}", self.token))
-            .header("User-Agent", "scratchmd2");
+            .header("User-Agent", "scratchmd");
 
         if let Some(b) = body {
             req = req.json(b);
@@ -93,7 +98,7 @@ impl ApiClient {
             .client
             .request(method, &url)
             .header("Authorization", format!("API-Token {}", self.token))
-            .header("User-Agent", "scratchmd2")
+            .header("User-Agent", "scratchmd")
             .send()
             .await?;
         let status = resp.status();
@@ -144,7 +149,7 @@ impl ApiClient {
     pub async fn auth_initiate(base_url: &str) -> ApiResult<AuthInitiateResponse> {
         let client = Client::new();
         let url = format!("{}/auth/initiate", base_url.trim_end_matches('/'));
-        let resp = client.post(&url).header("User-Agent", "scratchmd2").send().await?;
+        let resp = client.post(&url).header("User-Agent", "scratchmd").send().await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -157,7 +162,7 @@ impl ApiClient {
         let client = Client::new();
         let url = format!("{}/auth/poll", base_url.trim_end_matches('/'));
         let body = serde_json::json!({ "pollingCode": polling_code });
-        let resp = client.post(&url).json(&body).header("User-Agent", "scratchmd2").send().await?;
+        let resp = client.post(&url).json(&body).header("User-Agent", "scratchmd").send().await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
