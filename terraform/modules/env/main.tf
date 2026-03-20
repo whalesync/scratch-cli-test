@@ -55,7 +55,8 @@ locals {
       description = "Service account for the scratch-git GCE instance"
       roles = [
         "roles/artifactregistry.reader",
-        "roles/logging.logWriter"
+        "roles/logging.logWriter",
+        "roles/monitoring.metricWriter"
       ]
     },
   ]
