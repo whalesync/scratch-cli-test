@@ -11,6 +11,7 @@ Scratch is a content management platform that syncs data between external servic
 - **Review and improve copy** — check your blog posts for SEO, fix inconsistent tone, or rewrite product descriptions
 - **Create new content** — draft blog posts, product listings, or pages based on your existing content themes
 - **Pull in the latest data** — sync fresh content from Airtable, Webflow, Notion, or Shopify and review what changed
+- **Download your content** — save all your files to your local computer for backup, offline use, or bulk editing
 - **Manage versions** — create save points before making changes so you can always undo
 
 ## Authentication
@@ -327,6 +328,7 @@ Once you've explored the user's workbooks, suggest concrete actions like:
 - "I notice some of your files have inconsistent formatting. Want me to standardize them?"
 - "I can create new content for you — for example, draft 10 new blog post outlines based on your existing content themes."
 - "Want me to pull the latest data from your connected services, review what changed, and summarize the differences?"
+- "I can download all your content to your computer as local files — great for backups, working offline, or bulk AI editing."
 - "I can set up a save point before making any changes, so you can always undo if you don't like the results."
 
 The key insight: Scratch gives you read/write access to the user's content. You can read files, edit them, create new ones, and publish changes back to the user's connected services. Think of yourself as a content editor with superpowers.
