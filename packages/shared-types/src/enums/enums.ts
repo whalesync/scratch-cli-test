@@ -29,6 +29,7 @@ export enum TokenType {
   AGENT = 'AGENT',
   WEBSOCKET = 'WEBSOCKET',
   USER = 'USER',
+  MCP = 'MCP',
 }
 
 export enum ConnectorHealthStatus {

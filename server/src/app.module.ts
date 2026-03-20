@@ -14,8 +14,9 @@ import { DiscoverModule } from './discover/discover.module';
 import { ExperimentsModule } from './experiments/experiments.module';
 import { HealthModule } from './health/health.module';
 import { JobModule } from './job/job.module';
+import { McpModule } from './mcp/mcp.module';
 import { MetricsModule } from './metrics/metrics.module';
-import { JsonBodyMiddleware, RawBodyMiddleware } from './middleware';
+import { JsonBodyMiddleware, RawBodyMiddleware, UrlencodedBodyMiddleware } from './middleware';
 import { OAuthModule } from './oauth/oauth.module';
 import { PaymentModule } from './payment/payment.module';
 import { PosthogModule } from './posthog/posthog.module';
@@ -59,6 +60,7 @@ import { WorkerModule } from './worker/workers.module';
     PublishPlanModule,
     ScheduleModule,
     ShopifyWebhooksModule,
+    McpModule,
     ...(ScratchConfigService.isAPIService() ? [DevToolsModule, BugReportModule, CodeMigrationsModule] : []),
     ...(ScratchConfigService.isTaskWorkerService() ? [WorkerModule] : []),
     ...(ScratchConfigService.isCronService() ? [CronModule] : []),
@@ -79,6 +81,9 @@ export class AppModule implements NestModule {
         { path: '/payment/webhook', method: RequestMethod.POST },
         { path: '/connectors/shopify/webhooks', method: RequestMethod.POST },
       )
+      // OAuth token endpoint uses application/x-www-form-urlencoded per the OAuth spec
+      .apply(UrlencodedBodyMiddleware)
+      .forRoutes({ path: '/mcp-auth/token', method: RequestMethod.POST })
       .apply(JsonBodyMiddleware)
       .exclude(
         // Import suggestions endpoint
@@ -93,6 +98,8 @@ export class AppModule implements NestModule {
         { path: '/cli/v1/workbooks/:id/git/*path', method: RequestMethod.ALL },
         // V2 per-connector git proxy (uses raw body)
         { path: '/cli/v1/workbooks/:id/connectors/:connectorAccountId/git/*path', method: RequestMethod.ALL },
+        // MCP OAuth token endpoint (uses urlencoded body)
+        { path: '/mcp-auth/token', method: RequestMethod.POST },
       )
       .forRoutes('*');
   }

@@ -34,6 +34,7 @@ export enum IdPrefixes {
   WORKSPACE_PERMISSION = 'wpe_', // Workspace permission
   WORKSPACE_INVITE = 'win_', // Workspace invite
   ASSET = 'ast_', // Asset
+  MCP_CLIENT = 'mcc_', // MCP OAuth client
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -287,4 +288,15 @@ export function isAssetId(id: unknown): id is AssetId {
 
 export function createAssetId(): AssetId {
   return createId(IdPrefixes.ASSET) as AssetId;
+}
+
+// ------- MCP Client -------
+export type McpClientId = PrefixedId<IdPrefixes.MCP_CLIENT>;
+
+export function isMcpClientId(id: unknown): id is McpClientId {
+  return isId(id, IdPrefixes.MCP_CLIENT);
+}
+
+export function createMcpClientId(): McpClientId {
+  return createId(IdPrefixes.MCP_CLIENT) as McpClientId;
 }

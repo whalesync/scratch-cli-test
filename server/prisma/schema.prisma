@@ -84,6 +84,7 @@ model User {
   schedules            Schedule[]
   workspacePermissions WorkspacePermission[]
   workspaceInvites     WorkspaceInvites[]
+  mcpClients           McpClient[]
 }
 
 model ApiToken {
@@ -99,6 +100,16 @@ model ApiToken {
   @@unique([token])
   @@index([userId])
   @@map("APIToken")
+}
+
+model McpClient {
+  id           String   @id // type: McpClientId
+  clientId     String   @unique
+  clientName   String?
+  redirectUris String[]
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId       String?
 }
 
 ///

@@ -147,6 +147,14 @@ export class ScratchConfigService {
     return `https://${env}.scratch.md`;
   }
 
+  getScratchServerUrl(): string {
+    return this.getOptionalEnvVariable('MCP_SERVER_URL') ?? ScratchConfigService.getApiBaseUrl();
+  }
+
+  getMcpClientUrl(): string {
+    return this.getOptionalEnvVariable('MCP_CLIENT_URL') ?? this.getScratchApplicationUrl();
+  }
+
   getScratchGitApiUrl(): string {
     return this.getOptionalEnvVariable('SCRATCH_GIT_API_URL') ?? 'http://localhost:3100';
   }
@@ -254,7 +262,7 @@ export class ScratchConfigService {
   public static getApiBaseUrl(): string {
     const env = ScratchConfigService.getScratchEnvironment();
     if (env === 'development') {
-      const port = process.env.PORT ?? 3010;
+      const port = process.env.PORT ?? '3010';
       return `http://localhost:${port}`;
     }
 

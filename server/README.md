@@ -172,115 +172,6 @@ Stripe handles payments via hosted portals and webhooks. See [PaymentModule](src
 
 4. **Restart server**
 
-## Additional Resources
-
-Each module contains its own README with detailed documentation:
-
-- Architecture and design
-- API endpoints
-- Integration points
-- Configuration options
-- Use cases
-
-Explore the [src/](src/) directory to learn about specific modules.
-
----
-
-## Architecture Overview
-
-The Scratch server is a modular NestJS application built with a microservice-oriented architecture. It can run as a monolith for local development or as separate services (frontend API, worker, cron) in production.
-
-### Core Concepts
-
-**Snapshots**: Local workspaces that store copies of data from external services, allowing users to view, edit, and publish changes back to the source systems.
-
-**Connectors**: Integrations with external services (Airtable, Notion, Webflow, etc.) that enable bidirectional data synchronization.
-
-**AI-Powered**: Custom connector builder using AI to generate integration code, and AI agents that can operate on snapshot data.
-
-**Real-time**: WebSocket and SSE support for live updates, Redis pub/sub for multi-instance coordination.
-
-## Module Structure
-
-The server is organized into focused modules, each with its own README:
-
-### Foundation Modules
-
-- **[config](src/config/)**: Centralized configuration management with environment-specific settings
-- **[db](src/db/)**: Database abstraction layer with Prisma ORM and Knex query builder
-- **[types](src/types/)**: Core type definitions for IDs, error handling, and progress tracking
-- **[utils](src/utils/)**: Shared utility functions (encryption, CSV streaming, duration, validation)
-
-### Authentication & Authorization
-
-- **[auth](src/auth/)**: Multi-strategy authentication (Clerk JWT, API tokens, agent tokens)
-- **[clerk](src/clerk/)**: Clerk identity provider integration
-- **[agent-jwt](src/agent-jwt/)**: JWT generation for AI agents
-
-### User Management
-
-- **[users](src/users/)**: User lifecycle, API tokens, and session management
-- **[payment](src/payment/)**: Stripe integration for subscriptions and billing
-- **[audit](src/audit/)**: Comprehensive event tracking and audit logging
-
-### Data Management
-
-- **[snapshot](src/workbook/)**: Core workspace module for data viewing and editing
-- **[uploads](src/uploads/)**: CSV and Markdown file ingestion and storage
-- **[style-guide](src/style-guide/)**: Reference document management
-
-### External Integrations
-
-- **[remote-service](src/remote-service/)**: Connector abstraction layer for external services
-- **[oauth](src/oauth/)**: OAuth 2.0 flow management for third-party services
-
-### Background Processing
-
-- **[worker](src/worker/)**: Job queue and execution system with BullMQ and Piscina
-- **[worker-enqueuer](src/worker-enqueuer/)**: Job queueing service for background tasks
-- **[job](src/job/)**: Job lifecycle management and monitoring
-- **[cron](src/cron/)**: Scheduled task execution
-
-### AI & Analytics
-
-- **[ai](src/ai/)**: Google Gemini integration for AI-powered features
-- **[ai-agent-token-usage](src/ai-agent-token-usage/)**: AI token consumption tracking
-- **[openrouter](src/openrouter/)**: OpenRouter API key provisioning and management
-- **[posthog](src/posthog/)**: Product analytics and event tracking
-- **[experiments](src/experiments/)**: Feature flag management with OpenFeature
-
-### Infrastructure
-
-- **[redis](src/redis/)**: Pub/sub messaging for real-time events
-- **[slack](src/slack/)**: Developer notification system
-- **[admin](src/admin/)**: Health check and server info endpoints
-- **[dev-tools](src/dev-tools/)**: Administrative tools for support and debugging
-
-### Cross-Cutting Concerns
-
-- **[interceptors](src/interceptors/)**: Request logging and middleware
-- **[exception-filters](src/exception-filters/)**: Global error handling
-- **[wrappers](src/wrappers/)**: External library abstractions
-- **[mentions](src/mentions/)**: Search and autocomplete functionality
-
-## Data Flow
-
-### Typical Workflow
-
-1. **User Authentication**: User signs in via Clerk, receives JWT and API tokens
-2. **Connector Setup**: User configures connectors to external services (OAuth or API key)
-3. **Snapshot Creation**: User creates a snapshot with tables from one or more connectors
-4. **Data Download**: Background job fetches data from external services into snapshot schema
-5. **Local Editing**: User views and edits data locally, AI suggests improvements
-6. **Publishing**: User publishes changes back to external services
-
-### Real-time Updates
-
-- Changes broadcast via Redis pub/sub
-- WebSocket gateway pushes updates to connected clients
-- SSE provides progress updates for long-running operations
-- Multiple server instances coordinate through Redis
-
 ## Microservice Architecture
 
 The application supports different service types via the `SERVICE_TYPE` environment variable:
@@ -292,16 +183,46 @@ The application supports different service types via the `SERVICE_TYPE` environm
 
 This allows horizontal scaling of different concerns in production while maintaining simplicity in development.
 
-## Technology Stack
+## MCP Connector (Claude Integration)
 
-- **Framework**: NestJS with TypeScript
-- **Database**: PostgreSQL with Prisma ORM
-- **Queue**: BullMQ with Redis
-- **Real-time**: Socket.io for WebSocket, Redis Pub/Sub
-- **Authentication**: Clerk for identity, Passport for strategies
-- **Payment**: Stripe for subscriptions
-- **AI**: Google Gemini and OpenRouter
-- **Analytics**: PostHog
-- **Feature Flags**: OpenFeature with PostHog provider
+The server exposes a remote MCP (Model Context Protocol) endpoint that allows Claude to read workbook data via natural language. It implements OAuth 2.1 with PKCE for authentication and the Streamable HTTP transport for JSON-RPC messaging.
 
----
+### Testing MCP Locally with Claude
+
+Claude.ai needs to reach your local services over the internet, so you need tunnels for both the server and client.
+
+1. **Start ngrok tunnels** in two separate terminals:
+
+   ```bash
+   # Terminal 1: Server tunnel
+   ngrok http 3010
+
+   # Terminal 2: Client tunnel
+   ngrok http 3000
+   ```
+
+2. **Add the ngrok URLs to your `.env`**:
+
+   ```env
+   MCP_SERVER_URL=https://<server-tunnel>.ngrok.io
+   MCP_CLIENT_URL=https://<client-tunnel>.ngrok.io
+   ```
+
+3. **Restart the server** so it picks up the new URLs.
+
+4. **Register the connector in Claude**:
+   - Go to **Settings > Connectors** in Claude
+   - Click **Add custom connector**
+   - Enter the MCP server URL: `https://<server-tunnel>.ngrok.io/mcp`
+   - Click **Add**, then **Connect** to complete the OAuth flow
+
+5. **Enable in a conversation**:
+   - Click the **+** button in the Claude chat
+   - Select **Connectors** and toggle Scratch on
+
+### Architecture
+
+- **OAuth endpoints** (`/mcp-auth/*`) — Authorization server for token issuance
+- **Well-known endpoints** (`/.well-known/oauth-*`) — OAuth metadata discovery
+- **MCP endpoint** (`/mcp`) — JSON-RPC handler for `initialize`, `tools/list`, `tools/call`
+- **Consent page** (`/mcp/authorize` on the client) — User approves Claude's access
