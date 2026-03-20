@@ -1,13 +1,22 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use axum::extract::{Path, State};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use crate::service::envelope::{envelope_error, envelope_result};
 use crate::service::error::AppError;
 use crate::service::git::repo::GitRepo;
 use crate::service::state::AppState;
+
+/// Debug endpoint that sleeps for 30 seconds. Use this to test graceful shutdown:
+/// send a request, then send SIGINT/SIGTERM and verify the server waits for it to complete.
+pub async fn slow_request() -> impl IntoResponse {
+    tracing::info!("[debug] slow_request: starting 30s sleep");
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    tracing::info!("[debug] slow_request: done");
+    axum::Json(json!({ "ok": true, "slept_seconds": 30 }))
+}
 
 pub async fn graph(
     State(state): State<AppState>,

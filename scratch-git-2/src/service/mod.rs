@@ -3,6 +3,7 @@ pub mod envelope;
 pub mod error;
 pub mod git;
 pub mod routes;
+pub mod graceful_shutdown;
 pub mod state;
 pub mod types;
 
@@ -194,6 +195,10 @@ pub async fn run() {
             "/api/repo/debug/{id}/graph",
             get(routes::debug::graph),
         )
+        .route(
+            "/api/repo/debug/slow-request",
+            get(routes::debug::slow_request),
+        )
         .layer(CorsLayer::permissive())
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
         .layer(middleware::from_fn(timing_middleware))
@@ -231,11 +236,23 @@ pub async fn run() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     let git_listener = tokio::net::TcpListener::bind(&git_addr).await.unwrap();
 
-    let api_server = axum::serve(listener, app);
-    let git_server = axum::serve(git_listener, git_app);
+    // Spawn a background task that listens for SIGINT/SIGTERM. When a signal is received,
+    // both watch channels are notified, causing each server to stop accepting new connections
+    // and wait for in-flight requests to complete before exiting.
+    let (mut api_shutdown_rx, mut git_shutdown_rx) = graceful_shutdown::spawn_shutdown_handler();
 
-    tokio::select! {
-        _ = api_server => {},
-        _ = git_server => {},
+    let api_server = axum::serve(listener, app)
+        .with_graceful_shutdown(async move { api_shutdown_rx.changed().await.ok(); });
+    let git_server = axum::serve(git_listener, git_app)
+        .with_graceful_shutdown(async move { git_shutdown_rx.changed().await.ok(); });
+
+    let (api_result, git_result) = tokio::join!(api_server, git_server);
+    if let Err(e) = api_result {
+        tracing::error!("API server error: {}", e);
     }
+    if let Err(e) = git_result {
+        tracing::error!("Git backend server error: {}", e);
+    }
+
+    tracing::info!("Graceful shutdown complete.");
 }
