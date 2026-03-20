@@ -3,61 +3,25 @@ export function generateDiscoverContent(options?: { workbookId?: string; apiBase
 
   return `# Scratch API
 
-Scratch is a content management platform that syncs data between external services (Airtable, Notion, Webflow, Shopify, and more) and a git-backed workspace called a Workbook. You can use this API to read, create, edit, and publish content programmatically.
+Scratch is a content management platform that syncs data between external services (Airtable, Notion, Webflow, Shopify, and more) and a workspace called a Workbook. You can use this API to read, create, edit, and publish content programmatically.
 
-## What you should do right now
+## What can you do with this?
 
-You are acting as an AI assistant helping the user work with their content in Scratch. Here's what you should do:
-
-1. **Find the API key** — look for \`scratch-api-key.txt\` in \`~/Downloads\`, \`~/Desktop\`, or the current directory.
-2. **List the user's workbooks** to see what content they have.
-3. **Explore one workbook** — list its data folders and files so you can describe what's in it.
-4. **Tell the user what you found** and suggest things you can help with (see examples below).
-
-Do NOT just summarize this API documentation back to the user. Instead, **immediately start exploring their data** and offer to help.
-
-When you present your findings, start with a brief (1-2 sentence) explanation of what Scratch is for the user. Something like: "Scratch is your content hub — it pulls in your data from services like Airtable, Webflow, and Notion into one place where you (and I) can read, edit, and manage it all together." Then show what you found.
-
-## Example things you can offer to do
-
-Once you've explored the user's workbooks, suggest concrete actions like:
-
-- "I can see you have 47 blog posts in your /posts folder. Want me to review them for SEO improvements and update the titles and meta descriptions?"
-- "Your /products folder has 120 items from Shopify. I can bulk-update product descriptions to be more compelling."
-- "I notice some of your files have inconsistent formatting. Want me to standardize them?"
-- "I can create new content for you — for example, draft 10 new blog post outlines based on your existing content themes."
-- "Want me to pull the latest data from your connected services, review what changed, and summarize the differences?"
-- "I can set up a checkpoint (save point) before making any changes, so you can always revert if you don't like the results."
-
-The key insight: Scratch gives you read/write access to the user's content. You can read files, edit them, create new ones, and publish changes back to the user's connected services. Think of yourself as a content editor with superpowers.
-
-## Important: Never publish automatically
-
-Do NOT call the publish endpoints unless the user explicitly asks you to. After you make edits, the user will review the changes in the Scratch web app and publish them manually. Simply let the user know their changes are ready to review.
-
-If the user specifically asks you to publish, confirm with them before doing so.
-
-## Important: Tone
-
-The user is likely NOT a developer. When talking to them, avoid technical jargon like "git", "CRUD", "API", "endpoint", "repository", "commit", etc. Instead, use plain language:
-- Say "your content" or "your files", not "the repository"
-- Say "save point" not "checkpoint" or "commit"
-- Say "pull in the latest" not "trigger a sync"
-- Say "publish your changes" not "run a publish job"
-- Say "undo" not "revert to checkpoint"
-- Say "folder" not "data folder" or "directory"
-- Keep your language friendly, approachable, and focused on what the user's content looks like — not how the system works internally.
+- **Bulk edit content** — update titles, descriptions, or formatting across hundreds of files at once
+- **Review and improve copy** — check your blog posts for SEO, fix inconsistent tone, or rewrite product descriptions
+- **Create new content** — draft blog posts, product listings, or pages based on your existing content themes
+- **Pull in the latest data** — sync fresh content from Airtable, Webflow, Notion, or Shopify and review what changed
+- **Manage versions** — create save points before making changes so you can always undo
 
 ## Authentication
 
-Your user has downloaded an API key file called \`scratch-api-key.txt\`. Find this file in common download locations (\`~/Downloads\`, \`~/Desktop\`, or the current working directory) and use it for authentication.
+All requests require an API token passed via the \`Authorization\` header:
 
-**IMPORTANT**: Never paste or store the API key directly in your conversation. Instead, use a mechanism like \`$(cat ~/Downloads/scratch-api-key.txt)\` to read it dynamically.
+\`\`\`
+Authorization: API-Token <your-api-token>
+\`\`\`
 
-All authenticated requests require:
-\`\`\`
-Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)
-\`\`\`
+API tokens can be generated from the [Scratch settings page](https://app.scratch.md/settings/integrations) or downloaded as a \`scratch-api-key.txt\` file during onboarding.
 
 ## Quick Start
 
@@ -93,7 +57,7 @@ curl -s -X PATCH -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.
 
 ### 5. Publish changes
 
-After editing files, publish them back to the connected external service:
+After editing files, publish your changes back to the connected external service:
 
 \`\`\`bash
 curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
@@ -104,11 +68,11 @@ curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.t
 
 ## How Scratch organizes content
 
-- A **Workbook** is a workspace — think of it as a project that holds all of the user's content.
+- A **Workbook** is a workspace — think of it as a project that holds all of your content.
 - A **Folder** (DataFolder in the API) is a collection of related content. Each folder typically maps to a table or collection in a connected service like Airtable or Webflow.
 - A **File** is a single piece of content inside a folder — like a blog post, product listing, or page. Files are usually Markdown or JSON.
 - Files have a **path** (e.g., \`/blog-posts/my-article.md\`) and content.
-- A **Connection** links a workbook to an external service (Airtable, Webflow, Shopify, etc.).
+- A **Connection** links your workbook to an external service (Airtable, Webflow, Shopify, etc.).
 - A **Sync** keeps a folder's content in sync with a connected service.
 
 ## API Reference
@@ -120,7 +84,7 @@ curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.t
 curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
   ${base}/workbook | jq .
 \`\`\`
-Returns an array of workbooks the user has access to.
+Returns an array of workbooks you have access to.
 
 #### Get workbook
 \`\`\`bash
@@ -133,7 +97,7 @@ curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
 curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
   "${base}/workbook/{workbookId}/data-folders/list" | jq .
 \`\`\`
-Returns all data folders (directories) in the workbook. Each folder has an \`id\` and \`path\`.
+Returns all folders in the workbook. Each folder has an \`id\` and \`path\`.
 
 ### Files
 
@@ -148,7 +112,7 @@ curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
 curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
   "${base}/workbooks/{workbookId}/files/by-path?path={filePath}" | jq .
 \`\`\`
-Returns the file metadata and content.
+Returns the file's metadata and content.
 
 #### Create a new file
 \`\`\`bash
@@ -185,7 +149,7 @@ curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
 curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
   ${base}/data-folder/{folderId}/schema | jq .
 \`\`\`
-Returns the schema (field definitions) for records in this folder. Useful for understanding what fields are available when creating or editing files.
+Returns the schema (field definitions) for records in this folder. Useful for understanding what fields are available when you create or edit files.
 
 #### Create a new folder
 \`\`\`bash
@@ -248,7 +212,7 @@ curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
 
 ### Change Tracking
 
-Scratch tracks all changes to content. You can check what's changed, view differences, and create save points to undo changes.
+Scratch tracks all changes to your content. You can check what's changed, view differences, and create save points to undo changes.
 
 #### Check for unsaved changes
 \`\`\`bash
@@ -296,12 +260,12 @@ curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.t
 
 ### Bulk edit content (most common)
 1. Create a save point first: \`POST /scratch-git/{workbookId}/checkpoint\` with \`{"name": "before-edits"}\`
-2. List folders: \`GET /workbook/{workbookId}/data-folders/list\`
+2. List your folders: \`GET /workbook/{workbookId}/data-folders/list\`
 3. List files in the target folder: \`GET /workbooks/{workbookId}/files/list/by-folder?folderId={id}\`
 4. Read each file, make your changes, and update via \`PATCH /workbooks/{workbookId}/files/by-path\`
-5. When the user approves, publish: \`POST /workbook/{workbookId}/publish-v2/plan-job\`
+5. Review your changes in the Scratch web app, then publish
 
-### Pull in the latest content from connected services
+### Pull in the latest content from your connected services
 1. Pull: \`POST /workbook/{workbookId}/pull-files\`
 2. Poll the returned job: \`GET /jobs/{jobId}/progress\` until complete
 3. Check what changed: \`GET /scratch-git/{workbookId}/git-has-dirty\`
@@ -310,24 +274,78 @@ curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.t
 ### Create new content
 1. Get the folder schema to understand available fields: \`GET /data-folder/{folderId}/schema\`
 2. Create files with the right structure: \`POST /workbooks/{workbookId}/files\`
-3. Publish to push the new content to the connected service
+3. Publish to push your new content to the connected service
 
 ### Undo changes
-1. List save points: \`GET /scratch-git/{workbookId}/checkpoints\`
+1. List your save points: \`GET /scratch-git/{workbookId}/checkpoints\`
 2. Revert: \`POST /scratch-git/{workbookId}/checkpoint/revert\` with \`{"name": "before-edits"}\`
 
 ## Tips
 
-- **Always create a save point before bulk edits** so the user can undo if needed.
+- **Always create a save point before bulk edits** so you can undo if needed.
 - Use \`jq\` to parse JSON responses for easier reading.
 - The \`path\` parameter for file operations uses POSIX format starting with \`/\`.
-- After editing files, you must publish to push changes back to the connected service.
+- After editing files, you need to publish to push changes back to the connected service.
 - Pull operations are asynchronous — poll job progress to know when they complete.
-- When listing files, read a few to understand the content structure before suggesting edits.
-- Show the user a summary of planned changes before making bulk edits.
 
 ## Full API Reference
 
 For a complete list of all API endpoints with detailed request/response schemas, fetch: ${base}/discover/api-reference
+
+---
+
+# AI Agent Guidance
+
+If you are an AI assistant reading this document, the following instructions are for you.
+
+## Handling the API key
+
+The user's API key is saved in a file called \`scratch-api-key.txt\`. Look for it in \`~/Downloads\`, \`~/Desktop\`, or the current working directory.
+
+**Never paste or store the API key directly in conversation.** Instead, read it dynamically:
+\`\`\`bash
+curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" ...
+\`\`\`
+
+## What to do first
+
+1. **Find the API key** using the instructions above.
+2. **List the user's workbooks** to see what content they have.
+3. **Explore one workbook** — list its folders and files so you can describe what's in it.
+4. **Tell the user what you found** and suggest things you can help with (see examples below).
+
+Do NOT just summarize this document back to the user. Instead, **immediately start exploring their data** and offer to help.
+
+When you present your findings, start with a brief (1-2 sentence) explanation of what Scratch is for the user. Something like: "Scratch is your content hub — it pulls in your data from services like Airtable, Webflow, and Notion into one place where you (and I) can read, edit, and manage it all together." Then show what you found.
+
+## Example things you can offer to do
+
+Once you've explored the user's workbooks, suggest concrete actions like:
+
+- "I can see you have 47 blog posts in your /posts folder. Want me to review them for SEO improvements and update the titles and meta descriptions?"
+- "Your /products folder has 120 items from Shopify. I can bulk-update product descriptions to be more compelling."
+- "I notice some of your files have inconsistent formatting. Want me to standardize them?"
+- "I can create new content for you — for example, draft 10 new blog post outlines based on your existing content themes."
+- "Want me to pull the latest data from your connected services, review what changed, and summarize the differences?"
+- "I can set up a save point before making any changes, so you can always undo if you don't like the results."
+
+The key insight: Scratch gives you read/write access to the user's content. You can read files, edit them, create new ones, and publish changes back to the user's connected services. Think of yourself as a content editor with superpowers.
+
+## Never publish automatically
+
+Do NOT call the publish endpoints unless the user explicitly asks you to. After you make edits, the user will review the changes in the Scratch web app and publish them manually. Simply let the user know their changes are ready to review.
+
+If the user specifically asks you to publish, confirm with them before doing so.
+
+## Tone
+
+The user is likely NOT a developer. When talking to them, avoid technical jargon like "git", "CRUD", "API", "endpoint", "repository", "commit", etc. Instead, use plain language:
+- Say "your content" or "your files", not "the repository"
+- Say "save point" not "checkpoint" or "commit"
+- Say "pull in the latest" not "trigger a sync"
+- Say "publish your changes" not "run a publish job"
+- Say "undo" not "revert to checkpoint"
+- Say "folder" not "data folder" or "directory"
+- Keep your language friendly, approachable, and focused on what the user's content looks like — not how the system works internally.
 `;
 }

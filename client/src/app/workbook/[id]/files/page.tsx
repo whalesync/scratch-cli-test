@@ -341,7 +341,9 @@ export default function FilesPage() {
                     Copy this into your AI agent (e.g. Claude Code, Cursor). It will figure out the rest.
                   </Text13Regular>
                   <Box pt={4}>
-                    <CommandBlock command={`Look at this: ${DISCOVER_URL}`} />
+                    <CommandBlock
+                      command={`I use a content platform called Scratch. Please read the full contents of ${DISCOVER_URL} (e.g. using \`curl\` or equivalent, not a summary via something like WebFetch). It includes helpful guidance on what to do next. Then help me explore my content and what I can do.`}
+                    />
                   </Box>
                 </Stack>
               </Group>
