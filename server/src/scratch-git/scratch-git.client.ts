@@ -8,12 +8,16 @@ import {
 } from '@spinner/shared-types';
 // Trigger reload
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { WSLogger } from 'src/logger';
 
 export interface CommitFilesResult {
   created: string[];
   updated: string[];
   unchanged: string[];
 }
+
+// Maximum number of response body characters to log when an error occurs
+const MAX_LOG_RESPONSE = 1000;
 
 @Injectable()
 export class ScratchGitClient {
@@ -29,6 +33,7 @@ export class ScratchGitClient {
   }
 
   private async callGitApi(endpoint: string, method: string, body?: any): Promise<unknown> {
+    const url = `${this.gitApiUrl}${endpoint}`;
     const options: RequestInit = {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -38,12 +43,66 @@ export class ScratchGitClient {
       options.body = JSON.stringify(body);
     }
 
-    const response = await fetch(`${this.gitApiUrl}${endpoint}`, options);
+    const startMs = Date.now();
+    let response: Response;
+    try {
+      response = await fetch(url, options);
+    } catch (err) {
+      // Node's fetch wraps connection errors in a generic TypeError — unwrap to get the real cause
+      const rootCause = err instanceof Error && err.cause instanceof Error ? err.cause : err;
+      WSLogger.error({
+        source: 'ScratchGitClient.callGitApi',
+        message: 'Failed to connect to scratch-git',
+        method,
+        url,
+        durationMs: Date.now() - startMs,
+        error: rootCause,
+      });
+      throw err;
+    }
+
+    const durationMs = Date.now() - startMs;
+
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Git API Error ${endpoint}: ${response.status} ${text}`);
+      const responseBody = text.length > MAX_LOG_RESPONSE ? text.slice(0, MAX_LOG_RESPONSE) + '… (truncated)' : text;
+      const error = new Error(`Received error code from scratch-git API: ${endpoint}: HTTP ${response.status}`);
+      WSLogger.error({
+        source: 'ScratchGitClient.callGitApi',
+        message: 'scratch-git returned error response',
+        method,
+        url,
+        durationMs,
+        status: response.status,
+        responseBody,
+        error,
+      });
+      throw error;
     }
-    const jsonResult = (await response.json()) as { data: unknown; status: unknown };
+
+    // Read as text first so we can log the body if JSON parsing fails
+    const responseText = await response.text();
+    let jsonResult: { data: unknown; status: unknown };
+    try {
+      jsonResult = JSON.parse(responseText) as { data: unknown; status: unknown };
+    } catch (err) {
+      const responseBody =
+        responseText.length > MAX_LOG_RESPONSE
+          ? responseText.slice(0, MAX_LOG_RESPONSE) + '… (truncated)'
+          : responseText;
+      WSLogger.error({
+        source: 'ScratchGitClient.callGitApi',
+        message: 'scratch-git returned invalid JSON',
+        method,
+        url,
+        durationMs,
+        status: response.status,
+        responseBody,
+        error: err,
+      });
+      throw new Error(`Git API Error ${endpoint}: invalid JSON response`);
+    }
+
     // Unpack { data, status } wrapper if present, otherwise return raw json directly
     if (jsonResult && typeof jsonResult === 'object' && 'data' in jsonResult) {
       return jsonResult.data;
