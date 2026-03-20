@@ -9,15 +9,13 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
-import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
 import { workbookApi, type GitIndexDump } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
-import { useActiveJobsStore } from '@/stores/active-jobs-store';
+import { selectJobsForConnector, useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { initiateOAuth } from '@/utils/oauth';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -28,12 +26,12 @@ import {
   type DataFolder,
   type DataFolderGroup,
   type DataFolderId,
-  type FileDiffStatus,
   type FileRefEntity,
   type GitGcResponse,
   type GitObjectCountsResponse,
   type WorkbookId,
 } from '@spinner/shared-types';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -88,7 +86,6 @@ import { RemoveTableModal } from '../shared/RemoveTableModal';
 import { RenameFileModal } from '../shared/RenameFileModal';
 import { UpdateConnectionModal } from '../shared/UpdateConnectionModal';
 import { ActiveDataFolderJobIndicator } from './ActiveDataFolderJobIndicator';
-import type { FileTreeMode } from './FileTree';
 
 const SCRATCH_GROUP_NAME = 'Scratch';
 const FILE_LIMIT = 200;
@@ -201,8 +198,6 @@ interface FolderTreeRendererProps {
   depth: number;
   groupName: string;
   workbookId: WorkbookId;
-  mode: FileTreeMode;
-  dirtyFilePaths?: Map<string, FileDiffStatus>;
   /** Prefix of ancestor segment names for building unique node IDs */
   idPrefix: string;
 }
@@ -212,8 +207,6 @@ function FolderTreeRenderer({
   depth,
   groupName,
   workbookId,
-  mode,
-  dirtyFilePaths,
   idPrefix,
 }: FolderTreeRendererProps) {
   return (
@@ -229,8 +222,6 @@ function FolderTreeRenderer({
               depth={depth + 1}
               groupName={groupName}
               workbookId={workbookId}
-              mode={mode}
-              dirtyFilePaths={dirtyFilePaths}
               idPrefix={childId}
             />
           </IntermediateFolderNode>
@@ -241,8 +232,6 @@ function FolderTreeRenderer({
           <TableNode
             folder={folder}
             workbookId={workbookId}
-            mode={mode}
-            dirtyFilePaths={dirtyFilePaths}
             groupName={groupName}
           />
         </Box>
@@ -259,16 +248,12 @@ interface ConnectionNodeProps {
   group: DataFolderGroup;
   workbookId: WorkbookId;
   connectorAccount?: ConnectorAccount;
-  mode?: FileTreeMode;
-  dirtyFilePaths?: Map<string, FileDiffStatus>;
 }
 
 export function ConnectionNode({
   group,
   workbookId,
   connectorAccount,
-  mode = 'files',
-  dirtyFilePaths,
 }: ConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
@@ -276,45 +261,27 @@ export function ConnectionNode({
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders } = useActiveWorkbook();
-  const { getJobsForConnector } = useWorkbookActiveJobs(workbookId);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
 
-  const connectorJobs = useMemo(() => {
-    if (!connectorAccount) return [];
-    return getJobsForConnector(connectorAccount.id, workbook?.dataFolders ?? []);
-  }, [connectorAccount, workbook?.dataFolders, getJobsForConnector]);
+  // Targeted Zustand selector — only re-renders when THIS connector's jobs change
+  const connectorJobsSelector = useCallback(
+    (s: { activeJobs: import('@/types/server-entities/job').JobEntity[] }) => {
+      if (!connectorAccount) return [];
+      return selectJobsForConnector(s.activeJobs, connectorAccount.id, workbook?.dataFolders ?? []);
+    },
+    [connectorAccount, workbook?.dataFolders],
+  );
+  const connectorJobs = useActiveJobsStore(useShallow(connectorJobsSelector));
 
   const nodeId = `connection-${group.name}`;
   const isExpanded = expandedNodes.has(nodeId);
   const isScratch = group.name === SCRATCH_GROUP_NAME;
 
-  // In review mode, filter folders to only those with dirty files
-  const visibleFolders = useMemo(() => {
-    if (mode !== 'review' || !dirtyFilePaths || dirtyFilePaths.size === 0) return group.dataFolders;
-
-    return group.dataFolders.filter((folder) => {
-      if (!folder.path) return false;
-      for (const dirtyPath of dirtyFilePaths.keys()) {
-        if (fileMatchesFolder(folder.path, dirtyPath)) {
-          return true;
-        }
-      }
-      return false;
-    });
-  }, [mode, dirtyFilePaths, group.dataFolders]);
+  const visibleFolders = group.dataFolders;
 
   const folderTree = useMemo(() => buildFolderTree(visibleFolders, group.name), [visibleFolders, group.name]);
 
-  const hasDirtyFiles = mode !== 'review' || visibleFolders.length > 0;
-
   const showHidden = connectorAccount ? showHiddenConnections.has(connectorAccount.id) : false;
-
-  // Calculate dirty count across all folders in this connection
-  const totalDirtyCount = useMemo(() => {
-    // This would need to aggregate from all folder file lists
-    // For now, we'll show it at the table level only
-    return 0;
-  }, []);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -486,16 +453,11 @@ export function ConnectionNode({
     ? connectorAccount.healthStatus === 'OK' || connectorAccount.healthStatus === null
     : true;
 
-  // In review mode, hide connections with no dirty files
-  if (mode === 'review' && !hasDirtyFiles) {
-    return null;
-  }
-
   return (
     <>
       <UnstyledButton
         onClick={handleToggle}
-        onContextMenu={mode === 'files' ? handleContextMenu : undefined}
+        onContextMenu={handleContextMenu}
         px="sm"
         py={4}
         style={{
@@ -539,7 +501,7 @@ export function ConnectionNode({
 
             {isReauthorizing && <PulsingIcon Icon={CloudCogIcon} size={12} c="var(--mantine-color-yellow-6)" />}
 
-            {mode === 'files' && !isScratch && !isReauthorizing && (
+            {!isScratch && !isReauthorizing && (
               <Tooltip label={isConnected ? 'Connected' : 'Disconnected'} position="right">
                 <Box
                   style={{
@@ -557,15 +519,8 @@ export function ConnectionNode({
 
           {/* Right side items */}
           <Group gap={6} wrap="nowrap">
-            {/* Dirty badge when collapsed */}
-            {!isExpanded && totalDirtyCount > 0 && (
-              <Badge size="xs" variant="filled" color="orange">
-                {totalDirtyCount}
-              </Badge>
-            )}
-
-            {/* Three dots menu - only in files mode and for non-Scratch connections */}
-            {mode === 'files' && !isScratch && connectorAccount && (
+            {/* Three dots menu - for non-Scratch connections */}
+            {!isScratch && connectorAccount && (
               <Box
                 onClick={handleThreeDotsClick}
                 style={{
@@ -592,7 +547,6 @@ export function ConnectionNode({
       <Collapse in={isExpanded}>
         <Stack gap={0} pl={INDENT_PX}>
           {visibleFolders.length === 0 ? (
-            mode === 'files' &&
             connectorAccount && (
               <Box pl={INDENT_PX * 2 + 34} py={4}>
                 <UnstyledButton onClick={openChooseTables}>
@@ -609,11 +563,9 @@ export function ConnectionNode({
                 depth={0}
                 groupName={group.name}
                 workbookId={workbookId}
-                mode={mode}
-                dirtyFilePaths={dirtyFilePaths}
                 idPrefix={group.name}
               />
-              {showHidden && connectorAccount && mode === 'files' && (
+              {showHidden && connectorAccount && (
                 <ScratchFolderNode workbookId={workbookId} connectorAccountId={connectorAccount.id} />
               )}
             </>
@@ -818,12 +770,10 @@ export function ConnectionNode({
 interface TableNodeProps {
   folder: DataFolder;
   workbookId: WorkbookId;
-  mode?: FileTreeMode;
-  dirtyFilePaths?: Map<string, FileDiffStatus>;
   groupName: string;
 }
 
-function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: TableNodeProps) {
+function TableNode({ folder, workbookId }: TableNodeProps) {
   const router = useRouter();
   const pathname = usePathname();
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
@@ -836,16 +786,17 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   const isExpanded = expandedNodes.has(nodeId);
 
   // Check if this folder is currently selected (showing in the right panel)
-  const routeBase = mode === 'review' ? 'review' : 'files';
   const encodedFolderPath = (folder.path ?? folder.name)
     .replace(/^\//, '')
     .split('/')
     .map((s) => encodeURIComponent(s))
     .join('/');
-  const urlFolderPath = `/workbook/${workbookId}/${routeBase}/${encodedFolderPath}`;
+  const urlFolderPath = `/workbook/${workbookId}/files/${encodedFolderPath}`;
   const isSelected = pathname === urlFolderPath;
 
   const showHidden = folder.connectorAccountId ? showHiddenConnections.has(folder.connectorAccountId) : false;
+
+  // Lazy-load: only fetch file list when expanded
   const {
     files: allFiles,
     isLoading,
@@ -854,7 +805,7 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
     loadMore,
     refreshFiles,
     dirtyCount: serverDirtyCount,
-  } = useFolderFileListPaginated(workbookId, folder.id, FILE_LIMIT);
+  } = useFolderFileListPaginated(workbookId, isExpanded ? folder.id : null, FILE_LIMIT);
   const files = useMemo(
     () => (showHidden ? allFiles : allFiles.filter((f) => !f.name.startsWith('.'))),
     [allFiles, showHidden],
@@ -911,48 +862,14 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
   };
 
   // Limit files for display
-  const { displayedFiles, dirtyCount, hasAnyDirtyFiles } = useMemo(() => {
-    let fileItems = files.filter((f): f is FileRefEntity => f.type === 'file');
+  const { displayedFiles, dirtyCount } = useMemo(() => {
+    const fileItems = files.filter((f): f is FileRefEntity => f.type === 'file');
 
-    // In review mode, only show dirty files
-    if (mode === 'review' && dirtyFilePaths) {
-      fileItems = fileItems.filter((f) => dirtyFilePaths.has(f.path));
-    }
-
-    // Inject ghost nodes for dirty files not in the file list (e.g. deleted or not yet loaded)
-    if (mode === 'review' && dirtyFilePaths && folder.path) {
-      const existingPaths = new Set(fileItems.map((f) => f.path));
-
-      dirtyFilePaths.forEach((status, dirtyPath) => {
-        if (fileMatchesFolder(folder.path!, dirtyPath) && !existingPaths.has(dirtyPath)) {
-          const parts = dirtyPath.split('/');
-          const name = parts[parts.length - 1];
-          fileItems.push({
-            path: dirtyPath,
-            name: name,
-            type: 'file',
-            status,
-            content: '',
-            parentFolderId: folder.id,
-          } as FileRefEntity);
-        }
-      });
-
-      // Re-sort if we added items
-      fileItems.sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    // Use server-provided counts when not in review mode (pagination means we don't have all files loaded)
-    const dirty =
-      mode === 'review'
-        ? fileItems.filter((f) => f.status === 'modified' || f.status === 'added' || f.status === 'deleted').length
-        : serverDirtyCount;
     return {
       displayedFiles: fileItems,
-      dirtyCount: dirty,
-      hasAnyDirtyFiles: mode === 'review' ? fileItems.length > 0 : serverDirtyCount > 0,
+      dirtyCount: serverDirtyCount,
     };
-  }, [files, mode, dirtyFilePaths, folder.id, folder.path, serverDirtyCount]);
+  }, [files, serverDirtyCount]);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
@@ -977,24 +894,18 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
 
   // Row click (folder name): navigate to folder detail AND expand if collapsed
   const handleRowClick = useCallback(() => {
-    const routeBase = mode === 'review' ? 'review' : 'files';
-    router.push(`/workbook/${workbookId}/${routeBase}/${encodedFolderPath}`);
+    router.push(`/workbook/${workbookId}/files/${encodedFolderPath}`);
     // Also expand if not already expanded
     if (!isExpanded) {
       toggleNode(nodeId);
     }
-  }, [mode, router, workbookId, encodedFolderPath, isExpanded, toggleNode, nodeId]);
-
-  // In review mode, hide tables with no dirty files
-  if (mode === 'review' && !hasAnyDirtyFiles && !isLoading) {
-    return null;
-  }
+  }, [router, workbookId, encodedFolderPath, isExpanded, toggleNode, nodeId]);
 
   return (
     <>
       <UnstyledButton
         onClick={handleRowClick}
-        onContextMenu={mode === 'files' ? handleContextMenu : undefined}
+        onContextMenu={handleContextMenu}
         px="sm"
         py={4}
         style={{
@@ -1054,26 +965,24 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
           {folder.lock && <ActiveDataFolderJobIndicator folder={folder} />}
 
           {/* Three dots menu */}
-          {mode === 'files' && (
-            <Box
-              onClick={handleThreeDotsClick}
-              style={{
-                padding: 2,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                opacity: 0.5,
-              }}
-              onMouseOver={(e) => {
-                (e.currentTarget as HTMLElement).style.opacity = '1';
-              }}
-              onMouseOut={(e) => {
-                (e.currentTarget as HTMLElement).style.opacity = '0.5';
-              }}
-            >
-              <StyledLucideIcon Icon={MoreHorizontalIcon} size="sm" c="var(--fg-secondary)" />
-            </Box>
-          )}
+          <Box
+            onClick={handleThreeDotsClick}
+            style={{
+              padding: 2,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              opacity: 0.5,
+            }}
+            onMouseOver={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = '1';
+            }}
+            onMouseOut={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = '0.5';
+            }}
+          >
+            <StyledLucideIcon Icon={MoreHorizontalIcon} size="sm" c="var(--fg-secondary)" />
+          </Box>
         </Group>
       </UnstyledButton>
 
@@ -1094,7 +1003,6 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
             <FileNode
               key={file.path ?? `file-${fileIndex}`}
               file={file}
-              mode={mode}
               onSuccess={handleRefreshTable}
               linkedFolderId={folder.connectorAccountId ? folder.id : undefined}
             />
@@ -1212,13 +1120,12 @@ function TableNode({ folder, workbookId, mode = 'files', dirtyFilePaths }: Table
 
 interface FileNodeProps {
   file: FileRefEntity;
-  mode?: FileTreeMode;
   onSuccess?: () => void;
   /** ID of the parent DataFolder if the file belongs to a linked (connector-backed) folder */
   linkedFolderId?: DataFolderId;
 }
 
-function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeProps) {
+function FileNode({ file, onSuccess, linkedFolderId }: FileNodeProps) {
   const params = useParams<{ id: string }>();
   const pathname = usePathname();
   const router = useRouter();
@@ -1231,12 +1138,10 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
     .map((segment) => encodeURIComponent(segment))
     .join('/');
 
-  // Use the appropriate route based on mode
-  const routeBase = mode === 'review' ? 'review' : 'files';
-  const href = `/workbook/${params.id}/${routeBase}/${encodedPath}`;
+  const href = `/workbook/${params.id}/files/${encodedPath}`;
 
   // Check if this file is currently selected
-  const isSelected = pathname.includes(`/${routeBase}/${encodedPath}`);
+  const isSelected = pathname.includes(`/files/${encodedPath}`);
 
   // Determine if file is dirty (modified)
   const isDirty = file.status === 'modified' || file.status === 'added' || file.status === 'deleted';
@@ -1291,7 +1196,7 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
       <UnstyledButton
         onClick={handleFileClick}
         py={4}
-        onContextMenu={mode === 'files' ? handleContextMenu : undefined}
+        onContextMenu={handleContextMenu}
         style={{
           width: `calc(100% - ${INDENT_PX}px)`,
           marginLeft: INDENT_PX,
@@ -1340,27 +1245,25 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
             {file.name}
           </TextMono12Regular>
 
-          {/* Three dots menu - only in files mode */}
-          {mode === 'files' && (
-            <Box
-              onClick={handleThreeDotsClick}
-              style={{
-                padding: 2,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                opacity: 0.5,
-              }}
-              onMouseOver={(e) => {
-                (e.currentTarget as HTMLElement).style.opacity = '1';
-              }}
-              onMouseOut={(e) => {
-                (e.currentTarget as HTMLElement).style.opacity = '0.5';
-              }}
-            >
-              <StyledLucideIcon Icon={MoreHorizontalIcon} size="sm" c="var(--fg-secondary)" />
-            </Box>
-          )}
+          {/* Three dots menu */}
+          <Box
+            onClick={handleThreeDotsClick}
+            style={{
+              padding: 2,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              opacity: 0.5,
+            }}
+            onMouseOver={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = '1';
+            }}
+            onMouseOut={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = '0.5';
+            }}
+          >
+            <StyledLucideIcon Icon={MoreHorizontalIcon} size="sm" c="var(--fg-secondary)" />
+          </Box>
         </Group>
       </UnstyledButton>
 
@@ -1415,7 +1318,7 @@ function FileNode({ file, mode = 'files', onSuccess, linkedFolderId }: FileNodeP
           // Update URL if the selected file was renamed
           if (isSelected) {
             const newEncodedPath = [...encodedPath.split('/').slice(0, -1), encodeURIComponent(newName)].join('/');
-            router.push(`/workbook/${params.id}/${routeBase}/${newEncodedPath}`);
+            router.push(`/workbook/${params.id}/files/${newEncodedPath}`);
           }
         }}
       />

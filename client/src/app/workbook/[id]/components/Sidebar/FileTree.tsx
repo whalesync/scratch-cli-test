@@ -10,6 +10,7 @@ import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } fr
 import type { ConnectorAccount, Workbook } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
+import { ReviewConnectionNode } from './ReviewTreeNode';
 import { ConnectionNode, EmptyConnectionNode } from './TreeNode';
 
 export type FileTreeMode = 'files' | 'review';
@@ -30,7 +31,11 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
 
   // In review mode, fetch dirty files immediately
-  const { dirtyFiles, isLoading: dirtyFilesLoading } = useDirtyFiles(mode === 'review' ? workbook.id : null);
+  const {
+    dirtyFiles,
+    isLoading: dirtyFilesLoading,
+    refresh: refreshDirtyFiles,
+  } = useDirtyFiles(mode === 'review' ? workbook.id : null);
 
   // Create a map of dirty file paths to their status for quick lookup
   const dirtyFilePaths = useMemo(() => {
@@ -96,11 +101,9 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     );
   }
 
-  // Determine which content to render
-  let content: React.ReactNode;
-
+  // Review mode: loading and empty states
   if (mode === 'review' && dirtyFilesLoading) {
-    content = (
+    return (
       <Box p="md" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Loader size={14} />
         <Text size="sm" c="dimmed">
@@ -108,8 +111,10 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
         </Text>
       </Box>
     );
-  } else if (mode === 'review' && !dirtyFilesLoading && dirtyFiles.length === 0) {
-    content = (
+  }
+
+  if (mode === 'review' && !dirtyFilesLoading && dirtyFiles.length === 0) {
+    return (
       <Box p="md">
         <Text size="sm">Nothing to review</Text>
         <Text size="sm" c="dimmed">
@@ -117,61 +122,71 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
         </Text>
       </Box>
     );
-  } else {
-    content = (
-      <ScrollArea h="100%" type="auto">
-        <Stack gap={0} py="xs">
-          {/* Section title */}
-          <Box px="sm" py={4} mb={4}>
-            <Group justify="space-between" align="center">
-              <Group gap={6} align="center">
-                <Text12Regular
-                  c="var(--fg-muted)"
-                  style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.5px' }}
-                >
-                  {mode === 'review' ? 'Edited files' : 'All files'}
-                </Text12Regular>
-                {mode === 'review' && dirtyFiles.length > 0 && (
-                  <Badge size="sm" variant="filled" color="orange" radius="xl">
-                    {dirtyFiles.length}
-                  </Badge>
-                )}
-              </Group>
-              {mode !== 'review' && (
-                <UnstyledButton onClick={refreshDataFolders} style={{ opacity: 0.4, padding: 2 }} title="Refresh">
-                  <RefreshCwIcon size={12} />
-                </UnstyledButton>
+  }
+
+  return (
+    <ScrollArea h="100%" type="auto">
+      <Stack gap={0} py="xs">
+        {/* Section title */}
+        <Box px="sm" py={4} mb={4}>
+          <Group justify="space-between" align="center">
+            <Group gap={6} align="center">
+              <Text12Regular
+                c="var(--fg-muted)"
+                style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.5px' }}
+              >
+                {mode === 'review' ? 'Edited files' : 'All files'}
+              </Text12Regular>
+              {mode === 'review' && dirtyFiles.length > 0 && (
+                <Badge size="sm" variant="filled" color="orange" radius="xl">
+                  {dirtyFiles.length}
+                </Badge>
               )}
             </Group>
-          </Box>
+            <UnstyledButton
+              onClick={mode === 'review' ? refreshDirtyFiles : refreshDataFolders}
+              style={{ opacity: 0.4, padding: 2 }}
+              title="Refresh"
+            >
+              <RefreshCwIcon size={12} />
+            </UnstyledButton>
+          </Group>
+        </Box>
 
-          {/* Data folder groups (connections with tables) */}
-          {sortedGroups.map((group) => {
-            // Find the connector account for this group (from first data folder)
-            const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
-            const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
+        {/* Data folder groups (connections with tables) */}
+        {sortedGroups.map((group) => {
+          const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
+          const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
+          const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
 
+          if (mode === 'review') {
             return (
-              <ConnectionNode
-                key={connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name}
+              <ReviewConnectionNode
+                key={key}
                 group={group}
                 workbookId={workbook.id}
                 connectorAccount={connectorAccount}
-                mode={mode}
                 dirtyFilePaths={dirtyFilePaths}
               />
             );
-          })}
+          }
 
-          {/* Empty connector accounts (connections without tables yet) */}
-          {mode === 'files' &&
-            emptyConnectorAccounts.map((account) => (
-              <EmptyConnectionNode key={account.id} connectorAccount={account} workbookId={workbook.id} />
-            ))}
-        </Stack>
-      </ScrollArea>
-    );
-  }
+          return (
+            <ConnectionNode
+              key={key}
+              group={group}
+              workbookId={workbook.id}
+              connectorAccount={connectorAccount}
+            />
+          );
+        })}
 
-  return <>{content}</>;
+        {/* Empty connector accounts (connections without tables yet) — files mode only */}
+        {mode === 'files' &&
+          emptyConnectorAccounts.map((account) => (
+            <EmptyConnectionNode key={account.id} connectorAccount={account} workbookId={workbook.id} />
+          ))}
+      </Stack>
+    </ScrollArea>
+  );
 }
