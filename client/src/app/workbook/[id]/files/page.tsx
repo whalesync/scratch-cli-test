@@ -17,7 +17,7 @@ import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-me
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { API_CONFIG } from '@/lib/api/config';
 import { usersApi } from '@/lib/api/users';
-import { ActionIcon, Badge, Box, Code, Collapse, CopyButton, Group, Stack, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Box, Code, Collapse, CopyButton, Group, Stack, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { WorkbookId } from '@spinner/shared-types';
 import {
@@ -30,6 +30,7 @@ import {
   PencilIcon,
   PlusIcon,
   RocketIcon,
+  ShieldCheckIcon,
   SparklesIcon,
   UploadIcon,
 } from 'lucide-react';
@@ -331,11 +332,41 @@ export default function FilesPage() {
             </Box>
 
             <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
+              <Group gap="md" wrap="nowrap" align="start">
+                <Box pt={2}>
+                  <DecorativeBoxedIcon Icon={ShieldCheckIcon} size="sm" c={GREEN} />
+                </Box>
+                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                  <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
+                    Step 2 (Optional): Allow scratch.md in Claude
+                  </Text13Medium>
+                  <Text13Regular c="var(--fg-secondary)">
+                    If you use Claude, add scratch.md to its allowed domains so it can read your content directly.
+                  </Text13Regular>
+                  <Stack gap={2} pt={4}>
+                    <Text13Regular c="var(--fg-secondary)">
+                      1. Go to{' '}
+                      <Anchor href="https://claude.ai/settings/capabilities" target="_blank" c={GREEN} size="sm">
+                        claude.ai/settings/capabilities
+                      </Anchor>
+                    </Text13Regular>
+                    <Text13Regular c="var(--fg-secondary)">{`2. Find "Additional allowed domains"`}</Text13Regular>
+                    <Text13Regular c="var(--fg-secondary)">
+                      {'3. Type '}
+                      <Code>*.scratch.md</Code>
+                      {' and click "Add"'}
+                    </Text13Regular>
+                  </Stack>
+                </Stack>
+              </Group>
+            </Box>
+
+            <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
               <Group gap="md" wrap="nowrap" align="center">
                 <DecorativeBoxedIcon Icon={LinkIcon} size="sm" c={GREEN} />
                 <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
                   <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
-                    Step 2: Tell your AI agent to look at this
+                    Step 3: Tell your AI agent to look at this
                   </Text13Medium>
                   <Text13Regular c="var(--fg-secondary)">
                     Copy this into your AI agent (e.g. Claude Code, Cursor). It will figure out the rest.
