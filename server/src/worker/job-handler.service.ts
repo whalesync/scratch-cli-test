@@ -9,6 +9,7 @@ import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
+import { PublishFromGitService } from 'src/publish-plan/publish-from-git.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -20,6 +21,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
+import { PublishFromGitJobHandler } from './jobs/job-definitions/publish-from-git.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
@@ -45,6 +47,7 @@ export class JobHandlerService {
     private readonly assetDownloadService: AssetDownloadService,
     private readonly pipelinePlanService: PublishPlanBuildService,
     private readonly pipelineRunService: PublishPlanRunService,
+    private readonly publishFromGitService: PublishFromGitService,
     private readonly dbService: DbService,
     private readonly postHogService: PostHogService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
@@ -116,6 +119,9 @@ export class JobHandlerService {
           this.assetDownloadService,
           this.workbookEventService,
         ) as JobHandler<JobDefinition>;
+
+      case 'publish-from-git':
+        return new PublishFromGitJobHandler(this.publishFromGitService) as JobHandler<JobDefinition>;
 
       case 'publish':
         return new PublishJobHandler(

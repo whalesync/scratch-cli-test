@@ -7,7 +7,6 @@ use serde_json::json;
 use crate::service::envelope::{envelope_error, envelope_result};
 use crate::service::error::AppError;
 use crate::service::git::repo::GitRepo;
-use crate::service::routes::index as idx_routes;
 use crate::service::state::AppState;
 use crate::service::types::*;
 
@@ -36,8 +35,6 @@ pub async fn commit_files(
 ) -> Response {
     let branch = query.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Update files".to_string());
-    // Capture files for incremental index before body is moved into the closure
-    let files_for_index: Vec<(String, String)> = body.files.iter().map(|f| (f.path.clone(), f.content.clone())).collect();
 
     let result = {
         let repos_dir = state.repos_dir.clone();
@@ -85,13 +82,6 @@ pub async fn commit_files(
             .await
     };
 
-    // Incremental index update for files committed to main (best-effort)
-    if branch == MAIN_BRANCH {
-        for (path, content) in &files_for_index {
-            let _ = idx_routes::index_single_file_on_main(&state, &id, path, content);
-        }
-    }
-
     envelope_result(&state, &id, result)
 }
 
@@ -109,7 +99,6 @@ pub async fn delete_files(
 ) -> Response {
     let branch = query.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
     let message = body.message.unwrap_or_else(|| "Delete files".to_string());
-    let paths_for_index: Vec<String> = body.files.clone();
 
     let result = {
         let repos_dir = state.repos_dir.clone();
@@ -151,13 +140,6 @@ pub async fn delete_files(
             })
             .await
     };
-
-    // Remove deleted files from index when deleting from main (best-effort)
-    if branch == MAIN_BRANCH {
-        for path in &paths_for_index {
-            let _ = idx_routes::remove_file_from_index(&state, &id, path);
-        }
-    }
 
     envelope_result(&state, &id, result)
 }
@@ -389,9 +371,6 @@ pub async fn publish(
                 }
             })
             .await?;
-
-        // Incremental index update for the published file (best-effort, non-blocking)
-        let _ = idx_routes::index_single_file_on_main(&state, &id, &body.file.path, &body.file.content);
 
         // Rebase dirty
         tokio::task::spawn_blocking({

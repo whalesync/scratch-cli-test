@@ -218,10 +218,17 @@ async fn init(
         }
     }
 
+    let started = std::time::Instant::now();
     let total_files = if wb.version >= 2 {
         init_v2(&wb, &target_dir, server_url, &token)?
     } else {
         init_v1(&wb, &target_dir, server_url, &token)?
+    };
+    let elapsed_ms = started.elapsed().as_millis();
+    let elapsed = if elapsed_ms < 1000 {
+        format!("{}ms", elapsed_ms)
+    } else {
+        format!("{:.1}s", elapsed_ms as f64 / 1000.0)
     };
 
     if json {
@@ -232,11 +239,12 @@ async fn init(
                 "workbookName": wb.name,
                 "directory": target_dir.display().to_string(),
                 "fileCount": total_files,
+                "elapsedMs": elapsed_ms,
             }))?
         );
     } else {
         println!();
-        println!("Initialized workspace '{}' ({} files)", wb.name, total_files);
+        println!("Initialized workspace '{}' ({} files, {})", wb.name, total_files, elapsed);
         println!("  Directory: {}", target_dir.display());
         if wb.version >= 2 {
             for ca in &wb.connector_accounts {
@@ -279,12 +287,6 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     let target_dir = target_dir.as_path();
     markers::write_workspace(target_dir, &wb.id, &wb.name, server_url)?;
 
-    // Write .gitignore to exclude .scratch/ from any parent git repo
-    let gitignore = target_dir.join(".gitignore");
-    if !gitignore.exists() {
-        let _ = std::fs::write(&gitignore, ".scratch/\n");
-    }
-
     if wb.connector_accounts.is_empty() {
         return Ok(0);
     }
@@ -300,6 +302,7 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
         }
 
         git_clone(&ca.git_url, &conn_dir, token)?;
+        super::files::ensure_local_excludes(&conn_dir);
 
         // Set up master worktree and build initial index
         let _ = git_fetch_main(&conn_dir, token);

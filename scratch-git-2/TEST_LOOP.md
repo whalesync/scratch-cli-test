@@ -98,21 +98,30 @@ scratchmd2 syncs run-local
 # Writes modified records into .scratch/connections/<DestConn>/dirty/
 ```
 
-### 8. Upload dirty changes to the server
+### 8. Build a publish plan
+
+```bash
+scratchmd2 plan-publish
+# Diffs dirty vs master for each connection
+# Strips FK refs to deleted records, pseudo-refs, and asset refs
+# Writes plan to {conn}/.scratch/publish-plans/{timestamp}/
+# Only one plan is kept per connection — old plan is deleted automatically
+```
+
+### 9. Push changes (including the publish plan)
 
 ```bash
 scratchmd2 files upload
-# Commits local dirty changes and pushes to server
+# Commits local dirty changes (including .scratch/publish-plans/) and pushes to server
 ```
 
-### 9. Publish (trigger from server or web UI)
+### 10. Trigger publish from the plan
 
-From the web UI: publish via the Files → Publish button.
-
-Or verify what changed:
 ```bash
-scratchmd2 syncs list            # see sync metadata
-scratchmd2 syncs run <sync-id>   # trigger server-side sync job (waits for completion)
+scratchmd2 publish-from-git
+# For each connection with a publish plan, calls the server to execute it
+# Server reads the plan from git (dirty branch) and applies it to the remote CMS
+# Prints the queued job ID for each connection
 ```
 
 ---
@@ -130,5 +139,7 @@ scratchmd2 syncs run <sync-id>   # trigger server-side sync job (waits for compl
 | `scratchmd2 dump-index` | Print index contents |
 | `scratchmd2 syncs list` | List syncs for the workspace |
 | `scratchmd2 syncs run <id>` | Trigger server-side sync job (waits) |
-| `scratchmd2 syncs validate-local` | *(coming)* Validate local sync JSON |
-| `scratchmd2 syncs run-local` | *(coming)* Apply sync locally to dirty worktree |
+| `scratchmd2 syncs validate-local` | Validate local sync JSON configs |
+| `scratchmd2 syncs run-local` | Apply sync locally to dirty worktree |
+| `scratchmd2 plan-publish` | Build publish plan (diff dirty vs master) |
+| `scratchmd2 publish-from-git` | Trigger server publish from local plan |

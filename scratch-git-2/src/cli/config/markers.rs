@@ -125,6 +125,24 @@ pub fn find_nearest(start: &Path) -> Option<(Marker, PathBuf)> {
     }
 }
 
+/// Walk up from `start` to find the nearest workspace (not connector) .scratchmd.
+/// Returns the workspace root directory.
+pub fn find_nearest_workspace(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        let candidate = dir.join(".scratchmd");
+        if candidate.exists() {
+            if let Ok(Marker::Workspace(_)) = read(&candidate) {
+                return Some(dir);
+            }
+        }
+        match dir.parent() {
+            Some(p) => dir = p.to_path_buf(),
+            None => return None,
+        }
+    }
+}
+
 // ── Write ───────────────────────────────────────────────────────────────────
 
 pub fn write_workspace(

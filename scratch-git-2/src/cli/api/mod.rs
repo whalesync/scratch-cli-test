@@ -556,6 +556,22 @@ impl ApiClient {
     ) -> ApiResult<JobStartedResponse> {
         self.post_no_body(&format!("workbooks/{}/linked/{}/publish", workbook_id, folder_id)).await
     }
+
+    pub async fn publish_from_git(
+        &self,
+        workbook_id: &str,
+        connector_account_id: &str,
+        plan_path: &str,
+    ) -> ApiResult<serde_json::Value> {
+        self.post(
+            &format!("workbooks/{}/publish-v2/run-from-git", workbook_id),
+            &serde_json::json!({
+                "connectorAccountId": connector_account_id,
+                "planPath": plan_path,
+            }),
+        )
+        .await
+    }
 }
 
 // ── Syncs ────────────────────────────────────────────────────────────────────

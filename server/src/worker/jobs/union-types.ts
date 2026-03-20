@@ -1,6 +1,7 @@
 import { Job as BullMQPlainJob } from 'bullmq';
 import { Progress } from './base-types';
 import { PublishDataFolderJobDefinition } from './job-definitions/publish-data-folder.job';
+import { PublishFromGitJobDefinition } from './job-definitions/publish-from-git.job';
 import { PublishJobDefinition } from './job-definitions/publish.job';
 import { PullFilesJobDefinition } from './job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from './job-definitions/pull-linked-folder-files.job';
@@ -9,6 +10,7 @@ import { SyncDataFoldersJobDefinition } from './job-definitions/sync-data-folder
 
 export type JobDefinition =
   | PublishDataFolderJobDefinition
+  | PublishFromGitJobDefinition
   | PublishJobDefinition
   | PullLinkedFolderFilesJobDefinition
   | PullFilesJobDefinition

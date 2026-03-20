@@ -22,11 +22,13 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { PublishFromGitDto } from 'src/publish-plan/dto/publish-v2.dto';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookConfigService, getConfigRepoId } from 'src/workbook/workbook-config.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { Readable } from 'stream';
 import {
   CliConnectorAccountDto,
@@ -55,6 +57,7 @@ export class CliWorkbookController {
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookConfigService: WorkbookConfigService,
+    private readonly bullEnqueuerService: BullEnqueuerService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
   }
@@ -322,6 +325,30 @@ export class CliWorkbookController {
       connectorAccounts,
       configGitUrl,
     };
+  }
+
+  // ── Publish from git ────────────────────────────────────────────────────────
+
+  /**
+   * Trigger a publish job from a local publish plan stored in the connector's git repo (dirty branch).
+   * The CLI calls this after `scratchmd2 files upload` has pushed the plan to the server.
+   */
+  @Post(':id/publish-v2/run-from-git')
+  async runPublishFromGit(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Body() body: PublishFromGitDto,
+  ): Promise<{ jobId: string | number | undefined }> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, id as WorkbookId);
+
+    const job = await this.bullEnqueuerService.enqueuePublishFromGitJob(
+      id as WorkbookId,
+      req.user.id,
+      body.connectorAccountId,
+      body.planPath,
+    );
+    return { jobId: job.id };
   }
 
   // ── Workbook config repo endpoints ──────────────────────────────────────────

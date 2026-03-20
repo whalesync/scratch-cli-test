@@ -62,6 +62,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       initRepo: jest.fn().mockResolvedValue(undefined),
       commitFilesToBranch: jest.fn(),
       rebaseDirty: jest.fn(),
+      buildIndex: jest.fn().mockResolvedValue({ count: 0 }),
       listRepoFiles: jest.fn(),
       deleteFilesFromBranch: jest.fn(),
       runGitGc: jest.fn().mockResolvedValue(undefined),

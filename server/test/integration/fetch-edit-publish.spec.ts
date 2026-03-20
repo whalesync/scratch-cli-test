@@ -403,6 +403,7 @@ describe('Fetch → Edit → Publish Integration', () => {
         return schemas[folderPath] ?? null;
       }),
       writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
+      buildIndex: jest.fn().mockResolvedValue({ count: 0 }),
     } as unknown as ScratchGitService;
 
     // ── 8. Wire up all services ──────────────────────────────────────────────

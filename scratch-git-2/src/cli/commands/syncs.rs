@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::Subcommand;
 use serde::Deserialize;
@@ -505,7 +506,7 @@ struct RecordMatching {
 
 fn validate_local(sync_path: Option<&str>, _json: bool) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let (_, wb_dir) = markers::find_nearest(&cwd)
+    let wb_dir = markers::find_nearest_workspace(&cwd)
         .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
 
     let syncs_dir = wb_dir.join(".scratch/workbook/syncs");
@@ -743,8 +744,9 @@ fn collect_local_sync_files(syncs_dir: &Path, filter: Option<&str>) -> anyhow::R
 // ---------------------------------------------------------------------------
 
 fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
     let cwd = std::env::current_dir()?;
-    let (_, wb_dir) = markers::find_nearest(&cwd)
+    let wb_dir = markers::find_nearest_workspace(&cwd)
         .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
 
     let syncs_dir = wb_dir.join(".scratch/workbook/syncs");
@@ -800,8 +802,19 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
         }
     }
 
+    let elapsed_ms = started.elapsed().as_millis();
     if json {
-        println!("{}", serde_json::to_string_pretty(&all_results)?);
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "results": all_results,
+            "elapsedMs": elapsed_ms,
+        }))?);
+    } else {
+        let elapsed = if elapsed_ms < 1000 {
+            format!("{}ms", elapsed_ms)
+        } else {
+            format!("{:.1}s", elapsed_ms as f64 / 1000.0)
+        };
+        println!("Done ({})", elapsed);
     }
     Ok(())
 }
@@ -811,7 +824,7 @@ struct SyncResult {
     created: usize,
 }
 
-fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, _json: bool) -> anyhow::Result<SyncResult> {
+fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Result<SyncResult> {
     let src_dir = wb_dir.join(&cfg.source.connection).join(&cfg.source.folder);
     let dst_dir = wb_dir.join(&cfg.destination.connection).join(&cfg.destination.folder);
 
@@ -822,70 +835,99 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, _json: bool) -> anyhow::Resu
         anyhow::bail!("destination folder not found: {}", dst_dir.display());
     }
 
-    // Load destination records indexed by the match key value
-    let mut dst_by_match: HashMap<String, (PathBuf, serde_json::Value)> = HashMap::new();
-    if let Some(rm) = &cfg.record_matching {
-        for entry in std::fs::read_dir(&dst_dir)?.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-            if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data) {
-                    if let Some(key) = get_dot(&val, &rm.dest_field) {
-                        let key_str = json_to_string(&key);
-                        dst_by_match.insert(key_str, (path, val));
-                    }
-                }
-            }
-        }
+    // Pass 1: index destination records as match_key -> path only (no full parse in memory)
+    use rayon::prelude::*;
+    let pass1_start = std::time::Instant::now();
+    let dst_index: HashMap<String, PathBuf> = if let Some(rm) = &cfg.record_matching {
+        let dst_entries: Vec<_> = std::fs::read_dir(&dst_dir)?
+            .flatten()
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+            .collect();
+        dst_entries.par_iter()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let data = std::fs::read_to_string(&path).ok()?;
+                let val = serde_json::from_str::<serde_json::Value>(&data).ok()?;
+                let key = get_dot(&val, &rm.dest_field)?;
+                Some((json_to_string(&key), path))
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    if !json {
+        let ms = pass1_start.elapsed().as_millis();
+        let elapsed = if ms < 1000 { format!("{}ms", ms) } else { format!("{:.1}s", ms as f64 / 1000.0) };
+        println!("  {} destination records indexed ({})", dst_index.len(), elapsed);
     }
 
-    let mut updated = 0usize;
-    let mut created = 0usize;
+    // Collect source files upfront to know total count for progress reporting
+    let src_files: Vec<_> = std::fs::read_dir(&src_dir)?
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .collect();
+    let total = src_files.len();
+    let show_progress = !json && total >= 1000;
 
-    for entry in std::fs::read_dir(&src_dir)?.flatten() {
+    // Pass 2: parallel — each source file operates on a different destination file, no shared writes
+    let updated = AtomicUsize::new(0);
+    let created = AtomicUsize::new(0);
+    let processed = AtomicUsize::new(0);
+
+    let result: anyhow::Result<()> = src_files.par_iter().try_for_each(|entry| {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
         let data = std::fs::read_to_string(&path)?;
         let src_val: serde_json::Value = serde_json::from_str(&data)?;
 
-        // Find matching destination record
         let match_key = cfg.record_matching.as_ref()
             .and_then(|rm| get_dot(&src_val, &rm.source_field))
             .map(|v| json_to_string(&v));
 
-        if let Some(ref key) = match_key {
-            if let Some((dst_path, dst_val)) = dst_by_match.get_mut(key) {
-                // Apply field mappings onto existing destination record
-                for fm in &cfg.field_mappings {
-                    if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
-                        set_dot(dst_val, &fm.dest_field, src_v);
-                    }
+        if let Some(dst_path) = match_key.as_ref().and_then(|k| dst_index.get(k)) {
+            // Re-read destination file, apply field mappings, write back
+            let dst_data = std::fs::read_to_string(dst_path)?;
+            let mut dst_val: serde_json::Value = serde_json::from_str(&dst_data)?;
+            for fm in &cfg.field_mappings {
+                if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
+                    set_dot(&mut dst_val, &fm.dest_field, src_v);
                 }
-                std::fs::write(dst_path, format!("{}\n", serde_json::to_string_pretty(dst_val)?))?;
-                updated += 1;
-                continue;
+            }
+            std::fs::write(dst_path, format!("{}\n", serde_json::to_string_pretty(&dst_val)?))?;
+            updated.fetch_add(1, Ordering::Relaxed);
+        } else {
+            // No match — create pending record
+            let mut pending: serde_json::Value = serde_json::json!({});
+            for fm in &cfg.field_mappings {
+                if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
+                    set_dot(&mut pending, &fm.dest_field, src_v);
+                }
+            }
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                path.hash(&mut h);
+                format!("{:x}", h.finish())
+            };
+            let pending_path = dst_dir.join(format!("scratch_pending_{}.json", &hash[..8]));
+            std::fs::write(&pending_path, format!("{}\n", serde_json::to_string_pretty(&pending)?))?;
+            created.fetch_add(1, Ordering::Relaxed);
+        }
+
+        if show_progress {
+            let prev = processed.fetch_add(1, Ordering::Relaxed);
+            if (prev + 1) % 1000 == 0 {
+                println!("  {} / {} processed...", prev + 1, total);
             }
         }
 
-        // No match — create pending record
-        let mut pending: serde_json::Value = serde_json::json!({});
-        for fm in &cfg.field_mappings {
-            if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
-                set_dot(&mut pending, &fm.dest_field, src_v);
-            }
-        }
-        let hash = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            path.hash(&mut h);
-            format!("{:x}", h.finish())
-        };
-        let pending_path = dst_dir.join(format!("scratch_pending_{}.json", &hash[..8]));
-        std::fs::write(&pending_path, format!("{}\n", serde_json::to_string_pretty(&pending)?))?;
-        created += 1;
-    }
+        Ok(())
+    });
+    result?;
 
-    Ok(SyncResult { updated, created })
+    Ok(SyncResult {
+        updated: updated.into_inner(),
+        created: created.into_inner(),
+    })
 }
 
 /// Get a value from a JSON object using dot-notation path (e.g. "fields.Name").

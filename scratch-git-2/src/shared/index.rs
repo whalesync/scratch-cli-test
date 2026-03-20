@@ -80,26 +80,36 @@ fn collect_fk_fields(
 
 /// Extract FK field definitions from a schema.json object.
 ///
-/// Schema format: `{ "schema": { "properties": { "fieldName": { "x-scratch-foreign-key": { "linkedTableId": "..." } } } } }`
+/// Schema format: `{ "schema": { "properties": { "fields": { "properties": { "authors": { "x-scratch-foreign-key": { "linkedTableId": "..." } } } } } } }`
 /// Falls back to reading `properties` directly if there is no `schema` wrapper.
+/// Recurses into nested `properties` objects, building dot-notation paths (e.g. `"fields.authors"`).
 pub fn extract_fk_fields(outer: &Value) -> Vec<FkField> {
     let mut result = Vec::new();
-    // Navigate to the JSON Schema object (may be under a "schema" key)
     let json_schema = outer.get("schema").unwrap_or(outer);
-    let Some(props) = json_schema.get("properties").and_then(|v| v.as_object()) else {
-        return result;
+    extract_fk_fields_rec(json_schema, "", &mut result);
+    result
+}
+
+fn extract_fk_fields_rec(schema: &Value, prefix: &str, out: &mut Vec<FkField>) {
+    let Some(props) = schema.get("properties").and_then(|v| v.as_object()) else {
+        return;
     };
     for (field_name, field_val) in props {
+        let path = if prefix.is_empty() {
+            field_name.clone()
+        } else {
+            format!("{}.{}", prefix, field_name)
+        };
         if let Some(fk) = field_val.get("x-scratch-foreign-key") {
             if let Some(target_table_id) = fk.get("linkedTableId").and_then(|v| v.as_str()) {
-                result.push(FkField {
-                    field_path: field_name.clone(),
+                out.push(FkField {
+                    field_path: path.clone(),
                     target_table_id: target_table_id.to_string(),
                 });
             }
         }
+        extract_fk_fields_rec(field_val, &path, out);
     }
-    result
 }
 
 pub fn get_by_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {

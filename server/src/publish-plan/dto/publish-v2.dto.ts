@@ -31,3 +31,13 @@ export class PublishPlanRunDto implements IPublishPlanRunDto {
   @IsOptional()
   executeSinglePhase?: boolean;
 }
+
+export class PublishFromGitDto {
+  @IsString()
+  @IsNotEmpty()
+  connectorAccountId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  planPath!: string;
+}

@@ -14,6 +14,9 @@ pub enum FilesCommands {
     Download,
     /// Upload local changes to the server
     Upload,
+    /// Force-push local state to the server, skipping merge (fast)
+    #[command(name = "force-upload")]
+    ForceUpload,
 }
 
 pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
@@ -23,6 +26,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
     match cmd {
         FilesCommands::Download => run_download(&cwd, server_url, json),
         FilesCommands::Upload => run_upload(&cwd, server_url, json),
+        FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
     }
 }
 
@@ -36,12 +40,13 @@ fn get_token(server_url: &str) -> anyhow::Result<String> {
 }
 
 fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
     let token = get_token(server_url)?;
 
     // Check if we're inside a connector subdirectory
     if let Some((markers::Marker::Connector(_), conn_dir)) = markers::find_nearest(cwd) {
         let result = download_single_repo(&conn_dir, &token)?;
-        return print_download_result(&result, json);
+        return print_download_result(&result, started.elapsed().as_millis(), json);
     }
 
     // Find workspace marker
@@ -63,7 +68,7 @@ fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
     if conn_dirs.is_empty() {
         // V1: workspace dir is the repo
         let result = download_single_repo(&wb_dir, &token)?;
-        print_download_result(&result, json)
+        print_download_result(&result, started.elapsed().as_millis(), json)
     } else {
         // V2: iterate connector dirs
         let mut results = Vec::new();
@@ -86,16 +91,17 @@ fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
             let _ = super::generate_docs::write_docs(&wb_dir, wb_name);
         }
 
-        print_download_result(&agg, json)
+        print_download_result(&agg, started.elapsed().as_millis(), json)
     }
 }
 
 fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
     let token = get_token(server_url)?;
 
     if let Some((markers::Marker::Connector(_), conn_dir)) = markers::find_nearest(cwd) {
         let result = upload_single_repo(&conn_dir, &token)?;
-        return print_upload_result(&result, json);
+        return print_upload_result(&result, started.elapsed().as_millis(), json);
     }
 
     let (marker, wb_dir) = markers::find_nearest(cwd)
@@ -114,7 +120,7 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let conn_dirs = find_connector_dirs(&wb_dir);
     if conn_dirs.is_empty() {
         let result = upload_single_repo(&wb_dir, &token)?;
-        print_upload_result(&result, json)
+        print_upload_result(&result, started.elapsed().as_millis(), json)
     } else {
         let mut results = Vec::new();
         for dir in &conn_dirs {
@@ -124,8 +130,92 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
             results.push(upload_single_repo(dir, &token)?);
         }
         let agg = aggregate_upload(&results);
-        print_upload_result(&agg, json)
+        print_upload_result(&agg, started.elapsed().as_millis(), json)
     }
+}
+
+fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let token = get_token(server_url)?;
+
+    if let Some((markers::Marker::Connector(_), conn_dir)) = markers::find_nearest(cwd) {
+        let pushed = force_upload_single_repo(&conn_dir, &token)?;
+        let elapsed = started.elapsed().as_millis();
+        if json {
+            println!("{}", serde_json::json!({ "pushed": pushed, "elapsedMs": elapsed }));
+        } else if pushed {
+            println!("Force-pushed. ({})", format_elapsed(elapsed));
+        } else {
+            println!("Nothing to push. ({})", format_elapsed(elapsed));
+        }
+        return Ok(());
+    }
+
+    let (marker, wb_dir) = markers::find_nearest(cwd)
+        .ok_or_else(|| anyhow::anyhow!(
+            "Not inside a workspace directory. Run from a workspace directory."
+        ))?;
+
+    let workbook_server_url = match &marker {
+        markers::Marker::Workspace(m) if !m.workbook.server_url.is_empty() => {
+            m.workbook.server_url.clone()
+        }
+        _ => server_url.to_string(),
+    };
+    let token = get_token(&workbook_server_url)?;
+
+    let conn_dirs = find_connector_dirs(&wb_dir);
+    let dirs: Vec<_> = if conn_dirs.is_empty() { vec![wb_dir.clone()] } else { conn_dirs };
+
+    let mut any_pushed = false;
+    for dir in &dirs {
+        if !json {
+            println!("Force-uploading {}...", dir.file_name().unwrap_or_default().to_string_lossy());
+        }
+        if force_upload_single_repo(dir, &token)? {
+            any_pushed = true;
+        }
+    }
+
+    let elapsed = started.elapsed().as_millis();
+    if json {
+        println!("{}", serde_json::json!({ "pushed": any_pushed, "elapsedMs": elapsed }));
+    } else if any_pushed {
+        println!("Force-pushed. ({})", format_elapsed(elapsed));
+    } else {
+        println!("Nothing to push. ({})", format_elapsed(elapsed));
+    }
+    Ok(())
+}
+
+/// Stage all local changes and force-push to the dirty branch.
+/// Returns true if anything was pushed, false if there were no local changes.
+fn force_upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<bool> {
+    ensure_local_excludes(repo_dir);
+    git_add_all(repo_dir)?;
+
+    // Check if there's anything staged
+    let status = Command::new("git")
+        .current_dir(repo_dir)
+        .args(["diff", "--cached", "--quiet"])
+        .status()?;
+    if status.success() {
+        return Ok(false); // nothing staged
+    }
+
+    git_commit(repo_dir, "Force-upload from Scratch CLI")?;
+
+    let auth = git_auth_args(token);
+    let output = Command::new("git")
+        .current_dir(repo_dir)
+        .args(&auth)
+        .args(["push", "--force", "origin", "dirty:dirty"])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git push --force failed: {}", stderr);
+    }
+    Ok(true)
 }
 
 /// Public entry point called by linked/syncs commands after API operations.
@@ -177,9 +267,13 @@ struct UploadResult {
     conflicts_auto_resolved: i32,
     retries: i32,
     messages: Vec<String>,
+    uploaded_paths: Vec<String>,
+    merged_paths: Vec<String>,
+    deleted_paths: Vec<String>,
 }
 
 fn download_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<DownloadResult> {
+    ensure_local_excludes(repo_dir);
     // Fetch remote dirty branch
     git_fetch(repo_dir, token)?;
 
@@ -262,6 +356,7 @@ fn download_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<Download
 }
 
 fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResult> {
+    ensure_local_excludes(repo_dir);
     let base_hash = git_rev_parse(repo_dir, "HEAD")?;
     let base_map = read_git_tree(repo_dir, &base_hash)?;
     let local_map = read_disk(repo_dir)?;
@@ -294,6 +389,7 @@ fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResu
                         let remote_content = remote_map.get(path.as_str());
                         if remote_content.map(|r| r != c).unwrap_or(true) {
                             result.files_uploaded += 1;
+                            result.uploaded_paths.push(path.clone());
                         }
                     }
                     if let Some(w) = warning {
@@ -308,6 +404,7 @@ fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResu
                 MergeAction::Delete { path, warning } => {
                     if remote_map.contains_key(path.as_str()) {
                         result.files_deleted += 1;
+                        result.deleted_paths.push(path.clone());
                     }
                     if let Some(w) = warning {
                         messages.push(w.clone());
@@ -317,13 +414,17 @@ fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResu
                     let m = merge_content(path, Some(base), Some(local), Some(remote));
                     merged.insert(path.clone(), m);
                     result.files_merged += 1;
+                    result.merged_paths.push(path.clone());
                     result.conflicts_auto_resolved += 1;
                 }
             }
         }
 
-        // Strip .scratch/ entries (server-managed)
-        merged.retain(|p, _| !p.starts_with(".scratch/"));
+        // Strip server-managed .scratch/ subdirs, but keep publish-plans/ so the
+        // server can read the plan from git after `files upload`.
+        merged.retain(|p, _| {
+            !p.starts_with(".scratch/") || p.starts_with(".scratch/publish-plans/")
+        });
 
         if maps_equal(&merged, &remote_map) {
             return Ok(UploadResult { status: "up_to_date".to_string(), ..Default::default() });
@@ -433,6 +534,21 @@ fn git_reset_hard(repo_dir: &Path, hash: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Ensure .scratchmd is listed in .git/info/exclude so git never tracks it.
+/// This is a per-clone local exclude — never committed or pushed.
+pub fn ensure_local_excludes(repo_dir: &Path) {
+    let exclude_path = repo_dir.join(".git/info/exclude");
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    if !existing.lines().any(|l| l.trim() == ".scratchmd") {
+        let mut content = existing;
+        if !content.ends_with('\n') && !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(".scratchmd\n");
+        let _ = std::fs::write(&exclude_path, content);
+    }
+}
+
 fn git_add_all(repo_dir: &Path) -> anyhow::Result<()> {
     let output = Command::new("git")
         .current_dir(repo_dir)
@@ -476,40 +592,71 @@ fn git_push(repo_dir: &Path, token: &str) -> anyhow::Result<()> {
 // ── Reading git trees ────────────────────────────────────────────────────────
 
 /// Read all files from a commit tree into a FileMap.
+/// Uses `git cat-file --batch` to fetch all blob contents in a single subprocess
+/// instead of one subprocess per file.
 fn read_git_tree(repo_dir: &Path, hash: &str) -> anyhow::Result<FileMap> {
-    let output = Command::new("git")
+    let ls_output = Command::new("git")
         .current_dir(repo_dir)
         .args(["ls-tree", "-r", hash])
         .output()?;
 
-    if !output.status.success() {
+    if !ls_output.status.success() {
         return Ok(HashMap::new());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut map = FileMap::new();
-
+    // Collect (path, blob_hash) pairs
+    let stdout = String::from_utf8_lossy(&ls_output.stdout);
+    let mut entries: Vec<(String, String)> = Vec::new();
     for line in stdout.lines() {
         // Format: "100644 blob <blob-hash>\t<path>"
         if let Some((info, path)) = line.split_once('\t') {
             let parts: Vec<&str> = info.split_whitespace().collect();
             if parts.len() >= 3 && parts[1] == "blob" {
-                let blob_hash = parts[2];
-                let content = read_blob(repo_dir, blob_hash)?;
-                let content = normalize_crlf(content);
-                map.insert(path.to_string(), content);
+                entries.push((path.to_string(), parts[2].to_string()));
             }
         }
     }
-    Ok(map)
-}
 
-fn read_blob(repo_dir: &Path, blob_hash: &str) -> anyhow::Result<Vec<u8>> {
-    let output = Command::new("git")
+    if entries.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Batch-read all blobs in a single subprocess via stdin/stdout
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut child = Command::new("git")
         .current_dir(repo_dir)
-        .args(["cat-file", "blob", blob_hash])
-        .output()?;
-    Ok(output.stdout)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+
+    let hashes: String = entries.iter().map(|(_, h)| format!("{}\n", h)).collect();
+    child.stdin.take().unwrap().write_all(hashes.as_bytes())?;
+
+    let batch_output = child.wait_with_output()?;
+    let data = batch_output.stdout;
+
+    // Parse batch output: "<hash> blob <size>\n<content>\n" per entry
+    let mut map = FileMap::new();
+    let mut cursor = 0usize;
+    for (path, _) in &entries {
+        let header_end = data[cursor..].iter().position(|&b| b == b'\n')
+            .ok_or_else(|| anyhow::anyhow!("unexpected git cat-file batch output"))?;
+        let header = std::str::from_utf8(&data[cursor..cursor + header_end])?;
+        cursor += header_end + 1;
+
+        let size: usize = header.split_whitespace()
+            .nth(2)
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("invalid batch header: {}", header))?;
+
+        let content = normalize_crlf(data[cursor..cursor + size].to_vec());
+        cursor += size + 1; // +1 for trailing newline after content
+        map.insert(path.clone(), content);
+    }
+
+    Ok(map)
 }
 
 // ── Reading local disk ───────────────────────────────────────────────────────
@@ -794,11 +941,28 @@ fn aggregate_upload(results: &[UploadResult]) -> UploadResult {
         agg.conflicts_auto_resolved += r.conflicts_auto_resolved;
         agg.retries += r.retries;
         agg.messages.extend(r.messages.iter().cloned());
+        agg.uploaded_paths.extend(r.uploaded_paths.iter().cloned());
+        agg.merged_paths.extend(r.merged_paths.iter().cloned());
+        agg.deleted_paths.extend(r.deleted_paths.iter().cloned());
     }
     agg
 }
 
-fn print_download_result(result: &DownloadResult, json: bool) -> anyhow::Result<()> {
+fn print_file_list(label: &str, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    let _ = label; // label not shown per-file; category is clear from context
+    let limit = paths.len().min(10);
+    for path in &paths[..limit] {
+        println!("  {}", path);
+    }
+    if paths.len() > 10 {
+        println!("  ... and {} more", paths.len() - 10);
+    }
+}
+
+fn print_download_result(result: &DownloadResult, elapsed_ms: u128, json: bool) -> anyhow::Result<()> {
     if json {
         println!(
             "{}",
@@ -810,6 +974,7 @@ fn print_download_result(result: &DownloadResult, json: bool) -> anyhow::Result<
                 "filesMerged": result.files_merged,
                 "conflictsAutoResolved": result.conflicts_auto_resolved,
                 "messages": result.messages,
+                "elapsedMs": elapsed_ms,
             }))?
         );
         return Ok(());
@@ -817,10 +982,12 @@ fn print_download_result(result: &DownloadResult, json: bool) -> anyhow::Result<
 
     let total =
         result.files_created + result.files_updated + result.files_merged + result.files_deleted;
+    let elapsed = format_elapsed(elapsed_ms);
     if total == 0 {
         println!(
-            "{}",
-            if result.status == "up_to_date" { "Already up to date." } else { "No changes." }
+            "{} ({})",
+            if result.status == "up_to_date" { "Already up to date." } else { "No changes." },
+            elapsed
         );
         return Ok(());
     }
@@ -839,14 +1006,22 @@ fn print_download_result(result: &DownloadResult, json: bool) -> anyhow::Result<
     if result.files_deleted > 0 {
         parts.push(format!("{} deleted", result.files_deleted));
     }
-    println!("{}", parts.join(", "));
+    println!("{} ({})", parts.join(", "), elapsed);
     for msg in &result.messages {
         println!("Warning: {}", msg);
     }
     Ok(())
 }
 
-fn print_upload_result(result: &UploadResult, json: bool) -> anyhow::Result<()> {
+fn format_elapsed(ms: u128) -> String {
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    }
+}
+
+fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> anyhow::Result<()> {
     if json {
         println!(
             "{}",
@@ -858,23 +1033,25 @@ fn print_upload_result(result: &UploadResult, json: bool) -> anyhow::Result<()> 
                 "conflictsAutoResolved": result.conflicts_auto_resolved,
                 "retries": result.retries,
                 "messages": result.messages,
+                "elapsedMs": elapsed_ms,
             }))?
         );
         return Ok(());
     }
 
+    let elapsed = format_elapsed(elapsed_ms);
     if result.status == "no_changes" {
-        println!("No local changes to upload.");
+        println!("No local changes to upload. ({})", elapsed);
         return Ok(());
     }
     if result.status == "up_to_date" {
-        println!("Remote already has all local changes.");
+        println!("Remote already has all local changes. ({})", elapsed);
         return Ok(());
     }
 
     let total = result.files_uploaded + result.files_merged + result.files_deleted;
     if total == 0 {
-        println!("No changes.");
+        println!("No changes. ({})", elapsed);
         return Ok(());
     }
 
@@ -889,7 +1066,10 @@ fn print_upload_result(result: &UploadResult, json: bool) -> anyhow::Result<()> 
     if result.files_deleted > 0 {
         parts.push(format!("{} deleted", result.files_deleted));
     }
-    println!("{}", parts.join(", "));
+    println!("{} ({})", parts.join(", "), elapsed);
+    print_file_list("uploaded", &result.uploaded_paths);
+    print_file_list("merged", &result.merged_paths);
+    print_file_list("deleted", &result.deleted_paths);
     for msg in &result.messages {
         println!("Warning: {}", msg);
     }

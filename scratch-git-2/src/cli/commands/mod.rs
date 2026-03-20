@@ -4,5 +4,6 @@ pub mod files;
 pub mod generate_docs;
 pub mod index;
 pub mod linked;
+pub mod plan_publish;
 pub mod syncs;
 pub mod workspaces;

@@ -8,7 +8,7 @@ import { DbService } from '../db/db.service';
 import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
-import { PublishPlanBuildDto, PublishPlanRunDto } from './dto/publish-v2.dto';
+import { PublishFromGitDto, PublishPlanBuildDto, PublishPlanRunDto } from './dto/publish-v2.dto';
 import { PublishPlanBuildService } from './publish-plan-build.service';
 import { PublishPlanCrudService } from './publish-plan-crud.service';
 import { PublishPlanRunService } from './publish-plan-run.service';
@@ -108,6 +108,24 @@ export class PublishPlanController {
       createRunContext('web'),
     );
     await this.publishPlanService.setActiveJob(body.pipelineId, job.id!.toString());
+    return { jobId: job.id };
+  }
+
+  @Post('run-from-git')
+  async runFromGit(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Body() body: PublishFromGitDto,
+    @Req() req: RequestWithUser,
+  ) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+
+    const job = await this.bullEnqueuerService.enqueuePublishFromGitJob(
+      workbookId,
+      req.user.id,
+      body.connectorAccountId,
+      body.planPath,
+    );
     return { jobId: job.id };
   }
 

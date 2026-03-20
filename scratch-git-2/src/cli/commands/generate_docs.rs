@@ -153,6 +153,24 @@ creating duplicates. The sync finds the destination record where the value at
 `destField` equals the value at `sourceField`. Unmatched source records are
 written as `scratch_pending_<hash>.json` (new records awaiting publish).
 
+## Creating a sync
+
+In this version (V2), **creating a sync means writing a config file to
+`.scratch/workbook/syncs/`** — nothing else happens automatically.
+
+```bash
+# Create the syncs directory if it doesn't exist
+mkdir -p .scratch/workbook/syncs
+
+# Write your config (see format above) to a new file, e.g.:
+# .scratch/workbook/syncs/posts-airtable-to-webflow.json
+```
+
+> **Note:** `scratchmd2 syncs create` (the server-backed command) is kept for
+> backwards compatibility with V1 workbooks. For V2 local workbooks, just drop
+> a JSON file in the syncs folder — that is the entire create operation. Do not
+> run anything else after creating the file.
+
 ## Running a sync
 
 ```bash

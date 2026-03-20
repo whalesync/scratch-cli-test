@@ -9,7 +9,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
-use commands::{auth, connections, files, index, linked, syncs, workspaces};
+use commands::{auth, connections, files, index, linked, plan_publish, syncs, workspaces};
 
 #[derive(Parser)]
 #[command(
@@ -70,6 +70,20 @@ enum Commands {
         workspace: Option<String>,
         #[command(subcommand)]
         command: syncs::SyncsCommands,
+    },
+    /// Build a local publish plan by diffing dirty vs master
+    #[command(name = "plan-publish")]
+    PlanPublish {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
+    /// Trigger server-side publish from the local publish plan
+    #[command(name = "publish-from-git")]
+    PublishFromGit {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
     },
     /// Rebuild SQLite file index for the current workspace
     #[command(name = "build-index")]
@@ -132,6 +146,13 @@ async fn main() {
                 }
             }
         }
+
+        Commands::PlanPublish { workspace } => plan_publish::run(&workspace),
+
+        Commands::PublishFromGit { workspace } => match build_client(&server_url) {
+            Ok(client) => plan_publish::run_publish_from_git(&workspace, &client).await,
+            Err(e) => Err(e),
+        },
 
         Commands::BuildIndex { workspace } => index::build_command(&workspace),
         Commands::DumpIndex { workspace, connection } => index::dump_command(&workspace, connection.as_deref()),

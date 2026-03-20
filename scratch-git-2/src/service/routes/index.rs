@@ -176,6 +176,7 @@ pub async fn dump_index(State(state): State<AppState>, Path(id): Path<String>) -
 ///
 /// Reads the schema for the file's folder from the git tree at `main` to get FK fields.
 /// No-ops gracefully if the index DB does not exist yet (full build hasn't run).
+#[allow(dead_code)]
 pub fn index_single_file_on_main(
     state: &AppState,
     id: &str,
@@ -199,6 +200,7 @@ pub fn index_single_file_on_main(
 }
 
 /// Remove a file from the SQLite index (called when a file is deleted from main).
+#[allow(dead_code)]
 pub fn remove_file_from_index(
     state: &AppState,
     id: &str,
@@ -215,31 +217,24 @@ pub fn remove_file_from_index(
 }
 
 /// Read FK field definitions for a specific folder from the main branch in git.
+#[allow(dead_code)]
 fn load_fk_fields_for_folder(
     state: &AppState,
     id: &str,
     folder: &str,
 ) -> anyhow::Result<Vec<idx::FkField>> {
     let git_repo = GitRepo::open(&state.repos_dir, id)?;
-    let commit_oid = git_repo.resolve_ref("main")?;
-    let tree_oid = git_repo.get_commit_tree_oid(commit_oid)?;
-    let blobs = collect_blobs(&git_repo.repo, tree_oid)?;
-
     let schema_path = if folder.is_empty() {
         ".scratch/schema.json".to_string()
     } else {
         format!(".scratch/{}/schema.json", folder)
     };
 
-    for (path, oid) in &blobs {
-        if path == &schema_path {
-            let content = git_repo.read_blob(*oid)?;
-            let text = std::str::from_utf8(&content)?;
-            let schema: serde_json::Value = serde_json::from_str(text)?;
-            return Ok(idx::extract_fk_fields(&schema));
-        }
-    }
-    Ok(vec![])
+    let Some(text) = git_repo.get_file_content("main", &schema_path)? else {
+        return Ok(vec![]);
+    };
+    let schema: serde_json::Value = serde_json::from_str(&text)?;
+    Ok(idx::extract_fk_fields(&schema))
 }
 
 /// Recursively collect all blob (file) entries from a git tree as `(path, ObjectId)` pairs.
