@@ -1,12 +1,13 @@
 import { getAuthToken } from "@spinner/test-utils";
 import { TestApiClient } from "../helpers/test-api-client";
 import { airtableFixture } from "../helpers/connector-fixtures/airtable.fixture";
+import { hubspotFixture } from "../helpers/connector-fixtures/hubspot.fixture";
 import { ConnectorFixture } from "../helpers/connector-fixtures/types";
 import { createTestWorkspace, pullAndWait } from "../helpers/test-fixtures";
 
 const SERVER_URL = process.env.SMOKE_TEST_SERVER_URL ?? "http://localhost:3020";
 
-const fixtures: ConnectorFixture[] = [airtableFixture];
+const fixtures: ConnectorFixture[] = [airtableFixture, hubspotFixture];
 
 describe.each(fixtures)("Pull incremental: $displayName", (fixture) => {
   let api: TestApiClient;

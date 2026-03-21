@@ -22,4 +22,5 @@ export const Service = {
   QUICKBOOKS: 'QUICKBOOKS',
   PIPEDRIVE: 'PIPEDRIVE',
   MEMBERSTACK: 'MEMBERSTACK',
+  HUBSPOT: 'HUBSPOT',
 } as const;

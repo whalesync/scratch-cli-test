@@ -1,0 +1,135 @@
+import { Type, type TSchema } from '@sinclair/typebox';
+import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
+import { BaseJsonTableSpec, EntityId } from '../../types';
+import { HubspotApiClient } from './hubspot-api-client';
+import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './hubspot-types';
+
+/**
+ * HubSpot returns ALL property values as strings (even numbers and booleans).
+ * We store the raw API response as-is, so all property fields are String | Null.
+ * The CONNECTOR_DATA_TYPE annotation carries the semantic type for UI/transformers.
+ */
+export function hubspotPropertyToJsonSchema(property: HubspotProperty): TSchema {
+  const connectorDataType = resolveConnectorDataType(property);
+  const isReadonly = property.modificationMetadata?.readOnlyValue === true;
+
+  const annotations: Record<string, unknown> = {
+    description: property.label,
+    [REMOTE_FIELD_ID]: property.name,
+    [CONNECTOR_DATA_TYPE]: connectorDataType,
+  };
+
+  if (isReadonly) {
+    annotations[READONLY_FLAG] = true;
+  }
+
+  return Type.Union([Type.String(), Type.Null()], annotations);
+}
+
+/**
+ * Resolve the connector data type string from HubSpot's type/fieldType combination.
+ * Uses the same format as the existing whalesync connector: `hubspot/{type}_{fieldType}` or `hubspot/{type}`.
+ */
+function resolveConnectorDataType(property: HubspotProperty): string {
+  const combined = `hubspot/${property.type}_${property.fieldType}`;
+  const simple = `hubspot/${property.type}`;
+
+  // Use the more specific combined type when fieldType adds meaningful info
+  if (property.fieldType && property.fieldType !== property.type) {
+    return combined;
+  }
+  return simple;
+}
+
+/**
+ * Build the associations sub-schema for an object type.
+ * Associations are readonly since they're written via the separate v4 API.
+ */
+function buildAssociationsSchema(objectType: string): TSchema | null {
+  const associatedTypes = ASSOCIATIONS_BY_OBJECT_TYPE[objectType];
+  if (!associatedTypes || associatedTypes.length === 0) return null;
+
+  const assocProperties: Record<string, TSchema> = {};
+  for (const assocType of associatedTypes) {
+    assocProperties[assocType] = Type.Optional(
+      Type.Object({
+        results: Type.Array(
+          Type.Object({
+            id: Type.String(),
+            type: Type.String(),
+          }),
+        ),
+      }),
+    );
+  }
+
+  return Type.Optional(
+    Type.Object(assocProperties, {
+      [READONLY_FLAG]: true,
+      description: 'Associations with other HubSpot objects',
+    }),
+  );
+}
+
+/**
+ * Build a BaseJsonTableSpec from the HubSpot Properties API response.
+ * The schema mirrors the raw API response structure:
+ * { id, properties: { ... }, associations: { ... }, createdAt, updatedAt, archived }
+ *
+ * Returns both the spec and the list of property names (needed for API calls).
+ */
+export async function buildHubspotJsonTableSpec(
+  id: EntityId,
+  objectType: string,
+  client: HubspotApiClient,
+): Promise<{ spec: BaseJsonTableSpec; propertyNames: string[] }> {
+  const properties = await client.getProperties(objectType);
+  const propertyNames = properties.map((p) => p.name);
+
+  // Build the properties sub-object schema
+  const propertiesSchema: Record<string, TSchema> = {};
+  for (const property of properties) {
+    propertiesSchema[property.name] = hubspotPropertyToJsonSchema(property);
+  }
+
+  // Build top-level record schema matching raw API response
+  const topLevelProperties: Record<string, TSchema> = {
+    id: Type.String({ [READONLY_FLAG]: true, description: 'Record ID' }),
+    properties: Type.Object(propertiesSchema, { description: 'HubSpot properties' }),
+    createdAt: Type.String({ [READONLY_FLAG]: true, description: 'Created timestamp' }),
+    updatedAt: Type.String({ [READONLY_FLAG]: true, description: 'Updated timestamp' }),
+    archived: Type.Boolean({ [READONLY_FLAG]: true, description: 'Whether the record is archived' }),
+  };
+
+  // Add associations schema if this object type supports them
+  const associationsSchema = buildAssociationsSchema(objectType);
+  if (associationsSchema) {
+    topLevelProperties['associations'] = associationsSchema;
+  }
+
+  const config = OBJECT_CONFIG[objectType];
+  const displayName = config?.displayName ?? objectType;
+
+  const schema = Type.Object(topLevelProperties, {
+    $id: `hubspot/${objectType}`,
+    title: displayName,
+  });
+
+  // Determine title column — it's always nested under 'properties'
+  const titleField = config?.titleFieldPath?.replace('properties.', '');
+  const titleColumnRemoteId = titleField ? ['properties', titleField] : undefined;
+
+  const spec: BaseJsonTableSpec = {
+    id,
+    slug: id.wsId,
+    name: displayName,
+    schema,
+    idColumnRemoteId: 'id',
+    titleColumnRemoteId,
+    slugFieldPath: config?.titleFieldPath,
+    basePath: [],
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { spec, propertyNames };
+}
