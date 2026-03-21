@@ -6,8 +6,7 @@ import { CustomMetricDimensionValue } from './types';
 /** In local dev environments, we want to just see the logs in the console. */
 export class DevMetricsService implements CustomMetricsService {
   logValue(metric: CustomMetric, value: number, dimension?: CustomMetricDimensionValue): void {
-    // Do nothing.
-    WSLogger.info({
+    WSLogger.debug({
       source: 'DevMetricsService',
       message: metric,
       value: value,

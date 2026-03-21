@@ -1,8 +1,16 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Job, Worker } from 'bullmq';
+import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Job, Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
+import {
+  CustomMetric,
+  JOB_CANCELED_METRIC,
+  JOB_COMPLETED_METRIC,
+  JOB_FAILED_METRIC,
+  JOB_STALLED_METRIC,
+} from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { JobService } from '../job/job.service';
 import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
@@ -14,13 +22,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private redis: IORedis | null = null;
   private pubSubRedis: IORedis | null = null;
   private worker: Worker | null = null;
+  private queue: Queue | null = null;
   private activeJobToAbortCtrl: Map<string, AbortController> = new Map();
 
   constructor(
-    // private readonly workerPool: WorkerPoolService,
     private readonly jobHandlerService: JobHandlerService,
     private readonly jobService: JobService,
     private readonly configService: ScratchConfigService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   private getRedis(): IORedis {
@@ -48,6 +57,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit() {
+    // Create a queue instance for job lookups (e.g. stalled events)
+    this.queue = new Queue('worker-queue', { connection: this.getRedis() });
+
     // Create the worker to process jobs
     this.worker = new Worker('worker-queue', async (job: Job) => this.processJob(job), {
       connection: this.getRedis(),
@@ -57,13 +69,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     // Set up event listeners
     this.worker.on('completed', (job: Job, result: JobResult) => {
+      const jobType = (job.data as JobData)?.type;
       WSLogger.info({
         source: 'QueueService',
         message: 'Job completed successfully',
         jobId: job.id?.toString(),
-        jobType: (job.data as JobData)?.type,
+        jobType,
         executionTime: result?.executionTime,
       });
+      if (jobType && jobType in JOB_COMPLETED_METRIC) {
+        this.metricsService.logValue(JOB_COMPLETED_METRIC[jobType], 1);
+      }
       // Clean up the abort controller when job completes
       if (job.id) {
         this.activeJobToAbortCtrl.delete(job.id.toString());
@@ -71,14 +87,22 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.worker.on('failed', (job: Job | undefined, err: Error) => {
+      const jobType = job ? (job.data as JobData)?.type : undefined;
       WSLogger.error({
         source: 'QueueService',
         message: 'Job failed',
         jobId: job?.id?.toString(),
-        jobType: job ? (job.data as JobData)?.type : undefined,
+        jobType,
         error: err.message,
         stack: err.stack,
       });
+      if (jobType && jobType in JOB_FAILED_METRIC) {
+        if (err instanceof JobCanceledError) {
+          this.metricsService.logValue(JOB_CANCELED_METRIC[jobType], 1);
+        } else {
+          this.metricsService.logValue(JOB_FAILED_METRIC[jobType], 1);
+        }
+      }
       // Clean up the abort controller when job fails
       if (job?.id) {
         this.activeJobToAbortCtrl.delete(job.id.toString());
@@ -92,6 +116,31 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         error: err.message,
         stack: err.stack,
       });
+      this.metricsService.logValue(CustomMetric.JOB_WORKER_ERROR, 1);
+    });
+
+    this.worker.on('stalled', (jobId: string) => {
+      WSLogger.warn({
+        source: 'QueueService',
+        message: 'Job stalled',
+        jobId,
+      });
+      // Fetch the job to determine its type for the metric
+      void Job.fromId(this.queue!, jobId)
+        .then((job) => {
+          const jobType = job ? (job.data as JobData)?.type : undefined;
+          if (jobType && jobType in JOB_STALLED_METRIC) {
+            this.metricsService.logValue(JOB_STALLED_METRIC[jobType], 1);
+          }
+        })
+        .catch((err) => {
+          WSLogger.error({
+            source: 'QueueService',
+            message: 'Failed to fetch stalled job for metrics',
+            jobId,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        });
     });
 
     // Subscribe to job cancellation messages using the separate pub/sub client
@@ -246,6 +295,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() {
     if (this.worker) {
       await this.worker.close();
+    }
+    if (this.queue) {
+      await this.queue.close();
     }
     if (this.redis) {
       await this.redis.quit();
