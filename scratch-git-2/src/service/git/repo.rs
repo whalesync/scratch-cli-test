@@ -17,8 +17,12 @@ impl GitRepo {
     /// Open an existing bare git repository.
     pub fn open(repos_dir: &Path, repo_id: &str) -> Result<Self, AppError> {
         let repo_path = repos_dir.join(format!("{}.git", repo_id));
-        let repo = gix::open(&repo_path)
-            .map_err(|e| AppError::internal(format!("Failed to open repo {}: {}", repo_id, e)))?;
+        let repo = gix::open(&repo_path).map_err(|_| {
+            AppError::not_found(format!(
+                "Repository not found: {}",
+                repo_id
+            ))
+        })?;
         Ok(Self {
             repo,
             _repo_path: repo_path,
@@ -700,6 +704,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo = GitRepo::init(tmp.path(), "test").unwrap();
         (tmp, repo)
+    }
+
+    #[test]
+    fn open_nonexistent_repo_returns_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let result = GitRepo::open(tmp.path(), "does-not-exist");
+        match result {
+            Err(err) => assert_eq!(err.status_code(), axum::http::StatusCode::NOT_FOUND),
+            Ok(_) => panic!("Expected error for nonexistent repo"),
+        }
     }
 
     #[test]

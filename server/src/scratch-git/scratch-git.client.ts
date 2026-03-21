@@ -10,6 +10,23 @@ import {
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 
+/** Thrown when scratch-git returns a 404 — the repo, branch, or file does not exist. */
+export class ScratchGitNotFoundError extends Error {
+  constructor(
+    public readonly endpoint: string,
+    public readonly responseBody: string,
+  ) {
+    super(`scratch-git 404: ${endpoint}`);
+    this.name = 'ScratchGitNotFoundError';
+  }
+}
+
+export interface RepoFileRef {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+}
+
 export interface CommitFilesResult {
   created: string[];
   updated: string[];
@@ -66,6 +83,12 @@ export class ScratchGitClient {
     if (!response.ok) {
       const text = await response.text();
       const responseBody = text.length > MAX_LOG_RESPONSE ? text.slice(0, MAX_LOG_RESPONSE) + '… (truncated)' : text;
+
+      // 404s are expected control flow (repo/branch/file doesn't exist) — don't log, throw typed error
+      if (response.status === 404) {
+        throw new ScratchGitNotFoundError(endpoint, responseBody);
+      }
+
       const error = new Error(`Received error code from scratch-git API: ${endpoint}: HTTP ${response.status}`);
       WSLogger.error({
         source: 'ScratchGitClient.callGitApi',
@@ -207,24 +230,29 @@ export class ScratchGitClient {
     }>;
   }
 
-  async list(repoId: string, branch: string, folder: string): Promise<any[]> {
-    return this.callGitApi(
-      `/api/repo/read/${this.encodeRepoId(repoId)}/list?branch=${branch}&folder=${encodeURIComponent(folder)}`,
-      'GET',
-    ) as Promise<any[]>;
+  async list(repoId: string, branch: string, folder: string): Promise<RepoFileRef[]> {
+    try {
+      return (await this.callGitApi(
+        `/api/repo/read/${this.encodeRepoId(repoId)}/list?branch=${branch}&folder=${encodeURIComponent(folder)}`,
+        'GET',
+      )) as RepoFileRef[];
+    } catch (err) {
+      // Repo doesn't exist yet (not pulled) or folder doesn't exist — no files to list
+      if (err instanceof ScratchGitNotFoundError) return [];
+      throw err;
+    }
   }
 
   async getFile(repoId: string, branch: string, path: string): Promise<{ content: string } | null> {
     try {
-      console.log(`[ScratchGitClient] getFile: ${path} branch=${branch}`);
       const response = await this.callGitApi(
         `/api/repo/read/${this.encodeRepoId(repoId)}/file?branch=${branch}&path=${encodeURIComponent(path)}`,
         'GET',
       );
       return response as { content: string };
     } catch (err) {
-      console.error(`[ScratchGitClient] getFile error for ${path} (${branch}):`, err);
-      return null;
+      if (err instanceof ScratchGitNotFoundError) return null;
+      throw err;
     }
   }
 

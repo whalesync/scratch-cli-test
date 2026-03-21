@@ -12,6 +12,7 @@ import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
@@ -514,12 +515,15 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           );
         }
       } catch (err) {
-        WSLogger.error({
-          source: 'DownloadLinkedFolderFilesJob',
-          message: 'Failed to clean up deleted files from main',
-          workbookId: dataFolder.workbookId,
-          error: err,
-        });
+        // On first pull, the main branch doesn't exist yet — nothing to clean up
+        if (!(err instanceof ScratchGitNotFoundError)) {
+          WSLogger.error({
+            source: 'DownloadLinkedFolderFilesJob',
+            message: 'Failed to clean up deleted files from main',
+            workbookId: dataFolder.workbookId,
+            error: err,
+          });
+        }
         // Don't fail the job for cleanup errors
       }
 

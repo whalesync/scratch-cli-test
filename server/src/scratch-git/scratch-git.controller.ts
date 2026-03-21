@@ -13,7 +13,7 @@ import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { getConfigRepoId } from 'src/workbook/workbook-config.service';
 import { MigrationService, StripPrefixConnectionResult } from './migration.service';
-import { GitIndexDump } from './scratch-git.client';
+import { GitIndexDump, ScratchGitNotFoundError } from './scratch-git.client';
 import { ScratchGitService } from './scratch-git.service';
 
 @Controller('scratch-git')
@@ -88,11 +88,16 @@ export class ScratchGitController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
-    if (repoIds.length === 1) {
-      return this.scratchGitService.getRepoStatus(repoIds[0]);
-    }
-    // V2 aggregation: concatenate dirty file lists across all connection repos
-    const results = await Promise.all(repoIds.map((id) => this.scratchGitService.getRepoStatus(id)));
+    // V2 aggregation: concatenate dirty file lists across all connection repos.
+    // Repos that don't exist yet (not pulled) are skipped — they have no status.
+    const results = await Promise.all(
+      repoIds.map((id) =>
+        this.scratchGitService.getRepoStatus(id).catch((err) => {
+          if (err instanceof ScratchGitNotFoundError) return [];
+          throw err;
+        }),
+      ),
+    );
     return (results as unknown[][]).flat();
   }
 
@@ -105,11 +110,15 @@ export class ScratchGitController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
-    if (repoIds.length === 1) {
-      return this.scratchGitService.hasDirtyFiles(repoIds[0]);
-    }
-    // V2 aggregation: dirty if any connection repo has diffs
-    const results = await Promise.all(repoIds.map((id) => this.scratchGitService.hasDirtyFiles(id)));
+    // Repos that don't exist yet (not pulled) are not dirty.
+    const results = await Promise.all(
+      repoIds.map((id) =>
+        this.scratchGitService.hasDirtyFiles(id).catch((err) => {
+          if (err instanceof ScratchGitNotFoundError) return { dirty: false };
+          throw err;
+        }),
+      ),
+    );
     return { dirty: results.some((r) => r.dirty) };
   }
 
@@ -122,11 +131,15 @@ export class ScratchGitController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
-    if (repoIds.length === 1) {
-      return this.scratchGitService.getRepoStatusCount(repoIds[0]);
-    }
-    // V2 aggregation: sum counts across all connection repos
-    const results = await Promise.all(repoIds.map((id) => this.scratchGitService.getRepoStatusCount(id)));
+    // Repos that don't exist yet (not pulled) have 0 dirty files.
+    const results = await Promise.all(
+      repoIds.map((id) =>
+        this.scratchGitService.getRepoStatusCount(id).catch((err) => {
+          if (err instanceof ScratchGitNotFoundError) return { count: 0 };
+          throw err;
+        }),
+      ),
+    );
     return { count: results.reduce((sum, r) => sum + r.count, 0) };
   }
 

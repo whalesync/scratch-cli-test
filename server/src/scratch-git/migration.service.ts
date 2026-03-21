@@ -236,13 +236,7 @@ export class MigrationService {
 
       try {
         // Pre-check: if the top-level structure is not exactly 1 folder matching the connection name, throw an error
-        const listItems = (await this.scratchGitClient.list(repoId, MAIN_BRANCH, '')) as Array<{
-          type: string;
-          name: string;
-          mode: string;
-        }>;
-
-        const visibleItems = listItems;
+        const visibleItems = await this.scratchGitClient.list(repoId, MAIN_BRANCH, '');
 
         if (visibleItems.length !== 1) {
           throw new Error(
@@ -251,11 +245,7 @@ export class MigrationService {
         }
 
         const topItem = visibleItems[0];
-        const isDir =
-          topItem.type === 'tree' ||
-          topItem.type === 'dir' ||
-          topItem.mode === '040000' ||
-          topItem.type === 'directory';
+        const isDir = topItem.type === 'directory';
 
         if (!isDir) {
           throw new Error(`Expected the top-level item to be a directory, but found a file: ${topItem.name}`);

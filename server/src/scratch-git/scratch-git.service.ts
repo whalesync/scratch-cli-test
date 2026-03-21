@@ -9,14 +9,9 @@ import {
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
-import { GitIndexDump, ScratchGitClient } from './scratch-git.client';
+import { GitIndexDump, RepoFileRef, ScratchGitClient } from './scratch-git.client';
 
-// The object returned by listRepoFiles
-export interface RepoFileRef {
-  name: string;
-  path: string;
-  type: 'file' | 'folder';
-}
+export type { RepoFileRef };
 
 export const MAIN_BRANCH = 'main';
 export const DIRTY_BRANCH = 'dirty';
