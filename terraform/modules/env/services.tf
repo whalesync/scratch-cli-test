@@ -147,8 +147,8 @@ resource "google_cloud_run_v2_service" "api_service" {
   deletion_protection = false
 
   template {
-    # Use gen1 environment for faster cold starts.
-    execution_environment = "EXECUTION_ENVIRONMENT_GEN1"
+    # Use gen1 environment for faster cold starts, but gen2 is required for sidecar containers (e.g. OTel collector).
+    execution_environment = var.use_opentelemetry_metrics ? "EXECUTION_ENVIRONMENT_GEN2" : "EXECUTION_ENVIRONMENT_GEN1"
 
     scaling {
       min_instance_count = var.api_service_min_instance_count
@@ -394,7 +394,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
   deletion_protection = false
 
   template {
-    execution_environment = "EXECUTION_ENVIRONMENT_GEN1"
+    # Use gen1 environment for faster cold starts, but gen2 is required for sidecar containers (e.g. OTel collector).
+    execution_environment = var.use_opentelemetry_metrics ? "EXECUTION_ENVIRONMENT_GEN2" : "EXECUTION_ENVIRONMENT_GEN1"
 
     scaling {
       min_instance_count = 1
