@@ -87,7 +87,7 @@ struct PlanEntry {
     rel_path: String,
     phase: Phase,
     content: Value,
-    changed_fields: Option<Value>,
+    _changed_fields: Option<Value>,
 }
 
 /// A foreign-key field path extracted from a schema.
@@ -96,7 +96,7 @@ struct FkPath {
     /// Path segments in the record content, e.g. ["fields", "authors"] or ["items", "[]", "ref"].
     path: Vec<String>,
     /// The linkedTableId value from x-scratch-foreign-key.
-    target_table_id: String,
+    _target_table_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Edit,
                 content: pass3.clone(),
-                changed_fields: Some(changed),
+                _changed_fields: Some(changed),
             });
         }
 
@@ -341,7 +341,7 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Backfill,
                 content: pass1.clone(),
-                changed_fields: Some(backfill_changed),
+                _changed_fields: Some(backfill_changed),
             });
         }
     }
@@ -368,7 +368,7 @@ fn plan_connection(
             rel_path: rel_path.clone(),
             phase: Phase::Create,
             content: pass3.clone(),
-            changed_fields: None,
+            _changed_fields: None,
         });
 
         if filename.starts_with("scratch_pending_") {
@@ -376,7 +376,7 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Rename,
                 content: json!({}),
-                changed_fields: None,
+                _changed_fields: None,
             });
         }
 
@@ -385,7 +385,7 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Backfill,
                 content: pass1.clone(),
-                changed_fields: None,
+                _changed_fields: None,
             });
         }
     }
@@ -396,7 +396,7 @@ fn plan_connection(
             rel_path: rel_path.clone(),
             phase: Phase::Delete,
             content: json!({}),
-            changed_fields: None,
+            _changed_fields: None,
         });
     }
 
@@ -565,7 +565,7 @@ fn extract_fk_paths(schema: &Value) -> Vec<FkPath> {
 fn extract_fk_paths_rec(schema: &Value, path: &[String], out: &mut Vec<FkPath>) {
     if let Some(fk) = schema.get("x-scratch-foreign-key") {
         if let Some(id) = fk.get("linkedTableId").and_then(|v| v.as_str()) {
-            out.push(FkPath { path: path.to_vec(), target_table_id: id.to_string() });
+            out.push(FkPath { path: path.to_vec(), _target_table_id: id.to_string() });
         }
     }
 
