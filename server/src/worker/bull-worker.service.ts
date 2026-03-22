@@ -15,7 +15,7 @@ import { JobService } from '../job/job.service';
 import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
 import { JobResult, Progress } from './jobs/base-types';
-import { JobData } from './jobs/union-types';
+import { JobData, JobProgress } from './jobs/union-types';
 
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
@@ -227,7 +227,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         runId: dbJob.runId ?? undefined,
         data: jobData,
         checkpoint,
-        progress: job.progress as Progress<any, any>,
+        progress: job.progress as JobProgress,
         abortSignal: abortController.signal,
       });
 

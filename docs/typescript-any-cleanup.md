@@ -4,21 +4,13 @@
 
 We audited all `any` usage across the codebase and cleaned up the easy wins. This doc tracks what's left and why, so we can chip away at it over time.
 
-## Current State (after Phase 1-3 cleanup)
+## Current State (after Phase 1-4 cleanup)
 
 ### Production code: mostly clean
 
 The remaining `any` in non-test production code falls into a few categories:
 
-#### 1. Generic job dispatch — `Progress<any, any>` (1 occurrence)
-
-**File:** `server/src/worker/bull-worker.service.ts:230`
-
-The bull-worker is a generic job dispatcher that doesn't know which specific job type it's processing at runtime. Each job type defines its own `Progress<TPublicProgress, TJobProgress>`, and the handler is a union of all registered handlers. `Progress<any, any>` is type-erasure at the dispatch boundary.
-
-**Fix:** Make the dispatch path generic — parameterize by job type and thread the specific progress types through from the registry to the handler invocation. This is a meaningful refactor of the job dispatch system.
-
-#### 2. Generic type constraints in `JobDefinitionBuilder` (~5 occurrences)
+#### 1. Generic type constraints in `JobDefinitionBuilder` (~5 occurrences)
 
 **File:** `server/src/worker/jobs/base-types.ts`
 
@@ -26,7 +18,7 @@ The bull-worker is a generic job dispatcher that doesn't know which specific job
 
 **Fix:** This is a TypeScript language limitation. No fix needed — this is the correct pattern.
 
-#### 3. Notion SDK interop (~30+ occurrences across 4 files)
+#### 2. Notion SDK interop (~30+ occurrences across 4 files)
 
 **Files:**
 
@@ -41,21 +33,13 @@ These files have file-level `eslint-disable` comments for `no-unsafe-*` rules.
 
 **Fix:** Create a type-safe Notion block accessor layer with exhaustive discriminated union handling. This is a large, standalone refactor — probably 2-3 days of work.
 
-#### 4. `json-cycle.ts` — borrowed third-party code
+#### 3. `json-cycle.ts` — borrowed third-party code
 
 **File:** `server/src/remote-service/connectors/library/notion/conversion/json-cycle.ts`
 
 Crockford's JSON cycle detection library, copied verbatim. Uses `any` throughout because it operates on arbitrary JSON-like values.
 
 **Fix:** Not worth rewriting. The `/* eslint-disable */` comment documents this.
-
-#### 5. YouTube connector factory — `ctx.connectorAccount as any`
-
-**File:** `server/src/remote-service/connectors/library/youtube/youtube-connector.ts:295`
-
-The `ConnectorFactoryContext.connectorAccount` is a slim `{ id, authType, extras }` type, but the `YouTubeConnector` constructor expects the full Prisma `ConnectorAccount`. The `as any` bridges this mismatch.
-
-**Fix:** Either change the YouTube constructor to accept the slim type, or widen `ConnectorFactoryContext.connectorAccount` to include the fields YouTube needs. Quick fix.
 
 ### Test code: ~80+ occurrences
 
@@ -73,7 +57,7 @@ Test files use `as any` extensively for partial mocks. The most common patterns:
 
 **Fix:** Replace `as any` with `as unknown as FooService` for type safety, or create test factories/builders that produce properly-typed partial objects. Low risk, but tedious. Good candidate for gradual cleanup.
 
-## Phase 4: Enable the ESLint rule
+## Phase 5: Enable the ESLint rule
 
 Once the remaining production code `any` usages are addressed (or have targeted `eslint-disable` comments), enable `@typescript-eslint/no-explicit-any` in `server/eslint.config.mjs`:
 
@@ -88,7 +72,19 @@ Once the remaining production code `any` usages are addressed (or have targeted 
 
 The client ESLint config (`eslint-config-next/typescript`) doesn't enable this rule either — consider adding it there too.
 
-## What we already fixed (Phases 1-3)
+## What we already fixed (Phases 1-4)
+
+### Phase 4
+
+- Bull worker dispatch: `Progress<any, any>` → `JobProgress` union type (defined in `union-types.ts`)
+- YouTube connector factory: `ctx.connectorAccount as any` → extracted `ConnectorAccountRef` type in `connector-registry.ts`, changed constructor to accept it directly
+- YouTube API client: 4x `catch (error: any)` → `catch (error: unknown)` with proper type narrowing
+- YouTube API client: `transcriptResponse.data as any` → `as Blob`
+- YouTube API client: removed 3 file-level eslint-disable comments (`no-unsafe-call`, `no-unsafe-assignment`, `no-unsafe-member-access`)
+- YouTube connector: removed file-level `no-unsafe-argument` eslint-disable, added type guard for `additionalChannelIds`
+- Notion-to-HTML transformer: `(block as any).audio` → `(block as Record<string, unknown>).audio as MediaValue`
+
+### Phases 1-3
 
 - Type guards: `any` → `unknown` with proper narrowing
 - `TestTransformerResponse`: `value: any` → `unknown`

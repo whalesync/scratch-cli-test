@@ -18,6 +18,7 @@ export type JobDefinition =
   | SyncDataFoldersJobDefinition;
 export type JobData = JobDefinition['data'];
 export type JobTypes = JobDefinition['type'];
+export type JobProgress = Progress<JobDefinition['publicProgress'], JobDefinition['initialJobProgress']>;
 export type BullMqJob<TDefinition extends JobDefinition = JobDefinition> = BullMQPlainJob<
   TDefinition['data'],
   TDefinition['result'],

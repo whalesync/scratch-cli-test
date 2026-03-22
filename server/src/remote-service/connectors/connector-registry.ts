@@ -5,12 +5,18 @@ import { RateLimiterSpec } from '../../rate-limiter/rate-limiter.types';
 import { DecryptedCredentials } from '../connector-account/types/encrypted-credentials.interface';
 import { AuthParser, Connector } from './connector';
 
+export interface ConnectorAccountRef {
+  id: string;
+  authType: string;
+  extras: Record<string, unknown> | null;
+}
+
 /**
  * Context passed to connector factory functions during instantiation.
  * Wraps NestJS-injected services as plain functions so connectors don't depend on DI.
  */
 export interface ConnectorFactoryContext {
-  connectorAccount: { id: string; authType: string; extras: Record<string, unknown> | null } | null;
+  connectorAccount: ConnectorAccountRef | null;
   decryptedCredentials: DecryptedCredentials | null;
   userId?: string;
   getOAuthAccessToken: (connectorAccountId: string) => Promise<string>;

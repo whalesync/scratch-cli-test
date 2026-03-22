@@ -107,9 +107,8 @@ function convertNotionBlockObjectToHtml(input: ConvertedNotionBlock): string {
       return handleMediaTypes('image', block.id, block.image as MediaValue);
     case 'video':
       return handleMediaTypes('video', block.id, block.video as MediaValue);
-    case 'audio': // audio not supported in block object response type? assuming similar structure
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      return handleMediaTypes('audio', block.id, (block as any).audio as MediaValue);
+    case 'audio': // audio type not in Notion SDK's BlockObjectResponse yet — same structure as image/video
+      return handleMediaTypes('audio', block.id, (block as Record<string, unknown>).audio as MediaValue);
     case 'embed':
       return `<iframe style="width:100%;min-height:400px;" src="${block.embed.url}"></iframe>`;
     case 'divider':

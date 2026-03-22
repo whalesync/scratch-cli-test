@@ -1,6 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { youtube, youtube_v3 } from '@googleapis/youtube';
 import { Readable } from 'stream';
 // import { SyncProblem, SyncProblemCode } from '../types/sync-problem';
@@ -166,23 +163,25 @@ export class YoutubeApiClient {
 
       // The response is a Blob, we need to convert it to string
       // Convert Blob to ArrayBuffer, then to Buffer, then to string
-      const blob = transcriptResponse.data as any; // Type assertion for Blob
+      const blob = transcriptResponse.data as Blob;
       const arrayBuffer = await blob.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       const transcript = buffer.toString('utf-8');
       return { text: transcript, id: captionId, captionListItems };
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle specific error cases
-      if (typeof error === 'object' && 'status' in error) {
-        if (error.status === 403) {
+      if (typeof error === 'object' && error !== null && 'status' in error) {
+        const statusError = error as { status: number; message?: string };
+        if (statusError.status === 403) {
           return { text: `Access denied for transcript of video ${videoId}`, id: null, captionListItems };
-        } else if (error.status === 404) {
+        } else if (statusError.status === 404) {
           return { text: `No captions found for video ${videoId}`, id: null, captionListItems };
         }
       }
 
+      const message = error instanceof Error ? error.message : 'Unknown error';
       return {
-        text: `Error fetching transcript for video ${videoId}: ${error?.message ?? 'Unknown error'}`,
+        text: `Error fetching transcript for video ${videoId}: ${message}`,
         id: null,
         captionListItems,
       };
@@ -242,21 +241,23 @@ export class YoutubeApiClient {
           body: transcriptStream,
         },
       });
-    } catch (error: any) {
-      if (typeof error === 'object' && 'status' in error) {
-        if (error.status === 403) {
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'status' in error) {
+        const statusError = error as { status: number; message?: string };
+        if (statusError.status === 403) {
           // Check if this is specifically about auto-generated captions
-          if (error.message?.includes('auto-generated') || error.message?.includes('ASR')) {
+          if (statusError.message?.includes('auto-generated') || statusError.message?.includes('ASR')) {
             throw new Error(`Cannot update auto-generated captions. Please upload a new caption track instead.`);
           }
           throw new Error(
             `Access denied for updating transcript ${transcriptId}. This may be an auto-generated caption that cannot be updated.`,
           );
-        } else if (error.status === 404) {
+        } else if (statusError.status === 404) {
           throw new Error(`Transcript ${transcriptId} not found`);
         }
       }
-      throw new Error(`Error updating transcript ${transcriptId}: ${error?.message ?? 'Unknown error'}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Error updating transcript ${transcriptId}: ${message}`);
     }
   }
 
@@ -291,15 +292,17 @@ export class YoutubeApiClient {
       }
 
       return response.data.id;
-    } catch (error: any) {
-      if (typeof error === 'object' && 'status' in error) {
-        if (error.status === 403) {
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'status' in error) {
+        const statusError = error as { status: number };
+        if (statusError.status === 403) {
           throw new Error(`Access denied for creating transcript for video ${videoId}`);
-        } else if (error.status === 404) {
+        } else if (statusError.status === 404) {
           throw new Error(`Video ${videoId} not found`);
         }
       }
-      throw new Error(`Error creating transcript for video ${videoId}: ${error?.message ?? 'Unknown error'}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Error creating transcript for video ${videoId}: ${message}`);
     }
   }
 
@@ -341,15 +344,17 @@ export class YoutubeApiClient {
           },
         },
       });
-    } catch (error: any) {
-      if (typeof error === 'object' && 'status' in error) {
-        if (error.status === 403) {
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'status' in error) {
+        const statusError = error as { status: number };
+        if (statusError.status === 403) {
           throw new Error(`Access denied for hiding transcript ${transcriptId}`);
-        } else if (error.status === 404) {
+        } else if (statusError.status === 404) {
           throw new Error(`Transcript ${transcriptId} not found`);
         }
       }
-      throw new Error(`Error hiding transcript ${transcriptId}: ${error?.message ?? 'Unknown error'}`);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Error hiding transcript ${transcriptId}: ${message}`);
     }
   }
 }

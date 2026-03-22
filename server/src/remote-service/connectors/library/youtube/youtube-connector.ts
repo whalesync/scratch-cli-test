@@ -1,13 +1,11 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-import { Service } from '../../service-constants';
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorAccount } from '@prisma/client';
 import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
-import { connectorRegistry } from '../../connector-registry';
+import { ConnectorAccountRef, connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
+import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { YoutubeApiClient } from './youtube-api-client';
 import { buildYouTubeJsonTableSpec } from './youtube-json-schema';
@@ -30,7 +28,7 @@ export class YouTubeConnector extends Connector {
 
   constructor(
     private readonly accessToken: string,
-    private readonly account: ConnectorAccount,
+    private readonly account: ConnectorAccountRef,
   ) {
     super();
     this.apiClient = new YoutubeApiClient(accessToken);
@@ -69,14 +67,10 @@ export class YouTubeConnector extends Connector {
 
     // Get additional channels from extras if they exist
     const additionalChannels: TablePreview[] = [];
-    const accountWithExtras = this.account as ConnectorAccount & { extras?: Record<string, unknown> };
-    if (
-      accountWithExtras.extras &&
-      typeof accountWithExtras.extras === 'object' &&
-      'additionalChannels' in accountWithExtras.extras
-    ) {
-      const additionalChannelIds = accountWithExtras.extras.additionalChannels;
-      if (Array.isArray(additionalChannelIds) && additionalChannelIds.length > 0) {
+    if (this.account.extras && 'additionalChannels' in this.account.extras) {
+      const rawChannelIds = this.account.extras.additionalChannels;
+      if (Array.isArray(rawChannelIds) && rawChannelIds.length > 0) {
+        const additionalChannelIds = rawChannelIds.filter((id): id is string => typeof id === 'string');
         try {
           // Fetch additional channels by their IDs
           const additionalChannelsResponse = await this.apiClient.getChannelsByIds(additionalChannelIds);
@@ -292,7 +286,7 @@ connectorRegistry.register({
     }
     if (ctx.connectorAccount.authType === 'OAUTH') {
       const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new YouTubeConnector(accessToken, ctx.connectorAccount as any);
+      return new YouTubeConnector(accessToken, ctx.connectorAccount);
     } else {
       throw new Error('YouTube only supports OAuth authentication');
     }
