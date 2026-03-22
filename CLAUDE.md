@@ -154,7 +154,6 @@ Redis pub/sub → WebSocket gateway → connected clients. Multiple server insta
 - React Strict Mode runs components twice in dev (affects debugging)
 - Feature flags: OpenFeature + PostHog — do NOT enable "Persist flag across authentication steps" (causes errors)
 - Connection credentials are encrypted with `ENCRYPTION_MASTER_KEY`
-- Test coverage is critically low (<1%) — see `TEST_COVERAGE.md` for priorities
 - Project management: [Linear](https://linear.app/whalesync/team/DEV)
 - When adding new data resources to a Workbook (database tables, git repos, files on disk, etc.), ensure they are cleaned up in `WorkbookService.delete` (`server/src/workbook/workbook.service.ts`). If the new table has a foreign key to Workbook with `onDelete: Cascade`, Prisma handles it automatically. Otherwise, add explicit deletion before the workbook record is deleted.
 
