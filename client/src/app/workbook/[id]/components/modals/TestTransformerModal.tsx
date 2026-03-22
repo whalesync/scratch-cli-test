@@ -1,11 +1,25 @@
 import { workbookApi } from '@/lib/api/workbook';
-import { Autocomplete, Badge, Button, Code, Group, Modal, Select, Stack, Text, Title } from '@mantine/core';
+import {
+  Autocomplete,
+  Badge,
+  Button,
+  Code,
+  type ComboboxLikeRenderOptionInput,
+  type ComboboxStringItem,
+  Group,
+  Modal,
+  Select,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import {
   FileRefEntity,
   TestTransformerResponse,
   TRANSFORMER_TYPES,
+  TransformerConfig,
   TransformerType,
   TransformerTypes,
   WorkbookId,
@@ -28,18 +42,19 @@ interface PathOption {
   type: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const renderAutocompleteOption = ({ option }: any) => (
-  <Group gap="sm" wrap="nowrap">
-    <Badge size="xs" variant="light" color="blue" w={70} style={{ flexShrink: 0 }}>
-      {option.type}
-    </Badge>
-    <Text size="sm">{option.value}</Text>
-  </Group>
-);
+const renderAutocompleteOption = ({ option }: ComboboxLikeRenderOptionInput<ComboboxStringItem>) => {
+  const item = option as ComboboxStringItem & { type?: string };
+  return (
+    <Group gap="sm" wrap="nowrap">
+      <Badge size="xs" variant="light" color="blue" w={70} style={{ flexShrink: 0 }}>
+        {item.type}
+      </Badge>
+      <Text size="sm">{item.value}</Text>
+    </Group>
+  );
+};
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function flattenKeys(obj: any, prefix = ''): PathOption[] {
+function flattenKeys(obj: Record<string, unknown>, prefix = ''): PathOption[] {
   const keys: PathOption[] = [];
   for (const key in obj) {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
@@ -54,16 +69,15 @@ function flattenKeys(obj: any, prefix = ''): PathOption[] {
           // For arrays, maybe add index 0 to show structure, or just the array itself
           // keys.push(...flattenKeys(obj[key], newKey));
           // Arrays index notation like [0]
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          value.forEach((item: any, index: number) => {
+          value.forEach((item: unknown, index: number) => {
             if (typeof item === 'object' && item !== null) {
-              keys.push(...flattenKeys(item, `${newKey}[${index}]`));
+              keys.push(...flattenKeys(item as Record<string, unknown>, `${newKey}[${index}]`));
             } else {
               keys.push({ value: `${newKey}[${index}]`, label: `${newKey}[${index}]`, type: typeof item });
             }
           });
         } else {
-          keys.push(...flattenKeys(value, newKey));
+          keys.push(...flattenKeys(value as Record<string, unknown>, newKey));
         }
       }
     }
@@ -109,7 +123,7 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
         .getRepoFile(workbookId, file.path)
         .then((res) => {
           try {
-            const json = JSON.parse(res.content);
+            const json = JSON.parse(res.content) as Record<string, unknown>;
             const flattened = flattenKeys(json);
             console.log('Flattened paths:', flattened); // Debug log
             setPaths(flattened);
@@ -149,8 +163,7 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
           type: values.transformerType,
           options: {}, // Default options for now
           // For complex transformers, we'd need more inputs here
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any,
+        } as unknown as TransformerConfig,
       });
       setResult(response);
     } catch (error) {

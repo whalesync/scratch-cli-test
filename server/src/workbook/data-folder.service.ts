@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import { ConnectorAccount } from '@prisma/client';
+import { ConnectorAccount, Prisma } from '@prisma/client';
 import {
   ConnectorPullOptions,
   createDataFolderId,
@@ -277,7 +277,7 @@ export class DataFolderService {
             ...(filter ? { filter } : {}),
             ...(idFieldOverride ? { idFieldOverride } : {}),
             ...(nameFieldOverride ? { nameFieldOverride } : {}),
-          } as Record<string, any>,
+          } as Prisma.InputJsonValue,
         },
         include: DataFolderCluster._validator.include,
       });
@@ -384,7 +384,7 @@ export class DataFolderService {
           path: folderPath,
           lastSchemaRefreshAt: new Date(),
           version: 1,
-          options: { ...(dto.options ?? {}), ...(filter ? { filter } : {}) } as Record<string, any>,
+          options: { ...(dto.options ?? {}), ...(filter ? { filter } : {}) } as Prisma.InputJsonValue,
         },
         include: DataFolderCluster._validator.include,
       });
@@ -642,7 +642,7 @@ export class DataFolderService {
     const updatedDataFolder = await this.db.client.dataFolder.update({
       where: { id },
       data: {
-        options: mergedOptions as Record<string, any>,
+        options: mergedOptions as Prisma.InputJsonValue,
       },
       include: DataFolderCluster._validator.include,
     });

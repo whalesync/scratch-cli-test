@@ -227,7 +227,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         runId: dbJob.runId ?? undefined,
         data: jobData,
         checkpoint,
-        progress: job.progress as Progress<any>,
+        progress: job.progress as Progress<any, any>,
         abortSignal: abortController.signal,
       });
 

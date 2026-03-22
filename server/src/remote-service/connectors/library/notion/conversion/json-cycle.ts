@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* eslint-disable -- Borrowed third-party JSON cycle detection code (Crockford's cycle.js) */
 // Borrowed from:
 // https://github.com/douglascrockford/JSON-js/blob/8e8b0407e475e35942f7e9461dab81929fcc7321/cycle.js#L1
 

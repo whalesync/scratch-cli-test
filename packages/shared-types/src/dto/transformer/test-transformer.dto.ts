@@ -21,7 +21,7 @@ export class TestTransformerDto {
 
 export interface TestTransformerResponse {
   success: boolean;
-  value: any;
+  value: unknown;
   error?: string;
-  originalValue?: any;
+  originalValue?: unknown;
 }

@@ -31,6 +31,8 @@ import {
   Text,
   Tooltip,
   useMantineColorScheme,
+  type ComboboxLikeRenderOptionInput,
+  type ComboboxStringItem,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type {
@@ -174,16 +176,16 @@ const syncMappingToFolderPairs = (mapping: SyncMapping, allFolders: DataFolder[]
   });
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const isSyncMapping = (obj: any): obj is SyncMapping => {
+const isSyncMapping = (obj: unknown): obj is SyncMapping => {
   if (!obj || typeof obj !== 'object') return false;
-  if (obj.version !== 1) return false;
-  if (!Array.isArray(obj.tableMappings)) return false;
-  for (const tm of obj.tableMappings) {
+  const record = obj as Record<string, unknown>;
+  if (record.version !== 1) return false;
+  if (!Array.isArray(record.tableMappings)) return false;
+  for (const tm of record.tableMappings as Record<string, unknown>[]) {
     if (typeof tm.sourceDataFolderId !== 'string') return false;
     if (typeof tm.destinationDataFolderId !== 'string') return false;
     if (!Array.isArray(tm.columnMappings)) return false;
-    for (const cm of tm.columnMappings) {
+    for (const cm of tm.columnMappings as Record<string, unknown>[]) {
       if (typeof cm.sourceColumnId !== 'string') return false;
       if (typeof cm.destinationColumnId !== 'string') return false;
     }
@@ -191,15 +193,17 @@ const isSyncMapping = (obj: any): obj is SyncMapping => {
   return true;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const renderAutocompleteOption = ({ option }: any) => (
-  <Group gap="sm" wrap="nowrap">
-    <Badge size="xs" variant="light" color="blue" w={70} style={{ flexShrink: 0 }}>
-      {option.type}
-    </Badge>
-    <Text size="sm">{option.displayLabel ? `${option.displayLabel} (${option.value})` : option.value}</Text>
-  </Group>
-);
+const renderAutocompleteOption = ({ option }: ComboboxLikeRenderOptionInput<ComboboxStringItem>) => {
+  const item = option as ComboboxStringItem & { type?: string; displayLabel?: string };
+  return (
+    <Group gap="sm" wrap="nowrap">
+      <Badge size="xs" variant="light" color="blue" w={70} style={{ flexShrink: 0 }}>
+        {item.type}
+      </Badge>
+      <Text size="sm">{item.displayLabel ? `${item.displayLabel} (${item.value})` : item.value}</Text>
+    </Group>
+  );
+};
 
 const LINE_HEIGHT = 18;
 const MAX_COLLAPSED_LINES = 3;

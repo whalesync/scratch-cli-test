@@ -183,8 +183,7 @@ export class WebflowConnector extends Connector {
 
     if (type === 'object') {
       // For Image/File objects
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if ((schema as any).properties?.url) {
+      if ('properties' in schema && (schema as TObject).properties?.url) {
         return { url: '', alt: '' };
       }
       return {};

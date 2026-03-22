@@ -13,7 +13,7 @@ import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
-import { MAIN_BRANCH, RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
@@ -480,11 +480,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       // This ensures deleted items don't keep showing up in future diffs
       const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
       try {
-        const mainFiles = (await this.scratchGitService.listRepoFiles(
-          repoId,
-          MAIN_BRANCH,
-          folderPath,
-        )) as RepoFileRef[];
+        const mainFiles = await this.scratchGitService.listRepoFiles(repoId, MAIN_BRANCH, folderPath);
         const downloadedFilePaths = gitFiles.map((f) => f.path);
         const filesToDelete = mainFiles
           .filter((f) => !f.name.startsWith('.')) // Exclude dotfiles (e.g. .schema.json) from deletion

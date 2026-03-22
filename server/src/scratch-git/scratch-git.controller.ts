@@ -13,7 +13,7 @@ import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { getConfigRepoId } from 'src/workbook/workbook-config.service';
 import { MigrationService, StripPrefixConnectionResult } from './migration.service';
-import { GitIndexDump, ScratchGitNotFoundError } from './scratch-git.client';
+import { GitIndexDump, RepoFileRef, ScratchGitNotFoundError } from './scratch-git.client';
 import { ScratchGitService } from './scratch-git.service';
 
 @Controller('scratch-git')
@@ -51,7 +51,7 @@ export class ScratchGitController {
     @Query('connectorAccountId') connectorAccountId: string | undefined,
     @Query('useConfigRepo') useConfigRepo: string | undefined,
     @Req() req: RequestWithUser,
-  ): Promise<any[]> {
+  ): Promise<RepoFileRef[]> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
     const repoId =

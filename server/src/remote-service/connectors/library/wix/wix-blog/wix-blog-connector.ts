@@ -18,6 +18,19 @@ import { WixToHtmlConverter } from '../rich-content/ricos-to-html';
 import { buildWixBlogJsonTableSpec } from './wix-blog-json-schema';
 import { WixBlogSchemaParser } from './wix-blog-schema-parser';
 
+/** Shape of error objects returned by the Wix SDK/API */
+interface WixErrorData {
+  message?: string;
+  details?: string | { applicationError?: { description?: string; code?: string } };
+}
+
+interface WixErrorShape {
+  response?: { status?: number; data?: WixErrorData };
+  data?: WixErrorData;
+  status?: number;
+  statusCode?: number;
+}
+
 export const WIX_DEFAULT_BATCH_SIZE = 100; // Wix API supports up to 100
 
 export class WixBlogConnector extends Connector {
@@ -228,42 +241,26 @@ export class WixBlogConnector extends Connector {
     let userFriendlyMessage = this.fallbackErrorDetails(error).userFriendlyMessage;
     let description = error instanceof Error ? error.message : String(error);
     let statusCode: number | undefined;
-    // TODO: we can probably do much better than this.
     // Handle SDK/Fetch errors
     if (error && typeof error === 'object') {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const err = error as any;
+      const err = error as WixErrorShape;
 
       // Check if it's a Response object or has response info
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (err.response) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         statusCode = err.response.status;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         const errorData = err.response.data || err.data;
 
         if (errorData) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           if (errorData.message) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
             userFriendlyMessage = errorData.message;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
             description = errorData.message;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           } else if (errorData.details) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
             if (typeof errorData.details === 'string') {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
               userFriendlyMessage = errorData.details;
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
               description = errorData.details;
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
             } else if (errorData.details.applicationError) {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
               userFriendlyMessage =
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-                errorData.details.applicationError.description || errorData.details.applicationError.code;
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+                errorData.details.applicationError.description ?? errorData.details.applicationError.code ?? '';
               description = JSON.stringify(errorData.details.applicationError);
             }
           }
@@ -271,9 +268,7 @@ export class WixBlogConnector extends Connector {
       }
 
       // Handle status code from error object
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (err.status || err.statusCode) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         statusCode = err.status || err.statusCode;
       }
 

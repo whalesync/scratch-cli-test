@@ -49,10 +49,7 @@ export class ErrorMessageTemplates {
 }
 
 /** Utility function to throw a standardised exception for a connector error. */
-export function exceptionForConnectorError(
-  error: unknown,
-  connector: Connector<string, any>,
-): InternalServerErrorException {
+export function exceptionForConnectorError(error: unknown, connector: Connector): InternalServerErrorException {
   const details = connector.extractConnectorErrorDetails(error);
   return new InternalServerErrorException(details.userFriendlyMessage, {
     cause: error as Error,

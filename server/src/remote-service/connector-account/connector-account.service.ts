@@ -5,7 +5,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { AuthType, ConnectorAccount } from '@prisma/client';
+import { AuthType, ConnectorAccount, Prisma } from '@prisma/client';
 import type { Service } from '@spinner/shared-types';
 import {
   ConnectorAccountId,
@@ -115,7 +115,7 @@ export class ConnectorAccountService {
         displayName: createDto.displayName ?? `${_.startCase(createDto.service.toLowerCase())}`,
         authType: createDto.authType || AuthType.USER_PROVIDED_PARAMS,
         repoPath,
-        encryptedCredentials: encryptedCredentials as Record<string, any>,
+        encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue,
         modifier: createDto.modifier,
         extras,
       },
@@ -258,7 +258,7 @@ export class ConnectorAccountService {
       where: { id, workbookId },
       data: {
         displayName: updateDto.displayName,
-        encryptedCredentials: encryptedCredentials as Record<string, any>,
+        encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue,
         modifier: updateDto.modifier,
         extras,
         healthStatus: null,
@@ -452,7 +452,7 @@ export class ConnectorAccountService {
   async listTables(connectorAccountId: string, actor: Actor): Promise<TableList> {
     const account = await this.findOneById(connectorAccountId, actor);
 
-    let connector: Connector<string, any>;
+    let connector: Connector;
     try {
       connector = await this.connectorsService.getConnector({
         service: account.service,
@@ -485,7 +485,7 @@ export class ConnectorAccountService {
   async searchTables(connectorAccountId: string, searchTerm: string, actor: Actor): Promise<TableSearchResult> {
     const account = await this.findOneById(connectorAccountId, actor);
 
-    let connector: Connector<string, any>;
+    let connector: Connector;
     try {
       connector = await this.connectorsService.getConnector({
         service: account.service,
@@ -522,7 +522,7 @@ export class ConnectorAccountService {
   ): Promise<TableSchemaPreview> {
     const account = await this.findOne(workbookId, connectorAccountId, actor);
 
-    let connector: Connector<string, any>;
+    let connector: Connector;
     try {
       connector = await this.connectorsService.getConnector({
         service: account.service,

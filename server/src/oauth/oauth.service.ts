@@ -637,7 +637,7 @@ export class OAuthService {
       const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
       await this.db.client.connectorAccount.update({
         where: { id: connectorAccountId },
-        data: { encryptedCredentials: encryptedCredentials as Record<string, any> },
+        data: { encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue },
       });
 
       WSLogger.info({

@@ -8,7 +8,7 @@ export class AuditLogEventEntity {
   eventType: string;
   message: string;
   entityId: string;
-  context: Record<string, any>;
+  context: JsonObject;
   createdAt: Date;
 
   constructor(auditLogEvent: AuditLogEvent) {

@@ -74,12 +74,12 @@ export class EncryptionService {
     }
   }
 
-  async encryptObject(obj: Record<string, any>): Promise<EncryptedData> {
+  async encryptObject(obj: object): Promise<EncryptedData> {
     const jsonString = JSON.stringify(obj);
     return this.encrypt(jsonString);
   }
 
-  async decryptObject<T = Record<string, any>>(encryptedData: EncryptedData): Promise<T> {
+  async decryptObject<T = Record<string, unknown>>(encryptedData: EncryptedData): Promise<T> {
     const decryptedString = await this.decrypt(encryptedData);
     if (!decryptedString) {
       return {} as T;

@@ -653,7 +653,7 @@ export class PublishPlanBuildService {
     };
   }
 
-  private async resolveConnector(connectorAccountId: string): Promise<Connector<string, any>> {
+  private async resolveConnector(connectorAccountId: string): Promise<Connector> {
     const account = await this.db.client.connectorAccount.findUnique({
       where: { id: connectorAccountId },
     });

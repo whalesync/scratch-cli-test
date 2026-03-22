@@ -103,7 +103,7 @@ export class ScratchGitService {
     return this.scratchGitClient.commitFiles(repoId, branch, files, message);
   }
 
-  async listRepoFiles(repoId: string, branch: string, folder: string): Promise<any[]> {
+  async listRepoFiles(repoId: string, branch: string, folder: string): Promise<RepoFileRef[]> {
     return this.scratchGitClient.list(repoId, branch, folder);
   }
 

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AuditLogEvent } from '@prisma/client';
+import { AuditLogEvent, Prisma } from '@prisma/client';
 import { AnyId, createAuditLogEventId } from '@spinner/shared-types';
 import { Actor } from 'src/users/types';
 import { DbService } from '../db/db.service';
@@ -14,7 +14,7 @@ export class AuditLogService {
     eventType: AuditLogEventType;
     message: string;
     entityId: AnyId;
-    context?: Record<string, any>;
+    context?: Prisma.InputJsonObject;
     organizationId?: string;
   }): Promise<AuditLogEvent> {
     // write the event to the database
