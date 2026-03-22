@@ -83,6 +83,7 @@ impl Phase {
     }
 }
 
+#[allow(dead_code)]
 struct PlanEntry {
     rel_path: String,
     phase: Phase,
@@ -91,6 +92,7 @@ struct PlanEntry {
 }
 
 /// A foreign-key field path extracted from a schema.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FkPath {
     /// Path segments in the record content, e.g. ["fields", "authors"] or ["items", "[]", "ref"].

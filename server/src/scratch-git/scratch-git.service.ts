@@ -84,6 +84,11 @@ export class ScratchGitService {
     return this.scratchGitClient.dumpIndex(repoId);
   }
 
+  async lookupByRemoteIds(repoId: string, folder: string, remoteIds: string[]): Promise<Map<string, string>> {
+    const result = await this.scratchGitClient.lookupByRemoteIds(repoId, folder, remoteIds);
+    return new Map(Object.entries(result));
+  }
+
   async commitFilesToBranch(
     repoId: string,
     branch: string,

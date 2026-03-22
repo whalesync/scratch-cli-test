@@ -293,7 +293,7 @@ export class FilesService {
           workbookId,
           tableId: { has: fk.targetRemoteTableId },
         },
-        select: { path: true },
+        select: { path: true, connectorAccountId: true },
       });
 
       if (!targetFolder?.path) {
@@ -324,14 +324,13 @@ export class FilesService {
         remoteIds.length = 500;
       }
 
-      // FileIndex uses folderPath without leading slash
-      const targetFolderPathForIndex = targetFolder.path.replace(/^\//, '');
-
-      const filenameMap = await this.fileIndexService.getFilenamesByRecordIds(
+      // Resolve via SQLite index in the Rust git service (no PostgreSQL FileIndex needed)
+      const targetFolderForIndex = targetFolder.path.replace(/^\//, '');
+      const targetRepoId = await this.scratchGitService.resolveRepoId(
         workbookId,
-        targetFolderPathForIndex,
-        remoteIds,
+        targetFolder.connectorAccountId ?? undefined,
       );
+      const filenameMap = await this.scratchGitService.lookupByRemoteIds(targetRepoId, targetFolderForIndex, remoteIds);
 
       // Build the field key from the FK path (e.g., ["fieldData", "sectors"] -> "sectors")
       const fieldKey = fk.path.filter((p) => p !== '[]').join('.');

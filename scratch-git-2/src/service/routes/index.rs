@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use axum::response::Response;
+use axum::Json;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::service::envelope::{envelope_error, envelope_result};
@@ -162,6 +164,40 @@ pub async fn dump_index(State(state): State<AppState>, Path(id): Path<String>) -
                 "files": files_json,
                 "references": refs_json,
             }))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LookupRequest {
+    pub folder: String,
+    pub remote_ids: Vec<String>,
+}
+
+/// Resolve a batch of remote IDs to filenames using the SQLite index.
+///
+/// POST body: `{ "folder": "contacts", "remote_ids": ["rec123", "rec456"] }`
+/// Response:  `{ "rec123": "alice.json", "rec456": "bob.json" }`
+pub async fn lookup_index(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LookupRequest>,
+) -> Response {
+    let result = tokio::task::spawn_blocking({
+        let db_path = state.index_db_path(&id);
+        let id = id.clone();
+        move || {
+            let map = idx::lookup_by_remote_ids(&db_path, &body.folder, &body.remote_ids)
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            let json_map: serde_json::Map<String, Value> =
+                map.into_iter().map(|(k, v)| (k, Value::String(v))).collect();
+            Ok::<_, AppError>(Value::Object(json_map))
         }
     })
     .await;

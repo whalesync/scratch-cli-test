@@ -426,6 +426,66 @@ pub fn remove_single_file(db_path: &Path, folder: &str, filename: &str) -> anyho
     Ok(())
 }
 
+// ── Lookups ───────────────────────────────────────────────────────────────────
+
+/// Resolve a batch of remote IDs in a given folder to their filenames.
+///
+/// Returns a map of `remote_id → filename` for IDs that exist in the index.
+/// Missing IDs are silently omitted.
+pub fn lookup_by_remote_ids(
+    db_path: &Path,
+    folder: &str,
+    remote_ids: &[String],
+) -> anyhow::Result<HashMap<String, String>> {
+    if remote_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    if !db_path.exists() {
+        return Ok(HashMap::new());
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+
+    // Build parameterized IN clause: (?2, ?3, ...)
+    let placeholders: String = remote_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT remote_id, filename FROM file_index WHERE folder = ?1 AND remote_id IN ({placeholders})"
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| anyhow::anyhow!("prepare failed: {e}"))?;
+
+    // Build params: folder first, then each remote_id
+    use rusqlite::types::ToSql;
+    let folder_val: &dyn ToSql = &folder;
+    let id_vals: Vec<Box<dyn ToSql>> =
+        remote_ids.iter().map(|s| Box::new(s.clone()) as Box<dyn ToSql>).collect();
+    let mut all_params: Vec<&dyn ToSql> = vec![folder_val];
+    for v in &id_vals {
+        all_params.push(v.as_ref());
+    }
+
+    let mut map = HashMap::new();
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(all_params.iter().copied()), |row| {
+            let remote_id: String = row.get(0)?;
+            let filename: String = row.get(1)?;
+            Ok((remote_id, filename))
+        })
+        .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
+
+    for row in rows {
+        let (remote_id, filename) = row.map_err(|e| anyhow::anyhow!("{e}"))?;
+        map.insert(remote_id, filename);
+    }
+
+    Ok(map)
+}
+
 // ── Index dump ────────────────────────────────────────────────────────────────
 
 pub struct IndexRow {

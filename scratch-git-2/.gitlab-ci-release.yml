@@ -6,6 +6,7 @@
     GIT_DEPTH: 0
   dependencies: []
   before_script:
+    - apt-get update -qq && apt-get install -y zip
     # Install zig from official release (Debian package is too old for cargo-zigbuild)
     - export ZIG_VERSION="0.13.0"
     - curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
@@ -52,6 +53,8 @@ release-rust-cli-major:
     GIT_DEPTH: 0
   dependencies: []
   before_script:
+    - apt-get update -qq && apt-get install -y zip
+    # Install zig from official release (Debian package is too old for cargo-zigbuild)
     - export ZIG_VERSION="0.13.0"
     - curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
     - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"

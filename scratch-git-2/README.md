@@ -24,6 +24,29 @@ The service consists of two HTTP servers running within a single Rust binary:
   - Proxies requests to the standard `git http-backend` binary.
   - Fully compatible with the standard `git` CLI.
 
+## CLI Binary (`scratchmd`)
+
+This crate also builds the `scratchmd` CLI — the end-user tool for interacting with Scratch from the command line. See [PARITY.md](PARITY.md) for a full feature listing.
+
+### Build locally
+
+```bash
+cd scratch-git-2
+cargo build --release --bin scratchmd
+./target/release/scratchmd --help
+```
+
+By default the CLI points at `http://localhost:3010`. To build against the production or test server:
+
+```bash
+SCRATCH_DEFAULT_URL=https://api.scratch.md cargo build --release --bin scratchmd
+SCRATCH_DEFAULT_URL=https://test-api.scratch.md cargo build --release --bin scratchmd
+```
+
+The compiled URL is baked in at build time. You can always override it at runtime with `--scratch-url <url>` or via `scratchmd.config.yaml`.
+
+---
+
 ## Setup
 
 ### Prerequisites

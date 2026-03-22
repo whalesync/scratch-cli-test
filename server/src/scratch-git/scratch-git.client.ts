@@ -387,6 +387,13 @@ export class ScratchGitClient {
   async dumpIndex(repoId: string): Promise<GitIndexDump> {
     return this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/dump`, 'GET') as Promise<GitIndexDump>;
   }
+
+  async lookupByRemoteIds(repoId: string, folder: string, remoteIds: string[]): Promise<Record<string, string>> {
+    return this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/lookup`, 'POST', {
+      folder,
+      remote_ids: remoteIds,
+    }) as Promise<Record<string, string>>;
+  }
 }
 
 export interface StripPrefixResult {

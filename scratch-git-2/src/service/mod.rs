@@ -190,6 +190,10 @@ pub async fn run() {
             "/api/repo/index/{id}/dump",
             get(routes::index::dump_index),
         )
+        .route(
+            "/api/repo/index/{id}/lookup",
+            post(routes::index::lookup_index),
+        )
         // Debug
         .route(
             "/api/repo/debug/{id}/graph",
