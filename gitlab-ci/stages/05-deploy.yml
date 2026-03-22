@@ -52,6 +52,22 @@ deploy cron service to Cloud Run test environment:
       allow_failure: true
     - !reference [.rules, on_merge_to_master]
 
+deploy worker service to Cloud Run test environment:
+  stage: deploy
+  extends:
+    - .gcp_eu_test_env # sets before_script and variables
+  script:
+    - IMAGE_URL=${GCP_REGISTRY_URL}/spinner-server:$CI_COMMIT_SHORT_SHA
+    - gcloud run services update worker-service --image="${IMAGE_URL}"
+    - gcloud run services update-traffic worker-service --to-latest
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - gitlab-ci/stages/05-deploy.yml
+      when: manual
+      allow_failure: true
+    - !reference [.rules, on_merge_to_master]
+
 deploy scratch-git to test environment:
   stage: deploy
   extends:
@@ -140,6 +156,17 @@ deploy cron service to Cloud Run production environment:
     - IMAGE_URL=${GCP_REGISTRY_URL}/spinner-server:$CI_COMMIT_SHORT_SHA
     - gcloud run services update cron-service --image="${IMAGE_URL}"
     - gcloud run services update-traffic cron-service --to-latest
+  rules:
+    - !reference [.rules, on_merge_to_prod]
+
+deploy worker service to Cloud Run production environment:
+  stage: deploy
+  extends:
+    - .gcp_eu_production_env # sets before_script and variables
+  script:
+    - IMAGE_URL=${GCP_REGISTRY_URL}/spinner-server:$CI_COMMIT_SHORT_SHA
+    - gcloud run services update worker-service --image="${IMAGE_URL}"
+    - gcloud run services update-traffic worker-service --to-latest
   rules:
     - !reference [.rules, on_merge_to_prod]
 

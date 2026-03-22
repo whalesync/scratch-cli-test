@@ -38,7 +38,9 @@ module "eu_test" {
   maintenance_mode_enabled       = var.maintenance_mode_enabled
   api_service_min_instance_count = 2
   api_service_max_instance_count = 2
-  worker_concurrency             = 10
+  worker_service_min_instance_count = 2
+  worker_service_max_instance_count = 2
+  worker_concurrency                = 10
   
   # Static Assets
   enable_static_assets_lb = true

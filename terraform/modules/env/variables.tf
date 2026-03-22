@@ -257,6 +257,36 @@ variable "cron_service_node_options" {
   description = "Node.js options for the cron service (e.g., '--max-old-space-size=512')."
 }
 
+variable "worker_service_min_instance_count" {
+  type        = number
+  default     = 1
+  description = "Minimum number of instances for the worker service."
+}
+
+variable "worker_service_max_instance_count" {
+  type        = number
+  default     = 1
+  description = "Maximum number of instances for the worker service."
+}
+
+variable "worker_service_cpu_limit" {
+  type        = string
+  default     = "1"
+  description = "CPU limit for the worker service (e.g., '1', '2', '4')."
+}
+
+variable "worker_service_memory_limit" {
+  type        = string
+  default     = "2Gi"
+  description = "Memory limit for the worker service (e.g., '512Mi', '1Gi', '2Gi')."
+}
+
+variable "worker_service_node_options" {
+  type        = string
+  default     = ""
+  description = "Node.js options for the worker service (e.g., '--max-old-space-size=512')."
+}
+
 variable "worker_concurrency" {
   type        = number
   default     = 5

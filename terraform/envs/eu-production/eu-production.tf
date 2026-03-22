@@ -36,9 +36,11 @@ module "eu_production" {
   # Services
   force_reload_services          = var.force_reload_services
   maintenance_mode_enabled       = var.maintenance_mode_enabled
-  api_service_min_instance_count = 4
-  api_service_max_instance_count = 4
-  worker_concurrency             = 10
+  api_service_min_instance_count = 2
+  api_service_max_instance_count = 2
+  worker_service_min_instance_count = 2
+  worker_service_max_instance_count = 2
+  worker_concurrency                = 10
 
   # Static Assets
   enable_static_assets_lb = true
