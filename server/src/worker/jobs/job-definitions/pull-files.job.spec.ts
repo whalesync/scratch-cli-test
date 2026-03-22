@@ -1,8 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { PrismaClient } from '@prisma/client';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { AssetExtractorService } from 'src/asset/asset-extractor.service';
+import { AssetIndexService } from 'src/asset/asset-index.service';
+import { PostHogService } from 'src/posthog/posthog.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
@@ -16,15 +18,16 @@ describe('PullFilesJobHandler', () => {
   let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
   let mockWorkbookEventService: jest.Mocked<WorkbookEventService>;
   let mockScratchGitService: jest.Mocked<ScratchGitService>;
-  let mockFileIndexService: jest.Mocked<any>;
-  let mockFileReferenceService: jest.Mocked<any>;
-  let mockAssetExtractorService: jest.Mocked<any>;
-  let mockAssetIndexService: jest.Mocked<any>;
+  let mockFileIndexService: jest.Mocked<FileIndexService>;
+  let mockFileReferenceService: jest.Mocked<FileReferenceService>;
+  let mockAssetExtractorService: jest.Mocked<AssetExtractorService>;
+  let mockAssetIndexService: jest.Mocked<AssetIndexService>;
+  let mockPostHogService: jest.Mocked<PostHogService>;
 
   const WORKBOOK_ID = 'wkb_123' as WorkbookId;
   const DATA_FOLDER_ID = 'dfld_123' as DataFolderId;
 
-  const createMockDataFolder = (overrides?: any) => ({
+  const createMockDataFolder = (overrides?: Partial<Record<string, unknown>>) => ({
     id: DATA_FOLDER_ID,
     workbookId: WORKBOOK_ID,
     name: 'Test Folder',
@@ -35,7 +38,7 @@ describe('PullFilesJobHandler', () => {
     ...overrides,
   });
 
-  const createMockParams = (overrides?: any) => ({
+  const createMockParams = (overrides?: Partial<Record<string, unknown>>) => ({
     jobId: 'test-job-id',
     data: {
       workbookId: WORKBOOK_ID,
@@ -83,19 +86,23 @@ describe('PullFilesJobHandler', () => {
       getRecordIds: jest.fn(),
       getFilenamesByRecordIds: jest.fn(),
       upsertBatch: jest.fn(),
-    } as any;
+    } as unknown as jest.Mocked<FileIndexService>;
 
     mockFileReferenceService = {
       updateRefsForFiles: jest.fn(),
-    } as any;
+    } as unknown as jest.Mocked<FileReferenceService>;
 
     mockAssetExtractorService = {
       extractAssets: jest.fn(),
-    } as any;
+    } as unknown as jest.Mocked<AssetExtractorService>;
 
     mockAssetIndexService = {
       upsertBatch: jest.fn(),
-    } as any;
+    } as unknown as jest.Mocked<AssetIndexService>;
+
+    mockPostHogService = {
+      trackPullCompleted: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
 
     handler = new PullFilesJobHandler(
       mockPrisma,
@@ -107,6 +114,7 @@ describe('PullFilesJobHandler', () => {
       mockFileReferenceService,
       mockAssetExtractorService,
       mockAssetIndexService,
+      mockPostHogService,
     );
   });
 

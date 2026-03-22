@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import { TSchema } from '@sinclair/typebox';
 import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
 import { PipedriveConnector } from '../pipedrive-connector';
@@ -61,7 +61,7 @@ function buildTableSpec(entityType: string): BaseJsonTableSpec {
     id: { wsId: entityType, remoteId: [entityType] },
     slug: entityType,
     name: entityType,
-    schema: {} as any,
+    schema: {} as unknown as TSchema,
     idColumnRemoteId: 'id',
   };
 }

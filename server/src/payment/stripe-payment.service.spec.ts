@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/unbound-method */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() returns any */
+/* eslint-disable @typescript-eslint/no-unsafe-call -- deeply nested Prisma mock methods */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- deeply nested Prisma mock methods */
 import { ScratchPlanType } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -45,7 +44,7 @@ const mockDbService = {
       create: jest.fn(),
     },
   },
-} as unknown as DbService;
+} as unknown as jest.Mocked<DbService>;
 
 const mockPostHogService = {
   trackTrialStarted: jest.fn(),
@@ -63,7 +62,19 @@ const mockAuditLogService = {
 
 // Helper to create mock user
 
-function createMockUser(overrides?: Partial<any>): any {
+interface MockUser {
+  id: string;
+  email: string | null;
+  name: string | null;
+  clerkId: string;
+  stripeCustomerId: string | null;
+  organizationId: string | null;
+  apiTokens: unknown[];
+  organization: { id: string; subscriptions: unknown[] } | null;
+  [key: string]: unknown;
+}
+
+function createMockUser(overrides?: Partial<MockUser>): MockUser {
   return {
     id: 'usr_test123',
     email: 'test@example.com',
@@ -105,8 +116,7 @@ describe('StripePaymentService', () => {
     );
 
     // Access private stripe instance for mocking
-
-    mockStripeInstance = (service as any).stripe as jest.Mocked<Stripe>;
+    mockStripeInstance = (service as unknown as Record<string, unknown>).stripe as jest.Mocked<Stripe>;
   });
 
   afterEach(() => {
@@ -209,10 +219,10 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       mockStripeInstance.subscriptions.create = jest.fn().mockResolvedValue(mockSubscription);
-      mockDbService.client.subscription.upsert.mockResolvedValue({});
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({});
 
       const result = await service.createTrialSubscription(user, ScratchPlanType.PRO_PLAN);
 
@@ -251,12 +261,12 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       mockStripeInstance.customers.create = jest.fn().mockResolvedValue(mockCustomer);
       mockStripeInstance.subscriptions.create = jest.fn().mockResolvedValue(mockSubscription);
-      mockDbService.client.user.update.mockResolvedValue({});
-      mockDbService.client.subscription.upsert.mockResolvedValue({});
+      (mockDbService.client.user.update as jest.Mock).mockResolvedValue({});
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({});
 
       const result = await service.createTrialSubscription(user, ScratchPlanType.PRO_PLAN);
 
@@ -456,7 +466,7 @@ describe('StripePaymentService', () => {
         organization: { id: 'org_123', subscriptions: [] },
       });
 
-      const mockSession = { id: 'cs_nourl', url: null } as any;
+      const mockSession = { id: 'cs_nourl', url: null } as unknown as Stripe.Checkout.Session;
 
       mockStripeInstance.checkout.sessions.create = jest.fn().mockResolvedValue(mockSession);
 
@@ -579,14 +589,16 @@ describe('StripePaymentService', () => {
                 },
               ],
             },
-          } as any,
+          } as unknown as Stripe.Subscription,
         },
       } as Stripe.Event;
 
       mockStripeInstance.webhooks.constructEvent = jest.fn().mockReturnValue(mockEvent);
       mockStripeInstance.subscriptions.retrieve = jest.fn().mockResolvedValue(mockEvent.data.object);
-      mockDbService.client.user.findFirst.mockResolvedValue(createMockUser({ stripeCustomerId: 'cus_webhook123' }));
-      mockDbService.client.subscription.upsert.mockResolvedValue({});
+      (mockDbService.client.user.findFirst as jest.Mock).mockResolvedValue(
+        createMockUser({ stripeCustomerId: 'cus_webhook123' }),
+      );
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({});
 
       const result = await service.handleWebhookCallback(requestBody, signatureHeader);
 
@@ -661,12 +673,12 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any);
+      } as unknown as Stripe.Subscription);
       // Need to mock findFirst multiple times - for isKnownStripeCustomerId and getUserFromStripeCustomerId
-      mockDbService.client.user.findFirst
+      (mockDbService.client.user.findFirst as jest.Mock)
         .mockResolvedValueOnce(createMockUser({ stripeCustomerId: 'cus_checkout123' }))
         .mockResolvedValueOnce(createMockUser({ stripeCustomerId: 'cus_checkout123' }));
-      mockDbService.client.subscription.upsert.mockResolvedValue({});
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({});
 
       const result = await service.handleWebhookCallback(requestBody, signatureHeader);
 
@@ -714,14 +726,14 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any);
+      } as unknown as Stripe.Subscription);
       // Need to mock findFirst multiple times - for isKnownStripeCustomerId, getUserFromStripeCustomerId (in upsertSubscription), and getUserFromStripeCustomerId (in handleInvoicePaid)
-      mockDbService.client.user.findFirst
+      (mockDbService.client.user.findFirst as jest.Mock)
         .mockResolvedValueOnce(createMockUser({ stripeCustomerId: 'cus_paid123', organizationId: 'org_paid' }))
         .mockResolvedValueOnce(createMockUser({ stripeCustomerId: 'cus_paid123', organizationId: 'org_paid' }))
         .mockResolvedValueOnce(createMockUser({ stripeCustomerId: 'cus_paid123', organizationId: 'org_paid' }));
-      mockDbService.client.subscription.upsert.mockResolvedValue({});
-      mockDbService.client.invoiceResult.create.mockResolvedValue({});
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({});
+      (mockDbService.client.invoiceResult.create as jest.Mock).mockResolvedValue({});
 
       const result = await service.handleWebhookCallback(requestBody, signatureHeader);
 
@@ -763,7 +775,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any);
+      } as unknown as Stripe.Subscription);
       mockDbService.client.subscription.update.mockResolvedValue({});
 
       const result = await service.handleWebhookCallback(requestBody, signatureHeader);
@@ -820,7 +832,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       // Need to mock findFirst twice - once for isKnownStripeCustomerId check, once for getUserFromStripeCustomerId
       mockDbService.client.user.findFirst
@@ -867,7 +879,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       const result = await service.upsertSubscription('sub_other123', undefined, mockSubscription);
 
@@ -894,7 +906,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       mockDbService.client.user.findFirst.mockResolvedValue(null);
 
@@ -924,7 +936,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       // In non-production, if user is not known, it returns "ignored" before checking organization
       // So we need to make sure the user is found but has no organization
@@ -956,7 +968,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       // Need to mock findFirst twice - once for isKnownStripeCustomerId check, once for getUserFromStripeCustomerId
       mockDbService.client.user.findFirst
@@ -988,7 +1000,7 @@ describe('StripePaymentService', () => {
             },
           ],
         },
-      } as any;
+      } as unknown as Stripe.Subscription;
 
       mockStripeInstance.subscriptions.retrieve = jest.fn().mockResolvedValue(mockSubscription);
       // Need to mock findFirst twice - once for isKnownStripeCustomerId check, once for getUserFromStripeCustomerId

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/unbound-method */
 import { DbJob } from '@prisma/client';
+import { Job } from 'bullmq';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
@@ -108,7 +108,7 @@ describe('StaleJobReaperService', () => {
     (dbService.client.dbJob.findMany as jest.Mock).mockResolvedValue([staleJob]);
     bullEnqueuerService.getJob.mockResolvedValue({
       getState: jest.fn().mockResolvedValue('waiting'),
-    } as any);
+    } as unknown as Job);
 
     await service.reapStaleCreatedJobs();
 

@@ -41,23 +41,11 @@ Crockford's JSON cycle detection library, copied verbatim. Uses `any` throughout
 
 **Fix:** Not worth rewriting. The `/* eslint-disable */` comment documents this.
 
-### Test code: ~80+ occurrences
+### Test code: clean
 
-Test files use `as any` extensively for partial mocks. The most common patterns:
+All test files have been cleaned up. Zero `as any`, `: any`, or `<any>` remain in `*.spec.ts` files.
 
-- `mockService = { someMethod: jest.fn() } as any` — partial mock of a service
-- `MOCK_WORKBOOK as any` — partial workbook object missing optional fields
-- `(service as any).stripe` — accessing private members for test setup
-
-**Files with most test `any`:**
-
-- `server/src/sync/__tests__/sync.service.spec.ts` (~40 occurrences)
-- `server/src/payment/stripe-payment.service.spec.ts` (~15 occurrences)
-- `server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.spec.ts` (~5 occurrences)
-
-**Fix:** Replace `as any` with `as unknown as FooService` for type safety, or create test factories/builders that produce properly-typed partial objects. Low risk, but tedious. Good candidate for gradual cleanup.
-
-## Phase 5: Enable the ESLint rule
+## Phase 6: Enable the ESLint rule
 
 Once the remaining production code `any` usages are addressed (or have targeted `eslint-disable` comments), enable `@typescript-eslint/no-explicit-any` in `server/eslint.config.mjs`:
 
@@ -72,7 +60,24 @@ Once the remaining production code `any` usages are addressed (or have targeted 
 
 The client ESLint config (`eslint-config-next/typescript`) doesn't enable this rule either — consider adding it there too.
 
-## What we already fixed (Phases 1-4)
+## What we already fixed (Phases 1-5)
+
+### Phase 5
+
+- Eliminated all `any` from test files (80+ occurrences across 12 spec files)
+- `sync.service.spec.ts`: typed `MOCK_WORKBOOK` and `MOCK_SCHEMA_SPEC` at declaration, removed ~30 `as any` casts
+- `stripe-payment.service.spec.ts`: created `MockUser` interface, fixed private member access pattern
+- `pull-linked-folder-files.job.spec.ts`: replaced `jest.Mocked<any>` with actual service types
+- `pull-files.job.spec.ts`: same pattern as above
+- `publish-data-folder.job.spec.ts`: typed mock factories and checkpoint access
+- `sync.controller.spec.ts`: typed DTO casts and job return values
+- `cli-workbook.controller.spec.ts`: typed workbook mock
+- `stale-job-reaper.service.spec.ts`: typed BullMQ Job mock
+- `encryption.spec.ts`: `undefined as any` → `undefined as unknown as string`
+- `users/types.spec.ts`: same pattern
+- `pipedrive-json-schema.spec.ts`: typed API client mock
+- `pipedrive-connector.spec.ts`: typed schema mock
+- Removed unnecessary file-level eslint-disable comments where possible
 
 ### Phase 4
 

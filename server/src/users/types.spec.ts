@@ -88,8 +88,7 @@ describe('User Type Utilities', () => {
 
       const user: UserCluster.User = {
         ...testUser,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        organizationId: undefined as any,
+        organizationId: undefined as unknown as string,
         organization: null,
       };
 

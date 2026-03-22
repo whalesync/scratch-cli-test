@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { NotFoundException } from '@nestjs/common';
-import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, PreviewRecordBody, SyncId, ValidateMappingBody, WorkbookId } from '@spinner/shared-types';
+import { Job } from 'bullmq';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -220,7 +220,7 @@ describe('SyncController', () => {
     it('happy path: enqueues job and returns success with jobId', async () => {
       (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue(mockWorkbook);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(mockSync);
-      bullEnqueuerService.enqueueSyncDataFoldersJob.mockResolvedValue({ id: 'job_1' } as any);
+      bullEnqueuerService.enqueueSyncDataFoldersJob.mockResolvedValue({ id: 'job_1' } as unknown as Job);
 
       const result = await controller.runSync(WORKBOOK_ID, SYNC_ID, makeReqWithUser());
 
@@ -251,7 +251,7 @@ describe('SyncController', () => {
         organizationId: workbookOrgId,
       });
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(mockSync);
-      bullEnqueuerService.enqueueSyncDataFoldersJob.mockResolvedValue({ id: 'job_2' } as any);
+      bullEnqueuerService.enqueueSyncDataFoldersJob.mockResolvedValue({ id: 'job_2' } as unknown as Job);
 
       await controller.runSync(WORKBOOK_ID, SYNC_ID, makeReqWithUser({ organizationId: null }));
 
@@ -270,7 +270,7 @@ describe('SyncController', () => {
         organizationId: 'org_workbook',
       });
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(mockSync);
-      bullEnqueuerService.enqueueSyncDataFoldersJob.mockResolvedValue({ id: 'job_3' } as any);
+      bullEnqueuerService.enqueueSyncDataFoldersJob.mockResolvedValue({ id: 'job_3' } as unknown as Job);
 
       await controller.runSync(WORKBOOK_ID, SYNC_ID, makeReqWithUser({ organizationId: ORG_ID }));
 
@@ -332,7 +332,11 @@ describe('SyncController', () => {
       const expected = { recordId: 'rec1', fields: [] };
       syncService.previewRecord.mockResolvedValue(expected);
 
-      const result = await controller.previewRecord(WORKBOOK_ID, body as any, makeReqWithUser());
+      const result = await controller.previewRecord(
+        WORKBOOK_ID,
+        body as unknown as PreviewRecordBody,
+        makeReqWithUser(),
+      );
 
       expect(syncService.previewRecord).toHaveBeenCalledWith(
         WORKBOOK_ID,
@@ -356,7 +360,11 @@ describe('SyncController', () => {
     it('returns { valid: true } when service returns true', async () => {
       syncService.validateFolderMapping.mockResolvedValue(true);
 
-      const result = await controller.validateMapping(WORKBOOK_ID, body as any, makeReqWithUser());
+      const result = await controller.validateMapping(
+        WORKBOOK_ID,
+        body as unknown as ValidateMappingBody,
+        makeReqWithUser(),
+      );
 
       expect(result).toEqual({ valid: true });
     });
@@ -364,7 +372,11 @@ describe('SyncController', () => {
     it('returns { valid: false } when service returns false', async () => {
       syncService.validateFolderMapping.mockResolvedValue(false);
 
-      const result = await controller.validateMapping(WORKBOOK_ID, body as any, makeReqWithUser());
+      const result = await controller.validateMapping(
+        WORKBOOK_ID,
+        body as unknown as ValidateMappingBody,
+        makeReqWithUser(),
+      );
 
       expect(result).toEqual({ valid: false });
     });
@@ -372,7 +384,7 @@ describe('SyncController', () => {
     it('passes sourceId/destId cast as DataFolderId and columnMappings to service', async () => {
       syncService.validateFolderMapping.mockResolvedValue(true);
 
-      await controller.validateMapping(WORKBOOK_ID, body as any, makeReqWithUser());
+      await controller.validateMapping(WORKBOOK_ID, body as unknown as ValidateMappingBody, makeReqWithUser());
 
       expect(syncService.validateFolderMapping).toHaveBeenCalledWith(
         WORKBOOK_ID,

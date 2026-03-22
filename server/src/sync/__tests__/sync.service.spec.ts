@@ -1,13 +1,11 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
+import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
@@ -62,7 +60,7 @@ function makeSaveSyncBody(overrides?: Partial<SaveSyncBody>): SaveSyncBody {
   };
 }
 
-const MOCK_WORKBOOK = { id: WORKBOOK_ID, organizationId: 'org_xyz' };
+const MOCK_WORKBOOK = { id: WORKBOOK_ID, organizationId: 'org_xyz' } as unknown as WorkbookCluster.Workbook;
 const MOCK_SYNC = { id: SYNC_ID, displayName: 'Test Sync', mappings: {} };
 /** Valid cron: every hour at minute 0 (meets min 1-min interval) */
 const CRON_HOURLY = '0 * * * *';
@@ -71,6 +69,7 @@ const MOCK_SCHEMA = {
   type: 'object',
   properties: { title: { type: 'string' }, name: { type: 'string' } },
 };
+const MOCK_SCHEMA_SPEC = { schema: MOCK_SCHEMA } as unknown as BaseJsonTableSpec;
 
 describe('SyncService', () => {
   let service: SyncService;
@@ -141,7 +140,7 @@ describe('SyncService', () => {
   // ===========================================================================
   describe('createSync', () => {
     it('creates a sync with correct Prisma payload', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       const createdSync = { id: SYNC_ID, displayName: 'Test Sync', syncTablePairs: [] };
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(createdSync);
 
@@ -151,7 +150,16 @@ describe('SyncService', () => {
       expect(result).toEqual(createdSync);
       expect(dbService.client.sync.create).toHaveBeenCalledTimes(1);
 
-      const createArg = (dbService.client.sync.create as jest.Mock).mock.calls[0][0];
+      type SyncCreateArg = {
+        data: {
+          workbookId: string;
+          displayName: string;
+          mappings: { version: number; tableMappings: Record<string, unknown>[] };
+          syncTablePairs: { create: unknown[] };
+        };
+        include: { syncTablePairs: boolean };
+      };
+      const createArg = ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as SyncCreateArg;
       expect(createArg.data.workbookId).toBe(WORKBOOK_ID);
       expect(createArg.data.displayName).toBe('Test Sync');
       expect(createArg.data.mappings.version).toBe(1);
@@ -173,8 +181,8 @@ describe('SyncService', () => {
     });
 
     it('calls fetchSchemaSpec for each table mapping and validates when schemas present', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      dataFolderService.fetchSchemaSpec.mockResolvedValue(MOCK_SCHEMA_SPEC);
       validateSchemaMapping.mockReturnValue([]);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
@@ -187,7 +195,7 @@ describe('SyncService', () => {
     });
 
     it('skips validation gracefully when schemas are absent', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       dataFolderService.fetchSchemaSpec.mockResolvedValue(null);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
@@ -199,10 +207,8 @@ describe('SyncService', () => {
     });
 
     it('throws NotFoundException when source schema present but dest schema missing', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      dataFolderService.fetchSchemaSpec
-        .mockResolvedValueOnce({ schema: MOCK_SCHEMA } as any)
-        .mockResolvedValueOnce(null);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      dataFolderService.fetchSchemaSpec.mockResolvedValueOnce(MOCK_SCHEMA_SPEC).mockResolvedValueOnce(null);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody();
@@ -213,8 +219,8 @@ describe('SyncService', () => {
     });
 
     it('throws BadRequestException on schema validation errors', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
-      dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      dataFolderService.fetchSchemaSpec.mockResolvedValue(MOCK_SCHEMA_SPEC);
       validateSchemaMapping.mockReturnValue(['Type mismatch for field X']);
 
       const body = makeSaveSyncBody({ validateMappings: true });
@@ -223,7 +229,7 @@ describe('SyncService', () => {
     });
 
     it('creates multiple syncTablePairs for multiple table mappings', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody({
@@ -245,13 +251,15 @@ describe('SyncService', () => {
       });
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      const createArg = (dbService.client.sync.create as jest.Mock).mock.calls[0][0];
+      const createArg = ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
+        data: { mappings: { tableMappings: unknown[] }; syncTablePairs: { create: unknown[] } };
+      };
       expect(createArg.data.mappings.tableMappings).toHaveLength(2);
       expect(createArg.data.syncTablePairs.create).toHaveLength(2);
     });
 
     it('includes recordMatching when set', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody({
@@ -272,7 +280,11 @@ describe('SyncService', () => {
       });
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      const tableMapping = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0];
+      const tableMapping = (
+        ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
+          data: { mappings: { tableMappings: Array<Record<string, unknown>> } };
+        }
+      ).data.mappings.tableMappings[0];
       expect(tableMapping.recordMatching).toEqual({
         sourceColumnId: 'email',
         destinationColumnId: 'email_addr',
@@ -280,18 +292,22 @@ describe('SyncService', () => {
     });
 
     it('omits recordMatching when not set', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody();
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      const tableMapping = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0];
+      const tableMapping = (
+        ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
+          data: { mappings: { tableMappings: Array<Record<string, unknown>> } };
+        }
+      ).data.mappings.tableMappings[0];
       expect(tableMapping.recordMatching).toBeUndefined();
     });
 
     it('calls PostHog tracking after creation', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       const createdSync = { id: SYNC_ID };
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(createdSync);
 
@@ -301,7 +317,7 @@ describe('SyncService', () => {
     });
 
     it('handles columnMappings with transformer', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody({
@@ -324,8 +340,11 @@ describe('SyncService', () => {
       });
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      const columnMappings = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0]
-        .columnMappings;
+      const columnMappings = (
+        ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
+          data: { mappings: { tableMappings: Array<{ columnMappings: unknown }> } };
+        }
+      ).data.mappings.tableMappings[0].columnMappings;
       expect(columnMappings).toEqual([
         {
           sourceColumnId: 'price',
@@ -336,7 +355,7 @@ describe('SyncService', () => {
     });
 
     it('handles multiple simple column mappings', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody({
@@ -356,8 +375,11 @@ describe('SyncService', () => {
       });
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
-      const columnMappings = (dbService.client.sync.create as jest.Mock).mock.calls[0][0].data.mappings.tableMappings[0]
-        .columnMappings;
+      const columnMappings = (
+        ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
+          data: { mappings: { tableMappings: Array<{ columnMappings: unknown }> } };
+        }
+      ).data.mappings.tableMappings[0].columnMappings;
       expect(columnMappings).toEqual([
         { sourceColumnId: 'title', destinationColumnId: 'name' },
         { sourceColumnId: 'slug', destinationColumnId: 'url_slug' },
@@ -365,7 +387,7 @@ describe('SyncService', () => {
     });
 
     it('creates a schedule when schedule cron expression is provided', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       const createdSync = { id: SYNC_ID, displayName: 'Scheduled Sync', syncTablePairs: [] };
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(createdSync);
 
@@ -373,7 +395,11 @@ describe('SyncService', () => {
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       expect(scheduleService.create).toHaveBeenCalledTimes(1);
-      const createCall = (scheduleService.create as jest.Mock).mock.calls[0];
+      const createCall = ((scheduleService.create as jest.Mock).mock.calls as unknown[][])[0] as [
+        string,
+        { name: string; action: string; cronExpression: string; enabled: boolean; entityId: string },
+        Actor,
+      ];
       expect(createCall[0]).toBe(WORKBOOK_ID);
       expect(createCall[1]).toMatchObject({
         name: 'Sync: Scheduled Sync',
@@ -387,7 +413,7 @@ describe('SyncService', () => {
     });
 
     it('does not create a schedule when schedule is omitted or empty', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.create as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       await service.createSync(WORKBOOK_ID, makeSaveSyncBody({ schedule: '' }), ACTOR);
@@ -401,11 +427,11 @@ describe('SyncService', () => {
   // ===========================================================================
   describe('updateSync', () => {
     it('deletes old pairs and updates sync in transaction', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const updatedSync = { id: SYNC_ID, displayName: 'Updated', syncTablePairs: [] };
-      (dbService.client.$transaction as jest.Mock).mockImplementation(async (fn: (tx: any) => Promise<any>) => {
+      (dbService.client.$transaction as jest.Mock).mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           syncTablePair: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
           sync: { update: jest.fn().mockResolvedValue(updatedSync) },
@@ -429,7 +455,7 @@ describe('SyncService', () => {
     });
 
     it('throws NotFoundException when sync not found', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR)).rejects.toThrow(
@@ -438,7 +464,7 @@ describe('SyncService', () => {
     });
 
     it('throws BadRequestException when record matching fields are not in column mappings', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
 
       const body = makeSaveSyncBody({
@@ -462,7 +488,7 @@ describe('SyncService', () => {
     });
 
     it('passes when record matching fields are aligned with column mappings', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
@@ -488,9 +514,9 @@ describe('SyncService', () => {
     });
 
     it('validates schema mappings when schemas are present', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
-      dataFolderService.fetchSchemaSpec.mockResolvedValue({ schema: MOCK_SCHEMA } as any);
+      dataFolderService.fetchSchemaSpec.mockResolvedValue(MOCK_SCHEMA_SPEC);
       validateSchemaMapping.mockReturnValue([]);
       (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
 
@@ -502,7 +528,7 @@ describe('SyncService', () => {
     });
 
     it('skips validation when schemas are absent', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       dataFolderService.fetchSchemaSpec.mockResolvedValue(null);
       (dbService.client.$transaction as jest.Mock).mockResolvedValue({ id: SYNC_ID, syncTablePairs: [] });
@@ -514,7 +540,7 @@ describe('SyncService', () => {
     });
 
     it('calls PostHog tracking after update', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
@@ -525,7 +551,7 @@ describe('SyncService', () => {
     });
 
     it('adds a schedule when updating sync with schedule and none exists', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
@@ -551,7 +577,7 @@ describe('SyncService', () => {
     });
 
     it('updates the schedule when updating sync with new cron and one exists', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
@@ -573,7 +599,7 @@ describe('SyncService', () => {
     });
 
     it('removes the schedule when updating sync with empty schedule and one exists', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
       (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
@@ -597,7 +623,7 @@ describe('SyncService', () => {
     const mockSyncWithPairs = { id: SYNC_ID, displayName: 'Test Sync', syncTablePairs: [] };
 
     it('returns sync scoped to workbook with syncTablePairs included', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(mockSyncWithPairs);
 
       const result = await service.findOneForWorkbook(WORKBOOK_ID, SYNC_ID, ACTOR);
@@ -620,7 +646,7 @@ describe('SyncService', () => {
     });
 
     it('throws NotFoundException when sync not found', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.findOneForWorkbook(WORKBOOK_ID, SYNC_ID, ACTOR)).rejects.toThrow(NotFoundException);
@@ -632,7 +658,7 @@ describe('SyncService', () => {
   // ===========================================================================
   describe('findAllForWorkbook', () => {
     it('returns syncs scoped to workbook, ordered by createdAt desc', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       const syncs = [{ id: 'syn_1' }, { id: 'syn_2' }];
       (dbService.client.sync.findMany as jest.Mock).mockResolvedValue(syncs);
 
@@ -655,7 +681,7 @@ describe('SyncService', () => {
     });
 
     it('returns empty array when no syncs exist', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findMany as jest.Mock).mockResolvedValue([]);
 
       const result = await service.findAllForWorkbook(WORKBOOK_ID, ACTOR);
@@ -669,7 +695,7 @@ describe('SyncService', () => {
   // ===========================================================================
   describe('deleteSync', () => {
     it('deletes sync and tracks in PostHog', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.sync.delete as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([]);
@@ -682,7 +708,7 @@ describe('SyncService', () => {
 
     it('deletes associated schedules when sync is deleted', async () => {
       const mockSchedule = { id: 'schedule-1', workbookId: WORKBOOK_ID, action: 'SYNC', entityId: SYNC_ID };
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.sync.delete as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([mockSchedule]);
@@ -696,7 +722,7 @@ describe('SyncService', () => {
     });
 
     it('handles no associated schedules gracefully', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.sync.delete as jest.Mock).mockResolvedValue(MOCK_SYNC);
       (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([]);
@@ -713,7 +739,7 @@ describe('SyncService', () => {
     });
 
     it('throws NotFoundException when sync not found, delete NOT called', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.deleteSync(WORKBOOK_ID, SYNC_ID, ACTOR)).rejects.toThrow(NotFoundException);
@@ -721,7 +747,7 @@ describe('SyncService', () => {
     });
 
     it('scopes sync query to workbook via workbookId', async () => {
-      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK as any);
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
       (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.deleteSync(WORKBOOK_ID, SYNC_ID, ACTOR)).rejects.toThrow(NotFoundException);
@@ -740,9 +766,7 @@ describe('SyncService', () => {
   // ===========================================================================
   describe('validateFolderMapping', () => {
     it('returns true when both schemas are present', async () => {
-      dataFolderService.fetchSchemaSpec
-        .mockResolvedValueOnce({ schema: MOCK_SCHEMA } as any)
-        .mockResolvedValueOnce({ schema: MOCK_SCHEMA } as any);
+      dataFolderService.fetchSchemaSpec.mockResolvedValueOnce(MOCK_SCHEMA_SPEC).mockResolvedValueOnce(MOCK_SCHEMA_SPEC);
 
       const result = await service.validateFolderMapping(
         WORKBOOK_ID,
@@ -757,9 +781,7 @@ describe('SyncService', () => {
     });
 
     it('returns true when source schema is missing (loose validation)', async () => {
-      dataFolderService.fetchSchemaSpec
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ schema: MOCK_SCHEMA } as any);
+      dataFolderService.fetchSchemaSpec.mockResolvedValueOnce(null).mockResolvedValueOnce(MOCK_SCHEMA_SPEC);
 
       const result = await service.validateFolderMapping(
         WORKBOOK_ID,
@@ -773,9 +795,7 @@ describe('SyncService', () => {
     });
 
     it('returns true when dest schema is missing (loose validation)', async () => {
-      dataFolderService.fetchSchemaSpec
-        .mockResolvedValueOnce({ schema: MOCK_SCHEMA } as any)
-        .mockResolvedValueOnce(null);
+      dataFolderService.fetchSchemaSpec.mockResolvedValueOnce(MOCK_SCHEMA_SPEC).mockResolvedValueOnce(null);
 
       const result = await service.validateFolderMapping(
         WORKBOOK_ID,
@@ -839,8 +859,9 @@ describe('transformRecordAsync', () => {
       );
 
       // The mapped fields should be updated/added
-      expect((result as any).fieldData.name).toBe('Atlantic Mackerel');
-      expect((result as any).fieldData.link).toBe('https://en.wikipedia.org/wiki/Atlantic_mackerel');
+      const fieldData1 = (result as Record<string, Record<string, unknown>>).fieldData;
+      expect(fieldData1.name).toBe('Atlantic Mackerel');
+      expect(fieldData1.link).toBe('https://en.wikipedia.org/wiki/Atlantic_mackerel');
 
       // Non-mapped fields must still be present
       expect(result.id).toBe('6994a4d364f1775dd68f1589');
@@ -881,8 +902,9 @@ describe('transformRecordAsync', () => {
 
       const { fields: result } = await transformRecordAsync(sourceRecord, columnMappings, null, null);
 
-      expect((result as any).fieldData.name).toBe('New Item');
-      expect((result as any).fieldData.slug).toBe('new-item');
+      const fieldData2 = (result as Record<string, Record<string, unknown>>).fieldData;
+      expect(fieldData2.name).toBe('New Item');
+      expect(fieldData2.slug).toBe('new-item');
       // No extra keys from any base — only the mapped fields
       expect(Object.keys(result)).toEqual(['fieldData']);
     });

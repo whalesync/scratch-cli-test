@@ -1,5 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../../json-schema';
+import { PipedriveApiClient } from '../pipedrive-api-client';
 import { buildPipedriveJsonTableSpec, pipedriveFieldToJsonSchema } from '../pipedrive-json-schema';
 import { PipedriveField } from '../pipedrive-types';
 
@@ -149,7 +150,7 @@ describe('buildPipedriveJsonTableSpec', () => {
     ]);
 
     const entityId = { wsId: 'deals', remoteId: ['deals'] };
-    const spec = await buildPipedriveJsonTableSpec(entityId, 'deals', mockClient as any);
+    const spec = await buildPipedriveJsonTableSpec(entityId, 'deals', mockClient as unknown as PipedriveApiClient);
 
     expect(spec.name).toBe('Deals');
     expect(spec.idColumnRemoteId).toBe('id');
@@ -168,7 +169,7 @@ describe('buildPipedriveJsonTableSpec', () => {
     ]);
 
     const entityId = { wsId: 'persons', remoteId: ['persons'] };
-    const spec = await buildPipedriveJsonTableSpec(entityId, 'persons', mockClient as any);
+    const spec = await buildPipedriveJsonTableSpec(entityId, 'persons', mockClient as unknown as PipedriveApiClient);
 
     expect(spec.schema.properties.id[READONLY_FLAG]).toBe(true);
     expect(spec.schema.properties.add_time[READONLY_FLAG]).toBe(true);
@@ -182,7 +183,11 @@ describe('buildPipedriveJsonTableSpec', () => {
     ]);
 
     const entityId = { wsId: 'organizations', remoteId: ['organizations'] };
-    const spec = await buildPipedriveJsonTableSpec(entityId, 'organizations', mockClient as any);
+    const spec = await buildPipedriveJsonTableSpec(
+      entityId,
+      'organizations',
+      mockClient as unknown as PipedriveApiClient,
+    );
 
     expect(spec.schema.properties).not.toHaveProperty('custom_fields');
   });

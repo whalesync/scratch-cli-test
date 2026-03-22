@@ -22,8 +22,9 @@ describe('EncryptionService', () => {
     });
 
     it('should throw error for undefined master key', () => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      expect(() => new EncryptionService(undefined as any)).toThrow('Master key must be at least 32 characters long');
+      expect(() => new EncryptionService(undefined as unknown as string)).toThrow(
+        'Master key must be at least 32 characters long',
+      );
     });
   });
 

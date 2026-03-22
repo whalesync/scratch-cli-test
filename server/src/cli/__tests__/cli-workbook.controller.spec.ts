@@ -1,9 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() returns any */
 import { NotFoundException } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -52,7 +53,7 @@ function makeWorkbook(overrides?: Partial<{ version: number; dataFolders: { id: 
     version: overrides?.version ?? 2,
     dataFolders: overrides?.dataFolders ?? [{ id: 'df1', name: 'Posts' }],
     workspacePermissions: [{ id: 'wsp_1', workbookId: WORKBOOK_ID, role: 'editor' }],
-  } as any;
+  } as unknown as WorkbookCluster.Workbook;
 }
 
 describe('CliWorkbookController', () => {

@@ -1,10 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { PrismaClient } from '@prisma/client';
 import { Type } from '@sinclair/typebox';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { PostHogService } from 'src/posthog/posthog.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -12,7 +9,9 @@ import { ConnectorsService } from '../../../remote-service/connectors/connectors
 import { BaseJsonTableSpec } from '../../../remote-service/connectors/types';
 import { DataFolderPublishingService } from '../../../workbook/data-folder-publishing.service';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
-import { PublishDataFolderJobHandler } from './publish-data-folder.job';
+import { PublishDataFolderJobHandler, PublishDataFolderPublicProgress } from './publish-data-folder.job';
+
+type CheckpointCall = [{ publicProgress: PublishDataFolderPublicProgress }];
 
 describe('PublishDataFolderJobHandler', () => {
   let handler: PublishDataFolderJobHandler;
@@ -36,7 +35,7 @@ describe('PublishDataFolderJobHandler', () => {
     schema: Type.Object({}),
   };
 
-  const createMockDataFolder = (overrides?: any) => ({
+  const createMockDataFolder = (overrides?: Partial<Record<string, unknown>>) => ({
     id: 'dfld_001' as DataFolderId,
     workbookId: WORKBOOK_ID,
     name: 'Folder 1',
@@ -50,7 +49,7 @@ describe('PublishDataFolderJobHandler', () => {
     ...overrides,
   });
 
-  const createMockParams = (dataFolderIds: DataFolderId[], overrides?: any) => ({
+  const createMockParams = (dataFolderIds: DataFolderId[], overrides?: Partial<Record<string, unknown>>) => ({
     jobId: 'test-job-id',
     data: {
       workbookId: WORKBOOK_ID,
@@ -112,7 +111,7 @@ describe('PublishDataFolderJobHandler', () => {
       mockDataFolderPublishingService,
       mockBullEnqueuerService,
       mockScratchGitService,
-      { trackPublishCompleted: jest.fn() } as any,
+      { trackPublishCompleted: jest.fn() } as unknown as jest.Mocked<PostHogService>,
     );
   });
 
@@ -126,7 +125,7 @@ describe('PublishDataFolderJobHandler', () => {
       await handler.run(params);
 
       // Find the last checkpoint call to inspect final folder state
-      const checkpointCalls = params.checkpoint.mock.calls;
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
       const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
       expect(lastCheckpoint.publicProgress.folders[0].status).toBe('failed');
     });
@@ -161,7 +160,7 @@ describe('PublishDataFolderJobHandler', () => {
       const params = createMockParams([folderNoSchema.id, folderWithSchema.id]);
       await handler.run(params);
 
-      const checkpointCalls = params.checkpoint.mock.calls;
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
       const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
       expect(lastCheckpoint.publicProgress.folders[0].status).toBe('failed');
       expect(lastCheckpoint.publicProgress.folders[1].status).toBe('completed');

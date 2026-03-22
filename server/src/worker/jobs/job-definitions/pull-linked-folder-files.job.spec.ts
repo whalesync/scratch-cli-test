@@ -1,19 +1,23 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/unbound-method */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { PrismaClient } from '@prisma/client';
 import { Type } from '@sinclair/typebox';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { AssetExtractorService } from 'src/asset/asset-extractor.service';
+import { AssetIndexService } from 'src/asset/asset-index.service';
+import { PostHogService } from 'src/posthog/posthog.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
+import { JsonSafeObject } from '../../../utils/objects';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
-import { PullLinkedFolderFilesJobHandler } from './pull-linked-folder-files.job';
+import { PullLinkedFolderFilesJobHandler, PullLinkedFolderFilesPublicProgress } from './pull-linked-folder-files.job';
+
+type PullCallback = (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>;
+type CheckpointCall = [{ publicProgress: PullLinkedFolderFilesPublicProgress }];
 
 describe('PullLinkedFolderFilesJobHandler', () => {
   let handler: PullLinkedFolderFilesJobHandler;
@@ -22,10 +26,11 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
   let mockSnapshotEventService: jest.Mocked<WorkbookEventService>;
   let mockScratchGitService: jest.Mocked<ScratchGitService>;
-  let mockFileIndexService: jest.Mocked<any>;
-  let mockFileReferenceService: jest.Mocked<any>;
-  let mockAssetExtractorService: jest.Mocked<any>;
-  let mockAssetIndexService: jest.Mocked<any>;
+  let mockFileIndexService: jest.Mocked<FileIndexService>;
+  let mockFileReferenceService: jest.Mocked<FileReferenceService>;
+  let mockAssetExtractorService: jest.Mocked<AssetExtractorService>;
+  let mockAssetIndexService: jest.Mocked<AssetIndexService>;
+  let mockPostHogService: jest.Mocked<PostHogService>;
 
   beforeEach(() => {
     mockPrisma = {
@@ -72,12 +77,20 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
     mockFileIndexService = {
       getFilenamesByRecordIds: jest.fn().mockResolvedValue(new Map()),
-
       upsertBatch: jest.fn().mockResolvedValue(undefined),
-    } as any;
-    mockFileReferenceService = { updateRefsForFiles: jest.fn().mockResolvedValue(undefined) } as any;
-    mockAssetExtractorService = { extractAssets: jest.fn().mockReturnValue([]) } as any;
-    mockAssetIndexService = { upsertBatch: jest.fn().mockResolvedValue(undefined) } as any;
+    } as unknown as jest.Mocked<FileIndexService>;
+    mockFileReferenceService = {
+      updateRefsForFiles: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<FileReferenceService>;
+    mockAssetExtractorService = {
+      extractAssets: jest.fn().mockReturnValue([]),
+    } as unknown as jest.Mocked<AssetExtractorService>;
+    mockAssetIndexService = {
+      upsertBatch: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<AssetIndexService>;
+    mockPostHogService = {
+      trackPullCompleted: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
 
     handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
@@ -89,6 +102,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       mockFileReferenceService,
       mockAssetExtractorService,
       mockAssetIndexService,
+      mockPostHogService,
     );
   });
 
@@ -285,7 +299,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), ['test']);
 
-        const parsedContent = JSON.parse(result[0].content);
+        const parsedContent = JSON.parse(result[0].content) as typeof testRecord;
         expect(parsedContent).toEqual(testRecord);
       });
 
@@ -304,7 +318,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         const result = buildGitFilesFromConnectorFiles('/', records, tableSpec, new Set(), new Map(), [undefined]);
 
         // Verify JSON is valid and can be parsed
-        const parsed = JSON.parse(result[0].content);
+        const parsed = JSON.parse(result[0].content) as { id: string; data: { email: string } };
         expect(parsed.id).toBe('rec1');
         expect(parsed.data.email).toBe('test@example.com');
 
@@ -392,7 +406,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       schema: Type.Object({}),
     };
 
-    const createMockDataFolder = (overrides?: any) => ({
+    const createMockDataFolder = (overrides?: Partial<Record<string, unknown>>) => ({
       id: 'dfld_123' as DataFolderId,
       workbookId: 'wkb_123' as WorkbookId,
       name: 'Test Folder',
@@ -401,7 +415,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       connectorAccountId: 'coa_123',
       tableId: ['tbl_abc'],
       filter: null as string | null,
-      options: null as any,
+      options: null as unknown as Record<string, unknown>,
       ...overrides,
     });
 
@@ -427,7 +441,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       }),
     });
 
-    const createMockParams = (overrides?: any) => ({
+    const createMockParams = (overrides?: Partial<Record<string, unknown>>) => ({
       data: {
         workbookId: 'wkb_123' as WorkbookId,
         dataFolderIds: ['dfld_123' as DataFolderId],
@@ -464,7 +478,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Simulate connector pulling files
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [
             {
@@ -493,7 +507,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         'main',
         expect.arrayContaining([
           expect.objectContaining({
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             path: expect.stringContaining('test-post.json'),
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             content: expect.stringContaining('rec1'),
           }),
         ]),
@@ -503,7 +519,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(mockScratchGitService.rebaseDirty).toHaveBeenCalledWith('wkb_123');
 
       // Verify createdPaths was populated from commitResult
-      const checkpointCalls = params.checkpoint.mock.calls;
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
       const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
       expect(lastCheckpoint.publicProgress.createdPaths).toContain('test-folder/test-post.json');
       expect(lastCheckpoint.publicProgress.updatedPaths).toHaveLength(0);
@@ -520,7 +536,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Simulate two batches of files by calling callback twice within pullRecordFiles
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [
             {
@@ -567,7 +583,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(mockScratchGitService.commitFilesToBranch).toHaveBeenCalledTimes(2);
 
       // Verify createdPaths and updatedPaths accumulate across batches
-      const checkpointCalls = params.checkpoint.mock.calls;
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
       const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
       expect(lastCheckpoint.publicProgress.createdPaths).toEqual(['test-folder/post-1.json']);
       expect(lastCheckpoint.publicProgress.updatedPaths).toEqual(['test-folder/post-2.json']);
@@ -588,7 +604,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       // Simulate pulling only one file
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [
             {
@@ -635,7 +651,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [{ id: 'rec1', slug: 'post-1' }],
           connectorProgress: {},
@@ -712,7 +728,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [],
           connectorProgress: {},
@@ -728,6 +744,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         where: { id: 'dfld_123' },
         data: {
           lock: null,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           lastSyncTime: expect.any(Date),
         },
       });
@@ -770,7 +787,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [
             {
@@ -797,6 +814,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         'wkb_123',
         expect.objectContaining({
           type: 'job-started',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({
             entityId: 'dfld_123',
           }),
@@ -807,6 +825,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         'wkb_123',
         expect.objectContaining({
           type: 'folder-contents-changed',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({
             entityId: 'dfld_123',
           }),
@@ -817,6 +836,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         'wkb_123',
         expect.objectContaining({
           type: 'job-completed',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({
             entityId: 'dfld_123',
           }),
@@ -834,7 +854,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({
           files: [
             {
@@ -875,7 +895,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (_spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
         await callback({ files: [], connectorProgress: {} });
       });
 
@@ -894,7 +914,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'dfld_123' },
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             lastSchemaRefreshAt: expect.any(Date),
           }),
         }),
@@ -927,7 +949,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
       (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
-      mockConnector.pullRecordFiles.mockImplementation(async (spec, callback) => {
+      mockConnector.pullRecordFiles.mockImplementation(async (spec: BaseJsonTableSpec, callback: PullCallback) => {
         // Verify the spec passed to pullRecordFiles has the overrides applied
         expect(spec.idColumnRemoteId).toBe('custom_id');
         expect(spec.titleColumnRemoteId).toEqual(['custom_name']);
