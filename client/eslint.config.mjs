@@ -37,6 +37,7 @@ const eslintConfig = [
           // hookNames: ['useWorkbookEditorUIStore', 'useLayoutManagerStore'],
         },
       ],
+      '@typescript-eslint/no-explicit-any': 'error',
       'no-restricted-imports': [
         'error',
         {

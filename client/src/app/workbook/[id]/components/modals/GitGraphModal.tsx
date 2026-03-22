@@ -1,5 +1,7 @@
 import { workbookApi } from '@/lib/api/workbook';
+import { BranchUserApi } from '@gitgraph/core';
 import { Gitgraph, templateExtend, TemplateName } from '@gitgraph/react';
+import type { ReactSvgElement } from '@gitgraph/react/lib/types';
 import { ActionIcon, Box, Code, Loader, Modal, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkbookId } from '@spinner/shared-types';
@@ -295,8 +297,7 @@ const GitGraphRenderer = ({ data }: { data: GraphData }) => {
           }
 
           // 5. Render loop
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const branchObjs = new Map<string, any>();
+          const branchObjs = new Map<string, BranchUserApi<ReactSvgElement>>();
 
           for (const commit of sortedCommits) {
             const refs = refsByOid.get(commit.oid) || [];
