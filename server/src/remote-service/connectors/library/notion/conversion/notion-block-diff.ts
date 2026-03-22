@@ -1,6 +1,15 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import * as _ from 'lodash';
 import { ConvertedNotionBlock, ConvertedNotionBlockWithIds } from './notion-rich-text-push-types';
+
+/** Safely access the type-specific value object from a block (e.g., block.paragraph, block.heading_1). */
+function getBlockValue(block: ConvertedNotionBlock | ConvertedNotionBlockWithIds): Record<string, unknown> | undefined {
+  return block[block.type] as Record<string, unknown> | undefined;
+}
+
+interface RichTextItem {
+  plain_text?: string;
+  text?: { content?: string };
+}
 
 /**
  * Different types of operations that can be performed on Notion blocks
@@ -215,8 +224,8 @@ function areBlocksEquivalentByTypeKeys(block1: ConvertedNotionBlock, block2: Con
     if (property === 'image') {
       // Images have a type property that we should not compare.
       // lets special case this for images.
-      delete (value1 as any)['type'];
-      delete (value2 as any)['type'];
+      if (typeof value1 === 'object' && value1 !== null) delete (value1 as Record<string, unknown>)['type'];
+      if (typeof value2 === 'object' && value2 !== null) delete (value2 as Record<string, unknown>)['type'];
     }
     if (!_.isEqual(value1, value2)) {
       return false; // Different - NOT equivalent
@@ -257,66 +266,57 @@ function areBlocksEquivalent(block1: ConvertedNotionBlock, block2: ConvertedNoti
  * Helper function to extract text content from a block for comparison
  */
 export function extractBlockContent(block: ConvertedNotionBlock): string {
-  /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
-  const blockType = block.type;
+  const val = getBlockValue(block);
 
-  // Extract text content based on block type
-  // Support both plain_text (from Notion API) and text.content (from our test data)
-  const extractRichText = (richText: any[]): string =>
-    richText?.map((rt: any) => rt.plain_text || rt.text?.content || '').join('') || '';
+  // Extract text from a rich_text array. Supports both plain_text (API) and text.content (test data).
+  const extractRichText = (richText: unknown): string => {
+    if (!Array.isArray(richText)) return '';
+    return (richText as RichTextItem[]).map((rt) => rt.plain_text || rt.text?.content || '').join('');
+  };
 
-  switch (blockType) {
+  // Extract caption text from a media block's caption array
+  const extractCaption = (caption: unknown): string => {
+    if (!Array.isArray(caption)) return '';
+    return (caption as RichTextItem[]).map((rt) => rt.plain_text || '').join('');
+  };
+
+  // Extract URL from a media block value (external or file)
+  const extractMediaUrl = (v: Record<string, unknown> | undefined): string => {
+    const ext = v?.external as Record<string, unknown> | undefined;
+    const file = v?.file as Record<string, unknown> | undefined;
+    return (ext?.url as string) || (file?.url as string) || '';
+  };
+
+  switch (block.type) {
     case 'paragraph':
-      return extractRichText((block as any).paragraph?.rich_text);
     case 'heading_1':
-      return extractRichText((block as any).heading_1?.rich_text);
     case 'heading_2':
-      return extractRichText((block as any).heading_2?.rich_text);
     case 'heading_3':
-      return extractRichText((block as any).heading_3?.rich_text);
     case 'bulleted_list_item':
-      return extractRichText((block as any).bulleted_list_item?.rich_text);
     case 'numbered_list_item':
-      return extractRichText((block as any).numbered_list_item?.rich_text);
     case 'quote':
-      return extractRichText((block as any).quote?.rich_text);
     case 'callout':
-      return extractRichText((block as any).callout?.rich_text);
     case 'to_do':
-      return extractRichText((block as any).to_do?.rich_text);
     case 'toggle':
-      return extractRichText((block as any).toggle?.rich_text);
     case 'code':
-      return extractRichText((block as any).code?.rich_text);
+      return extractRichText(val?.rich_text);
     case 'image': {
-      const imageUrl = (block as any).image?.external?.url || (block as any).image?.file?.url || '';
-      const imageCaption = (block as any).image?.caption?.map((rt: any) => rt.plain_text || '').join('') || '';
+      const imageUrl = extractMediaUrl(val);
+      const imageCaption = extractCaption(val?.caption);
       return imageUrl ? `image:${imageUrl}` : imageCaption;
     }
     case 'video':
-      return (
-        (block as any).video?.caption?.map((rt: any) => rt.plain_text || '').join('') ||
-        `video:${(block as any).video?.external?.url || (block as any).video?.file?.url || ''}`
-      );
+      return extractCaption(val?.caption) || `video:${extractMediaUrl(val)}`;
     case 'audio':
-      return (
-        (block as any).audio?.caption?.map((rt: any) => rt.plain_text || '').join('') ||
-        `audio:${(block as any).audio?.external?.url || (block as any).audio?.file?.url || ''}`
-      );
+      return extractCaption(val?.caption) || `audio:${extractMediaUrl(val)}`;
     case 'file':
-      return (
-        (block as any).file?.caption?.map((rt: any) => rt.plain_text || '').join('') ||
-        `file:${(block as any).file?.external?.url || (block as any).file?.file?.url || ''}`
-      );
+      return extractCaption(val?.caption) || `file:${extractMediaUrl(val)}`;
     case 'pdf':
-      return (
-        (block as any).pdf?.caption?.map((rt: any) => rt.plain_text || '').join('') ||
-        `pdf:${(block as any).pdf?.external?.url || (block as any).pdf?.file?.url || ''}`
-      );
+      return extractCaption(val?.caption) || `pdf:${extractMediaUrl(val)}`;
     case 'bookmark':
-      return `bookmark:${(block as any).bookmark?.url || ''}`;
+      return `bookmark:${(val?.url as string) || ''}`;
     case 'embed':
-      return `embed:${(block as any).embed?.url || ''}`;
+      return `embed:${(val?.url as string) || ''}`;
     case 'divider':
       return 'divider';
     case 'table_of_contents':
@@ -324,31 +324,31 @@ export function extractBlockContent(block: ConvertedNotionBlock): string {
     case 'breadcrumb':
       return 'breadcrumb';
     case 'table':
-      return `table:${(block as any).table?.table_width || 0}x${(block as any).children?.length || 0}`;
-    case 'table_row':
-      return (
-        (block as any).table_row?.cells
-          ?.map((cell: any) => cell.map((rt: any) => rt.plain_text || '').join(''))
-          .join('|') || ''
-      );
+      return `table:${(val?.table_width as number) || 0}x${(block.children as unknown[] | undefined)?.length || 0}`;
+    case 'table_row': {
+      const cells = val?.cells;
+      if (!Array.isArray(cells)) return '';
+      return (cells as unknown[][]).map((cell) => extractRichText(cell)).join('|');
+    }
     case 'column_list':
       return 'column_list';
     case 'column':
       return 'column';
     case 'link_to_page':
-      return `link_to_page:${(block as any).link_to_page?.page_id || (block as any).link_to_page?.database_id || ''}`;
+      return `link_to_page:${(val?.page_id as string) || (val?.database_id as string) || ''}`;
     case 'equation':
-      return (block as any).equation?.expression || '';
-    case 'synced_block':
-      return `synced_block:${(block as any).synced_block?.synced_from?.block_id || 'original'}`;
+      return (val?.expression as string) || '';
+    case 'synced_block': {
+      const syncedFrom = val?.synced_from as Record<string, unknown> | undefined;
+      return `synced_block:${(syncedFrom?.block_id as string) || 'original'}`;
+    }
     default:
-      // For any unknown types, fall back to JSON but try to extract common properties
-      if ((block as any).rich_text) {
-        return (block as any).rich_text?.map((rt: any) => rt.plain_text || '').join('') || '';
+      // For unknown types, try to extract common properties
+      if (block['rich_text'] !== undefined) {
+        return extractRichText(block['rich_text']);
       }
       return JSON.stringify(block);
   }
-  /* eslint-enable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
 }
 
 /**
@@ -927,28 +927,28 @@ function createNotionBlockDiffCore(
 /**
  * Converts Notion API block objects to ConvertedNotionBlock format (preserving IDs)
  */
-function convertNotionObjectToConvertedBlock(blocks: any[]): ConvertedNotionBlockWithIds[] {
-  /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+function convertNotionObjectToConvertedBlock(blocks: Record<string, unknown>[]): ConvertedNotionBlockWithIds[] {
   const convertedBlocks: ConvertedNotionBlockWithIds[] = [];
   for (const block of blocks) {
+    const blockType = block.type as string;
     const convertedBlock: ConvertedNotionBlockWithIds = {
-      id: block.id,
-      object: block.object,
-      type: block.type,
-      has_children: block.has_children,
-      archived: block.archived,
-      [block.type]: { ...block[block.type] },
+      id: block.id as string,
+      object: block.object as 'block',
+      type: blockType,
+      has_children: block.has_children as boolean,
+      archived: block.archived as boolean | undefined,
+      [blockType]: { ...(block[blockType] as Record<string, unknown>) },
     };
 
     // Recursively convert children if they exist
-    if (block.children && block.children.length > 0) {
-      convertedBlock.children = convertNotionObjectToConvertedBlock(block.children);
+    const children = block.children as Record<string, unknown>[] | undefined;
+    if (children && children.length > 0) {
+      convertedBlock.children = convertNotionObjectToConvertedBlock(children);
     }
     convertedBlocks.push(convertedBlock);
   }
 
   return convertedBlocks;
-  /* eslint-enable @typescript-eslint/no-unsafe-member-access */
 }
 
 /**
@@ -959,7 +959,7 @@ function convertNotionObjectToConvertedBlock(blocks: any[]): ConvertedNotionBloc
  * @returns NotionBlockDiffResult containing the operations to perform
  */
 export function createNotionBlockDiff(
-  oldPageContent: { children: any[] },
+  oldPageContent: { children: Record<string, unknown>[] },
   newPageContent: ConvertedNotionBlock[],
   pageId: string,
 ): NotionBlockDiffResult {

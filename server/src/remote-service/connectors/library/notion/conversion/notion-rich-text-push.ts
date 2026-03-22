@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
 import type { TextRichTextItemResponse } from '@notionhq/client/build/src/api-endpoints';
 import * as cheerio from 'cheerio';
 import { ElementType } from 'domelementtype';
-import { Element } from 'domhandler';
+import { ChildNode, DataNode, Element } from 'domhandler';
 import MarkdownIt from 'markdown-it';
 import { cssColorsToNotionColors } from './notion-rich-text-conversion';
 import { ConvertedNotionBlock, RichTextItemWithResponseFields } from './notion-rich-text-push-types';
@@ -449,13 +448,13 @@ function parseElementIntoSegments(
 /**
  * Helper function to parse a single DOM node into text segments
  */
-function parseNodeIntoSegments(node: any, parentAnnotations: NotionAnnotations): TextSegment[] {
+function parseNodeIntoSegments(node: ChildNode, parentAnnotations: NotionAnnotations): TextSegment[] {
   const segments: TextSegment[] = [];
   const blockLevelTags = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'li']);
 
-  if (node.type === 'text') {
+  if (node.type === ElementType.Text) {
     // Text node
-    let text = node.data || '';
+    let text = (node as DataNode).data || '';
 
     // Decode HTML entities
     text = text
@@ -473,8 +472,8 @@ function parseNodeIntoSegments(node: any, parentAnnotations: NotionAnnotations):
         href: null,
       });
     }
-  } else if (node.type === 'tag') {
-    const elemNode = node as Element;
+  } else if (node.type === ElementType.Tag) {
+    const elemNode = node;
     const tagName = elemNode.tagName?.toLowerCase();
     const isBlockLevel = blockLevelTags.has(tagName || '');
 
@@ -1191,7 +1190,7 @@ function convertListItemToBlock(
 
   // Add children if they exist
   if (hasChildren) {
-    (block as any).children = children;
+    block.children = children;
   }
 
   return block;

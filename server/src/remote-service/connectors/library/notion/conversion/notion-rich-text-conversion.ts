@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument */
 import type {
   BlockObjectResponse,
   RichTextItemResponse,
@@ -17,6 +16,35 @@ import type { ConvertedNotionBlock } from './notion-rich-text-push-types';
  * Annotation structure for rich text formatting
  */
 type NotionAnnotations = TextRichTextItemResponse['annotations'];
+
+/**
+ * Value structure for media blocks (image, video, audio).
+ * Each media block has a type discriminator and optional caption array.
+ */
+interface NotionMediaValue {
+  type: 'external' | 'file';
+  external?: { url: string };
+  file?: { url: string; expiry_time?: string };
+  caption: RichTextItemResponse[];
+}
+
+/**
+ * Value structure for blocks containing rich text (paragraph, heading, list items, etc.).
+ * Includes optional `checked` for to_do blocks.
+ */
+interface NotionRichTextBlockValue {
+  rich_text: RichTextItemResponse[] | RichTextItemResponse;
+  checked?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Value structure for link-type blocks (bookmark, embed, link_preview).
+ */
+interface NotionLinkValue {
+  url: string;
+  caption?: RichTextItemResponse[];
+}
 
 /**
  * Color type for Notion blocks and rich text
@@ -231,19 +259,13 @@ function detectMediaFormat(fileName: string): string | undefined {
 /**
  * Handles media block types (image, video, audio)
  * @param value - Block-specific value structure (e.g., ImageBlockObjectResponse['image'])
- * Note: We use `any` because Notion SDK has different structures for each media type
  */
-export function handleMediaTypes(
-  type: 'image' | 'video' | 'audio',
-  value: any, // ImageBlockObjectResponse['image'] | VideoBlockObjectResponse['video'] | AudioBlockObjectResponse['audio']
-): string {
+export function handleMediaTypes(type: 'image' | 'video' | 'audio', value: NotionMediaValue): string {
   let url: string | undefined = undefined;
   if (value.type === 'external') {
-    const fileObject = value.external;
-    url = fileObject.url;
+    url = value.external?.url;
   } else if (value.type === 'file') {
-    const fileObject = value.file;
-    url = fileObject.url;
+    url = value.file?.url;
   } else {
     return '';
   }
@@ -329,18 +351,13 @@ function handleRichTextSubItem(value: RichTextItemResponse): string {
 /**
  * Handles block types that contain rich text (paragraph, heading, list items, etc.)
  * @param value - Block-specific value structure (e.g., ParagraphBlockObjectResponse['paragraph'])
- * Note: We use `any` because Notion SDK has 50+ different block types with different structures
  */
-export function handleRichTextTypes(
-  type: string,
-  value: any, // Block-specific structure varies by type
-  subBlocksText: string,
-): string {
+export function handleRichTextTypes(type: string, value: NotionRichTextBlockValue, subBlocksText: string): string {
   let blockText = '';
-  const richText = value['rich_text'];
-  if (richText['plain_text'] !== undefined) {
+  const richText = value.rich_text;
+  if (!Array.isArray(richText)) {
     blockText = handleRichTextSubItem(richText);
-  } else if (richText instanceof Array) {
+  } else {
     for (const item of richText) {
       const data = item;
       if (data.plain_text !== undefined) {
@@ -368,10 +385,7 @@ export function handleRichTextTypes(
  * Handles link block types (bookmark, link_preview, etc.)
  * @param value - Block-specific value structure with a `url` property
  */
-export function handleLinkTypes(
-  type: string,
-  value: any, // BookmarkBlockObjectResponse['bookmark'] | LinkPreviewBlockObjectResponse['link_preview']
-): string {
+export function handleLinkTypes(type: string, value: NotionLinkValue): string {
   if (value.url === '') {
     return `<p><br></p>`;
   }
@@ -487,7 +501,7 @@ function sanitizeAndApplyAnnotations(text: string, annotations?: NotionAnnotatio
  * Renders a Notion simple table block (type 'table') and its 'table_row' children into HTML.
  */
 export function convertNotionSimpleTableBlockToHtml(tableBlock: NotionBlockObject): string {
-  const tableValue = (tableBlock as Record<string, any>)['table'];
+  const tableValue = (tableBlock as Record<string, unknown>)['table'] as Record<string, unknown> | undefined;
   const hasColumnHeader: boolean = tableValue?.has_column_header === true;
   const hasRowHeader: boolean = tableValue?.has_row_header === true;
 
@@ -499,8 +513,8 @@ export function convertNotionSimpleTableBlockToHtml(tableBlock: NotionBlockObjec
     if (childType !== 'table_row') {
       continue;
     }
-    const rowValue = (child as Record<string, any>)['table_row'];
-    const cells: Array<Array<any>> = rowValue?.cells ?? [];
+    const rowValue = child['table_row'] as Record<string, unknown> | undefined;
+    const cells: RichTextItemResponse[][] = (rowValue?.cells ?? []) as RichTextItemResponse[][];
 
     const cellHtmls: string[] = [];
     for (let colIdx = 0; colIdx < cells.length; colIdx++) {
@@ -536,9 +550,9 @@ export function convertNotionSimpleTableBlockToHtml(tableBlock: NotionBlockObjec
  * Handles both Notion API responses and our internal block representations with children.
  * */
 export function convertNotionBlockObjectToHtmlv2(input: NotionBlockObject): string {
-  const block = input as Record<string, any>;
-  const type = block['type'];
-  const value = block[type];
+  const block = input as Record<string, unknown>;
+  const type = block['type'] as string;
+  const value = block[type] as Record<string, unknown>;
 
   let subBlocksText = '';
   if (block['has_children'] !== undefined && block['has_children'] === true) {
@@ -546,20 +560,20 @@ export function convertNotionBlockObjectToHtmlv2(input: NotionBlockObject): stri
     let list: 'bulleted_list_item' | 'numbered_list_item' | undefined = undefined;
     let listData = '';
 
-    const children = block['children'];
+    const children = block['children'] as NotionBlockObject[];
     for (const child of children) {
-      const childBlock = child as unknown as Record<string, any>;
+      const childBlock = child as Record<string, unknown>;
       const childHtml = convertNotionBlockObjectToHtmlv2(child);
 
-      const childType = childBlock['type'];
+      const childType = childBlock['type'] as string;
       if (childType.includes('list_item')) {
         if (list === undefined) {
-          list = childType;
+          list = childType as 'bulleted_list_item' | 'numbered_list_item';
           listData = childHtml;
         } else if (list !== childType) {
           const listType = list === 'bulleted_list_item' ? 'bulleted_list' : 'numbered_list';
           subBlocksText = subBlocksText.concat(applyHtmlTagFromType(listType, listData));
-          list = childType;
+          list = childType as 'bulleted_list_item' | 'numbered_list_item';
           listData = childHtml;
         } else {
           listData = listData.concat(childHtml);
@@ -583,11 +597,11 @@ export function convertNotionBlockObjectToHtmlv2(input: NotionBlockObject): stri
   let html = '';
 
   if (value['rich_text'] !== undefined) {
-    html = handleRichTextTypes(type, value, subBlocksText);
+    html = handleRichTextTypes(type, value as unknown as NotionRichTextBlockValue, subBlocksText);
   } else if (type === 'image' || type === 'video' || type === 'audio') {
-    html = handleMediaTypes(type, value);
+    html = handleMediaTypes(type, value as unknown as NotionMediaValue);
   } else if (type === 'bookmark' || type === 'embed') {
-    html = handleLinkTypes(type, value);
+    html = handleLinkTypes(type, value as unknown as NotionLinkValue);
   } else if (type === 'divider') {
     html = applyHtmlTagFromType(type, '');
   } else if (type === 'table') {

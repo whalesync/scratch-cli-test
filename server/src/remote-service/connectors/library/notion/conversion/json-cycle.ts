@@ -1,4 +1,3 @@
-/* eslint-disable -- Borrowed third-party JSON cycle detection code (Crockford's cycle.js) */
 // Borrowed from:
 // https://github.com/douglascrockford/JSON-js/blob/8e8b0407e475e35942f7e9461dab81929fcc7321/cycle.js#L1
 
@@ -23,12 +22,11 @@
 */
 
 export class JsonCycle {
-  static safeStringify(object: any): string {
+  static safeStringify(object: unknown): string {
     return JSON.stringify(JsonCycle.decycle(object));
   }
 
-  // eslint-disable-next-line @typescript-eslint/ban-types
-  static decycle(object: any, replacer?: Function): any {
+  static decycle(object: unknown, replacer?: (value: unknown) => unknown): unknown {
     'use strict';
 
     // Make a deep copy of an object or array, assuring that there is at most
@@ -57,11 +55,11 @@ export class JsonCycle {
 
     const objects = new WeakMap(); // object to path mappings
 
-    return (function derez(value, path): any {
+    return (function derez(value: unknown, path: string): unknown {
       // The derez function recurses through the object, producing the deep copy.
 
-      let old_path; // The path of an earlier occurance of value
-      let nu: any; // The new object or array
+      let old_path: string | undefined; // The path of an earlier occurance of value
+      let nu: unknown[] | Record<string, unknown>; // The new object or array
 
       // If a replacer function was provided, then call it to get a replacement value.
 
@@ -85,7 +83,7 @@ export class JsonCycle {
         // encountered it. If so, return a {"$ref":PATH} object. This uses an
         // ES6 WeakMap.
 
-        old_path = objects.get(value);
+        old_path = objects.get(value) as string | undefined;
         if (old_path !== undefined) {
           return { $ref: old_path };
         }
@@ -97,16 +95,17 @@ export class JsonCycle {
         // If it is an array, replicate the array.
 
         if (Array.isArray(value)) {
-          nu = [];
-          value.forEach(function (element, i) {
-            nu[i] = derez(element, path + '[' + i + ']');
+          nu = [] as unknown[];
+          value.forEach(function (element: unknown, i: number) {
+            (nu as unknown[])[i] = derez(element, path + '[' + i + ']');
           });
         } else {
           // If it is an object, replicate the object.
 
-          nu = {};
-          Object.keys(value).forEach(function (name) {
-            nu[name] = derez(value[name], path + '[' + JSON.stringify(name) + ']');
+          nu = {} as Record<string, unknown>;
+          const obj = value as Record<string, unknown>;
+          Object.keys(obj).forEach(function (name: string) {
+            (nu as Record<string, unknown>)[name] = derez(obj[name], path + '[' + JSON.stringify(name) + ']');
           });
         }
         return nu;
@@ -115,7 +114,7 @@ export class JsonCycle {
     })(object, '$');
   }
 
-  static retrocycle($: any): any {
+  static retrocycle($: unknown): unknown {
     'use strict';
 
     // Restore an object that was reduced by decycle. Members whose values are
@@ -137,9 +136,10 @@ export class JsonCycle {
     //      return JSON.retrocycle(JSON.parse(s));
     // produces an array containing a single element which is the array itself.
 
+    // eslint-disable-next-line no-control-regex, no-useless-escape -- Crockford's original regex
     const px = /^\$(?:\[(?:\d+|"(?:[^\\"\u0000-\u001f]|\\(?:[\\"\/bfnrt]|u[0-9a-zA-Z]{4}))*")\])*$/;
 
-    (function rez(value): any {
+    (function rez(value: unknown): void {
       // The rez function walks recursively through the object looking for $ref
       // properties. When it finds one that has a value that is a path, then it
       // replaces the $ref object with a reference to the value that is found by
@@ -147,10 +147,11 @@ export class JsonCycle {
 
       if (value && typeof value === 'object') {
         if (Array.isArray(value)) {
-          value.forEach(function (element, i) {
+          value.forEach(function (element: unknown, i: number) {
             if (typeof element === 'object' && element !== null) {
-              const path = element.$ref;
+              const path = (element as Record<string, unknown>).$ref;
               if (typeof path === 'string' && px.test(path)) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- eval returns any
                 value[i] = eval(path);
               } else {
                 rez(element);
@@ -158,12 +159,13 @@ export class JsonCycle {
             }
           });
         } else {
-          Object.keys(value).forEach(function (name) {
-            const item = value[name];
+          const obj = value as Record<string, unknown>;
+          Object.keys(obj).forEach(function (name: string) {
+            const item = obj[name];
             if (typeof item === 'object' && item !== null) {
-              const path = item.$ref;
+              const path = (item as Record<string, unknown>).$ref;
               if (typeof path === 'string' && px.test(path)) {
-                value[name] = eval(path);
+                obj[name] = eval(path);
               } else {
                 rez(item);
               }

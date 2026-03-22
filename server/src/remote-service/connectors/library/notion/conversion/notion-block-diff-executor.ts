@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument */
 import { Client } from '@notionhq/client';
+import type { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
 import { NotionBlockOperation } from './notion-block-diff';
 import { ConvertedNotionBlock } from './notion-rich-text-push-types';
 
@@ -31,7 +31,7 @@ export class NotionBlockDiffExecutor {
    * - For update operations: removes children (they're handled separately)
    * - Ensures block type property is properly defined
    */
-  private prepareBlockForApi(block: ConvertedNotionBlock): any {
+  private prepareBlockForApi(block: ConvertedNotionBlock): Record<string, unknown> {
     // Create a clean copy of the block, preserving all type-specific properties
     const blockForApi = { ...block };
 
@@ -119,27 +119,27 @@ export class NotionBlockDiffExecutor {
     after: string | undefined,
     idMappings: Map<string, string>,
   ): Promise<Array<{ id: string; [key: string]: unknown }>> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     const blocksForApi = blocks.map((block) => this.prepareBlockForApi(block));
     const afterParam = after ? this.resolveBlockId(after, idMappings) : undefined;
 
     const response = await this.client.blocks.children.append({
       block_id: pageId,
-      children: blocksForApi,
+      children: blocksForApi as unknown as BlockObjectRequest[],
       after: afterParam,
     });
 
     // Map temporary IDs to real Notion IDs (including nested children)
-    const mapNestedIds = (originalBlock: ConvertedNotionBlock, createdBlock: any): void => {
-      if (originalBlock.id && originalBlock.id.startsWith('temp.') && createdBlock.id) {
+    const mapNestedIds = (originalBlock: ConvertedNotionBlock, createdBlock: Record<string, unknown>): void => {
+      if (originalBlock.id && originalBlock.id.startsWith('temp.') && typeof createdBlock.id === 'string') {
         idMappings.set(originalBlock.id, createdBlock.id);
       }
 
       // Map children IDs recursively
-      if (originalBlock.children && createdBlock.children) {
+      const createdChildren = Array.isArray(createdBlock.children) ? createdBlock.children : undefined;
+      if (originalBlock.children && createdChildren) {
         for (let j = 0; j < originalBlock.children.length; j++) {
           const originalChild = originalBlock.children[j];
-          const createdChild = createdBlock.children[j];
+          const createdChild = createdChildren[j] as Record<string, unknown> | undefined;
           if (createdChild) {
             mapNestedIds(originalChild, createdChild);
           }
@@ -204,10 +204,9 @@ export class NotionBlockDiffExecutor {
         case 'delete': {
           const blockIdToDelete = this.resolveBlockId(operation.blockId, idMappings);
 
-          await this.client.blocks.update({
+          await this.client.blocks.delete({
             block_id: blockIdToDelete,
-            archived: true,
-          } as any);
+          });
           break;
         }
 
@@ -221,8 +220,10 @@ export class NotionBlockDiffExecutor {
           break;
         }
 
-        default:
-          throw new Error(`Unknown operation type: ${(operation as any).type}`);
+        default: {
+          const exhaustive: never = operation;
+          throw new Error(`Unknown operation type: ${(exhaustive as NotionBlockOperation).type}`);
+        }
       }
     } catch (error) {
       // Check if this is a 409 conflict error
@@ -242,13 +243,13 @@ export class NotionBlockDiffExecutor {
   private is409ConflictError(error: unknown): boolean {
     // Check for Notion API conflict error
     if (error && typeof error === 'object') {
-      const err = error as any;
+      const err = error as Record<string, unknown>;
       // Notion API errors have a status property
       if (err.status === 409 || err.code === 'conflict_error') {
         return true;
       }
       // Check error message
-      if (err.message && (err.message.includes('409') || err.message.includes('conflict'))) {
+      if (typeof err.message === 'string' && (err.message.includes('409') || err.message.includes('conflict'))) {
         return true;
       }
     }
