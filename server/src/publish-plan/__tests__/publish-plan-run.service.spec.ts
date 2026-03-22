@@ -27,7 +27,7 @@ function makeMockConnector() {
     updateRecords: jest.fn().mockResolvedValue(undefined),
     createRecords: jest.fn().mockResolvedValue([]),
     deleteRecords: jest.fn().mockResolvedValue(undefined),
-  } as unknown as jest.Mocked<Connector<any, any>>;
+  } as unknown as jest.Mocked<Connector>;
 }
 
 function makeDbMock() {

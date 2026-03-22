@@ -2,15 +2,15 @@
 
 ## Motivation
 
-We audited all `any` usage across the codebase and cleaned up the easy wins. This doc tracks what's left and why, so we can chip away at it over time.
+We audited all `any` usage across the codebase and cleaned up everything fixable. This doc tracks the current state and what's left.
 
-## Current State (after Phase 1-4 cleanup)
+## Current State (after Phase 1-6 cleanup)
 
-### Production code: mostly clean
+### Production code: clean
 
-The remaining `any` in non-test production code falls into a few categories:
+The only remaining `any` in production code is:
 
-#### 1. Generic type constraints in `JobDefinitionBuilder` (~5 occurrences)
+#### Generic type constraints in `JobDefinitionBuilder` (~5 occurrences)
 
 **File:** `server/src/worker/jobs/base-types.ts`
 
@@ -18,49 +18,26 @@ The remaining `any` in non-test production code falls into a few categories:
 
 **Fix:** This is a TypeScript language limitation. No fix needed — this is the correct pattern.
 
-#### 2. Notion SDK interop (~30+ occurrences across 4 files)
-
-**Files:**
-
-- `server/src/remote-service/connectors/library/notion/conversion/notion-block-diff.ts`
-- `server/src/remote-service/connectors/library/notion/conversion/notion-block-diff-executor.ts`
-- `server/src/remote-service/connectors/library/notion/conversion/notion-rich-text-conversion.ts`
-- `server/src/remote-service/connectors/library/notion/conversion/json-cycle.ts`
-
-The Notion SDK has 50+ block types with deeply nested discriminated unions. The conversion code accesses block-specific properties that vary per type (e.g., `paragraph.rich_text`, `heading_1.rich_text`, `image.file.url`). Properly typing this would require exhaustive pattern matching over every block type.
-
-These files have file-level `eslint-disable` comments for `no-unsafe-*` rules.
-
-**Fix:** Create a type-safe Notion block accessor layer with exhaustive discriminated union handling. This is a large, standalone refactor — probably 2-3 days of work.
-
-#### 3. `json-cycle.ts` — borrowed third-party code
-
-**File:** `server/src/remote-service/connectors/library/notion/conversion/json-cycle.ts`
-
-Crockford's JSON cycle detection library, copied verbatim. Uses `any` throughout because it operates on arbitrary JSON-like values.
-
-**Fix:** Not worth rewriting. The `/* eslint-disable */` comment documents this.
-
 ### Test code: clean
 
 All test files have been cleaned up. Zero `as any`, `: any`, or `<any>` remain in `*.spec.ts` files.
 
-## Phase 6: Enable the ESLint rule
+## Next step: Enable the ESLint rule
 
-Once the remaining production code `any` usages are addressed (or have targeted `eslint-disable` comments), enable `@typescript-eslint/no-explicit-any` in `server/eslint.config.mjs`:
-
-```js
-// Change from:
-'@typescript-eslint/no-explicit-any': 'off',
-// To:
-'@typescript-eslint/no-explicit-any': 'warn',
-// And eventually:
-'@typescript-eslint/no-explicit-any': 'error',
-```
+The only remaining `any` is the unfixable `JobDefinitionBuilder` constraint. Enable `@typescript-eslint/no-explicit-any` as `error` in `server/eslint.config.mjs` and add a single `eslint-disable-next-line` to `base-types.ts`.
 
 The client ESLint config (`eslint-config-next/typescript`) doesn't enable this rule either — consider adding it there too.
 
-## What we already fixed (Phases 1-5)
+## What we already fixed (Phases 1-6)
+
+### Phase 6
+
+- Notion block-diff: extracted `getBlockValue` helper for type-safe block property access, replaced 23 `any` casts
+- Notion rich-text-conversion: defined `NotionMediaValue`, `NotionRichTextBlockValue`, `NotionLinkValue` interfaces
+- Notion block-diff-executor: typed return values and parameters, replaced `blocks.update` archived cast with `blocks.delete`
+- Notion rich-text-push: imported `ChildNode`/`DataNode` from domhandler, removed `(block as any).children`
+- json-cycle.ts: replaced all `any` with `unknown`, removed blanket `/* eslint-disable */` that suppressed all rules
+- Removed all 5 file-level eslint-disable blocks from Notion conversion files
 
 ### Phase 5
 

@@ -35,6 +35,7 @@ export type JobDefinitionBuilder<
 
 export type { Progress };
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- required for TypeScript's infer pattern */
 export type JobHandlerBuilder<TDefinition extends JobDefinitionBuilder<any, any, any, any, any>> =
   TDefinition extends JobDefinitionBuilder<any, infer TData, infer TPublicProgress, infer TJobProgress, infer TResult>
     ? {
@@ -54,6 +55,7 @@ export type JobHandlerBuilder<TDefinition extends JobDefinitionBuilder<any, any,
         }) => Promise<TResult>;
       }
     : never;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 // export type JobHandlerBuilder2<TBullMqJob extends Job<any, any, any>> =
 //   TBullMqJob extends Job<any, infer TResult, any>

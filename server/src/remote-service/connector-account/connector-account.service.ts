@@ -578,7 +578,7 @@ export class ConnectorAccountService {
 
   async testConnection(workbookId: WorkbookId, id: string, actor: Actor): Promise<TestConnectionResponse> {
     const account = await this.findOne(workbookId, id, actor);
-    let connector: Connector<string, any> | undefined;
+    let connector: Connector | undefined;
     try {
       connector = await this.connectorsService.getConnector({
         service: account.service,
