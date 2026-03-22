@@ -1,7 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OAuthProvider, OAuthTokenResponse } from '../oauth-provider.interface';
@@ -57,7 +53,7 @@ export class YouTubeOAuthProvider implements OAuthProvider {
       throw new Error(`Failed to exchange code for tokens: ${error}`);
     }
 
-    const tokenData = await response.json();
+    const tokenData = (await response.json()) as GoogleTokenResponse;
 
     // Map Google's response to our OAuthTokenResponse interface
     return {
@@ -88,7 +84,7 @@ export class YouTubeOAuthProvider implements OAuthProvider {
       throw new Error(`Failed to refresh tokens: ${error}`);
     }
 
-    const tokenData = await response.json();
+    const tokenData = (await response.json()) as GoogleTokenResponse;
 
     // Map Google's response to our OAuthTokenResponse interface
     return {
@@ -106,14 +102,29 @@ export class YouTubeOAuthProvider implements OAuthProvider {
     return this.redirectUri;
   }
 
+  getClientId(): string {
+    return this.clientId;
+  }
+
+  getClientSecret(): string {
+    return this.clientSecret;
+  }
+
   private extractUserIdFromIdToken(idToken: string): string | undefined {
     try {
       // Decode the JWT ID token to extract user ID
-      const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString());
-      return payload.sub || payload.user_id;
-    } catch (error) {
-      console.warn('Failed to extract user ID from ID token:', error);
+      const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString()) as Record<string, unknown>;
+      const sub = payload.sub ?? payload.user_id;
+      return typeof sub === 'string' ? sub : undefined;
+    } catch {
       return undefined;
     }
   }
+}
+
+interface GoogleTokenResponse {
+  access_token: string;
+  expires_in?: number;
+  refresh_token?: string;
+  id_token?: string;
 }

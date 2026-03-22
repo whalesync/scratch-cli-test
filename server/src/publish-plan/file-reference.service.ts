@@ -1,12 +1,8 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-
 import { Injectable } from '@nestjs/common';
 import { chunk } from 'lodash';
 import { ParsedContent, Schema } from 'src/utils/objects';
 import { DbService } from '../db/db.service';
+import { BaseJsonTableSpec } from '../remote-service/connectors/types';
 import { RefCleanerService } from './ref-cleaner.service';
 import { SchemaHelperService } from './schema-helper.service';
 import { parsePath } from './utils';
@@ -67,24 +63,25 @@ export class FileReferenceService {
    * Retrieves all values at a given path from the content object.
    * Handles '[]' in the path by mapping over arrays.
    */
-  getNodesByPath(root: any, path: string[]): any[] {
+  getNodesByPath(root: ParsedContent, path: string[]): unknown[] {
     if (!root) return [];
     if (path.length === 0) return [root];
 
-    let current = [root];
+    let current: unknown[] = [root];
 
     for (const segment of path) {
-      const next: any[] = [];
+      const next: unknown[] = [];
       for (const node of current) {
-        if (!node) continue;
+        if (!node || typeof node !== 'object') continue;
 
         if (segment === '[]') {
           if (Array.isArray(node)) {
-            next.push(...node);
+            next.push(...(node as unknown[]));
           }
         } else {
-          if (node[segment] !== undefined) {
-            next.push(node[segment]);
+          const obj = node as Record<string, unknown>;
+          if (obj[segment] !== undefined) {
+            next.push(obj[segment]);
           }
         }
       }
@@ -100,7 +97,7 @@ export class FileReferenceService {
    * - If map is provided, looks for property `map` in object/item.
    * - Else uses value directly.
    */
-  private extractIds(value: any, map?: string): string[] {
+  private extractIds(value: unknown, map?: string): string[] {
     if (!value) return [];
 
     const items = Array.isArray(value) ? value : [value];
@@ -110,8 +107,8 @@ export class FileReferenceService {
       if (!item) continue;
 
       if (map) {
-        if (typeof item === 'object' && item !== null && item[map] !== undefined) {
-          const val = item[map];
+        if (typeof item === 'object' && item !== null) {
+          const val = (item as Record<string, unknown>)[map];
           if (typeof val === 'string' || typeof val === 'number') ids.push(String(val));
         }
       } else {
@@ -150,7 +147,7 @@ export class FileReferenceService {
 
     // 2. Extract new refs
     const allRefs: ExtractedRef[] = [];
-    const schemaCache = new Map<string, any>();
+    const schemaCache = new Map<string, BaseJsonTableSpec | null>();
 
     for (const file of files) {
       let fileSchema = schema;

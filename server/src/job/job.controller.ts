@@ -63,7 +63,7 @@ export class JobController {
   }
 
   @Get(':jobId/raw')
-  async getJobRaw(@Param('jobId') jobId: string): Promise<any> {
+  async getJobRaw(@Param('jobId') jobId: string): Promise<unknown> {
     return await this.jobService.getJobRaw(jobId);
   }
 

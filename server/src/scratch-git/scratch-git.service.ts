@@ -218,7 +218,7 @@ export class ScratchGitService {
     await this.scratchGitClient.publishFile(repoId, { path, content }, message);
   }
 
-  async getRepoStatus(repoId: string): Promise<any> {
+  async getRepoStatus(repoId: string): Promise<unknown> {
     return this.scratchGitClient.getStatus(repoId);
   }
 
@@ -230,7 +230,7 @@ export class ScratchGitService {
     return this.scratchGitClient.getStatusCount(repoId);
   }
 
-  async getFileDiff(repoId: string, path: string): Promise<any> {
+  async getFileDiff(repoId: string, path: string): Promise<string> {
     return this.scratchGitClient.getDiff(repoId, path);
   }
 
@@ -238,7 +238,7 @@ export class ScratchGitService {
     return this.scratchGitClient.getFolderDiff(repoId, folderPath);
   }
 
-  async getGraph(repoId: string): Promise<any> {
+  async getGraph(repoId: string): Promise<unknown> {
     return this.scratchGitClient.getGraph(repoId);
   }
 

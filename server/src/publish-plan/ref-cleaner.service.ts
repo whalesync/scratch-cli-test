@@ -78,18 +78,17 @@ export class RefCleanerService {
    * Traverses the schema to find all paths that are marked as foreign keys.
    */
   extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string; map?: string }> {
-    const schemaId = schema.$id as string | undefined;
+    const schemaId = schema.$id;
     if (typeof schemaId === 'string' && this.fkPathsCache.has(schemaId)) {
       return this.fkPathsCache.get(schemaId)!;
     }
 
     const results: Array<{ path: string[]; targetRemoteTableId: string; map?: string }> = [];
 
-    const walk = (schemaNode: any, currentPath: string[]) => {
+    const walk = (schemaNode: Record<string, unknown>, currentPath: string[]) => {
       if (!schemaNode || typeof schemaNode !== 'object') return;
 
       // Check for x-scratch-foreign-key
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const foreignKey = schemaNode['x-scratch-foreign-key'];
 
       if (foreignKey) {
@@ -98,12 +97,14 @@ export class RefCleanerService {
 
         if (typeof foreignKey === 'string') {
           linkedTableId = foreignKey;
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        } else if (typeof foreignKey === 'object' && foreignKey.linkedTableId) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          linkedTableId = foreignKey.linkedTableId;
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          map = foreignKey.map;
+        } else if (typeof foreignKey === 'object' && foreignKey !== null && !Array.isArray(foreignKey)) {
+          const fkObj = foreignKey as Record<string, unknown>;
+          if (typeof fkObj.linkedTableId === 'string') {
+            linkedTableId = fkObj.linkedTableId;
+          }
+          if (typeof fkObj.map === 'string') {
+            map = fkObj.map;
+          }
         }
 
         if (linkedTableId) {
@@ -116,34 +117,32 @@ export class RefCleanerService {
       }
 
       // Recurse
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (schemaNode.properties) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
-        for (const [key, prop] of Object.entries(schemaNode.properties)) {
-          walk(prop, [...currentPath, key]);
+      if (schemaNode.properties && typeof schemaNode.properties === 'object') {
+        for (const [key, prop] of Object.entries(schemaNode.properties as Record<string, unknown>)) {
+          if (prop && typeof prop === 'object') {
+            walk(prop as Record<string, unknown>, [...currentPath, key]);
+          }
         }
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (schemaNode.items) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         if (Array.isArray(schemaNode.items)) {
           // tuple validation not supported for now in this simple walker
-        } else {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          walk(schemaNode.items, [...currentPath, '[]']);
+        } else if (typeof schemaNode.items === 'object') {
+          walk(schemaNode.items as Record<string, unknown>, [...currentPath, '[]']);
         }
       }
 
       // Handle oneOf, anyOf, allOf (common in Webflow schemas)
       // These do NOT increase the data path depth.
-      const combinators = ['oneOf', 'anyOf', 'allOf'];
+      const combinators = ['oneOf', 'anyOf', 'allOf'] as const;
       for (const comb of combinators) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        if (Array.isArray(schemaNode[comb])) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          for (const subSchema of schemaNode[comb]) {
-            walk(subSchema, currentPath);
+        const combValue = schemaNode[comb];
+        if (Array.isArray(combValue)) {
+          for (const subSchema of combValue) {
+            if (subSchema && typeof subSchema === 'object') {
+              walk(subSchema as Record<string, unknown>, currentPath);
+            }
           }
         }
       }
@@ -151,7 +150,7 @@ export class RefCleanerService {
 
     walk(schema, []);
 
-    const outSchemaId = schema.$id as string | undefined;
+    const outSchemaId = schema.$id;
     if (typeof outSchemaId === 'string') {
       if (this.fkPathsCache.size > 1000) this.fkPathsCache.clear(); // Keep memory bounded
       this.fkPathsCache.set(outSchemaId, results);
@@ -161,7 +160,11 @@ export class RefCleanerService {
   }
 
   // Helper to traverse and strip at specific path using a predicate
-  private stripAtNodes(root: any, path: string[], shouldStrip: (value: any) => boolean): void {
+  private stripAtNodes(
+    root: Record<string, unknown> | unknown[],
+    path: string[],
+    shouldStrip: (value: unknown) => boolean,
+  ): void {
     if (!root) return;
     if (path.length === 0) return;
 
@@ -171,28 +174,25 @@ export class RefCleanerService {
       if (Array.isArray(root)) {
         for (let i = 0; i < root.length; i++) {
           if (tail.length === 0) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             root[i] = this.checkAndStrip(root[i], shouldStrip);
-          } else {
-            this.stripAtNodes(root[i], tail, shouldStrip);
+          } else if (root[i] && typeof root[i] === 'object') {
+            this.stripAtNodes(root[i] as Record<string, unknown>, tail, shouldStrip);
           }
         }
       }
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (root[head] !== undefined) {
+      const obj = root as Record<string, unknown>;
+      if (obj[head] !== undefined) {
         if (tail.length === 0) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          root[head] = this.checkAndStrip(root[head], shouldStrip);
-        } else {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          this.stripAtNodes(root[head], tail, shouldStrip);
+          obj[head] = this.checkAndStrip(obj[head], shouldStrip);
+        } else if (obj[head] && typeof obj[head] === 'object') {
+          this.stripAtNodes(obj[head] as Record<string, unknown>, tail, shouldStrip);
         }
       }
     }
   }
 
-  private checkAndStrip(value: any, shouldStrip: (value: any) => boolean): any {
+  private checkAndStrip(value: unknown, shouldStrip: (value: unknown) => boolean): unknown {
     if (Array.isArray(value)) {
       return value.filter((item) => !shouldStrip(item));
     } else {

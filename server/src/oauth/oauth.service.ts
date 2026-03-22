@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { AuthType, ConnectorAccount } from '@prisma/client';
+import { AuthType, ConnectorAccount, Prisma } from '@prisma/client';
 import {
   createConnectorAccountId,
   isShopifyConnectorExtras,
@@ -376,7 +376,7 @@ export class OAuthService {
           `${capitalize(service)} (${connectionInfo?.connectionMethod === 'OAUTH_CUSTOM' ? 'Private OAuth' : 'OAuth'})`,
         authType: AuthType.OAUTH,
         repoPath,
-        encryptedCredentials: encryptedCredentials as Record<string, any>,
+        encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
         extras: extras as Record<string, string> | undefined,
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),
@@ -445,7 +445,7 @@ export class OAuthService {
     await this.db.client.connectorAccount.update({
       where: { id: connectorAccount.id },
       data: {
-        encryptedCredentials: encryptedCredentials as Record<string, any>,
+        encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
         ...(extras ? { extras: { ...extras } } : {}),
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),
@@ -542,19 +542,12 @@ export class OAuthService {
    * authenticated requests. Exposes the provider's configuration without token data.
    */
   getYouTubeOAuthCredentials(): { clientId: string; clientSecret: string; redirectUri: string } {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const youtubeProvider = this.providers.get('YOUTUBE') as any;
-    if (!youtubeProvider) {
-      throw new Error('YouTube OAuth provider not found');
-    }
+    const youtubeProvider = this.youTubeProvider;
 
     return {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-      clientId: youtubeProvider.clientId,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-      clientSecret: youtubeProvider.clientSecret,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-      redirectUri: youtubeProvider.redirectUri,
+      clientId: youtubeProvider.getClientId(),
+      clientSecret: youtubeProvider.getClientSecret(),
+      redirectUri: youtubeProvider.getRedirectUri(),
     };
   }
 

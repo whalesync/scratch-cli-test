@@ -1,6 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { DbJob } from '@prisma/client';
+import { DbJob, Prisma } from '@prisma/client';
 import { createJobId, RunId } from '@spinner/shared-types';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
@@ -52,7 +51,7 @@ export class JobService {
         dataFolderId: params.dataFolderId,
         syncId: params.syncId,
         type: params.type,
-        data: params.data as any,
+        data: params.data as Prisma.InputJsonValue,
         bullJobId: params.bullJobId,
         progress: params.progress ?? undefined,
         status: 'created',
@@ -198,15 +197,14 @@ export class JobService {
 
         const state = await bullJob.getState();
         const progress = bullJob.progress as Progress;
+        const jobData = bullJob.data as Record<string, unknown>;
         return {
           dbJobId: dbJob.id,
           bullJobId: dbJob.bullJobId,
           dataFolderId: dbJob.dataFolderId,
           type: dbJob.type,
           state,
-          publicProgress:
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion, @typescript-eslint/no-unsafe-member-access
-            progress?.publicProgress || (bullJob.data as any).initialPublicProgress || undefined,
+          publicProgress: progress?.publicProgress || jobData.initialPublicProgress || undefined,
           processedOn: bullJob.processedOn ? new Date(bullJob.processedOn) : null,
           finishedOn: bullJob.finishedOn ? new Date(bullJob.finishedOn) : null,
           failedReason: bullJob.failedReason,
@@ -255,8 +253,8 @@ export class JobService {
       bullJobId: job.id as string,
       dbJobId: job.id as string,
       type: job.name,
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion, @typescript-eslint/no-unsafe-member-access
-      publicProgress: progress?.publicProgress || (job.data as any).initialPublicProgress || undefined,
+      publicProgress:
+        progress?.publicProgress || (job.data as Record<string, unknown>).initialPublicProgress || undefined,
       state: state,
       processedOn: job.processedOn ? new Date(job.processedOn) : null,
       finishedOn: job.finishedOn ? new Date(job.finishedOn) : null,
@@ -274,7 +272,7 @@ export class JobService {
     return dbJobs.map((dbJob) => dbJobToJobEntity(dbJob));
   }
 
-  async getJobRaw(jobId: string): Promise<any> {
+  async getJobRaw(jobId: string): Promise<unknown> {
     const queue = new Queue('worker-queue', {
       connection: this.getRedis(),
     });

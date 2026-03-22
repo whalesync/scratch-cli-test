@@ -49,7 +49,7 @@ export class ScratchGitClient {
     return repoId.split('/').map(encodeURIComponent).join('%2F');
   }
 
-  private async callGitApi(endpoint: string, method: string, body?: any): Promise<unknown> {
+  private async callGitApi(endpoint: string, method: string, body?: Record<string, unknown>): Promise<unknown> {
     const url = `${this.gitApiUrl}${endpoint}`;
     const options: RequestInit = {
       method,
@@ -319,7 +319,7 @@ export class ScratchGitClient {
     >;
   }
 
-  async getStatus(repoId: string): Promise<any> {
+  async getStatus(repoId: string): Promise<unknown> {
     return this.callGitApi(`/api/repo/diff/${this.encodeRepoId(repoId)}/status`, 'GET');
   }
 
@@ -351,7 +351,7 @@ export class ScratchGitClient {
     ) as Promise<Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>>;
   }
 
-  async getGraph(repoId: string): Promise<any> {
+  async getGraph(repoId: string): Promise<unknown> {
     return this.callGitApi(`/api/repo/debug/${this.encodeRepoId(repoId)}/graph`, 'GET');
   }
 

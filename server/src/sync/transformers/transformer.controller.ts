@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Body,
   ClassSerializerInterceptor,
@@ -9,7 +8,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { TestTransformerDto, TestTransformerResponse, WorkbookId } from '@spinner/shared-types';
+import { Service, TestTransformerDto, TestTransformerResponse, WorkbookId } from '@spinner/shared-types';
 import get from 'lodash/get';
 
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -18,6 +17,8 @@ import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { FilesService } from '../../workbook/files.service';
 import { getTransformer } from './transformer-registry';
+import { TransformContext } from './transformer.types';
+
 @Controller('sync/transformers')
 @UseGuards(ScratchAuthGuard)
 @UseInterceptors(ClassSerializerInterceptor)
@@ -39,54 +40,47 @@ export class TransformerController {
         throw new NotFoundException('File content not found');
       }
 
-      const fileContent = JSON.parse(fileDetails.file.content);
+      const fileContent = JSON.parse(fileDetails.file.content) as Record<string, unknown>;
 
       // 2. Extract value
-      const sourceValue = get(fileContent, dto.path);
+      const sourceValue: unknown = get(fileContent, dto.path);
 
       if (sourceValue === undefined) {
-        return {
-          success: false,
-          value: null,
-          error: `Path '${dto.path}' not found in file`,
-          originalValue: undefined,
-        };
+        return { success: false, value: null, error: `Path '${dto.path}' not found in file` };
       }
 
       // 3. Get Transformer
       const transformer = getTransformer(dto.transformerConfig.type);
       if (!transformer) {
-        return {
-          success: false,
-          value: null,
-          error: `Transformer type '${dto.transformerConfig.type}' not found`,
-          originalValue: sourceValue,
-        };
+        return { success: false, value: null, error: `Transformer type '${dto.transformerConfig.type}' not found` };
       }
 
-      // 4. Transform
-      const context = {
+      // 4. Transform — this preview endpoint only needs sourceValue/sourceRecord;
+      //    remaining context fields use safe defaults since no sync is running.
+      const context: TransformContext = {
         sourceValue,
-        sourceRecord: fileContent,
-        transformerConfig: dto.transformerConfig,
+        sourceRecord: { id: '', filePath: dto.fileId, fields: fileContent },
+        sourceFieldPath: dto.path,
+        sourceTableSpec: null,
+        sourceService: '' as Service,
+        destinationFieldPath: dto.path,
+        destinationTableSpec: null,
+        destinationService: '' as Service,
+        lookupTools: {
+          getDestinationMappingForSourceFk: () => Promise.resolve(null),
+          lookupFieldFromFkRecord: () => Promise.resolve(undefined),
+          getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available in preview')),
+        },
+        options: dto.transformerConfig.options ?? {},
+        phase: 'DATA',
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      const result = await transformer.transform(context as any);
+      const result = await transformer.transform(context);
 
       if (result.success) {
-        return {
-          success: true,
-          value: result.value,
-          originalValue: sourceValue,
-        };
+        return { success: true, value: result.value, originalValue: sourceValue };
       } else {
-        return {
-          success: false,
-          value: null,
-          error: result.error,
-          originalValue: sourceValue,
-        };
+        return { success: false, value: null, error: result.error, originalValue: sourceValue };
       }
     } catch (error) {
       return {

@@ -456,7 +456,7 @@ export class PublishPlanRunService {
   /**
    * Resolve the connector instance for the given connector account.
    */
-  private async resolveConnector(connectorAccountId: string | null): Promise<Connector<string, any>> {
+  private async resolveConnector(connectorAccountId: string | null): Promise<Connector> {
     if (!connectorAccountId) {
       throw new Error('No connectorAccountId on plan — cannot resolve connector');
     }
@@ -503,7 +503,7 @@ export class PublishPlanRunService {
   private async processBatch(
     phase: string,
     entries: PublishOperation[], // Type explicitly if possible, but 'any' avoids circular dep issues for now
-    connector: Connector<string, any>,
+    connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
@@ -558,10 +558,7 @@ export class PublishPlanRunService {
     }
   }
 
-  private async dispatchAssetUploadBatch(
-    entries: PublishOperation[],
-    connector: Connector<string, any>,
-  ): Promise<void> {
+  private async dispatchAssetUploadBatch(entries: PublishOperation[], connector: Connector): Promise<void> {
     for (const entry of entries) {
       const content = entry.content as Record<string, unknown> | null;
       if (!content) continue;
@@ -613,7 +610,7 @@ export class PublishPlanRunService {
   private async dispatchUpdateBatch(
     phase: string,
     entries: PublishOperation[],
-    connector: Connector<string, any>,
+    connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
@@ -694,7 +691,7 @@ export class PublishPlanRunService {
   private async dispatchCreateBatch(
     phase: string,
     entries: PublishOperation[],
-    connector: Connector<string, any>,
+    connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,
@@ -717,26 +714,25 @@ export class PublishPlanRunService {
 
     const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
 
-    const operations: any[] = [];
-    const entriesWithOps: { entry: PublishOperation; resolvedOp: ParsedContent }[] = [];
+    const operations: ConnectorFile[] = [];
+    const entriesWithOps: { entry: PublishOperation; resolvedOp: ConnectorFile }[] = [];
 
     let opIndex = 0;
     for (const entry of entries) {
       if (!entry.content) continue;
       const resolvedOp = resolvedOps[opIndex++];
       operations.push(resolvedOp);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      entriesWithOps.push({ entry, resolvedOp: resolvedOp as any });
+      entriesWithOps.push({ entry, resolvedOp });
     }
 
     if (operations.length === 0) return;
 
     // Bulk create
-    const returnedRecords = await connector.createRecords(tableSpec, operations as ConnectorFile[]);
+    const returnedRecords = await connector.createRecords(tableSpec, operations);
 
     // Post-process
     const fileIndexUpdates: { workbookId: string; folderPath: string; filename: string; recordId: string }[] = [];
-    const refUpdates: { path: string; content: any }[] = [];
+    const refUpdates: { path: string; content: ParsedContent }[] = [];
     const gitFiles: { path: string; content: string }[] = [];
 
     for (let i = 0; i < entriesWithOps.length; i++) {
@@ -744,8 +740,7 @@ export class PublishPlanRunService {
       const returned = returnedRecords[i] || resolvedOp; // Fallback if connector doesn't return
 
       // Update File Index
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-      const realId = (returned as any)[idField];
+      const realId = returned[idField];
       if (realId && (typeof realId === 'string' || typeof realId === 'number')) {
         const { folderPath, filename } = parsePath(entry.filePath);
         fileIndexUpdates.push({
@@ -762,12 +757,12 @@ export class PublishPlanRunService {
           filePath: entry.filePath,
           idField,
           idType: typeof realId,
-          id: `${realId}`,
+          id: JSON.stringify(realId),
         });
       }
 
       // Update Refs
-      refUpdates.push({ path: entry.filePath, content: returned });
+      refUpdates.push({ path: entry.filePath, content: returned as ParsedContent });
 
       // Git
       gitFiles.push({ path: entry.filePath, content: JSON.stringify(returned, null, 2) });
@@ -799,7 +794,7 @@ export class PublishPlanRunService {
 
   private async dispatchDeleteBatch(
     entries: PublishOperation[],
-    connector: Connector<string, any>,
+    connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     planId: string,

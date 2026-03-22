@@ -88,7 +88,7 @@ function hasStringType(obj: unknown): obj is { type: string } {
 /**
  * Recursively walks the Abstract Syntax Tree to enforce specific rules.
  */
-function traverseAst(node: any): void {
+function traverseAst(node: unknown): void {
   if (!node || typeof node !== 'object') {
     return;
   }
@@ -118,15 +118,15 @@ function traverseAst(node: any): void {
   // --- Recursive Traversal ---
   // Depending on the node type, children might be stored in different properties.
   // We iterate over all object keys to ensure we catch every nested expression.
-  for (const key in node) {
-    if (!Object.prototype.hasOwnProperty.call(node, key)) {
+  const record = node as Record<string, unknown>;
+  for (const key in record) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
       continue;
     }
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const child = node[key];
+    const child = record[key];
 
     if (Array.isArray(child)) {
-      child.forEach((c: any) => traverseAst(c));
+      child.forEach((c: unknown) => traverseAst(c));
     } else if (child && typeof child === 'object') {
       traverseAst(child);
     }

@@ -55,8 +55,7 @@ export function getSchemaAtPath(schema: TSchema, path: string): TSchema | undefi
     }
 
     // Unwrap Optional/Union wrapper to get to the object if needed
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    if (current.type === undefined && (current as any).anyOf) {
+    if (current.type === undefined && (current as { anyOf?: unknown }).anyOf) {
       const unwrapped = unwrapSchema(current);
       if (unwrapped) current = unwrapped;
     }
@@ -81,8 +80,7 @@ export function getSchemaType(schema: TSchema): string | undefined {
     return schema.type as string;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  const anyOf = (schema as any).anyOf as TSchema[] | undefined;
+  const anyOf = (schema as { anyOf?: TSchema[] }).anyOf;
   if (anyOf) {
     const realTypes = anyOf.filter((s) => s.type !== 'null');
     if (realTypes.length === 1) {
@@ -134,8 +132,7 @@ function isAnySchema(schema: TSchema): boolean {
 }
 
 function unwrapSchema(schema: TSchema): TSchema | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  const anyOf = (schema as any).anyOf as TSchema[] | undefined;
+  const anyOf = (schema as { anyOf?: TSchema[] }).anyOf;
   if (anyOf) {
     const nonNull = anyOf.find((s) => s.type !== 'null');
     return nonNull;
