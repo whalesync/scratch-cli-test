@@ -128,7 +128,7 @@ SHA_LINUX_AMD64=$(sha_for "${BINARY}_linux_amd64.tar.gz")
 SHA_LINUX_ARM64=$(sha_for "${BINARY}_linux_arm64.tar.gz")
 BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${NEW_VERSION}"
 
-FORMULA="$TAP_DIR/Formula/scratchmd.rb"
+FORMULA="$TAP_DIR/scratchmd.rb"
 cat > "$FORMULA" <<RUBY
 class Scratchmd < Formula
   desc "Scratch content management CLI"
@@ -168,7 +168,7 @@ end
 RUBY
 
 (cd "$TAP_DIR" && \
-  git add Formula/scratchmd.rb && \
+  git add scratchmd.rb && \
   git commit -m "scratchmd $NEW_VERSION" && \
   git push)
 rm -rf "$TAP_DIR"

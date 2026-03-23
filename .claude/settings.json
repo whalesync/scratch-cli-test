@@ -29,18 +29,8 @@
       "Bash(lsof -iTCP:3100 -sTCP:LISTEN)",
       "Bash(scratchmd2 --version)",
       "Bash(./target/release/scratchmd2 syncs:*)",
-      "Bash(/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd2 plan-publish:*)",
-      "Bash(sqlite3 \"/Users/ijd/repos/spinner/local/cli-v2/newwb/.scratch/connections/AIRTABLE - Airtable/index.db\" \".tables\")",
-      "Bash(sqlite3 \"/Users/ijd/repos/spinner/local/cli-v2/newwb/.scratch/connections/AIRTABLE - Airtable/index.db\" \"SELECT * FROM file_references LIMIT 20;\")",
-      "Bash(/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd2 index:*)",
-      "Bash(/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd2 --help)",
-      "Bash(/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd2 build-index:*)",
-      "Bash(sqlite3 \"/Users/ijd/repos/spinner/local/cli-v2/newwb/.scratch/connections/AIRTABLE - Airtable/index.db\" \"SELECT * FROM file_references;\")",
-      "Bash(/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd2 syncs:*)",
-      "Read(//Users/ijd/repos/cli-v2/newwb/**)",
       "Bash(./target/debug/scratchmd --version)",
-      "Bash(./target/debug/scratchmd auth:*)",
-      "Bash(chmod +x /Users/ijd/repos/spinner/scratch-git-2/scripts/release_public.sh /Users/ijd/repos/spinner/scratch-git-2/scripts/release_test.sh)"
+      "Bash(./target/debug/scratchmd auth:*)"
     ]
   }
 }

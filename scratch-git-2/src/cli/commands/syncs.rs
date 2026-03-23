@@ -466,7 +466,9 @@ struct ValidationResult {
 }
 
 // ---------------------------------------------------------------------------
-// Local sync config types
+// Local sync config types — matches NestJS sync mapping format 1:1.
+// Exception: sourceDataFolderId / destinationDataFolderId are workspace-relative
+// folder paths (e.g. "AIRTABLE - Airtable/MyBase/Posts") instead of dfd_ IDs.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -474,34 +476,43 @@ struct ValidationResult {
 struct LocalSyncConfig {
     #[allow(dead_code)]
     version: u32,
-    source: LocalSyncEndpoint,
-    destination: LocalSyncEndpoint,
-    field_mappings: Vec<FieldMapping>,
-    record_matching: Option<RecordMatching>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LocalSyncEndpoint {
-    connection: String,
-    folder: String,
+    table_mappings: Vec<TableMapping>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct FieldMapping {
-    source_field: String,
-    dest_field: String,
-    #[serde(default)]
-    transformer: Option<Transformer>,
+struct TableMapping {
+    /// Workspace-relative path, e.g. "AIRTABLE - Airtable/MyBase/Posts"
+    source_data_folder_id: String,
+    /// Workspace-relative path, e.g. "WEBFLOW - Webflow/MySite/Posts"
+    destination_data_folder_id: String,
+    column_mappings: Vec<ColumnMapping>,
+    record_matching: Option<RecordMatching>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Transformer {
-    StringToNumber(StringToNumberOptions),
-    AutoConvert(AutoConvertOptions),
+#[serde(rename_all = "camelCase")]
+struct ColumnMapping {
+    source_column_id: String,
+    destination_column_id: String,
+    /// Single transformer (convenience form).
+    #[serde(default)]
+    transformer: Option<TransformerConfig>,
+    /// Pipeline of transformers applied in order. Takes precedence over `transformer`.
+    #[serde(default)]
+    transformers: Option<Vec<TransformerConfig>>,
 }
 
+/// Matches NestJS TransformerConfig: `{ "type": "...", "options": { ... } }`
+#[derive(Debug, Deserialize)]
+struct TransformerConfig {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    options: serde_json::Value,
+}
+
+/// Options for `string_to_number` — deserialized from `transformer.options`.
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct StringToNumberOptions {
@@ -511,17 +522,36 @@ struct StringToNumberOptions {
     parse_integer: bool,
 }
 
+/// Options for `auto_convert` — deserialized from `transformer.options`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AutoConvertOptions {
+    #[serde(default = "default_string_type")]
     target_type: String,
+}
+
+fn default_string_type() -> String {
+    "string".to_string()
+}
+
+impl Default for AutoConvertOptions {
+    fn default() -> Self {
+        Self { target_type: "string".to_string() }
+    }
+}
+
+/// Options for `rhai` — deserialized from `transformer.options`.
+#[derive(Debug, Deserialize)]
+struct RhaiOptions {
+    /// Script filename relative to `wb_dir/transformers/`.
+    script: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RecordMatching {
-    source_field: String,
-    dest_field: String,
+    source_column_id: String,
+    destination_column_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -620,98 +650,103 @@ fn validate_sync_file(path: &Path, workspace: &Path) -> Vec<SyncValidationError>
 fn validate_sync_fields(config: &LocalSyncConfig, workspace: &Path) -> Vec<SyncValidationError> {
     let mut errors = Vec::new();
 
-    let source_schema = load_local_schema(workspace, &config.source.connection, &config.source.folder);
-    let dest_schema = load_local_schema(workspace, &config.destination.connection, &config.destination.folder);
+    for (ti, tm) in config.table_mappings.iter().enumerate() {
+        let (src_conn, src_folder) = split_connection_folder(&tm.source_data_folder_id);
+        let (dst_conn, dst_folder) = split_connection_folder(&tm.destination_data_folder_id);
 
-    // Check source folder exists
-    let source_dir = workspace.join(&config.source.connection).join(&config.source.folder);
-    if !source_dir.exists() {
-        errors.push(SyncValidationError {
-            table_mapping_index: Some(0),
-            field_mapping_index: None,
-            error_msg: format!(
-                "source folder not found: {}/{}",
-                config.source.connection, config.source.folder
-            ),
-            error_type: LocalErrorType::InvalidField,
-        });
-    }
+        let source_schema = load_local_schema(workspace, src_conn, src_folder);
+        let dest_schema = load_local_schema(workspace, dst_conn, dst_folder);
 
-    // Check destination folder exists
-    let dest_dir = workspace.join(&config.destination.connection).join(&config.destination.folder);
-    if !dest_dir.exists() {
-        errors.push(SyncValidationError {
-            table_mapping_index: Some(1),
-            field_mapping_index: None,
-            error_msg: format!(
-                "destination folder not found: {}/{}",
-                config.destination.connection, config.destination.folder
-            ),
-            error_type: LocalErrorType::InvalidField,
-        });
-    }
+        // Check source folder exists
+        if !workspace.join(&tm.source_data_folder_id).exists() {
+            errors.push(SyncValidationError {
+                table_mapping_index: Some(ti),
+                field_mapping_index: None,
+                error_msg: format!("source folder not found: {}", tm.source_data_folder_id),
+                error_type: LocalErrorType::InvalidField,
+            });
+        }
 
-    // Validate each field mapping against schemas
-    for (i, mapping) in config.field_mappings.iter().enumerate() {
-        if let Some(schema) = &source_schema {
-            if !local_schema_has_path(schema, &mapping.source_field) {
-                errors.push(SyncValidationError {
-                    table_mapping_index: None,
-                    field_mapping_index: Some(FieldMappingRef::Index(i)),
-                    error_msg: format!(
-                        "sourceField '{}' not found in source schema ({}/{})",
-                        mapping.source_field, config.source.connection, config.source.folder
-                    ),
-                    error_type: LocalErrorType::InvalidField,
-                });
+        // Check destination folder exists
+        if !workspace.join(&tm.destination_data_folder_id).exists() {
+            errors.push(SyncValidationError {
+                table_mapping_index: Some(ti),
+                field_mapping_index: None,
+                error_msg: format!("destination folder not found: {}", tm.destination_data_folder_id),
+                error_type: LocalErrorType::InvalidField,
+            });
+        }
+
+        // Validate each column mapping against schemas
+        for (i, cm) in tm.column_mappings.iter().enumerate() {
+            if let Some(schema) = &source_schema {
+                if !local_schema_has_path(schema, &cm.source_column_id) {
+                    errors.push(SyncValidationError {
+                        table_mapping_index: Some(ti),
+                        field_mapping_index: Some(FieldMappingRef::Index(i)),
+                        error_msg: format!(
+                            "sourceColumnId '{}' not found in source schema ({})",
+                            cm.source_column_id, tm.source_data_folder_id
+                        ),
+                        error_type: LocalErrorType::InvalidField,
+                    });
+                }
+            }
+            if let Some(schema) = &dest_schema {
+                if !local_schema_has_path(schema, &cm.destination_column_id) {
+                    errors.push(SyncValidationError {
+                        table_mapping_index: Some(ti),
+                        field_mapping_index: Some(FieldMappingRef::Index(i)),
+                        error_msg: format!(
+                            "destinationColumnId '{}' not found in destination schema ({})",
+                            cm.destination_column_id, tm.destination_data_folder_id
+                        ),
+                        error_type: LocalErrorType::InvalidField,
+                    });
+                }
             }
         }
-        if let Some(schema) = &dest_schema {
-            if !local_schema_has_path(schema, &mapping.dest_field) {
-                errors.push(SyncValidationError {
-                    table_mapping_index: None,
-                    field_mapping_index: Some(FieldMappingRef::Index(i)),
-                    error_msg: format!(
-                        "destField '{}' not found in destination schema ({}/{})",
-                        mapping.dest_field, config.destination.connection, config.destination.folder
-                    ),
-                    error_type: LocalErrorType::InvalidField,
-                });
-            }
-        }
-    }
 
-    // Validate recordMatching fields
-    if let Some(rm) = &config.record_matching {
-        if let Some(schema) = &source_schema {
-            if !local_schema_has_path(schema, &rm.source_field) {
-                errors.push(SyncValidationError {
-                    table_mapping_index: None,
-                    field_mapping_index: Some(FieldMappingRef::Matching("matching".into())),
-                    error_msg: format!(
-                        "recordMatching.sourceField '{}' not found in source schema ({}/{})",
-                        rm.source_field, config.source.connection, config.source.folder
-                    ),
-                    error_type: LocalErrorType::InvalidField,
-                });
+        // Validate recordMatching fields
+        if let Some(rm) = &tm.record_matching {
+            if let Some(schema) = &source_schema {
+                if !local_schema_has_path(schema, &rm.source_column_id) {
+                    errors.push(SyncValidationError {
+                        table_mapping_index: Some(ti),
+                        field_mapping_index: Some(FieldMappingRef::Matching("matching".into())),
+                        error_msg: format!(
+                            "recordMatching.sourceColumnId '{}' not found in source schema ({})",
+                            rm.source_column_id, tm.source_data_folder_id
+                        ),
+                        error_type: LocalErrorType::InvalidField,
+                    });
+                }
             }
-        }
-        if let Some(schema) = &dest_schema {
-            if !local_schema_has_path(schema, &rm.dest_field) {
-                errors.push(SyncValidationError {
-                    table_mapping_index: None,
-                    field_mapping_index: Some(FieldMappingRef::Matching("matching".into())),
-                    error_msg: format!(
-                        "recordMatching.destField '{}' not found in destination schema ({}/{})",
-                        rm.dest_field, config.destination.connection, config.destination.folder
-                    ),
-                    error_type: LocalErrorType::InvalidField,
-                });
+            if let Some(schema) = &dest_schema {
+                if !local_schema_has_path(schema, &rm.destination_column_id) {
+                    errors.push(SyncValidationError {
+                        table_mapping_index: Some(ti),
+                        field_mapping_index: Some(FieldMappingRef::Matching("matching".into())),
+                        error_msg: format!(
+                            "recordMatching.destinationColumnId '{}' not found in destination schema ({})",
+                            rm.destination_column_id, tm.destination_data_folder_id
+                        ),
+                        error_type: LocalErrorType::InvalidField,
+                    });
+                }
             }
         }
     }
 
     errors
+}
+
+/// Splits "Connection Name/Base/Folder" into ("Connection Name", "Base/Folder").
+fn split_connection_folder(folder_id: &str) -> (&str, &str) {
+    match folder_id.find('/') {
+        Some(i) => (&folder_id[..i], &folder_id[i + 1..]),
+        None => (folder_id, ""),
+    }
 }
 
 /// Schema path in V2: workspace/{connection}/.scratch/{folder}/schema.json
@@ -833,11 +868,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
             "elapsedMs": elapsed_ms,
         }))?);
     } else {
-        let elapsed = if elapsed_ms < 1000 {
-            format!("{}ms", elapsed_ms)
-        } else {
-            format!("{:.1}s", elapsed_ms as f64 / 1000.0)
-        };
+        let elapsed = format!("{:.3}s", elapsed_ms as f64 / 1000.0);
         println!("Done ({})", elapsed);
     }
     Ok(())
@@ -848,120 +879,217 @@ struct SyncResult {
     created: usize,
 }
 
+// ---------------------------------------------------------------------------
+// Rhai context — compiled scripts shared across the parallel record loop
+// ---------------------------------------------------------------------------
+
+struct RhaiContext {
+    engine: rhai::Engine,
+    scripts: HashMap<String, rhai::AST>,
+}
+
+/// Builds a sandboxed Rhai engine and pre-compiles every unique script referenced
+/// in `cfg`. Fails fast if any script is missing or has a syntax error.
+fn build_rhai_context(wb_dir: &Path, cfg: &LocalSyncConfig) -> anyhow::Result<RhaiContext> {
+    let mut engine = rhai::Engine::new();
+    engine.set_max_modules(0);
+    engine.on_print(|_| {});
+    engine.on_debug(|_, _, _| {});
+
+    let transformers_dir = wb_dir.join(".scratch/workbook/transformers");
+    let mut scripts: HashMap<String, rhai::AST> = HashMap::new();
+
+    for tm in &cfg.table_mappings {
+        for cm in &tm.column_mappings {
+            for tc in get_transformer_configs(cm) {
+                if tc.kind == "rhai" {
+                    let opts: RhaiOptions = serde_json::from_value(tc.options.clone())
+                        .map_err(|e| anyhow::anyhow!("rhai transformer missing 'script' option: {e}"))?;
+                    if scripts.contains_key(&opts.script) {
+                        continue;
+                    }
+                    let script_path = transformers_dir.join(&opts.script);
+                    let ast = engine.compile_file(script_path.clone()).map_err(|e| {
+                        anyhow::anyhow!("Rhai compile error in {}: {e}", script_path.display())
+                    })?;
+                    scripts.insert(opts.script, ast);
+                }
+            }
+        }
+    }
+
+    Ok(RhaiContext { engine, scripts })
+}
+
 fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Result<SyncResult> {
-    let src_dir = wb_dir.join(&cfg.source.connection).join(&cfg.source.folder);
-    let dst_dir = wb_dir.join(&cfg.destination.connection).join(&cfg.destination.folder);
-
-    if !src_dir.exists() {
-        anyhow::bail!("source folder not found: {}", src_dir.display());
-    }
-    if !dst_dir.exists() {
-        anyhow::bail!("destination folder not found: {}", dst_dir.display());
-    }
-
-    // Pass 1: index destination records as match_key -> path only (no full parse in memory)
     use rayon::prelude::*;
-    let pass1_start = std::time::Instant::now();
-    let dst_index: HashMap<String, PathBuf> = if let Some(rm) = &cfg.record_matching {
-        let dst_entries: Vec<_> = std::fs::read_dir(&dst_dir)?
+
+    let rhai_ctx = build_rhai_context(wb_dir, cfg)?;
+
+    let mut total_updated = 0usize;
+    let mut total_created = 0usize;
+
+    for tm in &cfg.table_mappings {
+        let src_dir = wb_dir.join(&tm.source_data_folder_id);
+        let dst_dir = wb_dir.join(&tm.destination_data_folder_id);
+
+        if !src_dir.exists() {
+            anyhow::bail!("source folder not found: {}", tm.source_data_folder_id);
+        }
+        if !dst_dir.exists() {
+            anyhow::bail!("destination folder not found: {}", tm.destination_data_folder_id);
+        }
+
+        // Pass 1: index destination records as match_key -> path only (no full parse in memory)
+        let pass1_start = std::time::Instant::now();
+        let dst_index: HashMap<String, PathBuf> = if let Some(rm) = &tm.record_matching {
+            let dst_entries: Vec<_> = std::fs::read_dir(&dst_dir)?
+                .flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                .collect();
+            dst_entries
+                .par_iter()
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    let data = std::fs::read_to_string(&path).ok()?;
+                    let val = serde_json::from_str::<serde_json::Value>(&data).ok()?;
+                    let key = get_dot(&val, &rm.destination_column_id)?;
+                    Some((json_to_string(&key), path))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        if !json {
+            let ms = pass1_start.elapsed().as_millis();
+            let elapsed = format!("{:.3}s", ms as f64 / 1000.0);
+            println!("  {} destination records indexed ({})", dst_index.len(), elapsed);
+        }
+
+        // Collect source files upfront to know total count for progress reporting
+        let src_files: Vec<_> = std::fs::read_dir(&src_dir)?
             .flatten()
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
             .collect();
-        dst_entries.par_iter()
-            .filter_map(|entry| {
-                let path = entry.path();
-                let data = std::fs::read_to_string(&path).ok()?;
-                let val = serde_json::from_str::<serde_json::Value>(&data).ok()?;
-                let key = get_dot(&val, &rm.dest_field)?;
-                Some((json_to_string(&key), path))
-            })
-            .collect()
-    } else {
-        HashMap::new()
-    };
-    if !json {
-        let ms = pass1_start.elapsed().as_millis();
-        let elapsed = if ms < 1000 { format!("{}ms", ms) } else { format!("{:.1}s", ms as f64 / 1000.0) };
-        println!("  {} destination records indexed ({})", dst_index.len(), elapsed);
+        let total = src_files.len();
+        let show_progress = !json && total >= 1000;
+
+        // Pass 2: parallel — each source file operates on a different destination file, no shared writes
+        let updated = AtomicUsize::new(0);
+        let created = AtomicUsize::new(0);
+        let processed = AtomicUsize::new(0);
+
+        let result: anyhow::Result<()> = src_files.par_iter().try_for_each(|entry| {
+            let path = entry.path();
+            let data = std::fs::read_to_string(&path)?;
+            let src_val: serde_json::Value = serde_json::from_str(&data)?;
+
+            let match_key = tm
+                .record_matching
+                .as_ref()
+                .and_then(|rm| get_dot(&src_val, &rm.source_column_id))
+                .map(|v| json_to_string(&v));
+
+            if let Some(dst_path) = match_key.as_ref().and_then(|k| dst_index.get(k)) {
+                // Re-read destination file, apply column mappings, write back
+                let dst_data = std::fs::read_to_string(dst_path)?;
+                let mut dst_val: serde_json::Value = serde_json::from_str(&dst_data)?;
+                for cm in &tm.column_mappings {
+                    if let Some(src_v) = get_dot(&src_val, &cm.source_column_id) {
+                        let transformed =
+                            apply_transformer_pipeline(src_v, &get_transformer_configs(cm), &rhai_ctx);
+                        set_dot(&mut dst_val, &cm.destination_column_id, transformed);
+                    }
+                }
+                std::fs::write(dst_path, format!("{}\n", serde_json::to_string_pretty(&dst_val)?))?;
+                updated.fetch_add(1, Ordering::Relaxed);
+            } else {
+                // No match — create pending record
+                let mut pending: serde_json::Value = serde_json::json!({});
+                for cm in &tm.column_mappings {
+                    if let Some(src_v) = get_dot(&src_val, &cm.source_column_id) {
+                        let transformed =
+                            apply_transformer_pipeline(src_v, &get_transformer_configs(cm), &rhai_ctx);
+                        set_dot(&mut pending, &cm.destination_column_id, transformed);
+                    }
+                }
+                let hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    path.hash(&mut h);
+                    format!("{:x}", h.finish())
+                };
+                let pending_path =
+                    dst_dir.join(format!("scratch_pending_{}.json", &hash[..8]));
+                std::fs::write(
+                    &pending_path,
+                    format!("{}\n", serde_json::to_string_pretty(&pending)?),
+                )?;
+                created.fetch_add(1, Ordering::Relaxed);
+            }
+
+            if show_progress {
+                let prev = processed.fetch_add(1, Ordering::Relaxed);
+                if (prev + 1) % 1000 == 0 {
+                    println!("  {} / {} processed...", prev + 1, total);
+                }
+            }
+
+            Ok(())
+        });
+        result?;
+
+        total_updated += updated.into_inner();
+        total_created += created.into_inner();
     }
 
-    // Collect source files upfront to know total count for progress reporting
-    let src_files: Vec<_> = std::fs::read_dir(&src_dir)?
-        .flatten()
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
-        .collect();
-    let total = src_files.len();
-    let show_progress = !json && total >= 1000;
-
-    // Pass 2: parallel — each source file operates on a different destination file, no shared writes
-    let updated = AtomicUsize::new(0);
-    let created = AtomicUsize::new(0);
-    let processed = AtomicUsize::new(0);
-
-    let result: anyhow::Result<()> = src_files.par_iter().try_for_each(|entry| {
-        let path = entry.path();
-        let data = std::fs::read_to_string(&path)?;
-        let src_val: serde_json::Value = serde_json::from_str(&data)?;
-
-        let match_key = cfg.record_matching.as_ref()
-            .and_then(|rm| get_dot(&src_val, &rm.source_field))
-            .map(|v| json_to_string(&v));
-
-        if let Some(dst_path) = match_key.as_ref().and_then(|k| dst_index.get(k)) {
-            // Re-read destination file, apply field mappings, write back
-            let dst_data = std::fs::read_to_string(dst_path)?;
-            let mut dst_val: serde_json::Value = serde_json::from_str(&dst_data)?;
-            for fm in &cfg.field_mappings {
-                if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
-                    let transformed = apply_transformer(src_v, fm.transformer.as_ref());
-                    set_dot(&mut dst_val, &fm.dest_field, transformed);
-                }
-            }
-            std::fs::write(dst_path, format!("{}\n", serde_json::to_string_pretty(&dst_val)?))?;
-            updated.fetch_add(1, Ordering::Relaxed);
-        } else {
-            // No match — create pending record
-            let mut pending: serde_json::Value = serde_json::json!({});
-            for fm in &cfg.field_mappings {
-                if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
-                    let transformed = apply_transformer(src_v, fm.transformer.as_ref());
-                    set_dot(&mut pending, &fm.dest_field, transformed);
-                }
-            }
-            let hash = {
-                use std::hash::{Hash, Hasher};
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                path.hash(&mut h);
-                format!("{:x}", h.finish())
-            };
-            let pending_path = dst_dir.join(format!("scratch_pending_{}.json", &hash[..8]));
-            std::fs::write(&pending_path, format!("{}\n", serde_json::to_string_pretty(&pending)?))?;
-            created.fetch_add(1, Ordering::Relaxed);
-        }
-
-        if show_progress {
-            let prev = processed.fetch_add(1, Ordering::Relaxed);
-            if (prev + 1) % 1000 == 0 {
-                println!("  {} / {} processed...", prev + 1, total);
-            }
-        }
-
-        Ok(())
-    });
-    result?;
-
-    Ok(SyncResult {
-        updated: updated.into_inner(),
-        created: created.into_inner(),
-    })
+    Ok(SyncResult { updated: total_updated, created: total_created })
 }
 
-fn apply_transformer(value: serde_json::Value, transformer: Option<&Transformer>) -> serde_json::Value {
-    match transformer {
-        None => value,
-        Some(Transformer::StringToNumber(opts)) => apply_string_to_number(value, opts),
-        Some(Transformer::AutoConvert(opts)) => apply_auto_convert(value, opts),
+/// Normalizes a ColumnMapping's transformer config(s) into a slice, mirroring
+/// NestJS `getTransformerConfigs`: `transformers` array takes precedence over
+/// the singular `transformer`; returns empty if neither is set.
+fn get_transformer_configs(mapping: &ColumnMapping) -> Vec<&TransformerConfig> {
+    if let Some(list) = &mapping.transformers {
+        list.iter().collect()
+    } else if let Some(t) = &mapping.transformer {
+        vec![t]
+    } else {
+        vec![]
     }
+}
+
+/// Applies a pipeline of transformers in order, feeding each output as the next input.
+/// Options are deserialized from `config.options` matching the NestJS format.
+fn apply_transformer_pipeline(
+    value: serde_json::Value,
+    transformers: &[&TransformerConfig],
+    rhai_ctx: &RhaiContext,
+) -> serde_json::Value {
+    let mut current = value;
+    for t in transformers {
+        current = match t.kind.as_str() {
+            "string_to_number" => {
+                let opts: StringToNumberOptions =
+                    serde_json::from_value(t.options.clone()).unwrap_or_default();
+                apply_string_to_number(current, &opts)
+            }
+            "auto_convert" => {
+                let opts: AutoConvertOptions =
+                    serde_json::from_value(t.options.clone()).unwrap_or_default();
+                apply_auto_convert(current, &opts)
+            }
+            "rhai" => {
+                let script_name = t.options.get("script").and_then(|v| v.as_str()).unwrap_or("");
+                match rhai_ctx.scripts.get(script_name) {
+                    Some(ast) => apply_rhai(&rhai_ctx.engine, ast, current.clone()).unwrap_or(current),
+                    None => current,
+                }
+            }
+            _ => current, // unknown transformer type, pass through
+        };
+    }
+    current
 }
 
 fn apply_string_to_number(value: serde_json::Value, opts: &StringToNumberOptions) -> serde_json::Value {
@@ -1093,4 +1221,62 @@ fn json_to_string(v: &serde_json::Value) -> String {
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Rhai evaluation
+// ---------------------------------------------------------------------------
+
+fn apply_rhai(engine: &rhai::Engine, ast: &rhai::AST, value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let mut scope = rhai::Scope::new();
+    scope.push("value", json_to_dynamic(value));
+    let result: rhai::Dynamic = engine.eval_ast_with_scope(&mut scope, ast)?;
+    Ok(dynamic_to_json(result))
+}
+
+fn json_to_dynamic(value: serde_json::Value) -> rhai::Dynamic {
+    use rhai::Dynamic;
+    match value {
+        serde_json::Value::Null => Dynamic::UNIT,
+        serde_json::Value::Bool(b) => Dynamic::from(b),
+        serde_json::Value::Number(n) => Dynamic::from(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(s) => Dynamic::from(s),
+        serde_json::Value::Array(arr) => {
+            let v: rhai::Array = arr.into_iter().map(json_to_dynamic).collect();
+            Dynamic::from(v)
+        }
+        serde_json::Value::Object(map) => {
+            let m: rhai::Map = map.into_iter().map(|(k, v)| (k.into(), json_to_dynamic(v))).collect();
+            Dynamic::from(m)
+        }
+    }
+}
+
+fn dynamic_to_json(value: rhai::Dynamic) -> serde_json::Value {
+    if value.is_unit() {
+        return serde_json::Value::Null;
+    }
+    if let Some(b) = value.clone().try_cast::<bool>() {
+        return serde_json::Value::Bool(b);
+    }
+    if let Some(i) = value.clone().try_cast::<i64>() {
+        return serde_json::Value::Number(i.into());
+    }
+    if let Some(f) = value.clone().try_cast::<f64>() {
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return serde_json::Value::Number(n);
+        }
+    }
+    if let Some(s) = value.clone().try_cast::<String>() {
+        return serde_json::Value::String(s);
+    }
+    if let Some(arr) = value.clone().try_cast::<rhai::Array>() {
+        return serde_json::Value::Array(arr.into_iter().map(dynamic_to_json).collect());
+    }
+    if let Some(map) = value.try_cast::<rhai::Map>() {
+        return serde_json::Value::Object(
+            map.into_iter().map(|(k, v)| (k.to_string(), dynamic_to_json(v))).collect(),
+        );
+    }
+    serde_json::Value::Null
 }

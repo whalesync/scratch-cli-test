@@ -114,6 +114,13 @@ enum Commands {
         #[arg(long)]
         connection: Option<String>,
     },
+    /// Regenerate CLAUDE.md and .scratch/docs/ in the current workspace
+    #[command(name = "generate-docs")]
+    GenerateDocs {
+        /// Workspace directory (default: current directory)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
 }
 
 fn build_client(server_url: &str) -> anyhow::Result<ApiClient> {
@@ -174,6 +181,15 @@ async fn main() {
 
         Commands::BuildIndex { workspace } => index::build_command(&workspace),
         Commands::DumpIndex { workspace, connection } => index::dump_command(&workspace, connection.as_deref()),
+        Commands::GenerateDocs { workspace } => {
+            (|| -> anyhow::Result<()> {
+                let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;
+                let name = wb_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+                commands::generate_docs::write_docs(&wb_dir, &name)?;
+                println!("Docs written to {}", wb_dir.display());
+                Ok(())
+            })()
+        }
     };
 
     if let Err(e) = result {

@@ -12,8 +12,28 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::write(docs_dir.join("structure.md"), STRUCTURE_DOC)?;
     std::fs::write(docs_dir.join("syncs.md"), SYNCS_DOC)?;
     std::fs::write(docs_dir.join("schema.md"), SCHEMA_DOC)?;
+    std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
 
     Ok(())
+}
+
+/// Resolves the workspace directory for the `generate-docs` command.
+/// Walks up from `path` looking for a `.scratchmd` marker; falls back to `path` itself.
+pub fn resolve_workspace_for_docs(path: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    // Walk up looking for a .scratchmd marker file
+    let mut cur = abs.as_path();
+    loop {
+        if cur.join(".scratchmd").exists() {
+            return Ok(cur.to_path_buf());
+        }
+        match cur.parent() {
+            Some(p) => cur = p,
+            None => break,
+        }
+    }
+    // Fall back to the given path (user may be pointing directly at a workspace dir)
+    Ok(abs)
 }
 
 // ---------------------------------------------------------------------------
@@ -33,6 +53,7 @@ Once you are happy with the changes — whether from a sync or manual edits — 
 - [How files are organised](.scratch/docs/structure.md)
 - [Creating and running syncs](.scratch/docs/syncs.md)
 - [Schema files (field definitions)](.scratch/docs/schema.md)
+- [CLI command reference](.scratch/docs/commands.md)
 "#,
         workbook_name = workbook_name,
     )
@@ -111,47 +132,48 @@ Sync configs live in `.scratch/workbook/syncs/*.json`.
 
 ## Sync config format
 
+The local format matches the NestJS sync mapping format exactly. The only
+difference is that `sourceDataFolderId` / `destinationDataFolderId` are
+workspace-relative folder paths instead of database IDs.
+
 ```json
 {
   "version": 1,
-  "displayName": "Posts: Airtable -> Webflow",
-  "source": {
-    "connection": "AIRTABLE - Airtable",
-    "folder": "MyBase/Posts"
-  },
-  "destination": {
-    "connection": "WEBFLOW - Webflow",
-    "folder": "MySite/Posts"
-  },
-  "fieldMappings": [
-    { "sourceField": "fields.Name",      "destField": "fieldData.name" },
-    { "sourceField": "fields.Post Body", "destField": "fieldData.post-body" }
-  ],
-  "recordMatching": {
-    "sourceField": "fields.Name",
-    "destField":   "fieldData.name"
-  }
+  "tableMappings": [
+    {
+      "sourceDataFolderId": "AIRTABLE - Airtable/MyBase/Posts",
+      "destinationDataFolderId": "WEBFLOW - Webflow/MySite/Posts",
+      "columnMappings": [
+        { "sourceColumnId": "fields.Name",      "destinationColumnId": "fieldData.name" },
+        { "sourceColumnId": "fields.Post Body", "destinationColumnId": "fieldData.post-body" }
+      ],
+      "recordMatching": {
+        "sourceColumnId": "fields.Name",
+        "destinationColumnId": "fieldData.name"
+      }
+    }
+  ]
 }
 ```
 
-**`source.connection`** and **`destination.connection`** must match the top-level
-folder names exactly (e.g. `AIRTABLE - Airtable`, `WEBFLOW - Webflow`).
+**`sourceDataFolderId`** / **`destinationDataFolderId`** — workspace-relative path
+to the folder: `"<Connection Name>/<Base>/<Table>"`. Must match the directory names
+exactly (e.g. `"AIRTABLE - Airtable/MyBase/Posts"`).
 
-**`source.folder`** and **`destination.folder`** are the path within the connection,
-e.g. `MyBase/Posts`. Check the actual folder names by looking at the directory tree.
-
-**`fieldMappings`** — both `sourceField` and `destField` are **full dot-notation
-paths** into the JSON file on disk. Always open a few sample records from both
-source and destination to see the exact structure — schemas show types but
-records show the real nesting. Examples:
-- Airtable source fields: `fields.Name`, `fields.Post Body`
-- Webflow dest fields: `fieldData.name`, `fieldData.post-body`
-- Any path works: `id`, `createdTime`, `fieldData.slug`, etc.
+**`columnMappings`** — both `sourceColumnId` and `destinationColumnId` are
+**full dot-notation paths** into the JSON file on disk. Always open a few sample
+records from both folders to see the exact structure. Examples:
+- Airtable: `fields.Name`, `fields.Post Body`
+- Webflow: `fieldData.name`, `fieldData.post-body`
+- Any path works: `id`, `createdTime`, etc.
 
 **`recordMatching`** — used to update existing destination records instead of
-creating duplicates. The sync finds the destination record where the value at
-`destField` equals the value at `sourceField`. Unmatched source records are
-written as `scratch_pending_<hash>.json` (new records awaiting publish).
+creating duplicates. Matches on the column value at `sourceColumnId` vs
+`destinationColumnId`. Unmatched source records are written as
+`scratch_pending_<hash>.json` (new records awaiting publish).
+
+**`tableMappings`** — array. Multiple table pairs can be synced in a single
+config file.
 
 ## Creating a sync
 
@@ -170,6 +192,110 @@ mkdir -p .scratch/workbook/syncs
 > backwards compatibility with V1 workbooks. For V2 local workbooks, just drop
 > a JSON file in the syncs folder — that is the entire create operation. Do not
 > run anything else after creating the file.
+
+## Transformers
+
+An optional `transformer` (single) or `transformers` (array pipeline) can be added
+to any field mapping to convert the source value before it is written to the destination.
+When both are present, `transformers` takes precedence.
+
+**Single transformer** — options are nested under an `options` key:
+```json
+{
+  "sourceColumnId": "fields.Price",
+  "destinationColumnId": "fieldData.price",
+  "transformer": { "type": "string_to_number", "options": { "stripCurrency": true } }
+}
+```
+
+**Chained pipeline** — `transformers` array runs left-to-right, each output feeds the next:
+```json
+{
+  "sourceColumnId": "fields.Active",
+  "destinationColumnId": "fieldData.active",
+  "transformers": [
+    { "type": "auto_convert", "options": { "targetType": "string" } },
+    { "type": "auto_convert", "options": { "targetType": "boolean" } }
+  ]
+}
+```
+
+Cannot set both `transformer` and `transformers` — use one or the other.
+
+### `string_to_number`
+
+Parses a string (or number) into a JSON number.
+
+```json
+{ "sourceColumnId": "fields.Price", "destinationColumnId": "fieldData.price",
+  "transformer": { "type": "string_to_number", "options": {} } }
+```
+
+Options (all optional, default `false`):
+- `stripCurrency` — removes `$€£¥` and thousands-separator commas before parsing
+- `parseInteger` — truncates to an integer instead of returning a float
+
+```json
+{ "transformer": { "type": "string_to_number", "options": { "stripCurrency": true, "parseInteger": false } } }
+```
+
+### `auto_convert`
+
+Coerces a value to a target type. Requires `targetType` in `options`.
+
+| `targetType` | Behaviour |
+|---|---|
+| `"string"` | Converts numbers/booleans to string; single-element arrays unwrap; multi-element arrays join with `", "` |
+| `"number"` | Parses string/boolean to float |
+| `"integer"` | Same but truncates to integer |
+| `"boolean"` | `"true"/"yes"/"1"` → `true`; `"false"/"no"/"0"` → `false` |
+| `"array"` | Wraps non-array values in a one-element array |
+
+```json
+{ "sourceColumnId": "fields.Active", "destinationColumnId": "fieldData.active",
+  "transformer": { "type": "auto_convert", "options": { "targetType": "boolean" } } }
+```
+
+### `rhai` — custom script transformer
+
+For logic that the built-in transformers can't handle, write a [Rhai](https://rhai.rs) script.
+Rhai syntax is close to JavaScript/Rust. Scripts are sandboxed — no file I/O, no network.
+
+**Config:**
+```json
+{ "sourceColumnId": "fields.Value",
+  "destinationColumnId": "fieldData.squared",
+  "transformer": { "type": "rhai", "options": { "script": "square.rhai" } } }
+```
+
+The `script` path is relative to the `.scratch/workbook/transformers/` directory in your workspace root.
+Create that directory and add your script there — it will be git-tracked alongside your data.
+
+**Example — square a number (`transformers/square.rhai`):**
+```rhai
+if value == () { return (); }
+let n = parse_float(value.to_string());
+n * n
+```
+
+The script receives the source field value as `value` and its return value becomes the
+destination field value. `()` is Rhai's null — always guard against it if the field can be empty.
+
+**Example — append a suffix (`transformers/append_usd.rhai`):**
+```rhai
+if value == () { return (); }
+value.to_string() + " USD"
+```
+
+**Example — clamp a number to a range (`transformers/clamp.rhai`):**
+```rhai
+if value == () { return (); }
+let n = parse_float(value.to_string());
+if n < 0.0 { 0.0 } else if n > 100.0 { 100.0 } else { n }
+```
+
+Scripts are compiled once before the sync runs. A syntax error in any script will abort
+the entire sync before any records are written.
 
 ## Running a sync
 
@@ -246,4 +372,97 @@ For Airtable, fields are at the top level (no `fieldData` wrapper):
 
 Do not include system fields like `id`, `slug`, `_archived`, `_draft` in mappings —
 these are managed automatically.
+"#;
+
+// ---------------------------------------------------------------------------
+// .scratch/docs/commands.md
+// ---------------------------------------------------------------------------
+
+const COMMANDS_DOC: &str = r#"# CLI Command Reference
+
+All commands are run as `scratchmd <command> [options]`.
+Run `scratchmd <command> --help` for full flag details.
+
+## auth
+
+| Command | Description |
+|---|---|
+| `auth login` | Authenticate with Scratch.md (opens browser) |
+| `auth logout` | Remove stored credentials |
+| `auth status` | Show current authentication status |
+
+## workspaces
+
+| Command | Description |
+|---|---|
+| `workspaces list` | List all workspaces |
+| `workspaces show <id>` | Show workspace details |
+| `workspaces create --name <name>` | Create a new workspace |
+| `workspaces delete <id>` | Delete a workspace |
+| `workspaces init <id>` | Clone a workspace locally (creates directory + docs) |
+
+## files
+
+| Command | Description |
+|---|---|
+| `files download` | Pull remote changes and three-way merge with local edits |
+| `files upload` | Push local changes to the server |
+| `files force-upload` | Force-push local state, skipping merge |
+
+## connections
+
+| Command | Description |
+|---|---|
+| `connections list` | List all connections in the workspace |
+| `connections authorize` | Authorize a new connection |
+| `connections show <id>` | Show connection details |
+| `connections delete <id>` | Delete a connection |
+
+## linked
+
+| Command | Description |
+|---|---|
+| `linked list-tables <connection-id>` | List available tables from a connection |
+| `linked list` | List linked tables in the workspace |
+| `linked link` | Link a new table to the workspace |
+| `linked unlink <folder-id>` | Remove a linked table |
+| `linked show <folder-id>` | Show linked table details and pending changes |
+| `linked pull [--folder <id>]` | Pull CRM changes into the workspace |
+| `linked publish [--folder <id>]` | Publish workspace changes to the CRM |
+
+## syncs
+
+| Command | Description |
+|---|---|
+| `syncs list` | List sync configurations |
+| `syncs show <id>` | Show sync details |
+| `syncs create --config <file\|json>` | Create a sync from a JSON config |
+| `syncs update <id> --config <file\|json>` | Update a sync |
+| `syncs delete <id>` | Delete a sync |
+| `syncs run <id>` | Execute a sync on the server and wait |
+| `syncs download` | Download all sync configs as JSON files |
+| `syncs validate-local [--sync <file>]` | Validate local sync configs (no server needed) |
+| `syncs run-local [--sync <file>]` | Run a sync locally against files on disk |
+
+See [syncs.md](syncs.md) for sync config format and transformer reference.
+
+## publish
+
+| Command | Description |
+|---|---|
+| `plan-publish` | Build a publish plan locally (diffs dirty vs master, writes plan.json) |
+| `publish-from-git` | Trigger server-side publish from the local publish plan |
+
+## index
+
+| Command | Description |
+|---|---|
+| `build-index` | Rebuild the SQLite file index for the current workspace |
+| `dump-index [--connection <name>]` | Print file index contents (debugging) |
+
+## docs
+
+| Command | Description |
+|---|---|
+| `generate-docs [--workspace <dir>]` | Regenerate CLAUDE.md and `.scratch/docs/` in the workspace |
 "#;
