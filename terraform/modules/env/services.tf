@@ -226,6 +226,8 @@ resource "google_cloud_run_v2_service" "api_service" {
           "GOOGLE_CLIENT_SECRET",
           "LANGSMITH_API_KEY",
           "LINEAR_API_KEY",
+          "LINEAR_OAUTH_CLIENT_ID",
+          "LINEAR_OAUTH_CLIENT_SECRET",
           "NOTION_CLIENT_ID",
           "NOTION_CLIENT_SECRET",
           "OPENROUTER_API_KEY",

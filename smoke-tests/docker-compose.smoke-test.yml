@@ -141,6 +141,8 @@ services:
       SUPABASE_CLIENT_SECRET: fake_key
       AIRTABLE_CLIENT_ID: fake_id
       AIRTABLE_CLIENT_SECRET: fake_key
+      LINEAR_OAUTH_CLIENT_ID: fake_id
+      LINEAR_OAUTH_CLIENT_SECRET: fake_key
     depends_on:
       db:
         condition: service_healthy
