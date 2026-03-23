@@ -10,6 +10,7 @@ import { ConnectorsService } from '../remote-service/connectors/connectors.servi
 import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
+import { pickByShape } from './diff-utils';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefResolverService } from './ref-resolver.service';
@@ -621,7 +622,7 @@ export class PublishPlanRunService {
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
 
     const contents: ParsedContent[] = [];
-    const changedKeysArray: (string[] | undefined)[] = [];
+    const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
     const entriesWithOps: { entry: PublishOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
@@ -646,21 +647,27 @@ export class PublishPlanRunService {
       } as ParsedContent;
 
       // Skip no-op edits where changedFields is an empty object
-      const changedKeys = entry.changedFields ? Object.keys(entry.changedFields) : undefined;
-      if (changedKeys && changedKeys.length === 0) {
+      if (entry.changedFields && Object.keys(entry.changedFields).length === 0) {
         continue;
       }
 
+      // Build deep changedFields from transformed content using the shape from diff.
+      // pickByShape uses the structure of entry.changedFields as a mask to extract
+      // the corresponding values from the fully-transformed resolvedContent.
+      const resolvedChangedFields = entry.changedFields
+        ? pickByShape(resolvedContent as Record<string, unknown>, entry.changedFields)
+        : undefined;
+
       contents.push(resolvedContent);
-      changedKeysArray.push(changedKeys);
+      changedFieldsArray.push(resolvedChangedFields);
       entriesWithOps.push({ entry, resolvedContent: resolvedContent });
     }
 
     if (contents.length === 0) return;
 
-    // Bulk update — pass changedKeys to the connector if any entry has them
-    const hasChangedKeys = changedKeysArray.some((ck) => ck !== undefined);
-    await connector.updateRecords(tableSpec, contents, hasChangedKeys ? changedKeysArray : undefined);
+    // Bulk update — pass changedFields to the connector if any entry has them
+    const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
+    await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
 
     // Update Refs & Git
     // We can do this in parallel or sequentially. Sequential for safety.

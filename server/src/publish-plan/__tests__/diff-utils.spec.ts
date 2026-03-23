@@ -1,4 +1,4 @@
-import { computeChangedFields } from '../diff-utils';
+import { computeChangedFields, pickByShape } from '../diff-utils';
 
 describe('computeChangedFields', () => {
   // --- Basic behavior ---
@@ -169,5 +169,84 @@ describe('computeChangedFields', () => {
   it('returns full dirty content when main is empty object', () => {
     const dirty = { a: 1, b: 'hello' };
     expect(computeChangedFields({}, dirty)).toEqual(dirty);
+  });
+});
+
+describe('pickByShape', () => {
+  it('picks flat keys present in shape', () => {
+    const source = { a: 1, b: 2, c: 3 };
+    const shape = { a: 'x', c: 'x' };
+    expect(pickByShape(source, shape)).toEqual({ a: 1, c: 3 });
+  });
+
+  it('picks nested sub-keys from source', () => {
+    const source = { properties: { email: 'new@ex.com', firstname: 'John', lastname: 'Doe' } };
+    const shape = { properties: { email: 'old' } };
+    expect(pickByShape(source, shape)).toEqual({ properties: { email: 'new@ex.com' } });
+  });
+
+  it('handles deeply nested paths (3+ levels)', () => {
+    const source = { l1: { l2: { l3: 'value', other: 'skip' }, extra: 'skip' } };
+    const shape = { l1: { l2: { l3: 'x' } } };
+    expect(pickByShape(source, shape)).toEqual({ l1: { l2: { l3: 'value' } } });
+  });
+
+  it('skips shape keys missing from source', () => {
+    const source = { a: 1 };
+    const shape = { a: 'x', missing: 'x' };
+    expect(pickByShape(source, shape)).toEqual({ a: 1 });
+  });
+
+  it('returns empty object for empty shape', () => {
+    expect(pickByShape({ a: 1, b: 2 }, {})).toEqual({});
+  });
+
+  it('treats arrays as leaf nodes — takes full array from source', () => {
+    const source = { tags: ['transformed-a', 'transformed-b'] };
+    const shape = { tags: ['old-a', 'old-b'] };
+    expect(pickByShape(source, shape)).toEqual({ tags: ['transformed-a', 'transformed-b'] });
+  });
+
+  it('takes source value when shape has object but source has primitive', () => {
+    const source = { field: 'scalar-value' };
+    const shape = { field: { nested: 'x' } };
+    expect(pickByShape(source, shape)).toEqual({ field: 'scalar-value' });
+  });
+
+  it('takes full source object when shape has primitive but source has object', () => {
+    const source = { field: { a: 1, b: 2, c: 3 } };
+    const shape = { field: 'changed' };
+    expect(pickByShape(source, shape)).toEqual({ field: { a: 1, b: 2, c: 3 } });
+  });
+
+  it('picks HubSpot-style nested properties', () => {
+    const source = {
+      id: '123',
+      properties: { email: 'transformed@ex.com', firstname: 'John', company: 'Acme' },
+      associations: { contacts: ['c1'] },
+    };
+    const shape = { properties: { email: 'old@ex.com' } };
+    expect(pickByShape(source, shape)).toEqual({ properties: { email: 'transformed@ex.com' } });
+  });
+
+  it('picks Webflow-style fieldData', () => {
+    const source = {
+      id: 'abc',
+      fieldData: { slug: 'new-slug', name: 'Full Name', body: '<p>content</p>' },
+    };
+    const shape = { fieldData: { slug: 'old-slug' } };
+    expect(pickByShape(source, shape)).toEqual({ fieldData: { slug: 'new-slug' } });
+  });
+
+  it('handles null values in source', () => {
+    const source = { a: null, b: 2 };
+    const shape = { a: 'x', b: 'x' };
+    expect(pickByShape(source, shape)).toEqual({ a: null, b: 2 });
+  });
+
+  it('handles array in source with object in shape', () => {
+    const source = { items: [1, 2, 3] };
+    const shape = { items: { 0: 'x' } };
+    expect(pickByShape(source, shape)).toEqual({ items: [1, 2, 3] });
   });
 });

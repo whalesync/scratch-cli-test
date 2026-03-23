@@ -419,16 +419,14 @@ export class WebflowConnector extends Connector {
   async updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
-    changedKeys?: (string[] | undefined)[],
+    changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<void> {
     const [, collectionId] = tableSpec.id.remoteId;
 
     const items: { id: string; fieldData: Webflow.CollectionItemFieldData }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const source = changedKeys?.[i]
-        ? (Object.fromEntries(changedKeys[i]!.map((k) => [k, file[k]])) as ConnectorFile)
-        : file;
+      const source = (changedFields?.[i] ?? file) as ConnectorFile;
       const fieldData = await this.extractFieldDataForApi(source, tableSpec);
       items.push({
         id: file.id as string,

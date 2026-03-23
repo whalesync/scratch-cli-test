@@ -177,12 +177,12 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
 
   /**
    * Update records in Pipedrive.
-   * Supports changedKeys for partial updates.
+   * Supports changedFields for partial updates.
    */
   async updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
-    changedKeys?: (string[] | undefined)[],
+    changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
     const customFieldKeys = await this.getCustomFieldKeys(entityType);
@@ -191,19 +191,8 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
       const file = files[i];
       const entityId = parseInt(String(file.id), 10);
 
-      let data: Record<string, unknown>;
-      const keys = changedKeys?.[i];
-      if (keys) {
-        // Partial update: only send changed fields
-        data = {};
-        for (const key of keys) {
-          if (key in file) {
-            data[key] = file[key];
-          }
-        }
-      } else {
-        data = this.extractWritableData(file);
-      }
+      const cf = changedFields?.[i];
+      const data = cf ?? this.extractWritableData(file);
 
       await this.client.updateEntity(entityType, entityId, data, customFieldKeys);
     }

@@ -207,7 +207,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       updateRecords: jest
         .fn()
         .mockImplementation(
-          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] | undefined)[]) => {
+          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> | undefined)[]) => {
             const idField = tableSpec.idColumnRemoteId;
             for (const file of files) {
               const idValue = file[idField];
@@ -218,12 +218,12 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
                 );
               }
             }
-            // Validate changedKeys contains only string arrays, not data objects
-            if (changedKeys) {
-              for (const ck of changedKeys) {
-                if (!ck) continue;
-                if (!Array.isArray(ck) || ck.some((k) => typeof k !== 'string')) {
-                  throw new Error(`updateRecords: changedKeys should be string arrays, but got: ${JSON.stringify(ck)}`);
+            // Validate changedFields contains only plain objects, not arrays or primitives
+            if (changedFields) {
+              for (const cf of changedFields) {
+                if (!cf) continue;
+                if (typeof cf !== 'object' || Array.isArray(cf)) {
+                  throw new Error(`updateRecords: changedFields should be plain objects, but got: ${JSON.stringify(cf)}`);
                 }
               }
             }
@@ -1294,7 +1294,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       updateRecords: jest
         .fn()
         .mockImplementation(
-          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedKeys?: (string[] | undefined)[]) => {
+          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> | undefined)[]) => {
             const idField = tableSpec.idColumnRemoteId;
             for (const file of files) {
               const idValue = file[idField];
@@ -1305,12 +1305,12 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
                 );
               }
             }
-            // Validate changedKeys contains only string arrays, not data objects
-            if (changedKeys) {
-              for (const ck of changedKeys) {
-                if (!ck) continue;
-                if (!Array.isArray(ck) || ck.some((k) => typeof k !== 'string')) {
-                  throw new Error(`updateRecords: changedKeys should be string arrays, but got: ${JSON.stringify(ck)}`);
+            // Validate changedFields contains only plain objects, not arrays or primitives
+            if (changedFields) {
+              for (const cf of changedFields) {
+                if (!cf) continue;
+                if (typeof cf !== 'object' || Array.isArray(cf)) {
+                  throw new Error(`updateRecords: changedFields should be plain objects, but got: ${JSON.stringify(cf)}`);
                 }
               }
             }

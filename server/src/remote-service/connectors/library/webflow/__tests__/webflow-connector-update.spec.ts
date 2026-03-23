@@ -67,21 +67,22 @@ describe('WebflowConnector.updateRecords', () => {
     connector = new WebflowConnector('test-token');
   });
 
-  it('should send only changed fieldData when changedKeys is provided', async () => {
+  it('should send only changed fieldData when changedFields is provided', async () => {
     const files: ConnectorFile[] = [
       { id: 'item1', fieldData: { name: 'New Name', slug: 'old-slug', body: '<p>old</p>' } } as ConnectorFile,
     ];
-    const changedKeys: (string[] | undefined)[] = [['fieldData']];
+    // Deep changedFields: only name changed within fieldData
+    const changedFields: (Record<string, unknown> | undefined)[] = [{ fieldData: { name: 'New Name' } }];
 
-    await connector.updateRecords(tableSpec, files, changedKeys);
+    await connector.updateRecords(tableSpec, files, changedFields);
 
     expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
-      items: [{ id: 'item1', fieldData: { name: 'New Name', slug: 'old-slug', body: 'minified:<p>old</p>' } }],
+      items: [{ id: 'item1', fieldData: { name: 'New Name' } }],
     });
   });
 
-  it('should send full fieldData when changedKeys is undefined', async () => {
+  it('should send full fieldData when changedFields is undefined', async () => {
     const files: ConnectorFile[] = [
       { id: 'item1', fieldData: { name: 'Full Name', slug: 'full-slug' } } as ConnectorFile,
     ];
@@ -94,31 +95,33 @@ describe('WebflowConnector.updateRecords', () => {
     });
   });
 
-  it('should fall back to full content when changedKeys[i] is undefined', async () => {
+  it('should fall back to full content when changedFields[i] is undefined', async () => {
     const files: ConnectorFile[] = [
       { id: 'item1', fieldData: { name: 'Changed', slug: 'changed-slug' } } as ConnectorFile,
       { id: 'item2', fieldData: { name: 'Full Content', slug: 'full-slug' } } as ConnectorFile,
     ];
-    const changedKeys: (string[] | undefined)[] = [['fieldData'], undefined];
+    const changedFields: (Record<string, unknown> | undefined)[] = [{ fieldData: { name: 'Changed' } }, undefined];
 
-    await connector.updateRecords(tableSpec, files, changedKeys);
+    await connector.updateRecords(tableSpec, files, changedFields);
 
     expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [
-        { id: 'item1', fieldData: { name: 'Changed', slug: 'changed-slug' } },
+        { id: 'item1', fieldData: { name: 'Changed' } },
         { id: 'item2', fieldData: { name: 'Full Content', slug: 'full-slug' } },
       ],
     });
   });
 
-  it('should minify RichText fields in partial update from changedKeys', async () => {
+  it('should minify RichText fields in partial update from changedFields', async () => {
     const files: ConnectorFile[] = [
       { id: 'item1', fieldData: { name: 'Name', body: '<p>  new content  </p>' } } as ConnectorFile,
     ];
-    const changedKeys: (string[] | undefined)[] = [['fieldData']];
+    const changedFields: (Record<string, unknown> | undefined)[] = [
+      { fieldData: { name: 'Name', body: '<p>  new content  </p>' } },
+    ];
 
-    await connector.updateRecords(tableSpec, files, changedKeys);
+    await connector.updateRecords(tableSpec, files, changedFields);
 
     expect(mockedMinifyHtml).toHaveBeenCalledWith('<p>  new content  </p>');
     expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
@@ -131,9 +134,11 @@ describe('WebflowConnector.updateRecords', () => {
     const files: ConnectorFile[] = [
       { id: 'item1', fieldData: { name: 'New Name', unknownField: 'should be filtered' } } as ConnectorFile,
     ];
-    const changedKeys: (string[] | undefined)[] = [['fieldData']];
+    const changedFields: (Record<string, unknown> | undefined)[] = [
+      { fieldData: { name: 'New Name', unknownField: 'should be filtered' } },
+    ];
 
-    await connector.updateRecords(tableSpec, files, changedKeys);
+    await connector.updateRecords(tableSpec, files, changedFields);
 
     expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
@@ -141,11 +146,11 @@ describe('WebflowConnector.updateRecords', () => {
     });
   });
 
-  it('should always use id from files, not changedKeys subset', async () => {
+  it('should always use id from files, not changedFields subset', async () => {
     const files: ConnectorFile[] = [{ id: 'correct-id', fieldData: { name: 'New Name' } } as ConnectorFile];
-    const changedKeys: (string[] | undefined)[] = [['fieldData']];
+    const changedFields: (Record<string, unknown> | undefined)[] = [{ fieldData: { name: 'New Name' } }];
 
-    await connector.updateRecords(tableSpec, files, changedKeys);
+    await connector.updateRecords(tableSpec, files, changedFields);
 
     expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,

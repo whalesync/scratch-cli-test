@@ -217,7 +217,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   async updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
-    changedKeys?: (string[] | undefined)[],
+    changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<void> {
     const objectType = tableSpec.id.remoteId[0];
     const propertyNames = await this.getPropertyNames(objectType);
@@ -226,19 +226,32 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const recordId = String(file.id);
-      const keys = changedKeys?.[i];
+      const cf = changedFields?.[i];
 
-      // Update properties if changed (or if changedKeys not provided)
-      const hasPropertyChanges = !keys || keys.includes('properties');
+      // Update properties if changed (or if changedFields not provided)
+      const hasPropertyChanges = !cf || 'properties' in cf;
       if (hasPropertyChanges) {
-        const properties = this.extractWritableProperties(file);
+        let properties: Record<string, unknown>;
+        if (cf?.properties && typeof cf.properties === 'object' && !Array.isArray(cf.properties)) {
+          // Deep changedFields: only send the specific sub-properties that changed
+          const changedProps = cf.properties as Record<string, unknown>;
+          const fileProps = (file as unknown as HubspotRecord).properties ?? {};
+          properties = {};
+          for (const propKey of Object.keys(changedProps)) {
+            if (propKey in fileProps && !this.isReadOnlyProperty(propKey)) {
+              properties[propKey] = fileProps[propKey];
+            }
+          }
+        } else {
+          properties = this.extractWritableProperties(file);
+        }
         if (Object.keys(properties).length > 0) {
           await this.client.updateRecord(objectType, recordId, properties);
         }
       }
 
-      // Sync associations if changed (or if changedKeys not provided)
-      const hasAssociationChanges = !keys || keys.includes('associations');
+      // Sync associations if changed (or if changedFields not provided)
+      const hasAssociationChanges = !cf || 'associations' in cf;
       if (hasAssociationChanges && associationTypes.length > 0) {
         // Fetch current remote state to compute the diff
         const currentRecord = await this.client.getRecord(objectType, recordId, propertyNames, associationTypes);
@@ -321,14 +334,17 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   /**
    * Extract writable properties from a file, skipping read-only system fields.
    */
+  private isReadOnlyProperty(key: string): boolean {
+    return key.startsWith('hs_object_id') || key === 'createdate' || key === 'lastmodifieddate';
+  }
+
   private extractWritableProperties(file: ConnectorFile): Record<string, unknown> {
     const properties = (file as unknown as HubspotRecord).properties;
     if (!properties) return {};
 
     const writable: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(properties)) {
-      // Skip HubSpot system read-only properties
-      if (key.startsWith('hs_object_id') || key === 'createdate' || key === 'lastmodifieddate') continue;
+      if (this.isReadOnlyProperty(key)) continue;
       writable[key] = value;
     }
     return writable;

@@ -38,6 +38,37 @@ export function computeChangedFields(
   return result;
 }
 
+/**
+ * Picks values from `source` using the structure of `shape` as a mask.
+ *
+ * Walks the keys of `shape`:
+ * - If both `shape[key]` and `source[key]` are plain objects, recurses.
+ * - Otherwise treats the key as a leaf and takes `source[key]` wholesale.
+ * - If a shape key is missing from source, it is skipped.
+ *
+ * This is used to combine the deep granularity of `computeChangedFields` (which
+ * tracks exactly which nested paths changed) with the fully-transformed content
+ * from the publish pipeline (which has FK resolution, transformers, etc. applied).
+ */
+export function pickByShape(source: Record<string, unknown>, shape: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const key of Object.keys(shape)) {
+    if (!(key in source)) continue;
+
+    const shapeVal = shape[key];
+    const sourceVal = source[key];
+
+    if (isPlainObject(shapeVal) && isPlainObject(sourceVal)) {
+      result[key] = pickByShape(sourceVal, shapeVal);
+    } else {
+      result[key] = sourceVal;
+    }
+  }
+
+  return result;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

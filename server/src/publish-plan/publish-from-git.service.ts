@@ -9,6 +9,7 @@ import { ConnectorsService } from '../remote-service/connectors/connectors.servi
 import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
+import { pickByShape } from './diff-utils';
 import { FileReferenceService } from './file-reference.service';
 import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
@@ -288,7 +289,7 @@ export class PublishFromGitService {
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
 
     const contents: ParsedContent[] = [];
-    const changedKeysArray: (string[] | undefined)[] = [];
+    const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
     const entriesWithOps: { entry: PhaseOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
@@ -310,18 +311,21 @@ export class PublishFromGitService {
 
       resolvedContent = { ...resolvedContent, [idField]: remoteId } as ParsedContent;
 
-      const changedKeys = entry.changedFields ? Object.keys(entry.changedFields) : undefined;
-      if (changedKeys && changedKeys.length === 0) continue;
+      if (entry.changedFields && Object.keys(entry.changedFields).length === 0) continue;
+
+      const resolvedChangedFields = entry.changedFields
+        ? pickByShape(resolvedContent as Record<string, unknown>, entry.changedFields)
+        : undefined;
 
       contents.push(resolvedContent);
-      changedKeysArray.push(changedKeys);
+      changedFieldsArray.push(resolvedChangedFields);
       entriesWithOps.push({ entry, resolvedContent });
     }
 
     if (contents.length === 0) return;
 
-    const hasChangedKeys = changedKeysArray.some((ck) => ck !== undefined);
-    await connector.updateRecords(tableSpec, contents, hasChangedKeys ? changedKeysArray : undefined);
+    const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
+    await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
 
     const refUpdates = entriesWithOps.map(({ entry, resolvedContent }) => ({
       path: entry.relPath,

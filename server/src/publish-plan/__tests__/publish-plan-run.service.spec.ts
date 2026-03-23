@@ -202,8 +202,8 @@ describe('PublishPlanRunService', () => {
     );
   }
 
-  describe('dispatchUpdateBatch with changedKeys', () => {
-    it('passes changedKeys to connector.updateRecords', async () => {
+  describe('dispatchUpdateBatch with changedFields', () => {
+    it('passes deep changedFields to connector.updateRecords', async () => {
       setupEditPhaseEntries([
         {
           id: 'op_1',
@@ -218,11 +218,11 @@ describe('PublishPlanRunService', () => {
 
       expect(connector.updateRecords).toHaveBeenCalledTimes(1);
       const updateMock = jest.mocked(connector.updateRecords);
-      const [, , ckArg] = updateMock.mock.calls[0];
-      expect(ckArg).toEqual([['title']]);
+      const [, , cfArg] = updateMock.mock.calls[0];
+      expect(cfArg).toEqual([{ title: 'New' }]);
     });
 
-    it('aligns changedKeys parallel array with files', async () => {
+    it('aligns changedFields parallel array with files', async () => {
       setupEditPhaseEntries([
         {
           id: 'op_1',
@@ -242,11 +242,11 @@ describe('PublishPlanRunService', () => {
 
       await service.runPipeline(PLAN_ID);
 
-      const [, files, ckArr] = connector.updateRecords.mock.calls[0];
+      const [, files, cfArr] = connector.updateRecords.mock.calls[0];
       expect(files).toHaveLength(2);
-      expect(ckArr).toHaveLength(2);
-      expect(ckArr![0]).toEqual(['title']);
-      expect(ckArr![1]).toEqual(['body']);
+      expect(cfArr).toHaveLength(2);
+      expect(cfArr![0]).toEqual({ title: 'New1' });
+      expect(cfArr![1]).toEqual({ body: 'New2' });
     });
 
     it('skips no-op edits where changedFields is empty object', async () => {
@@ -293,7 +293,7 @@ describe('PublishPlanRunService', () => {
       expect(files[0]).toMatchObject({ id: 'rec_2' });
     });
 
-    it('passes undefined changedKeys for legacy plans (null changedFields)', async () => {
+    it('passes undefined changedFields for legacy plans (null changedFields)', async () => {
       setupEditPhaseEntries([
         {
           id: 'op_1',
@@ -308,12 +308,12 @@ describe('PublishPlanRunService', () => {
 
       expect(connector.updateRecords).toHaveBeenCalledTimes(1);
       const updateMock = jest.mocked(connector.updateRecords);
-      const [, , ckArg] = updateMock.mock.calls[0];
+      const [, , cfArg] = updateMock.mock.calls[0];
       // When no entry has changedFields, pass undefined
-      expect(ckArg).toBeUndefined();
+      expect(cfArg).toBeUndefined();
     });
 
-    it('commits full content to git even with partial changedKeys', async () => {
+    it('commits full content to git even with partial changedFields', async () => {
       const fullContent = { id: 'rec_1', title: 'New', body: 'Same', slug: 'test' };
       setupEditPhaseEntries([
         {
@@ -327,13 +327,45 @@ describe('PublishPlanRunService', () => {
 
       await service.runPipeline(PLAN_ID);
 
-      // Git commit should use full content, not changedKeys
+      // Git commit should use full content, not changedFields
       const commitCalls = scratchGitService.commitFilesToBranch.mock.calls;
       expect(commitCalls.length).toBeGreaterThan(0);
       const mainCommit = commitCalls.find(([, branch]) => branch === 'main');
       expect(mainCommit).toBeDefined();
       const gitContent = JSON.parse(mainCommit![2][0].content) as Record<string, unknown>;
       expect(gitContent).toMatchObject(fullContent);
+    });
+
+    it('uses transformed values from resolvedContent, not raw changedFields values', async () => {
+      // Simulate FK transformation: ref resolver transforms @/path refs to real IDs
+      refResolverService.resolveBatchPseudoRefs.mockImplementation((_wkbId, contents) => {
+        return Promise.resolve(
+          (contents as Record<string, unknown>[]).map((c) => ({
+            ...c,
+            // FK transformer resolves the author ref to a real remote ID
+            author: c.author === '@/authors/hemingway.json' ? 'author_remote_456' : c.author,
+          })),
+        );
+      });
+
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'articles/a1.json',
+          content: { id: 'rec_1', title: 'Old Man', author: '@/authors/hemingway.json' },
+          // changedFields stores the raw (untransformed) diff value
+          changedFields: { author: '@/authors/hemingway.json' },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      await service.runPipeline(PLAN_ID);
+
+      expect(connector.updateRecords).toHaveBeenCalledTimes(1);
+      const [, , cfArg] = connector.updateRecords.mock.calls[0];
+      // changedFields passed to connector should contain the TRANSFORMED value,
+      // not the raw @/ pseudo-ref from the DB
+      expect(cfArg).toEqual([{ author: 'author_remote_456' }]);
     });
   });
 });

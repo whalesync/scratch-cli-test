@@ -119,7 +119,7 @@ describe('PipedriveConnector', () => {
   });
 
   describe('updateRecords', () => {
-    it('updates records with full data when no changedKeys', async () => {
+    it('updates records with full data when no changedFields', async () => {
       mockUpdateEntity.mockResolvedValue({});
 
       const tableSpec = buildTableSpec('deals');
@@ -135,14 +135,14 @@ describe('PipedriveConnector', () => {
       );
     });
 
-    it('sends only changed fields when changedKeys is provided', async () => {
+    it('sends only changed fields when changedFields is provided', async () => {
       mockUpdateEntity.mockResolvedValue({});
 
       const tableSpec = buildTableSpec('deals');
       const files: ConnectorFile[] = [{ id: 42, title: 'Updated', value: 100, status: 'open' }];
-      const changedKeys: (string[] | undefined)[] = [['title']];
+      const changedFields: (Record<string, unknown> | undefined)[] = [{ title: 'Updated' }];
 
-      await connector.updateRecords(tableSpec, files, changedKeys);
+      await connector.updateRecords(tableSpec, files, changedFields);
 
       expect(mockUpdateEntity).toHaveBeenCalledWith('deals', 42, { title: 'Updated' }, expect.any(Set));
     });
