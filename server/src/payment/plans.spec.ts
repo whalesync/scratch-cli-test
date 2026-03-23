@@ -105,11 +105,11 @@ describe('plans', () => {
         expect(plan).toHaveProperty('planType');
         expect(plan).toHaveProperty('displayName');
         expect(plan).toHaveProperty('stripeProductId');
-        expect(plan).toHaveProperty('stripePriceId');
+        expect(plan).toHaveProperty('stripePriceIds');
         expect(typeof plan.planType).toBe('string');
         expect(typeof plan.displayName).toBe('string');
         expect(typeof plan.stripeProductId).toBe('string');
-        expect(typeof plan.stripePriceId).toBe('string');
+        expect(Array.isArray(plan.stripePriceIds)).toBe(true);
       });
     });
 
@@ -118,7 +118,7 @@ describe('plans', () => {
         expect(plan).toHaveProperty('planType');
         expect(plan).toHaveProperty('displayName');
         expect(plan).toHaveProperty('stripeProductId');
-        expect(plan).toHaveProperty('stripePriceId');
+        expect(plan).toHaveProperty('stripePriceIds');
       });
     });
 
@@ -127,7 +127,7 @@ describe('plans', () => {
         expect(plan).toHaveProperty('planType');
         expect(plan).toHaveProperty('displayName');
         expect(plan).toHaveProperty('stripeProductId');
-        expect(plan).toHaveProperty('stripePriceId');
+        expect(plan).toHaveProperty('stripePriceIds');
       });
     });
 
@@ -143,7 +143,7 @@ describe('plans', () => {
       const allPlans = [...PRODUCTION_PLANS, ...STAGING_SANDBOX_PLANS, ...TEST_SANDBOX_PLANS];
       // remove the free plans
       const excludingFreePlans = allPlans.filter((p) => p.planType !== ScratchPlanType.FREE_PLAN);
-      const priceIds = excludingFreePlans.map((p) => p.stripePriceId);
+      const priceIds = excludingFreePlans.flatMap((p) => p.stripePriceIds);
       const uniquePriceIds = new Set(priceIds);
       expect(uniquePriceIds.size).toBe(priceIds.length);
     });
@@ -152,7 +152,7 @@ describe('plans', () => {
       const allPlans = [...PRODUCTION_PLANS, ...STAGING_SANDBOX_PLANS, ...TEST_SANDBOX_PLANS];
       // remove the free plans
       const onlyFreePlans = allPlans.filter((p) => p.planType === ScratchPlanType.FREE_PLAN);
-      const priceIds = onlyFreePlans.map((p) => p.stripePriceId);
+      const priceIds = onlyFreePlans.flatMap((p) => p.stripePriceIds);
       const uniquePriceIds = new Set(priceIds);
       expect(uniquePriceIds.size).toBe(1);
       expect(priceIds[0]).toBe('free_plan');

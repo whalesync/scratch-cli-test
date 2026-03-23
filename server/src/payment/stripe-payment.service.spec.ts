@@ -15,9 +15,9 @@ import { TEST_SANDBOX_PLANS } from './plans';
 import { StripePaymentService } from './stripe-payment.service';
 
 // Valid test price ID from plans.ts
-const VALID_TEST_PRICE_ID = TEST_SANDBOX_PLANS[0].stripePriceId;
+const VALID_TEST_PRICE_ID = TEST_SANDBOX_PLANS[0].stripePriceIds[0];
 const VALID_TEST_PRO_PLAN_PRICE_ID =
-  TEST_SANDBOX_PLANS.find((p) => p.planType === ScratchPlanType.PRO_PLAN)?.stripePriceId ||
+  TEST_SANDBOX_PLANS.find((p) => p.planType === ScratchPlanType.PRO_PLAN)?.stripePriceIds[0] ||
   'price_1SYU4jBdRE0kMHNq4mMMjgWH';
 
 // Mock dependencies

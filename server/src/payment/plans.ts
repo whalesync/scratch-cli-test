@@ -23,7 +23,7 @@ export interface Plan {
   costUSD: number;
   displayName: string;
   stripeProductId: string;
-  stripePriceId: string;
+  stripePriceIds: string[];
   popular: boolean;
   hidden: boolean;
   features: PlanFeatures;
@@ -41,7 +41,7 @@ export const FREE_PLAN: Plan = {
   costUSD: 0,
   displayName: 'Free',
   stripeProductId: 'free_plan',
-  stripePriceId: 'free_plan',
+  stripePriceIds: ['free_plan'],
   popular: false,
   hidden: false,
   features: {
@@ -60,7 +60,7 @@ export const PRO_PLAN: Plan = {
   costUSD: 20,
   displayName: 'Pro',
   stripeProductId: '', // Set differently for each environment
-  stripePriceId: '', // Set differently for each environment
+  stripePriceIds: [], // Set differently for each environment
   popular: true,
   hidden: false,
   features: {
@@ -74,7 +74,7 @@ export const MAX_PLAN: Plan = {
   costUSD: 100,
   displayName: 'Max',
   stripeProductId: '', // Set differently for each environment
-  stripePriceId: '', // Set differently for each environment
+  stripePriceIds: [], // Set differently for each environment
   popular: false,
   hidden: false,
   features: {
@@ -86,22 +86,29 @@ export const MAX_PLAN: Plan = {
 // Plans configured in the Scratch Test sandbox environment for developer testing
 export const TEST_SANDBOX_PLANS: Plan[] = [
   FREE_PLAN,
-  { ...PRO_PLAN, stripeProductId: 'prod_TVV4n4JqTQnENy', stripePriceId: 'price_1SYU4jBdRE0kMHNq4mMMjgWH' },
-  { ...MAX_PLAN, stripeProductId: 'prod_TVV6aVZ43QYJmO', stripePriceId: 'price_1SYU6CBdRE0kMHNqr7YRm7uu' },
+  { ...PRO_PLAN, stripeProductId: 'prod_TVV4n4JqTQnENy', stripePriceIds: ['price_1SYU4jBdRE0kMHNq4mMMjgWH'] },
+  { ...MAX_PLAN, stripeProductId: 'prod_TVV6aVZ43QYJmO', stripePriceIds: ['price_1SYU6CBdRE0kMHNqr7YRm7uu'] },
 ];
 
 // Plans configured in the Scratch Staging sandbox environment
 export const STAGING_SANDBOX_PLANS: Plan[] = [
   FREE_PLAN,
-  { ...PRO_PLAN, stripeProductId: 'prod_TVXbDaLac1BeEs', stripePriceId: 'price_1SYWWVPd1pp0ErHMfWTsG55n' },
-  { ...MAX_PLAN, stripeProductId: 'prod_TVXeZZtBUz1VRA', stripePriceId: 'price_1SYWZDPd1pp0ErHMwtBs7ycN' },
+  { ...PRO_PLAN, stripeProductId: 'prod_TVXbDaLac1BeEs', stripePriceIds: ['price_1SYWWVPd1pp0ErHMfWTsG55n'] },
+  { ...MAX_PLAN, stripeProductId: 'prod_TVXeZZtBUz1VRA', stripePriceIds: ['price_1SYWZDPd1pp0ErHMwtBs7ycN'] },
 ];
 
 // Plans configured in the Stripe Production environment
 export const PRODUCTION_PLANS: Plan[] = [
   FREE_PLAN,
-  { ...PRO_PLAN, stripeProductId: 'prod_TVXVbCVSdlGOjc', stripePriceId: 'price_1SYWQ2BuGFTHqsGmiLNoiPCv' },
-  { ...MAX_PLAN, stripeProductId: 'prod_TVXUCHtF58Bzd2', stripePriceId: 'price_1SYWPuBuGFTHqsGmOtGqjM6E' },
+  {
+    ...PRO_PLAN,
+    stripeProductId: 'prod_TVXVbCVSdlGOjc',
+    stripePriceIds: [
+      'price_1SYWQ2BuGFTHqsGmiLNoiPCv',
+      'price_1T2cQxBuGFTHqsGmBOQjhThc', // This is an archived price ID for $5 that is here for Viktor
+    ],
+  },
+  { ...MAX_PLAN, stripeProductId: 'prod_TVXUCHtF58Bzd2', stripePriceIds: ['price_1SYWPuBuGFTHqsGmOtGqjM6E'] },
 ];
 
 export function getPlans(environment: ScratchEnvironment): Plan[] {

@@ -869,7 +869,7 @@ export class StripePaymentService {
 
     for (const plan of plans) {
       if (plan.planType === planType) {
-        return plan.stripePriceId;
+        return plan.stripePriceIds[0] ?? null;
       }
     }
 
@@ -880,10 +880,8 @@ export class StripePaymentService {
     const plans = getPlans(this.configService.getScratchEnvironment());
 
     for (const plan of plans) {
-      if (plan.stripePriceId === priceId) {
-        if (plan.stripePriceId === priceId) {
-          return plan.planType;
-        }
+      if (plan.stripePriceIds.includes(priceId)) {
+        return plan.planType;
       }
     }
 
