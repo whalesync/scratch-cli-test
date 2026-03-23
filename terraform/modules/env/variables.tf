@@ -230,7 +230,7 @@ variable "api_service_memory_limit" {
 
 variable "api_service_node_options" {
   type        = string
-  default     = ""
+  default     = "--max-old-space-size=1900"
   description = "Node.js options for the api service (e.g., '--max-old-space-size=512')."
 }
 
@@ -253,7 +253,7 @@ variable "cron_service_memory_limit" {
 
 variable "cron_service_node_options" {
   type        = string
-  default     = ""
+  default     = "--max-old-space-size=1900"
   description = "Node.js options for the cron service (e.g., '--max-old-space-size=512')."
 }
 
@@ -283,7 +283,7 @@ variable "worker_service_memory_limit" {
 
 variable "worker_service_node_options" {
   type        = string
-  default     = ""
+  default     = "--max-old-space-size=1900"
   description = "Node.js options for the worker service (e.g., '--max-old-space-size=512')."
 }
 
