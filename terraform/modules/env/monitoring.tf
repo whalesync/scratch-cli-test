@@ -104,10 +104,10 @@ resource "google_monitoring_service" "client_service_monitoring_service" {
 ## SQL PROXY VM Alerts
 ## ---------------------------------------------------------------------------------------------------------------------
 resource "google_monitoring_alert_policy" "sqlproxy_cpu_too_high" {
-  display_name = "${local.display_env} CloudSQL Proxy CPU > 80%"
+  display_name = "Scratch ${local.display_env} CloudSQL Proxy CPU > 80%"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} CloudSQL Proxy CPU Utilization > 80%"
+    subject = "Scratch ${local.display_env} CloudSQL Proxy CPU Utilization > 80%"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -149,10 +149,10 @@ resource "google_monitoring_alert_policy" "sqlproxy_cpu_too_high" {
 ## ---------------------------------------------------------------------------------------------------------------------
 
 resource "google_monitoring_alert_policy" "db_cpu_too_high" {
-  display_name = "${local.display_env} DB CPU Utilization too high"
+  display_name = "Scratch ${local.display_env} DB CPU Utilization too high"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} DB CPU Utilization too high"
+    subject = "Scratch ${local.display_env} DB CPU Utilization too high"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -185,10 +185,10 @@ resource "google_monitoring_alert_policy" "db_cpu_too_high" {
 }
 
 resource "google_monitoring_alert_policy" "db_out_of_disk_space" {
-  display_name = "${local.display_env} DB low on disk space"
+  display_name = "Scratch ${local.display_env} DB low on disk space"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} DB low on disk space"
+    subject = "Scratch ${local.display_env} DB low on disk space"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -221,10 +221,10 @@ resource "google_monitoring_alert_policy" "db_out_of_disk_space" {
 }
 
 resource "google_monitoring_alert_policy" "db_disk_read_io_high" {
-  display_name = "${local.display_env} DB Disk Read I/O above threshold"
+  display_name = "Scratch ${local.display_env} DB Disk Read I/O above threshold"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} DB Disk Read I/O above threshold"
+    subject = "Scratch ${local.display_env} DB Disk Read I/O above threshold"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -258,10 +258,10 @@ resource "google_monitoring_alert_policy" "db_disk_read_io_high" {
 
 
 resource "google_monitoring_alert_policy" "db_disk_write_io_high" {
-  display_name = "${local.display_env} DB Disk Write I/O above threshold"
+  display_name = "Scratch ${local.display_env} DB Disk Write I/O above threshold"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} DB Disk Write I/O above threshold"
+    subject = "Scratch ${local.display_env} DB Disk Write I/O above threshold"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -294,10 +294,10 @@ resource "google_monitoring_alert_policy" "db_disk_write_io_high" {
 }
 
 resource "google_monitoring_alert_policy" "db_mem_usage_too_high" {
-  display_name = "${local.display_env} DB memory utilization > 95%"
+  display_name = "Scratch ${local.display_env} DB memory utilization > 95%"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} DB memory utilization > 95%"
+    subject = "Scratch ${local.display_env} DB memory utilization > 95%"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -331,10 +331,10 @@ resource "google_monitoring_alert_policy" "db_mem_usage_too_high" {
 
 
 resource "google_monitoring_alert_policy" "db_connections_too_high" {
-  display_name = "${local.display_env} DB Connections > 95% of max capacity"
+  display_name = "Scratch ${local.display_env} DB Connections > 95% of max capacity"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} DB Connections > 95% of max capacity"
+    subject = "Scratch ${local.display_env} DB Connections > 95% of max capacity"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -371,10 +371,10 @@ resource "google_monitoring_alert_policy" "db_connections_too_high" {
 ## ---------------------------------------------------------------------------------------------------------------------
 
 resource "google_monitoring_alert_policy" "redis_mem_usage_too_high" {
-  display_name = "${local.display_env} Redis using too much Memory"
+  display_name = "Scratch ${local.display_env} Redis using too much Memory"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} Redis using too much Memory"
+    subject = "Scratch ${local.display_env} Redis using too much Memory"
     content = "Ops Playbook: ${local.playbook_link}"
 
   }
@@ -411,10 +411,10 @@ resource "google_monitoring_alert_policy" "redis_mem_usage_too_high" {
 ## ---------------------------------------------------------------------------------------------------------------------
 
 resource "google_monitoring_alert_policy" "client_high_5xx_error_count" {
-  display_name = "${local.display_env} Client Service - 5xx Errors"
+  display_name = "Scratch ${local.display_env} Client Service - 5xx Errors"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} Client Service - 5xx Errors"
+    subject = "Scratch ${local.display_env} Client Service - 5xx Errors"
     content = "[Remediation Playbook](https://www.notion.so/whalesync/Playbook-Firefighting-and-On-Call-c1914705f4ed45eba45d6c92e786ddfa?pvs=4#d58b6663c58346058b8157bc9caf8919)"
   }
   combiner = "OR"
@@ -451,10 +451,10 @@ resource "google_monitoring_alert_policy" "client_high_5xx_error_count" {
 
 
 resource "google_monitoring_alert_policy" "api_frontend_high_5xx_error_count" {
-  display_name = "${local.display_env} API Service - 5xx Errors"
+  display_name = "Scratch ${local.display_env} API Service - 5xx Errors"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} API Service - 5xx Errors"
+    subject = "Scratch ${local.display_env} API Service - 5xx Errors"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -490,10 +490,10 @@ resource "google_monitoring_alert_policy" "api_frontend_high_5xx_error_count" {
 ## ---------------------------------------------------------------------------------------------------------------------
 
 resource "google_monitoring_alert_policy" "cron_high_5xx_error_count" {
-  display_name = "${local.display_env} Cron Service - 5xx Errors"
+  display_name = "Scratch ${local.display_env} Cron Service - 5xx Errors"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} Cron Service - 5xx Errors"
+    subject = "Scratch ${local.display_env} Cron Service - 5xx Errors"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -539,10 +539,10 @@ resource "google_logging_metric" "worker_service_error_count" {
 }
 
 resource "google_monitoring_alert_policy" "worker_high_error_log_count" {
-  display_name = "${local.display_env} Worker Service - High Error Log Count"
+  display_name = "Scratch ${local.display_env} Worker Service - High Error Log Count"
   count        = var.enable_alerts ? 1 : 0
   documentation {
-    subject = "${local.display_env} Worker Service - High Error Log Count"
+    subject = "Scratch ${local.display_env} Worker Service - High Error Log Count"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -556,7 +556,7 @@ resource "google_monitoring_alert_policy" "worker_high_error_log_count" {
       comparison      = "COMPARISON_GT"
       duration        = "0s"
       filter          = "resource.type = \"cloud_run_revision\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.worker_service_error_count.name}\""
-      threshold_value = 50
+      threshold_value = 10000
       trigger {
         count = 1
       }
@@ -569,8 +569,8 @@ resource "google_monitoring_alert_policy" "worker_high_error_log_count" {
     }
   }
 
-  notification_channels = local.notification_channels
-  severity              = "ERROR"
+  notification_channels = local.warning_notification_channels
+  severity              = "WARNING"
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
@@ -599,9 +599,9 @@ resource "google_logging_metric" "intrusion_detection_system_notifications" {
 
 resource "google_monitoring_alert_policy" "intrusion_detection_system_alert" {
   count        = var.enable_intrusion_detection ? 1 : 0
-  display_name = "${local.display_env} Intrusion Detection System - Alert"
+  display_name = "Scratch ${local.display_env} Intrusion Detection System - Alert"
   documentation {
-    subject = "${local.display_env} Intrusion Detection System - Alert"
+    subject = "Scratch ${local.display_env} Intrusion Detection System - Alert"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -636,10 +636,10 @@ resource "google_monitoring_alert_policy" "intrusion_detection_system_alert" {
 ## ---------------------------------------------------------------------------------------------------------------------
 
 resource "google_monitoring_alert_policy" "scratch_git_cpu_too_high" {
-  display_name = "${local.display_env} Scratch Git CPU > 90%"
+  display_name = "Scratch ${local.display_env} Scratch Git CPU > 90%"
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
-    subject = "${local.display_env} Scratch Git CPU Utilization > 90%"
+    subject = "Scratch ${local.display_env} Scratch Git CPU Utilization > 90%"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -669,10 +669,10 @@ resource "google_monitoring_alert_policy" "scratch_git_cpu_too_high" {
 }
 
 resource "google_monitoring_alert_policy" "scratch_git_memory_too_high" {
-  display_name = "${local.display_env} Scratch Git Memory > 85%"
+  display_name = "Scratch ${local.display_env} Scratch Git Memory > 85%"
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
-    subject = "${local.display_env} Scratch Git Memory Utilization > 85%"
+    subject = "Scratch ${local.display_env} Scratch Git Memory Utilization > 85%"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
@@ -702,10 +702,10 @@ resource "google_monitoring_alert_policy" "scratch_git_memory_too_high" {
 }
 
 resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
-  display_name = "${local.display_env} Scratch Git Disk > 80%"
+  display_name = "Scratch ${local.display_env} Scratch Git Disk > 80%"
   count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
   documentation {
-    subject = "${local.display_env} Scratch Git Disk Utilization > 80%"
+    subject = "Scratch ${local.display_env} Scratch Git Disk Utilization > 80%"
     content = "Ops Playbook: ${local.playbook_link}"
   }
   combiner = "OR"
