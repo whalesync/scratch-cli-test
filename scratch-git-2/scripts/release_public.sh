@@ -128,9 +128,11 @@ SHA_LINUX_AMD64=$(sha_for "${BINARY}_linux_amd64.tar.gz")
 SHA_LINUX_ARM64=$(sha_for "${BINARY}_linux_arm64.tar.gz")
 BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${NEW_VERSION}"
 
-FORMULA="$TAP_DIR/scratchmd.rb"
-cat > "$FORMULA" <<RUBY
-class Scratchmd < Formula
+write_formula() {
+  local file="$1"
+  local class_name="$2"
+  cat > "$file" <<RUBY
+class ${class_name} < Formula
   desc "Scratch content management CLI"
   homepage "https://github.com/${GITHUB_REPO}"
   version "$MAJOR.$MINOR.$PATCH"
@@ -166,9 +168,15 @@ class Scratchmd < Formula
   end
 end
 RUBY
+}
+
+write_formula "$TAP_DIR/scratchmd.rb"                            "Scratchmd"
+write_formula "$TAP_DIR/scratchmd@${MAJOR}.rb"                   "ScratchmdAT${MAJOR}"
+write_formula "$TAP_DIR/scratchmd@${MAJOR}.${MINOR}.rb"          "ScratchmdAT${MAJOR}${MINOR}"
+write_formula "$TAP_DIR/scratchmd@${MAJOR}.${MINOR}.${PATCH}.rb" "ScratchmdAT${MAJOR}${MINOR}${PATCH}"
 
 (cd "$TAP_DIR" && \
-  git add scratchmd.rb && \
+  git add scratchmd.rb "scratchmd@${MAJOR}.rb" "scratchmd@${MAJOR}.${MINOR}.rb" "scratchmd@${MAJOR}.${MINOR}.${PATCH}.rb" && \
   git commit -m "scratchmd $NEW_VERSION" && \
   git push)
 rm -rf "$TAP_DIR"
