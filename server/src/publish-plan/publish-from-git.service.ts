@@ -9,7 +9,6 @@ import { ConnectorsService } from '../remote-service/connectors/connectors.servi
 import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
-import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
@@ -52,7 +51,6 @@ export class PublishFromGitService {
     private readonly scratchGitService: ScratchGitService,
     private readonly connectorsService: ConnectorsService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
-    private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
     private readonly refResolverService: RefResolverService,
     private readonly schemaService: SchemaHelperService,
@@ -303,7 +301,8 @@ export class PublishFromGitService {
       let remoteId = typeof contentId === 'string' || typeof contentId === 'number' ? String(contentId) : null;
       if (!remoteId) {
         const { folderPath, filename } = parsePath(entry.relPath);
-        remoteId = await this.fileIndexService.getRecordId(workbookId, folderPath, filename);
+        const filenameMap = await this.scratchGitService.lookupFilenamesByFolder(repoId, folderPath, [filename]);
+        remoteId = filenameMap.get(filename) ?? null;
       }
       if (!remoteId) {
         throw new Error(`Could not resolve remote ID for entry: ${entry.relPath}`);
@@ -412,7 +411,10 @@ export class PublishFromGitService {
     }
 
     if (fileIndexUpdates.length > 0) {
-      await this.fileIndexService.upsertBatch(fileIndexUpdates);
+      await this.scratchGitService.upsertIndexEntries(
+        repoId,
+        fileIndexUpdates.map((u) => ({ folder: u.folderPath, filename: u.filename, remoteId: u.recordId })),
+      );
     }
     await this.fileReferenceService.updateRefsForFiles(
       workbookId,
@@ -472,12 +474,10 @@ export class PublishFromGitService {
 
     const fileIndexDeletes = validEntries.map((e) => {
       const { folderPath, filename } = parsePath(e.relPath);
-      return { folderPath, filename };
+      return { folder: folderPath, filename };
     });
     if (fileIndexDeletes.length > 0) {
-      await this.db.client.fileIndex.deleteMany({
-        where: { workbookId, OR: fileIndexDeletes },
-      });
+      await this.scratchGitService.deleteIndexEntries(repoId, fileIndexDeletes);
     }
 
     await this.scratchGitService.deleteFilesFromBranch(
@@ -506,10 +506,7 @@ export class PublishFromGitService {
   ): Promise<void> {
     const filenames = entries.map((e) => parsePath(e.relPath).filename);
 
-    const indexRecords = await this.db.client.fileIndex.findMany({
-      where: { workbookId, folderPath, filename: { in: filenames } },
-    });
-    const filenameToRecordId = new Map(indexRecords.map((r) => [r.filename, r.recordId]));
+    const filenameToRecordId = await this.scratchGitService.lookupFilenamesByFolder(repoId, folderPath, filenames);
 
     const renames: { oldName: string; newName: string }[] = [];
     const fileIndexUpdates: { workbookId: string; folderPath: string; recordId: string; filename: string }[] = [];
@@ -540,7 +537,10 @@ export class PublishFromGitService {
       renames,
       `Publish V2 rename batch (${renames.length})`,
     );
-    await this.fileIndexService.upsertBatch(fileIndexUpdates);
+    await this.scratchGitService.upsertIndexEntries(
+      repoId,
+      fileIndexUpdates.map((u) => ({ folder: u.folderPath, filename: u.filename, remoteId: u.recordId })),
+    );
 
     for (const ref of refUpdates) {
       await this.db.client.fileReference.updateMany({

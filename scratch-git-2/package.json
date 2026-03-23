@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" GIT_REPOS_V2_DIR=\"$INIT_CWD/../local/scratch-git-repos-v2\" cargo run",
+    "build": "cargo build --release 2>&1 | tail -5",
     "test": "cargo test"
   }
 }

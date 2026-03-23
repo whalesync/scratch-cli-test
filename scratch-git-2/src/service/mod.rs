@@ -194,6 +194,18 @@ pub async fn run() {
             "/api/repo/index/{id}/lookup",
             post(routes::index::lookup_index),
         )
+        .route(
+            "/api/repo/index/{id}/lookup-filenames",
+            post(routes::index::lookup_index_filenames),
+        )
+        .route(
+            "/api/repo/index/{id}/upsert-entries",
+            post(routes::index::upsert_index_entries),
+        )
+        .route(
+            "/api/repo/index/{id}/delete-entries",
+            post(routes::index::delete_index_entries),
+        )
         // Debug
         .route(
             "/api/repo/debug/{id}/graph",

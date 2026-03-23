@@ -491,6 +491,30 @@ struct LocalSyncEndpoint {
 struct FieldMapping {
     source_field: String,
     dest_field: String,
+    #[serde(default)]
+    transformer: Option<Transformer>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Transformer {
+    StringToNumber(StringToNumberOptions),
+    AutoConvert(AutoConvertOptions),
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct StringToNumberOptions {
+    #[serde(default)]
+    strip_currency: bool,
+    #[serde(default)]
+    parse_integer: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoConvertOptions {
+    target_type: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -889,7 +913,8 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
             let mut dst_val: serde_json::Value = serde_json::from_str(&dst_data)?;
             for fm in &cfg.field_mappings {
                 if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
-                    set_dot(&mut dst_val, &fm.dest_field, src_v);
+                    let transformed = apply_transformer(src_v, fm.transformer.as_ref());
+                    set_dot(&mut dst_val, &fm.dest_field, transformed);
                 }
             }
             std::fs::write(dst_path, format!("{}\n", serde_json::to_string_pretty(&dst_val)?))?;
@@ -899,7 +924,8 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
             let mut pending: serde_json::Value = serde_json::json!({});
             for fm in &cfg.field_mappings {
                 if let Some(src_v) = get_dot(&src_val, &fm.source_field) {
-                    set_dot(&mut pending, &fm.dest_field, src_v);
+                    let transformed = apply_transformer(src_v, fm.transformer.as_ref());
+                    set_dot(&mut pending, &fm.dest_field, transformed);
                 }
             }
             let hash = {
@@ -928,6 +954,114 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
         updated: updated.into_inner(),
         created: created.into_inner(),
     })
+}
+
+fn apply_transformer(value: serde_json::Value, transformer: Option<&Transformer>) -> serde_json::Value {
+    match transformer {
+        None => value,
+        Some(Transformer::StringToNumber(opts)) => apply_string_to_number(value, opts),
+        Some(Transformer::AutoConvert(opts)) => apply_auto_convert(value, opts),
+    }
+}
+
+fn apply_string_to_number(value: serde_json::Value, opts: &StringToNumberOptions) -> serde_json::Value {
+    use serde_json::Value;
+    match &value {
+        Value::Number(n) => {
+            if opts.parse_integer {
+                return Value::Number(serde_json::Number::from(n.as_f64().unwrap_or(0.0).trunc() as i64));
+            }
+            value
+        }
+        Value::String(s) => {
+            let mut cleaned = s.trim().to_string();
+            if opts.strip_currency {
+                cleaned = cleaned
+                    .replace(['$', '€', '£', '¥', '₹', '₽', '₩', '₴', '₪', '฿', '₫', '₦'], "")
+                    .replace(',', "");
+                cleaned = cleaned.trim().to_string();
+            }
+            if cleaned.is_empty() {
+                return Value::Null;
+            }
+            if opts.parse_integer {
+                if let Ok(n) = cleaned.parse::<i64>() {
+                    return Value::Number(n.into());
+                }
+                // Try float then truncate
+                if let Ok(f) = cleaned.parse::<f64>() {
+                    return Value::Number(serde_json::Number::from(f.trunc() as i64));
+                }
+            } else if let Ok(f) = cleaned.parse::<f64>() {
+                if let Some(n) = serde_json::Number::from_f64(f) {
+                    return Value::Number(n);
+                }
+            }
+            value // parse failed, pass through
+        }
+        Value::Null => Value::Null,
+        _ => value, // unsupported type, pass through
+    }
+}
+
+fn apply_auto_convert(value: serde_json::Value, opts: &AutoConvertOptions) -> serde_json::Value {
+    use serde_json::Value;
+    if value.is_null() {
+        return Value::Null;
+    }
+    match opts.target_type.as_str() {
+        "string" => match &value {
+            Value::String(_) => value,
+            Value::Number(n) => Value::String(n.to_string()),
+            Value::Bool(b) => Value::String(b.to_string()),
+            Value::Array(arr) if arr.len() == 1 => {
+                apply_auto_convert(arr[0].clone(), opts)
+            }
+            Value::Array(arr) => Value::String(
+                arr.iter()
+                    .map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            _ => value,
+        },
+        "number" | "integer" => {
+            let as_f64 = match &value {
+                Value::Number(n) => n.as_f64(),
+                Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+                Value::String(s) => s.trim().parse::<f64>().ok(),
+                Value::Array(arr) if arr.len() == 1 => {
+                    return apply_auto_convert(arr[0].clone(), opts);
+                }
+                _ => None,
+            };
+            match as_f64 {
+                Some(f) => {
+                    let n = if opts.target_type == "integer" { f.trunc() } else { f };
+                    serde_json::Number::from_f64(n).map(Value::Number).unwrap_or(value)
+                }
+                None => value,
+            }
+        }
+        "boolean" => match &value {
+            Value::Bool(_) => value,
+            Value::Number(n) => Value::Bool(n.as_f64().unwrap_or(0.0) != 0.0),
+            Value::String(s) => match s.trim().to_lowercase().as_str() {
+                "true" | "yes" | "1" => Value::Bool(true),
+                "false" | "no" | "0" => Value::Bool(false),
+                _ => value,
+            },
+            _ => value,
+        },
+        "array" => match value {
+            Value::Array(_) => value,
+            _ => Value::Array(vec![value]),
+        },
+        _ => value,
+    }
 }
 
 /// Get a value from a JSON object using dot-notation path (e.g. "fields.Name").

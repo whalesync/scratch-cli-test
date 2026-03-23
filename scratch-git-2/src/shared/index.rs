@@ -426,7 +426,116 @@ pub fn remove_single_file(db_path: &Path, folder: &str, filename: &str) -> anyho
     Ok(())
 }
 
+// ── Mutations ─────────────────────────────────────────────────────────────────
+
+/// Upsert a batch of `(folder, filename, remote_id)` entries into the index.
+///
+/// Creates the index tables if they don't exist yet (safe to call before a full build).
+pub fn upsert_entries(
+    db_path: &Path,
+    entries: &[(String, String, Option<String>)],
+) -> anyhow::Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("failed to create index dir: {e}"))?;
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    ensure_schema(&conn)?;
+
+    for (folder, filename, remote_id) in entries {
+        conn.execute(
+            "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
+            params![folder, filename, remote_id],
+        )
+        .map_err(|e| anyhow::anyhow!("failed to upsert {}/{}: {e}", folder, filename))?;
+    }
+    Ok(())
+}
+
+/// Delete a batch of `(folder, filename)` entries from the index and their FK references.
+pub fn delete_entries(db_path: &Path, entries: &[(String, String)]) -> anyhow::Result<()> {
+    if entries.is_empty() || !db_path.exists() {
+        return Ok(());
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+
+    for (folder, filename) in entries {
+        conn.execute(
+            "DELETE FROM file_index WHERE folder = ?1 AND filename = ?2",
+            params![folder, filename],
+        )
+        .map_err(|e| anyhow::anyhow!("failed to delete {}/{}: {e}", folder, filename))?;
+        conn.execute(
+            "DELETE FROM file_references WHERE source_folder = ?1 AND source_filename = ?2",
+            params![folder, filename],
+        )
+        .map_err(|e| {
+            anyhow::anyhow!("failed to delete references for {}/{}: {e}", folder, filename)
+        })?;
+    }
+    Ok(())
+}
+
 // ── Lookups ───────────────────────────────────────────────────────────────────
+
+/// Resolve a batch of filenames in a given folder to their remote IDs.
+///
+/// Returns a map of `filename → remote_id` for entries that exist in the index.
+/// Missing filenames are silently omitted.
+pub fn lookup_filenames_to_remote_ids(
+    db_path: &Path,
+    folder: &str,
+    filenames: &[String],
+) -> anyhow::Result<HashMap<String, String>> {
+    if filenames.is_empty() || !db_path.exists() {
+        return Ok(HashMap::new());
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+
+    let placeholders: String = filenames
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT filename, remote_id FROM file_index \
+         WHERE folder = ?1 AND filename IN ({placeholders}) AND remote_id IS NOT NULL"
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| anyhow::anyhow!("prepare failed: {e}"))?;
+
+    use rusqlite::types::ToSql;
+    let folder_val: &dyn ToSql = &folder;
+    let fn_vals: Vec<Box<dyn ToSql>> =
+        filenames.iter().map(|s| Box::new(s.clone()) as Box<dyn ToSql>).collect();
+    let mut all_params: Vec<&dyn ToSql> = vec![folder_val];
+    for v in &fn_vals {
+        all_params.push(v.as_ref());
+    }
+
+    let mut map = HashMap::new();
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(all_params.iter().copied()), |row| {
+            let filename: String = row.get(0)?;
+            let remote_id: String = row.get(1)?;
+            Ok((filename, remote_id))
+        })
+        .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
+
+    for row in rows {
+        let (filename, remote_id) = row.map_err(|e| anyhow::anyhow!("{e}"))?;
+        map.insert(filename, remote_id);
+    }
+
+    Ok(map)
+}
 
 /// Resolve a batch of remote IDs in a given folder to their filenames.
 ///

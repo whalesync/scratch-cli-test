@@ -394,6 +394,28 @@ export class ScratchGitClient {
       remote_ids: remoteIds,
     }) as Promise<Record<string, string>>;
   }
+
+  async lookupFilenamesByFolder(repoId: string, folder: string, filenames: string[]): Promise<Record<string, string>> {
+    return this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/lookup-filenames`, 'POST', {
+      folder,
+      filenames,
+    }) as Promise<Record<string, string>>;
+  }
+
+  async upsertIndexEntries(
+    repoId: string,
+    entries: { folder: string; filename: string; remoteId: string | null }[],
+  ): Promise<void> {
+    await this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/upsert-entries`, 'POST', {
+      entries: entries.map((e) => [e.folder, e.filename, e.remoteId]),
+    });
+  }
+
+  async deleteIndexEntries(repoId: string, entries: { folder: string; filename: string }[]): Promise<void> {
+    await this.callGitApi(`/api/repo/index/${this.encodeRepoId(repoId)}/delete-entries`, 'POST', {
+      entries: entries.map((e) => [e.folder, e.filename]),
+    });
+  }
 }
 
 export interface StripPrefixResult {

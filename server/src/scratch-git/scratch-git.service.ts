@@ -89,6 +89,22 @@ export class ScratchGitService {
     return new Map(Object.entries(result));
   }
 
+  async lookupFilenamesByFolder(repoId: string, folder: string, filenames: string[]): Promise<Map<string, string>> {
+    const result = await this.scratchGitClient.lookupFilenamesByFolder(repoId, folder, filenames);
+    return new Map(Object.entries(result));
+  }
+
+  async upsertIndexEntries(
+    repoId: string,
+    entries: { folder: string; filename: string; remoteId: string | null }[],
+  ): Promise<void> {
+    await this.scratchGitClient.upsertIndexEntries(repoId, entries);
+  }
+
+  async deleteIndexEntries(repoId: string, entries: { folder: string; filename: string }[]): Promise<void> {
+    await this.scratchGitClient.deleteIndexEntries(repoId, entries);
+  }
+
   async commitFilesToBranch(
     repoId: string,
     branch: string,
