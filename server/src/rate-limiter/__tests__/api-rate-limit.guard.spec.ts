@@ -62,10 +62,16 @@ describe('ApiRateLimitGuard', () => {
     getRedisPassword: () => '',
   };
 
+  const mockMetricsService = {
+    logValue: jest.fn(),
+    withLoggedExecTime: jest.fn(),
+    withLoggedExecTimeForConnector: jest.fn(),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
     reflector = new Reflector();
-    guard = new ApiRateLimitGuard(reflector, mockConfigService as never);
+    guard = new ApiRateLimitGuard(reflector, mockConfigService as never, mockMetricsService);
     guard.onModuleInit();
   });
 
@@ -112,6 +118,11 @@ describe('ApiRateLimitGuard', () => {
       const body = httpError.getResponse() as Record<string, unknown>;
       expect(body.retryAfterS).toBe(5);
     }
+
+    expect(mockMetricsService.logValue).toHaveBeenCalledWith('api_rate_limit_exceeded', 1, {
+      name: 'authSource',
+      value: 'user',
+    });
   });
 
   it('should set Retry-After header on 429', async () => {

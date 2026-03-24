@@ -6,6 +6,7 @@ import { CustomMetricDimension, CustomMetricUnit } from './types';
  */
 export enum CustomMetric {
   API_REQUEST = 'api_request',
+  API_RATE_LIMIT_EXCEEDED = 'api_rate_limit_exceeded',
 
   // BullMQ job metrics — completed
   JOB_PULL_LINKED_FOLDER_FILES_COMPLETED = 'job_pull_linked_folder_files_completed',
@@ -80,6 +81,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_PUBLISH_STALLED:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
+    case CustomMetric.API_RATE_LIMIT_EXCEEDED:
       return CustomMetricDimension.AUTH_SOURCE;
     default:
       return assertUnreachable(metric);
@@ -89,6 +91,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
 export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
   switch (metric) {
     case CustomMetric.API_REQUEST:
+    case CustomMetric.API_RATE_LIMIT_EXCEEDED:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_COMPLETED:
     case CustomMetric.JOB_REFRESH_RECORDS_COMPLETED:
     case CustomMetric.JOB_PUBLISH_DATA_FOLDER_COMPLETED:

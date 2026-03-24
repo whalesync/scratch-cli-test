@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   OnModuleDestroy,
   OnModuleInit,
@@ -13,6 +14,9 @@ import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import { AuthenticatedUser, RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
+import { CustomMetricDimension } from 'src/metrics/types';
 import { API_RATE_LIMIT_KEY, API_RATE_LIMIT_WEIGHT_KEY } from './api-rate-limit.decorator';
 import { RateLimiterSpec } from './rate-limiter.types';
 
@@ -32,6 +36,7 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit, OnModuleDes
   constructor(
     private readonly reflector: Reflector,
     private readonly configService: ScratchConfigService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   onModuleInit() {
@@ -102,6 +107,11 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit, OnModuleDes
         WSLogger.warn({
           source: LOG_SOURCE,
           message: `API rate limit exceeded for user ${key}, retry after ${retryAfterS}s`,
+        });
+
+        this.metricsService.logValue(CustomMetric.API_RATE_LIMIT_EXCEEDED, 1, {
+          name: CustomMetricDimension.AUTH_SOURCE,
+          value: user.authSource ?? 'unknown',
         });
 
         context.switchToHttp().getResponse<import('express').Response>().setHeader('Retry-After', String(retryAfterS));
