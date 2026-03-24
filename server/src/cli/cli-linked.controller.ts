@@ -21,6 +21,7 @@ import { JobEntity } from 'src/job/entities/job.entity';
 import { JobService } from 'src/job/job.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
@@ -39,7 +40,7 @@ import { CreateCliLinkedTableDto, ValidatedCreateCliLinkedTableDto } from './dto
  */
 @Controller('cli/v1')
 @UseInterceptors(ClassSerializerInterceptor)
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 export class CliLinkedController {
   constructor(
     private readonly dataFolderService: DataFolderService,

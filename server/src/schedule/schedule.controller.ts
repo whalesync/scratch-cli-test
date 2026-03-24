@@ -22,12 +22,13 @@ import type {
 import { ScheduleAction } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { ScheduleService } from './schedule.service';
 
 @Controller('workbooks/:workbookId/schedules')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class ScheduleController {
   constructor(private readonly scheduleService: ScheduleService) {}

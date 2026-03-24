@@ -11,6 +11,7 @@ import {
 import { CliAuthGuard } from 'src/auth/cli-auth.guard';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { CliAuthService } from './cli-auth.service';
 import {
   AuthInitiateResponseDto,
@@ -68,7 +69,7 @@ export class CliAuthController {
    * Protected by Scratch auth guard (requires Clerk JWT).
    */
   @Post('verify')
-  @UseGuards(ScratchAuthGuard)
+  @UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
   async verifyAuth(@Req() req: RequestWithUser, @Body() dto: AuthVerifyRequestDto): Promise<AuthVerifyResponseDto> {
     if (!dto.userCode) {
       throw new BadRequestException('User code is required');

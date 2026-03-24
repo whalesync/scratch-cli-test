@@ -33,6 +33,7 @@ import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { PostHogService } from '../posthog/posthog.service';
+import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
@@ -42,7 +43,7 @@ import { DataFolderService } from './data-folder.service';
 import { WorkbookService } from './workbook.service';
 
 @Controller('data-folder')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class DataFolderController {
   constructor(

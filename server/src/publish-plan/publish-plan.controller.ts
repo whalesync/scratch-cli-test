@@ -5,6 +5,7 @@ import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
+import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
@@ -14,7 +15,7 @@ import { PublishPlanCrudService } from './publish-plan-crud.service';
 import { PublishPlanRunService } from './publish-plan-run.service';
 
 @Controller('workbook/:workbookId/publish-v2')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 export class PublishPlanController {
   constructor(
     private readonly publishPlanService: PublishPlanBuildService,

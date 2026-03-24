@@ -5,8 +5,10 @@ import { DbModule } from '../db/db.module';
 import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { ExperimentsModule } from 'src/experiments/experiments.module';
+import { MetricsModule } from 'src/metrics/metrics.module';
 import { PaymentModule } from 'src/payment/payment.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
+import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { SlackNotificationModule } from 'src/slack/slack-notification.module';
 import { OrganizationsService } from './organizations.service';
 import { SubscriptionService } from './subscription.service';
@@ -17,6 +19,8 @@ import { UsersService } from './users.service';
   providers: [UsersService, SubscriptionService, OrganizationsService],
   imports: [
     DbModule,
+    MetricsModule,
+    RateLimiterModule,
     PosthogModule,
     ScratchConfigModule,
     ExperimentsModule,

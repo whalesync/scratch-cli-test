@@ -3,7 +3,9 @@ import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ClerkModule } from 'src/clerk/clerk.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { MetricsModule } from 'src/metrics/metrics.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
+import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { RedisModule } from 'src/redis/redis.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { UserModule } from 'src/users/users.module';
@@ -28,6 +30,8 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
 @Module({
   imports: [
     DbModule,
+    MetricsModule,
+    RateLimiterModule,
     ConnectorsModule,
     ScratchConfigModule,
     ClerkModule,

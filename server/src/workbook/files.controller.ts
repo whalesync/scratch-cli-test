@@ -31,13 +31,14 @@ import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
+import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { FilesService } from './files.service';
 
 @Controller('workbooks/:workbookId/files')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class FilesController {
   constructor(

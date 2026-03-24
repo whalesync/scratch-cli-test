@@ -33,6 +33,7 @@ import {
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
+import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { WorkspacePermissionRole, userToActor } from '../users/types';
 import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
@@ -44,7 +45,7 @@ import { WorkbookService } from './workbook.service';
 import { WorkspacePermissionsService } from './workspace-permissions.service';
 
 @Controller('workbook')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class WorkbookController {
   constructor(

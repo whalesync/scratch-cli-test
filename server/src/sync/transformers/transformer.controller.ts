@@ -13,6 +13,7 @@ import get from 'lodash/get';
 
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { FilesService } from '../../workbook/files.service';
@@ -20,7 +21,7 @@ import { getTransformer } from './transformer-registry';
 import { TransformContext } from './transformer.types';
 
 @Controller('sync/transformers')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class TransformerController {
   constructor(private readonly filesService: FilesService) {}

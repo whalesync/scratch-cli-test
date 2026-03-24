@@ -19,6 +19,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { SyncService } from 'src/sync/sync.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
@@ -32,7 +33,7 @@ import { createRunContext } from 'src/worker/jobs/base-types';
  */
 @Controller('cli/v1/workbooks/:workbookId')
 @UseInterceptors(ClassSerializerInterceptor)
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 export class CliSyncController {
   constructor(
     private readonly syncService: SyncService,

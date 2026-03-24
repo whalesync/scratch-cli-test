@@ -23,6 +23,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishFromGitDto } from 'src/publish-plan/dto/publish-v2.dto';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
@@ -46,7 +47,7 @@ import {
  */
 @Controller('cli/v1/workbooks')
 @UseInterceptors(ClassSerializerInterceptor)
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 export class CliWorkbookController {
   private readonly gitBackendUrl: string;
 

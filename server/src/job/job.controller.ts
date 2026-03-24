@@ -13,13 +13,14 @@ import {
 import type { RunId, WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
+import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { dbJobToJobEntity, JobEntity } from './entities/job.entity';
 import { JobService } from './job.service';
 
 @Controller('jobs')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class JobController {
   constructor(private readonly jobService: JobService) {}

@@ -16,6 +16,7 @@ import {
 import { AuthType, type WorkbookId } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { TableList } from 'src/remote-service/connector-account/entities/table-list.entity';
 import { checkWorkspacePermissions } from 'src/users/permissions';
@@ -29,7 +30,7 @@ import { CreateCliConnectionDto, type ValidatedCreateCliConnectionDto } from './
  */
 @Controller('cli/v1/workbooks/:workbookId/connections')
 @UseInterceptors(ClassSerializerInterceptor)
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 export class CliConnectionController {
   constructor(
     private readonly connectorAccountService: ConnectorAccountService,

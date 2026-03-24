@@ -2,13 +2,15 @@ import { Module } from '@nestjs/common';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbModule } from 'src/db/db.module';
+import { MetricsModule } from 'src/metrics/metrics.module';
+import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { ScheduleController } from './schedule.controller';
 import { ScheduleService } from './schedule.service';
 import { SchedulerService } from './scheduler.service';
 
 @Module({
-  imports: [DbModule, ScratchConfigModule, WorkerEnqueuerModule],
+  imports: [DbModule, MetricsModule, ScratchConfigModule, RateLimiterModule, WorkerEnqueuerModule],
   controllers: [ScheduleController],
   providers: [
     ScheduleService,

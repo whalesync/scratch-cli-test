@@ -33,6 +33,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -41,7 +42,7 @@ import { SyncService } from './sync.service';
 import { WhalesyncImportApiService } from './whalesync-import';
 
 @Controller('workbooks/:workbookId/syncs')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class SyncController {
   constructor(

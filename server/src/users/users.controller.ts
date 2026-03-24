@@ -17,6 +17,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
+import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
 import { User } from './entities/user.entity';
@@ -24,7 +25,7 @@ import { SubscriptionService } from './subscription.service';
 import { UsersService } from './users.service';
 
 @Controller('users')
-@UseGuards(ScratchAuthGuard)
+@UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class UsersController {
   constructor(
