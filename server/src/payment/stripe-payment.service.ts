@@ -489,15 +489,6 @@ export class StripePaymentService {
     let updateCount = 0;
 
     for (const line of invoice.lines.data) {
-      if (line.metadata.application !== METADATA_APPLICATION_NAME) {
-        WSLogger.debug({
-          source: StripePaymentService.name,
-          message: `Skipping upsert for non-scratchpaper line item`,
-          line,
-        });
-        continue;
-      }
-
       if (!line.parent || line.parent.type !== 'subscription_item_details' || !line.parent.subscription_item_details) {
         WSLogger.debug({
           source: StripePaymentService.name,
@@ -586,16 +577,6 @@ export class StripePaymentService {
         continue;
       }
 
-      if (!this.isScratchSubscription(subscription.v)) {
-        WSLogger.info({
-          source: StripePaymentService.name,
-          message: `Skipping upsert for non-scratch subscription`,
-          subscriptionId: stripeSubscriptionId,
-          environment: subscription.v.metadata.application,
-        });
-        continue;
-      }
-
       if (!this.isCurrentScratchEnvironment(subscription.v)) {
         WSLogger.info({
           source: StripePaymentService.name,
@@ -635,19 +616,6 @@ export class StripePaymentService {
     }
   }
 
-  private isScratchSubscription(subscription: Stripe.Subscription): boolean {
-    const planType = this.getPlanTypeFromSubscription(subscription);
-
-    WSLogger.debug({
-      source: StripePaymentService.name,
-      message: `Checking if subscription is for scratch`,
-      subMetadata: JSON.stringify(subscription.metadata),
-      planType,
-    });
-
-    return subscription.metadata.application === METADATA_APPLICATION_NAME && planType !== null;
-  }
-
   private isCurrentScratchEnvironment(subscription: Stripe.Subscription): boolean {
     const appEnv = this.configService.getScratchEnvironment();
     return subscription.metadata.environment === appEnv;
@@ -682,14 +650,6 @@ export class StripePaymentService {
       subscription = getSubscriptionResult.v;
     }
 
-    if (!this.isScratchSubscription(subscription)) {
-      WSLogger.info({
-        source: StripePaymentService.name,
-        message: `Skipping upsert for non-scratchpaper subscription`,
-        subscriptionId: stripeSubscriptionId,
-      });
-      return ok('ignored');
-    }
     // Make sure the subscription is for the correct scratch environment.
     if (!this.isCurrentScratchEnvironment(subscription)) {
       WSLogger.info({
