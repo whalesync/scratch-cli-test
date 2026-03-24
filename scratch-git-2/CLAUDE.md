@@ -1,0 +1,30 @@
+# scratch-git-2
+
+A single Rust crate that ships two binaries:
+
+1. **`service`** — a Git microservice (port 3100 REST API + port 3101 Git HTTP backend) used by the Scratch server to store workbook data in bare git repositories. The NestJS server calls it for all file operations; it is stateless from the app's perspective.
+
+2. **`scratchmd`** — the end-user CLI. It runs business logic locally against JSON record files that are fetched from remote services (Airtable, Webflow, Notion, …). Key capabilities: three-way file upload/download, local sync execution with transformers (string_to_number, auto_convert, Rhai scripts), publish plan building (diff dirty vs master → phase files), and triggering server-side publish jobs.
+
+## Workflow
+
+```bash
+# Build and install the CLI locally
+cargo build --bin scratchmd
+cp target/debug/scratchmd /usr/local/bin/scratchmd
+
+# Run the service in dev
+cargo run
+
+# Run all tests
+cargo test
+```
+
+Always run commands from inside `scratch-git-2/` (or the repo root using Turborepo).
+
+## Docs
+
+- [README.md](docs/README.md) — service architecture, environment variables, Docker, deployment, DevOps playbook
+- [PARITY.md](docs/PARITY.md) — Rust vs Go CLI feature gap tracking
+- [MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) — plan to migrate business logic from NestJS/Postgres into Rust/git
+- [TEST_LOOP.md](docs/TEST_LOOP.md) — end-to-end test guide ⚠️ partially outdated (uses old binary name `scratchmd2` and old workspace paths — treat as conceptual reference)

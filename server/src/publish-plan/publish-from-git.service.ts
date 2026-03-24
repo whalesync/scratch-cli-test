@@ -15,16 +15,26 @@ import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
 import { parsePath } from './utils';
 
-// Shape of the plan.json written by `scratchmd2 plan-publish`
+// Shape of the plan.json written by `scratchmd plan-publish`
 interface PlanMeta {
   planId: string;
   createdAt: string;
   connectionName: string;
   connectionId: string;
   summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
-  deleteIndex: Record<string, string>; // rel_path → remote_id
-  changedFields: Record<string, unknown>; // rel_path → sparse fields object
-  entries: Partial<Record<PlanPhase, string[]>>; // phase → rel_paths
+  /** Table folder paths that have phase files, e.g. ["Folder/Table"]. */
+  tablePaths: string[];
+}
+
+// Shape of edit/backfill phase files: { content, changedFields }
+interface PhaseFileEnvelope {
+  content: ParsedContent;
+  changedFields: Record<string, unknown>;
+}
+
+// Shape of delete phase files: { remoteId }
+interface DeletePhaseFile {
+  remoteId: string;
 }
 
 type PlanPhase = 'edit' | 'create' | 'delete' | 'backfill' | 'rename';
@@ -95,9 +105,8 @@ export class PublishFromGitService {
     const connector = await this.resolveConnector(connectorAccountId);
     const tableSpecCache = new Map<string, BaseJsonTableSpec | null>();
 
-    // Build a set of rel_paths that have a later phase (backfill or delete)
-    // so we can decide when to sync to dirty.
-    const hasLaterPhase = new Set<string>([...(plan.entries.backfill ?? []), ...(plan.entries.delete ?? [])]);
+    // Build hasLaterPhase by scanning backfill and delete directories
+    const hasLaterPhase = await this.buildHasLaterPhase(repoId, plan.tablePaths);
 
     let successCount = 0;
     let failedCount = 0;
@@ -105,18 +114,15 @@ export class PublishFromGitService {
     const phases: PlanPhase[] = ['edit', 'create', 'delete', 'backfill', 'rename'];
 
     for (const phase of phases) {
-      const relPaths = plan.entries[phase] ?? [];
-      if (relPaths.length === 0) continue;
+      const operations = await this.loadPhaseOperations(repoId, plan.tablePaths, phase);
+      if (operations.length === 0) continue;
 
       WSLogger.info({
         source: 'PublishFromGitService.runFromGit',
-        message: `Executing ${phase} phase (${relPaths.length} entries)`,
+        message: `Executing ${phase} phase (${operations.length} entries)`,
         workbookId,
         data: { planId: plan.planId, phase },
       });
-
-      // Load file contents for this phase from git
-      const operations = await this.loadPhaseOperations(repoId, planPath, phase, relPaths, plan);
 
       if (phase === 'rename') {
         // Group by folder, execute renames
@@ -227,43 +233,83 @@ export class PublishFromGitService {
   // Phase file loading
   // ---------------------------------------------------------------------------
 
-  private async loadPhaseOperations(
+  /**
+   * Lists all { relPath, gitPath } pairs for a given phase.
+   *
+   * Phase files live at: .scratch/{tablePath}/publish-plan-{ts}/{phase}/{filename}
+   * relPath is the data-file path: {tablePath}/{filename}
+   *
+   * The timestamp dir is found by scanning .scratch/{tablePath}/ for a `publish-plan-*` entry.
+   */
+  private async listPhaseFiles(
     repoId: string,
-    planPath: string,
+    tablePaths: string[],
     phase: PlanPhase,
-    relPaths: string[],
-    plan: PlanMeta,
-  ): Promise<PhaseOperation[]> {
-    const ops: PhaseOperation[] = [];
+  ): Promise<{ relPath: string; gitPath: string }[]> {
+    const results: { relPath: string; gitPath: string }[] = [];
 
-    for (const relPath of relPaths) {
-      const { folderPath, filename } = parsePath(relPath);
-      // Plan file location: {planPath}/{folder}/{phase}/{filename}
-      const gitPath = folderPath
-        ? `${planPath}/${folderPath}/${phase}/${filename}`
-        : `${planPath}/${phase}/${filename}`;
+    for (const tablePath of tablePaths) {
+      // Phase files are under .scratch/{tablePath}/publish-plan-{ts}/{phase}/
+      const scratchTableDir = `.scratch/${tablePath}`;
+      const scratchEntries = await this.scratchGitService
+        .listRepoFiles(repoId, 'dirty', scratchTableDir)
+        .catch(() => []);
+      const planDir = scratchEntries.find((e) => e.type === 'directory' && e.name.startsWith('publish-plan-'));
+      if (!planDir) continue;
 
-      let content: ParsedContent | null = null;
-      if (phase !== 'delete' && phase !== 'rename') {
-        const file = await this.scratchGitService.getRepoFile(repoId, 'dirty', gitPath);
-        if (file) {
-          try {
-            content = JSON.parse(file.content) as ParsedContent;
-          } catch {
-            WSLogger.warn({
-              source: 'PublishFromGitService.loadPhaseOperations',
-              message: `Failed to parse ${gitPath}`,
-            });
-          }
+      const phaseDir = `${scratchTableDir}/${planDir.name}/${phase}`;
+      const files = await this.scratchGitService.listRepoFiles(repoId, 'dirty', phaseDir).catch(() => []);
+      for (const f of files) {
+        if (f.type === 'file') {
+          results.push({
+            relPath: `${tablePath}/${f.name}`,
+            gitPath: `${phaseDir}/${f.name}`,
+          });
         }
       }
+    }
 
-      const remoteRecordId = phase === 'delete' ? (plan.deleteIndex[relPath] ?? null) : null;
+    return results;
+  }
 
-      const changedFields =
-        phase === 'edit' || phase === 'backfill'
-          ? ((plan.changedFields[relPath] as Record<string, unknown>) ?? null)
-          : null;
+  /** Returns the set of rel_paths that appear in backfill or delete phases. */
+  private async buildHasLaterPhase(repoId: string, tablePaths: string[]): Promise<Set<string>> {
+    const [backfill, del] = await Promise.all([
+      this.listPhaseFiles(repoId, tablePaths, 'backfill'),
+      this.listPhaseFiles(repoId, tablePaths, 'delete'),
+    ]);
+    return new Set([...backfill.map((f) => f.relPath), ...del.map((f) => f.relPath)]);
+  }
+
+  private async loadPhaseOperations(repoId: string, tablePaths: string[], phase: PlanPhase): Promise<PhaseOperation[]> {
+    const files = await this.listPhaseFiles(repoId, tablePaths, phase);
+    const ops: PhaseOperation[] = [];
+
+    for (const { relPath, gitPath } of files) {
+      const file = await this.scratchGitService.getRepoFile(repoId, 'dirty', gitPath);
+      if (!file) continue;
+
+      let content: ParsedContent | null = null;
+      let remoteRecordId: string | null = null;
+      let changedFields: Record<string, unknown> | null = null;
+
+      try {
+        const parsed = JSON.parse(file.content) as unknown;
+        if (phase === 'edit' || phase === 'backfill') {
+          const envelope = parsed as PhaseFileEnvelope;
+          content = envelope.content;
+          changedFields = envelope.changedFields;
+        } else if (phase === 'delete') {
+          remoteRecordId = (parsed as DeletePhaseFile).remoteId ?? null;
+        } else {
+          content = parsed as ParsedContent;
+        }
+      } catch {
+        WSLogger.warn({
+          source: 'PublishFromGitService.loadPhaseOperations',
+          message: `Failed to parse ${gitPath}`,
+        });
+      }
 
       ops.push({ relPath, gitPath, content, remoteRecordId, changedFields });
     }

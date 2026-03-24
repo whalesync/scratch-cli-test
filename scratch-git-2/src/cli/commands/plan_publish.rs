@@ -12,13 +12,19 @@
 //!   Pass 2: strip @/ pseudo-refs (references to pending new records)
 //!   Pass 3: strip @asset/ pseudo-refs (schema-agnostic)
 //!
-//! Output: {conn_dir}/.scratch/publish-plans/{timestamp}/
-//!   plan.json       — metadata, delete_index, changed_fields, entries map
-//!   {folder}/edit/  — stripped edit content files
-//!   {folder}/create/ — stripped create content files
-//!   {folder}/delete/ — empty {} placeholder files
-//!   {folder}/backfill/ — pass-1 content for files that needed stripping
-//!   {folder}/rename/ — empty {} placeholder files for pending creates
+//! Output layout inside conn_dir:
+//!
+//!   .scratch/.publish-plans/{timestamp}/
+//!     plan.json     — manifest (planId, summary, tablePaths, …)
+//!
+//!   {folder}/.scratch/edit/     — { "content": {...}, "changedFields": {...} } envelope files
+//!   {folder}/.scratch/create/   — stripped record content files (naked JSON)
+//!   {folder}/.scratch/delete/   — { "remoteId": "..." } files
+//!   {folder}/.scratch/backfill/ — { "content": {...}, "changedFields": {...} } envelope files
+//!   {folder}/.scratch/rename/   — {} placeholder files for pending creates
+//!
+//! Phase files live alongside schema.json in the table's .scratch/ dir.
+//! The manifest lists tablePaths so the server knows where to find them.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -41,12 +47,9 @@ struct PlanMeta {
     connection_name: String,
     connection_id: String,
     summary: PlanSummary,
-    /// rel_path → remote_id for deleted files
-    delete_index: HashMap<String, String>,
-    /// rel_path → sparse changed-fields object for efficient PATCH
-    changed_fields: HashMap<String, Value>,
-    /// phase name → list of rel_paths in that phase
-    entries: HashMap<String, Vec<String>>,
+    /// Unique table folder paths that have phase files, e.g. ["Folder/Table"].
+    /// The server iterates these to find phase files at {path}/.scratch/{phase}/.
+    table_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,12 +86,11 @@ impl Phase {
     }
 }
 
-#[allow(dead_code)]
 struct PlanEntry {
     rel_path: String,
     phase: Phase,
     content: Value,
-    _changed_fields: Option<Value>,
+    changed_fields: Option<Value>,
 }
 
 /// A foreign-key field path extracted from a schema.
@@ -201,9 +203,9 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
             }
         };
 
-        // Find the single publish plan directory
-        let plans_dir = conn_dir.join(".scratch/publish-plans");
-        let plan_dir = match std::fs::read_dir(&plans_dir).ok().and_then(|mut d| d.next()) {
+        // Find the single publish plan manifest directory
+        let manifest_dir = conn_dir.join(".scratch/.publish-plans");
+        let plan_dir = match std::fs::read_dir(&manifest_dir).ok().and_then(|mut d| d.next()) {
             Some(Ok(e)) if e.path().is_dir() => e.path(),
             _ => {
                 eprintln!("  {conn_name}: no publish plan found — run 'scratchmd plan-publish' first");
@@ -213,7 +215,7 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
 
         // planPath is relative to the connector repo root (what the server reads from git)
         let plan_timestamp = plan_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let plan_path = format!(".scratch/publish-plans/{}", plan_timestamp);
+        let plan_path = format!(".scratch/.publish-plans/{}", plan_timestamp);
 
         match client.publish_from_git(&workbook_id, &connector_account_id, &plan_path).await {
             Ok(resp) => {
@@ -295,7 +297,6 @@ fn plan_connection(
 
     // 7. Build plan entries
     let mut entries: Vec<PlanEntry> = vec![];
-    let mut changed_fields_map: HashMap<String, Value> = HashMap::new();
 
     // --- Edit phase ---
     for rel_path in &edit_set {
@@ -327,12 +328,11 @@ fn plan_connection(
 
         let changed = compute_changed_fields(&master_val, &pass3);
         if !is_empty_object(&changed) {
-            changed_fields_map.insert(rel_path.clone(), changed.clone());
             entries.push(PlanEntry {
                 rel_path: rel_path.clone(),
                 phase: Phase::Edit,
                 content: pass3.clone(),
-                _changed_fields: Some(changed),
+                changed_fields: Some(changed),
             });
         }
 
@@ -343,7 +343,7 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Backfill,
                 content: pass1.clone(),
-                _changed_fields: Some(backfill_changed),
+                changed_fields: Some(backfill_changed),
             });
         }
     }
@@ -370,7 +370,7 @@ fn plan_connection(
             rel_path: rel_path.clone(),
             phase: Phase::Create,
             content: pass3.clone(),
-            _changed_fields: None,
+            changed_fields: None,
         });
 
         if filename.starts_with("scratch_pending_") {
@@ -378,7 +378,7 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Rename,
                 content: json!({}),
-                _changed_fields: None,
+                changed_fields: None,
             });
         }
 
@@ -387,18 +387,19 @@ fn plan_connection(
                 rel_path: rel_path.clone(),
                 phase: Phase::Backfill,
                 content: pass1.clone(),
-                _changed_fields: None,
+                changed_fields: None,
             });
         }
     }
 
     // --- Delete phase ---
     for rel_path in &deleted {
+        let remote_id = deleted_remote_ids.get(rel_path).cloned().unwrap_or_default();
         entries.push(PlanEntry {
             rel_path: rel_path.clone(),
             phase: Phase::Delete,
-            content: json!({}),
-            _changed_fields: None,
+            content: json!({ "remoteId": remote_id }),
+            changed_fields: None,
         });
     }
 
@@ -419,49 +420,62 @@ fn plan_connection(
     // 9. Report
     report_by_folder(conn_name, &entries, &modified, &added, &deleted, &ref_clear_candidates);
 
-    // 10. Write plan files into dirty_dir/.scratch/publish-plans/{timestamp}/
-    // Only one plan per connection is kept — delete any existing plan first.
-    let plans_dir = dirty_dir.join(".scratch/publish-plans");
-    if plans_dir.exists() {
-        for old in std::fs::read_dir(&plans_dir)?.flatten() {
+    // 10. Write plan files.
+    // All plan metadata lives under the top-level .scratch/ dir.
+    // Phase files: .scratch/{folder}/publish-plan-{ts}/{phase}/{filename}
+    // Manifest:    .scratch/.publish-plans/{ts}/plan.json
+    //
+    // Clean old publish-plan-* dirs and the old manifest first.
+    cleanup_old_plan_dirs(&dirty_dir.join(".scratch"));
+    let manifest_dir = dirty_dir.join(".scratch/.publish-plans");
+    if manifest_dir.exists() {
+        for old in std::fs::read_dir(&manifest_dir)?.flatten() {
             if old.path().is_dir() {
                 std::fs::remove_dir_all(old.path())?;
             }
         }
     }
-    let plan_root = plans_dir.join(timestamp);
-    std::fs::create_dir_all(&plan_root)?;
+
+    // Collect unique table paths for the manifest
+    let mut table_paths: Vec<String> = entries
+        .iter()
+        .map(|e| split_path(&e.rel_path).0)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    table_paths.sort();
 
     for entry in &entries {
         let (folder, filename) = split_path(&entry.rel_path);
-        let phase_dir = if folder.is_empty() {
-            plan_root.join(entry.phase.dir_name())
+        // Phase files go under .scratch/{folder}/publish-plan-{ts}/{phase}/
+        let plan_base = if folder.is_empty() {
+            dirty_dir.join(".scratch")
         } else {
-            plan_root.join(&folder).join(entry.phase.dir_name())
+            dirty_dir.join(".scratch").join(&folder)
         };
+        let phase_dir = plan_base.join(format!("publish-plan-{}", timestamp)).join(entry.phase.dir_name());
         std::fs::create_dir_all(&phase_dir)?;
-        let content_str = serde_json::to_string_pretty(&entry.content)?;
-        std::fs::write(phase_dir.join(&filename), content_str)?;
+        // edit/backfill: write envelope { content, changedFields }
+        // create/delete/rename: write content directly
+        let file_value = match (entry.phase, &entry.changed_fields) {
+            (Phase::Edit | Phase::Backfill, Some(cf)) => {
+                json!({ "content": entry.content, "changedFields": cf })
+            }
+            _ => entry.content.clone(),
+        };
+        std::fs::write(phase_dir.join(&filename), serde_json::to_string_pretty(&file_value)?)?;
     }
 
-    // 11. Write plan.json
-    let mut entries_map: HashMap<String, Vec<String>> = HashMap::new();
-    for entry in &entries {
-        entries_map
-            .entry(entry.phase.dir_name().to_string())
-            .or_default()
-            .push(entry.rel_path.clone());
-    }
-
+    // 11. Write plan.json manifest into .scratch/.publish-plans/{timestamp}/
+    let plan_root = manifest_dir.join(timestamp);
+    std::fs::create_dir_all(&plan_root)?;
     let meta = PlanMeta {
         plan_id: timestamp.to_string(),
         created_at: now_iso8601(),
         connection_name: conn_name.to_string(),
         connection_id: connection_id.to_string(),
         summary,
-        delete_index: deleted_remote_ids,
-        changed_fields: changed_fields_map,
-        entries: entries_map,
+        table_paths,
     };
     std::fs::write(plan_root.join("plan.json"), serde_json::to_string_pretty(&meta)?)?;
 
@@ -919,6 +933,25 @@ fn now_iso8601() -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
 }
 
+/// Recursively remove all `publish-plan-*` dirs found anywhere under `scratch_dir`
+/// (which is the top-level `.scratch/` of a connection repo).
+fn cleanup_old_plan_dirs(scratch_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(scratch_dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        if name_str.starts_with("publish-plan-") {
+            let _ = std::fs::remove_dir_all(entry.path());
+        } else if !name_str.starts_with('.') {
+            // Recurse into table-path subdirs (e.g. "Folder/Table/")
+            cleanup_old_plan_dirs(&entry.path());
+        }
+    }
+}
+
 fn now_compact() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -999,12 +1032,24 @@ mod tests {
     }
 
     fn find_plan_root(conn_dir: &Path) -> Option<PathBuf> {
-        let plans_dir = conn_dir.join(".scratch/publish-plans");
+        let plans_dir = conn_dir.join(".scratch/.publish-plans");
         if !plans_dir.exists() { return None; }
         std::fs::read_dir(&plans_dir).ok()?
             .flatten()
             .find(|e| e.path().is_dir())
             .map(|e| e.path())
+    }
+
+    /// Build the path to a phase file under the new layout:
+    /// conn_dir/.scratch/{folder}/publish-plan-{ts}/{phase}/{filename}
+    fn phase_file(conn_dir: &Path, plan_root: &Path, folder: &str, phase: &str, filename: &str) -> PathBuf {
+        let ts = plan_root.file_name().unwrap().to_string_lossy();
+        let plan_subdir = format!("publish-plan-{ts}");
+        if folder.is_empty() {
+            conn_dir.join(".scratch").join(plan_subdir).join(phase).join(filename)
+        } else {
+            conn_dir.join(".scratch").join(folder).join(plan_subdir).join(phase).join(filename)
+        }
     }
 
     #[test]
@@ -1024,10 +1069,10 @@ mod tests {
         assert_eq!(plan["summary"]["create"], 0);
         assert_eq!(plan["summary"]["delete"], 0);
 
-        let edit_file = plan_root.join("public/posts/edit/rec1.json");
+        let edit_file = phase_file(&conn_dir, &plan_root, "public/posts", "edit", "rec1.json");
         assert!(edit_file.exists(), "edit file not created");
         let edit_content: Value = serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
-        assert_eq!(edit_content["fields"]["title"], "New");
+        assert_eq!(edit_content["content"]["fields"]["title"], "New");
     }
 
     #[test]
@@ -1050,7 +1095,11 @@ mod tests {
         assert_eq!(plan["summary"]["create"], 1);
         assert_eq!(plan["summary"]["delete"], 1);
         assert_eq!(plan["summary"]["edit"], 0);
-        assert_eq!(plan["deleteIndex"]["posts/old.json"], "rec_old");
+
+        let delete_file = phase_file(&conn_dir, &plan_root, "posts", "delete", "old.json");
+        assert!(delete_file.exists(), "delete file not created");
+        let delete_content: Value = serde_json::from_str(&std::fs::read_to_string(delete_file).unwrap()).unwrap();
+        assert_eq!(delete_content["remoteId"], "rec_old");
     }
 
     #[test]
@@ -1099,7 +1148,7 @@ mod tests {
         run(tmp.path()).unwrap();
 
         let plan_root = find_plan_root(&conn_dir).expect("plan dir not created");
-        let create_file = plan_root.join("posts/create/new.json");
+        let create_file = phase_file(&conn_dir, &plan_root, "posts", "create", "new.json");
         assert!(create_file.exists());
         let content: Value = serde_json::from_str(&std::fs::read_to_string(create_file).unwrap()).unwrap();
         assert!(content["fields"]["image"].is_null(), "asset pseudo-ref should be stripped to null");

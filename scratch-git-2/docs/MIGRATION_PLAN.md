@@ -35,8 +35,8 @@ The NestJS business logic for publish plans, syncs, and indices is replaced by c
 - [x] **1.7** FileIndex calls in `PublishFromGitService` migrated to SQLite via Rust service. _Test by: run a full publish-from-git cycle (edit + create + delete + rename) and confirm the SQLite index reflects the result; no `FileIndex` table queries in server logs._
 - [x] **1.8** `string_to_number` transformer in CLI sync execution. _Test by: add `{ "type": "string_to_number" }` to a field mapping in a sync config, run `syncs run-local`, and confirm the destination field is a JSON number._
 - [x] **1.9** `auto_convert` transformer in CLI sync execution. _Test by: add `{ "type": "auto_convert", "targetType": "boolean" }` to a mapping, run `syncs run-local`, and confirm the destination field is `true`/`false`._
-- [ ] **1.10** Custom transformer via Rhai script file. _Test by: write a simple `.rhai` script (e.g. `value * 2`), reference it in a mapping, run `syncs run-local`, and confirm the output value is doubled._
-- [ ] **1.11** Publish job sends only changed fields, not all fields (use `changedFields` from plan.json). _Test by: edit one field on a record, build a plan, run the job, and confirm the remote API call contains only that one field (check connector logs or intercept the HTTP request)._
+- [x] **1.10** Custom transformer via Rhai script file. _Test by: write a simple `.rhai` script (e.g. `value * 2`), reference it in a mapping, run `syncs run-local`, and confirm the output value is doubled._
+- [x] **1.11** Publish job sends only changed fields, not all fields. _`changedFields` is now stored in edit/backfill phase file envelopes (not top-level plan.json — the detailed notes below are stale on this point)._
 
 ### Step 2: Rust git service has full feature parity with the CLI
 
@@ -313,7 +313,9 @@ let n = parse_float(value.to_string());
 
 ### 1.11 — Publish job sends only changed fields
 
-**What needs to change**
+> ⚠️ **Implemented.** Notes below are historical. `changedFields` is now stored per-file in edit/backfill phase file envelopes (`{ "content": {...}, "changedFields": {...} }`), not as a top-level map in `plan.json`.
+
+**What needed to change** _(original notes, kept for context)_
 
 The `plan.json` already contains a `changedFields` map (`relPath → { fieldName: value, ... }`). The publish job (`PublishFromGitService.dispatchUpdateBatch`) currently passes the full file content to `connector.updateRecords()`.
 

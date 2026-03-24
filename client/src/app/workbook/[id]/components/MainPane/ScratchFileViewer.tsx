@@ -27,7 +27,7 @@ export function ScratchFileViewer({ workbookId, filePath, connectorAccountId }: 
     isLoading,
     error,
   } = useSWR(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId), () =>
-    workbookApi.getRepoFile(workbookId, filePath, 'merge_base', connectorAccountId).then((r) => r?.content ?? ''),
+    workbookApi.getRepoFile(workbookId, filePath, 'dirty', connectorAccountId).then((r) => r?.content ?? ''),
   );
 
   const fileName = useMemo(() => {

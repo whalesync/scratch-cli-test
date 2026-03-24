@@ -420,11 +420,22 @@ fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResu
             }
         }
 
-        // Strip server-managed .scratch/ subdirs, but keep publish-plans/ so the
-        // server can read the plan from git after `files upload`.
+        // Strip server-managed .scratch/ subdirs; keep the manifest and plan phase dirs.
         merged.retain(|p, _| {
-            !p.starts_with(".scratch/") || p.starts_with(".scratch/publish-plans/")
+            !p.starts_with(".scratch/")
+                || p.starts_with(".scratch/.publish-plans/")
+                || is_plan_phase_file(p)
         });
+
+        // Always take plan files from local disk, bypassing the three-way merge.
+        // The merge can incorrectly drop them when the server rebases dirty (removing
+        // the plan) and plan-publish regenerates an identical plan: local_changed=false
+        // → merge follows the remote delete. We want whatever is on disk to win.
+        for (p, v) in &local_map {
+            if p.starts_with(".scratch/.publish-plans/") || is_plan_phase_file(p) {
+                merged.insert(p.clone(), v.clone());
+            }
+        }
 
         if maps_equal(&merged, &remote_map) {
             return Ok(UploadResult { status: "up_to_date".to_string(), ..Default::default() });
@@ -677,7 +688,8 @@ fn walk_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
         if ft.is_dir() {
             match name_str.as_ref() {
                 ".git" | "syncs" => continue,
-                n if n.starts_with('.') && n != ".scratch" => continue,
+                // Allow .scratch and .publish-plans (which lives inside .scratch)
+                n if n.starts_with('.') && n != ".scratch" && n != ".publish-plans" => continue,
                 _ => walk_disk(root, &entry.path(), map)?,
             }
         } else if ft.is_file() {
@@ -848,6 +860,11 @@ fn normalize_crlf(data: Vec<u8>) -> Vec<u8> {
         i += 1;
     }
     out
+}
+
+/// Returns true for phase files at `{folder}/.scratch/publish-plan-{ts}/{phase}/`.
+fn is_plan_phase_file(p: &str) -> bool {
+    p.contains("/.scratch/publish-plan-")
 }
 
 fn maps_equal(a: &FileMap, b: &FileMap) -> bool {

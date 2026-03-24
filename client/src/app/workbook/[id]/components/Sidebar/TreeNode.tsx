@@ -1724,8 +1724,9 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
 }
 
 // ============================================================================
-// ScratchFolderNode — virtual read-only .scratch folder shown per-connection
-// when "Show hidden files" is enabled. Displays schema files from git directly.
+// ScratchFolderNode — virtual .scratch folder shown per-connection
+// when "Show hidden files" is enabled. Reads from the dirty branch so that
+// publish-plans and other CLI-written metadata are visible.
 // ============================================================================
 
 interface ScratchFolderNodeProps {
@@ -1741,7 +1742,7 @@ function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNode
 
   const { data: entries, isLoading } = useSWR(
     isExpanded ? ['repo-files', workbookId, '.scratch', connectorAccountId] : null,
-    () => workbookApi.listRepoFiles(workbookId, 'merge_base', '.scratch', connectorAccountId),
+    () => workbookApi.listRepoFiles(workbookId, 'dirty', '.scratch', connectorAccountId),
   );
 
   return (
@@ -1868,7 +1869,7 @@ function ScratchSubdirNode({
 
   const { data: entries, isLoading } = useSWR(
     isExpanded ? ['repo-files', workbookId, path, connectorAccountId] : null,
-    () => workbookApi.listRepoFiles(workbookId, 'merge_base', path, connectorAccountId),
+    () => workbookApi.listRepoFiles(workbookId, 'dirty', path, connectorAccountId),
   );
 
   return (

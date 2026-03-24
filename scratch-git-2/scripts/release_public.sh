@@ -187,7 +187,7 @@ SHA_WINDOWS_AMD64=$(sha_for "${BINARY}_windows_amd64.zip")
 BUCKET_DIR=$(mktemp -d)
 git clone "https://${GITHUB_TOKEN}@github.com/whalesync/scratch-cli-bucket.git" "$BUCKET_DIR"
 
-MANIFEST="$BUCKET_DIR/bucket/scratchmd.json"
+MANIFEST="$BUCKET_DIR/scratchmd.json"
 cat > "$MANIFEST" <<JSON
 {
   "version": "$MAJOR.$MINOR.$PATCH",
@@ -205,7 +205,7 @@ cat > "$MANIFEST" <<JSON
 JSON
 
 (cd "$BUCKET_DIR" && \
-  git add bucket/scratchmd.json && \
+  git add scratchmd.json && \
   git commit -m "scratchmd $NEW_VERSION" && \
   git push)
 rm -rf "$BUCKET_DIR"
