@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { type DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
+import { type DataFolderId, JobType, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
@@ -31,7 +31,7 @@ export type PullFilesPublicProgress = {
 };
 
 export type PullFilesJobDefinition = JobDefinitionBuilder<
-  'refresh-records',
+  typeof JobType.RefreshRecords,
   {
     workbookId: WorkbookId;
     dataFolderId: DataFolderId;

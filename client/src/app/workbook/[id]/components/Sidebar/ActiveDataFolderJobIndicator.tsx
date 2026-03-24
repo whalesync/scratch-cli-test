@@ -7,7 +7,7 @@ import { PublishRecordsPublicProgress } from '@/app/components/jobs/publish/Publ
 import { PullLinkedFolderFilesProgress } from '@/app/components/jobs/pull/PullJobProgress';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { Box, Group, HoverCard, Stack } from '@mantine/core';
-import { DataFolder } from '@spinner/shared-types';
+import { DataFolder, JobType } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
 
 interface ActiveDataFolderJobIndicatorProps {
@@ -30,8 +30,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
     </Group>
   );
 
-  // TODO: make these constants in shared types
-  if (job.type === 'pull-linked-folder-files') {
+  if (job.type === JobType.PullLinkedFolderFiles) {
     const progress = job.publicProgress as PullLinkedFolderFilesProgress;
     // extract out the
     cardContent = (
@@ -40,7 +39,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
         <Text12Regular c="var(--fg-secondary)">{progress.totalFiles} files</Text12Regular>
       </Stack>
     );
-  } else if (job.type === 'sync-data-folders') {
+  } else if (job.type === JobType.SyncDataFolders) {
     const progress = job.publicProgress as SyncDataFoldersPublicProgress;
     const tableProgress = progress.tables.find((t) => t.id === folder.id);
     cardContent = (
@@ -57,7 +56,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
         )}
       </Stack>
     );
-  } else if (job.type === 'refresh-records') {
+  } else if (job.type === JobType.RefreshRecords) {
     const progress = job.publicProgress as { totalRequested?: number; updatedPaths?: string[] };
     const updated = progress.updatedPaths?.length ?? 0;
     cardContent = (
@@ -68,7 +67,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
         </Text12Regular>
       </Stack>
     );
-  } else if (job.type === 'publish-data-folder') {
+  } else if (job.type === JobType.PublishDataFolder) {
     const progress = job.publicProgress as PublishRecordsPublicProgress;
     const tableProgress = progress.tables.find((t) => t.id === folder.id);
     cardContent = (

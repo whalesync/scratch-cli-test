@@ -1,14 +1,14 @@
 import { JobEntity } from '@/types/server-entities/job';
-import { PublishPlanStatus } from '@spinner/shared-types';
+import { JobType as JobTypeConstant, PublishPlanStatus } from '@spinner/shared-types';
 import pluralize from 'pluralize';
 
 export type JobType = 'sync' | 'publish' | 'pull' | 'rehost' | 'unknown';
 
 export const getJobType = (type: string): JobType => {
   if (type.includes('sync')) return 'sync';
-  if (type.includes('publish')) return 'publish';
-  if (type.includes('pull') || type === 'refresh-records') return 'pull';
-  if (type === 'rehost-assets') return 'rehost';
+  if (type.includes('publish') || type.includes('pipeline')) return 'publish';
+  if (type.includes('pull') || type === JobTypeConstant.RefreshRecords) return 'pull';
+  if (type === JobTypeConstant.RehostAssets) return 'rehost';
   return 'unknown';
 };
 

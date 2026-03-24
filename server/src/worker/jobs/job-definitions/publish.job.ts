@@ -1,4 +1,4 @@
-import type { WorkbookId } from '@spinner/shared-types';
+import { JobType, type WorkbookId } from '@spinner/shared-types';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import type { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
@@ -33,7 +33,7 @@ export type PublishPublicProgress = {
 // ── Job Definition ───────────────────────────────────────────────────
 
 export type PublishJobDefinition = JobDefinitionBuilder<
-  'publish',
+  typeof JobType.Publish,
   {
     workbookId: WorkbookId;
     userId: string;

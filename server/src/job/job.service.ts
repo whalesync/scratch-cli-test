@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbJob, Prisma } from '@prisma/client';
-import { createJobId, RunId } from '@spinner/shared-types';
+import { createJobId, JobType, RunId } from '@spinner/shared-types';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -103,9 +103,9 @@ export class JobService {
    */
   private static readonly JOB_TYPE_MAP: Record<string, { in: string[] } | { contains: string }> = {
     sync: { contains: 'sync' },
-    publish: { in: ['publish', 'publish-data-folder', 'run-pipeline'] },
-    pull: { in: ['refresh-records', 'pull-linked-folder-files'] },
-    rehost: { in: ['rehost-assets'] },
+    publish: { in: [JobType.Publish, JobType.PublishDataFolder, JobType.RunPipeline] },
+    pull: { in: [JobType.RefreshRecords, JobType.PullLinkedFolderFiles] },
+    rehost: { in: [JobType.RehostAssets] },
   };
 
   async getJobsByUserId(

@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
-import { RunId, TransformerTypes } from '@spinner/shared-types';
+import { JobType, RunId, TransformerTypes } from '@spinner/shared-types';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { PostHogService } from 'src/posthog/posthog.service';
@@ -46,7 +46,7 @@ export type SyncDataFoldersPublicProgress = {
 };
 
 export type SyncDataFoldersJobDefinition = JobDefinitionBuilder<
-  'sync-data-folders',
+  typeof JobType.SyncDataFolders,
   {
     workbookId: WorkbookId;
     syncId: SyncId;

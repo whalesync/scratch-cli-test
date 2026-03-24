@@ -1,4 +1,4 @@
-import type { WorkbookId } from '@spinner/shared-types';
+import { JobType, type WorkbookId } from '@spinner/shared-types';
 import { PublishFromGitService } from 'src/publish-plan/publish-from-git.service';
 import { WSLogger } from '../../../logger';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
@@ -15,7 +15,7 @@ export type PublishFromGitPublicProgress = {
 // ── Job Definition ─────────────────────────────────────────────────────────
 
 export type PublishFromGitJobDefinition = JobDefinitionBuilder<
-  'publish-from-git',
+  typeof JobType.PublishFromGit,
   {
     workbookId: WorkbookId;
     connectorAccountId: string;

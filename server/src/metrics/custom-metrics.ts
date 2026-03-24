@@ -128,44 +128,45 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
 }
 
 /** Maps job type → metric for each job state. */
+import { JobType } from '@spinner/shared-types';
 import type { JobTypes } from 'src/worker/jobs/union-types';
 
 export const JOB_COMPLETED_METRIC: Record<JobTypes, CustomMetric> = {
-  'pull-linked-folder-files': CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_COMPLETED,
-  'refresh-records': CustomMetric.JOB_REFRESH_RECORDS_COMPLETED,
-  'publish-data-folder': CustomMetric.JOB_PUBLISH_DATA_FOLDER_COMPLETED,
-  'sync-data-folders': CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED,
-  'rehost-assets': CustomMetric.JOB_REHOST_ASSETS_COMPLETED,
-  'publish-from-git': CustomMetric.JOB_PUBLISH_FROM_GIT_COMPLETED,
-  publish: CustomMetric.JOB_PUBLISH_COMPLETED,
+  [JobType.PullLinkedFolderFiles]: CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_COMPLETED,
+  [JobType.RefreshRecords]: CustomMetric.JOB_REFRESH_RECORDS_COMPLETED,
+  [JobType.PublishDataFolder]: CustomMetric.JOB_PUBLISH_DATA_FOLDER_COMPLETED,
+  [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED,
+  [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_COMPLETED,
+  [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_COMPLETED,
+  [JobType.Publish]: CustomMetric.JOB_PUBLISH_COMPLETED,
 };
 
 export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
-  'pull-linked-folder-files': CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_FAILED,
-  'refresh-records': CustomMetric.JOB_REFRESH_RECORDS_FAILED,
-  'publish-data-folder': CustomMetric.JOB_PUBLISH_DATA_FOLDER_FAILED,
-  'sync-data-folders': CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED,
-  'rehost-assets': CustomMetric.JOB_REHOST_ASSETS_FAILED,
-  'publish-from-git': CustomMetric.JOB_PUBLISH_FROM_GIT_FAILED,
-  publish: CustomMetric.JOB_PUBLISH_FAILED,
+  [JobType.PullLinkedFolderFiles]: CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_FAILED,
+  [JobType.RefreshRecords]: CustomMetric.JOB_REFRESH_RECORDS_FAILED,
+  [JobType.PublishDataFolder]: CustomMetric.JOB_PUBLISH_DATA_FOLDER_FAILED,
+  [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED,
+  [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_FAILED,
+  [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_FAILED,
+  [JobType.Publish]: CustomMetric.JOB_PUBLISH_FAILED,
 };
 
 export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
-  'pull-linked-folder-files': CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_CANCELED,
-  'refresh-records': CustomMetric.JOB_REFRESH_RECORDS_CANCELED,
-  'publish-data-folder': CustomMetric.JOB_PUBLISH_DATA_FOLDER_CANCELED,
-  'sync-data-folders': CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED,
-  'rehost-assets': CustomMetric.JOB_REHOST_ASSETS_CANCELED,
-  'publish-from-git': CustomMetric.JOB_PUBLISH_FROM_GIT_CANCELED,
-  publish: CustomMetric.JOB_PUBLISH_CANCELED,
+  [JobType.PullLinkedFolderFiles]: CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_CANCELED,
+  [JobType.RefreshRecords]: CustomMetric.JOB_REFRESH_RECORDS_CANCELED,
+  [JobType.PublishDataFolder]: CustomMetric.JOB_PUBLISH_DATA_FOLDER_CANCELED,
+  [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED,
+  [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_CANCELED,
+  [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_CANCELED,
+  [JobType.Publish]: CustomMetric.JOB_PUBLISH_CANCELED,
 };
 
 export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
-  'pull-linked-folder-files': CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_STALLED,
-  'refresh-records': CustomMetric.JOB_REFRESH_RECORDS_STALLED,
-  'publish-data-folder': CustomMetric.JOB_PUBLISH_DATA_FOLDER_STALLED,
-  'sync-data-folders': CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED,
-  'rehost-assets': CustomMetric.JOB_REHOST_ASSETS_STALLED,
-  'publish-from-git': CustomMetric.JOB_PUBLISH_FROM_GIT_STALLED,
-  publish: CustomMetric.JOB_PUBLISH_STALLED,
+  [JobType.PullLinkedFolderFiles]: CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_STALLED,
+  [JobType.RefreshRecords]: CustomMetric.JOB_REFRESH_RECORDS_STALLED,
+  [JobType.PublishDataFolder]: CustomMetric.JOB_PUBLISH_DATA_FOLDER_STALLED,
+  [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED,
+  [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_STALLED,
+  [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_STALLED,
+  [JobType.Publish]: CustomMetric.JOB_PUBLISH_STALLED,
 };

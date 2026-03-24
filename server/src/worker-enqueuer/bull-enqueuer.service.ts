@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { createPlainId, DataFolderId, RunId, SyncId, WorkbookId } from '@spinner/shared-types';
+import { createPlainId, DataFolderId, JobType, RunId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { Job, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -69,14 +69,14 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: PullLinkedFolderFilesJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `pull-linked-folder-files-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `pull-${workbookId}-${createPlainId()}`;
     const data: PullLinkedFolderFilesJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
       organizationId: actor.organizationId,
       dataFolderIds,
       trigger: runContext.trigger,
-      type: 'pull-linked-folder-files',
+      type: JobType.PullLinkedFolderFiles,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(
@@ -102,14 +102,14 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: PublishDataFolderJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `publish-data-folder-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `publish-${workbookId}-${createPlainId()}`;
     const data: PublishDataFolderJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
       organizationId: actor.organizationId,
       dataFolderIds,
       trigger: runContext.trigger,
-      type: 'publish-data-folder',
+      type: JobType.PublishDataFolder,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(
@@ -135,14 +135,14 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: SyncDataFoldersJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `sync-data-folders-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `sync-${workbookId}-${syncId}-${createPlainId()}`;
     const data: SyncDataFoldersJobDefinition['data'] = {
       workbookId,
       syncId,
       userId: actor.userId,
       organizationId: actor.organizationId,
       trigger: runContext.trigger,
-      type: 'sync-data-folders',
+      type: JobType.SyncDataFolders,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(
@@ -172,12 +172,12 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialProgress: import('src/types/progress').Progress | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `publish-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
       pipelineId,
-      type: 'publish',
+      type: JobType.Publish,
       trigger: runContext.trigger,
       ...(connectorAccountId && { connectorAccountId }),
       ...(runAfterPlan && { runAfterPlan }),
@@ -208,12 +208,12 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialProgress: import('src/types/progress').Progress | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `publish-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `publish-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
       pipelineId,
       workbookId,
       userId: actor.userId,
-      type: 'publish',
+      type: JobType.Publish,
       trigger: runContext.trigger,
       // We are enqueuing a run explicitly
       runAfterPlan: true,
@@ -242,13 +242,13 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: RehostAssetsJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `rehost-assets-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `rehost-assets-${workbookId}-${createPlainId()}`;
     const data: RehostAssetsJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
       organizationId: actor.organizationId,
       dataFolderId,
-      type: 'rehost-assets',
+      type: JobType.RehostAssets,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(
@@ -275,7 +275,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     initialPublicProgress: PullFilesJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
   ): Promise<Job> {
-    const id = `refresh-records-${actor.userId}-${workbookId}-${createPlainId()}`;
+    const id = `refresh-records-${workbookId}-${createPlainId()}`;
     const data: PullFilesJobDefinition['data'] = {
       workbookId,
       userId: actor.userId,
@@ -283,7 +283,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       dataFolderId,
       filePaths,
       trigger: runContext.trigger,
-      type: 'refresh-records',
+      type: JobType.RefreshRecords,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(
@@ -308,9 +308,9 @@ export class BullEnqueuerService implements OnModuleDestroy {
     connectorAccountId: string,
     planPath: string,
   ): Promise<Job> {
-    const id = `publish-from-git-${userId}-${workbookId}-${createPlainId()}`;
+    const id = `publish-from-git-${workbookId}-${createPlainId()}`;
     const data: PublishFromGitJobDefinition['data'] = {
-      type: 'publish-from-git',
+      type: JobType.PublishFromGit,
       workbookId,
       userId,
       connectorAccountId,

@@ -1,4 +1,4 @@
-import type { WorkbookId } from '@spinner/shared-types';
+import { JobType, type WorkbookId } from '@spinner/shared-types';
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import { WSLogger } from '../../../logger';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
@@ -16,7 +16,7 @@ export type RunPipelinePublicProgress = {
 // ── Job Definition ───────────────────────────────────────────────────
 
 export type RunPipelineJobDefinition = JobDefinitionBuilder<
-  'run-pipeline',
+  typeof JobType.RunPipeline,
   {
     pipelineId: string;
     workbookId: WorkbookId;

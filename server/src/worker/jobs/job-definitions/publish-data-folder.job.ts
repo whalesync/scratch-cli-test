@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { type DataFolderId, type WorkbookId } from '@spinner/shared-types';
+import { type DataFolderId, JobType, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 import { createRunContext } from '../base-types';
@@ -42,7 +42,7 @@ export type PublishDataFolderPublicProgress = {
 };
 
 export type PublishDataFolderJobDefinition = JobDefinitionBuilder<
-  'publish-data-folder',
+  typeof JobType.PublishDataFolder,
   {
     workbookId: WorkbookId;
     dataFolderIds: DataFolderId[];

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { type ConnectorPullOptions, DataFolderId, Service, type WorkbookId } from '@spinner/shared-types';
+import { type ConnectorPullOptions, DataFolderId, JobType, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { ConnectorFile } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
@@ -36,7 +36,7 @@ export type PullLinkedFolderFilesPublicProgress = {
 };
 
 export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
-  'pull-linked-folder-files',
+  typeof JobType.PullLinkedFolderFiles,
   {
     workbookId: WorkbookId;
     dataFolderIds: DataFolderId[];

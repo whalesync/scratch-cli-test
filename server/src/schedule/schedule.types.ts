@@ -4,16 +4,19 @@ export const SCHEDULE_MIN_INTERVAL_MINUTES = 1;
 /** Default debounce window in milliseconds. If a job for the same entity was created within this window, skip. */
 export const SCHEDULE_DEBOUNCE_WINDOW_MS = 30_000;
 
+import { JobType } from '@spinner/shared-types';
+
+const SCHEDULE_ACTION_TO_JOB_TYPE: Record<string, JobType> = {
+  PULL: JobType.PullLinkedFolderFiles,
+  PUBLISH: JobType.PublishDataFolder,
+  SYNC: JobType.SyncDataFolders,
+};
+
 /** Maps a ScheduleAction string to the corresponding BullMQ job type string. */
-export function actionToJobType(action: string): string {
-  switch (action) {
-    case 'PULL':
-      return 'pull-linked-folder-files';
-    case 'PUBLISH':
-      return 'publish-data-folder';
-    case 'SYNC':
-      return 'sync-data-folders';
-    default:
-      throw new Error(`Unknown schedule action: ${action}`);
+export function actionToJobType(action: string): JobType {
+  const jobType = SCHEDULE_ACTION_TO_JOB_TYPE[action];
+  if (!jobType) {
+    throw new Error(`Unknown schedule action: ${action}`);
   }
+  return jobType;
 }

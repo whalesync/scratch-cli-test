@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { JobType, type DataFolderId, type WorkbookId } from '@spinner/shared-types';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
 import { AssetDownloadService } from 'src/asset/asset-download.service';
@@ -20,7 +20,7 @@ export type RehostAssetsPublicProgress = {
 };
 
 export type RehostAssetsJobDefinition = JobDefinitionBuilder<
-  'rehost-assets',
+  typeof JobType.RehostAssets,
   {
     workbookId: WorkbookId;
     dataFolderId: DataFolderId;

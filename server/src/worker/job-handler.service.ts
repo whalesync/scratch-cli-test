@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { JobType } from '@spinner/shared-types';
 import { AssetDownloadService } from 'src/asset/asset-download.service';
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
@@ -61,7 +62,7 @@ export class JobHandlerService {
     });
 
     switch (data.type) {
-      case 'pull-linked-folder-files':
+      case JobType.PullLinkedFolderFiles:
         return new PullLinkedFolderFilesJobHandler(
           prisma,
           this.connectorService,
@@ -75,7 +76,7 @@ export class JobHandlerService {
           this.postHogService,
         ) as JobHandler<JobDefinition>;
 
-      case 'refresh-records':
+      case JobType.RefreshRecords:
         return new PullFilesJobHandler(
           prisma,
           this.connectorService,
@@ -89,7 +90,7 @@ export class JobHandlerService {
           this.postHogService,
         ) as JobHandler<JobDefinition>;
 
-      case 'publish-data-folder':
+      case JobType.PublishDataFolder:
         return new PublishDataFolderJobHandler(
           prisma,
           this.connectorService,
@@ -101,7 +102,7 @@ export class JobHandlerService {
           this.postHogService,
         ) as JobHandler<JobDefinition>;
 
-      case 'sync-data-folders':
+      case JobType.SyncDataFolders:
         return new SyncDataFoldersJobHandler(
           prisma,
           this.syncService,
@@ -113,17 +114,17 @@ export class JobHandlerService {
           this.metricsService,
         ) as JobHandler<JobDefinition>;
 
-      case 'rehost-assets':
+      case JobType.RehostAssets:
         return new RehostAssetsJobHandler(
           prisma,
           this.assetDownloadService,
           this.workbookEventService,
         ) as JobHandler<JobDefinition>;
 
-      case 'publish-from-git':
+      case JobType.PublishFromGit:
         return new PublishFromGitJobHandler(this.publishFromGitService) as JobHandler<JobDefinition>;
 
-      case 'publish':
+      case JobType.Publish:
         return new PublishJobHandler(
           this.pipelinePlanService,
           this.pipelineRunService,

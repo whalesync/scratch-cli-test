@@ -14,6 +14,7 @@ export * from './connector-metadata';
 export * from './connector-types';
 export * from './file-types';
 export * from './ids';
+export * from './job-types';
 export * from './subscription';
 export * from './sync-mapping';
 export * from './whalesync-import';
