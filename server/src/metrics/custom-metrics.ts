@@ -5,7 +5,6 @@ import { CustomMetricDimension, CustomMetricUnit } from './types';
  * The list of metrics we collect manually.
  */
 export enum CustomMetric {
-  SYNC_DATA_FOLDERS_JOB_SUCCESS = 'sync_data_folders_job_success',
   API_REQUEST = 'api_request',
 
   // BullMQ job metrics — completed
@@ -50,7 +49,6 @@ export enum CustomMetric {
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
   switch (metric) {
-    case CustomMetric.SYNC_DATA_FOLDERS_JOB_SUCCESS:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_COMPLETED:
     case CustomMetric.JOB_REFRESH_RECORDS_COMPLETED:
     case CustomMetric.JOB_PUBLISH_DATA_FOLDER_COMPLETED:
@@ -90,7 +88,6 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
 
 export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
   switch (metric) {
-    case CustomMetric.SYNC_DATA_FOLDERS_JOB_SUCCESS:
     case CustomMetric.API_REQUEST:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_COMPLETED:
     case CustomMetric.JOB_REFRESH_RECORDS_COMPLETED:

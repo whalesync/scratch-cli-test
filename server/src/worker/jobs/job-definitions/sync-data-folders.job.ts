@@ -1,7 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
 import { JobType, RunId, TransformerTypes } from '@spinner/shared-types';
-import { CustomMetric } from 'src/metrics/custom-metrics';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
@@ -342,8 +341,6 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     const allTablesSucceeded = failedTables.length === 0;
 
     if (allTablesSucceeded) {
-      this.metricsService.logValue(CustomMetric.SYNC_DATA_FOLDERS_JOB_SUCCESS, 1);
-
       // Update lastSyncTime on the Sync record
       await this.prisma.sync.update({
         where: { id: data.syncId },
