@@ -323,6 +323,12 @@ variable "scratch_git_disk_source_snapshot" {
   description = "Full snapshot self_link to restore the scratch-git data disk from. When set, Terraform will destroy and recreate the disk and VM. Remove after restore is complete."
 }
 
+variable "scratch_git_initialize_filesystem" {
+  type        = bool
+  default     = false
+  description = "Whether to format the scratch-git data disk with ext4 if it has no filesystem. Only set to true when provisioning a brand-new instance."
+}
+
 variable "enable_static_assets_lb" {
   type        = bool
   default     = false

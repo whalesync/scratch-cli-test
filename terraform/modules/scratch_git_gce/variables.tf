@@ -119,3 +119,9 @@ variable "disk_source_snapshot" {
   type        = string
   default     = null
 }
+
+variable "initialize_filesystem" {
+  description = "Whether to format the data disk with ext4 if it has no filesystem. Only set to true when provisioning a brand-new disk."
+  type        = bool
+  default     = false
+}

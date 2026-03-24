@@ -320,6 +320,7 @@ module "scratch_git_gce" {
   boot_disk_size_gb       = var.scratch_git_boot_disk_size_gb
   disk_size_gb            = var.scratch_git_disk_size_gb
   disk_source_snapshot    = var.scratch_git_disk_source_snapshot
+  initialize_filesystem   = var.scratch_git_initialize_filesystem
   snapshot_hours_in_cycle = var.scratch_git_snapshot_hours_in_cycle
   labels                  = merge(local.default_labels, local.vanta_user_data_labels)
 

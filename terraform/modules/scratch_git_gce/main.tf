@@ -126,76 +126,24 @@ resource "google_compute_instance" "scratch_git" {
 
   metadata_startup_script = <<-EOT
     #!/bin/bash
-    set -e
+    set -eo pipefail
 
+    # --- Terraform-injected variables ---
     DEVICE="/dev/disk/by-id/google-data-disk"
     MOUNT_POINT="/mnt/disks/data"
+    DEPLOY_DIR="$MOUNT_POINT/.deploy"
+    STATE_FILE="$MOUNT_POINT/.active-slot"
+    IMAGE="${var.docker_image}"
+    REGISTRY_HOST="${split("/", var.docker_image)[0]}"
+    INITIALIZE_FILESYSTEM="${var.initialize_filesystem}"
+    GCP_PROJECT_ID="${var.gcp_project_id}"
+    DEPLOY_SCRIPT=$(cat <<'DEPLOY_HEREDOC'
+    ${file("${path.module}/scripts/deploy.sh")}
+    DEPLOY_HEREDOC
+    )
 
-    # Wait for the persistent disk device to appear (up to 60s)
-    for i in $(seq 1 30); do
-      [ -e "$DEVICE" ] && break
-      echo "Waiting for $DEVICE ... ($i)"
-      sleep 2
-    done
-
-    # Format the disk if it has no filesystem
-    if ! blkid "$DEVICE"; then
-      mkfs.ext4 -F "$DEVICE"
-    fi
-
-    # Mount the persistent data disk (skip if already mounted)
-    mkdir -p "$MOUNT_POINT"
-    mountpoint -q "$MOUNT_POINT" || mount "$DEVICE" "$MOUNT_POINT"
-
-    # Install Docker if not already present
-    if ! command -v docker &>/dev/null; then
-      apt-get update -y
-      apt-get install -y ca-certificates curl gnupg
-      install -m 0755 -d /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      chmod a+r /etc/apt/keyrings/docker.gpg
-      echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
-        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-      apt-get update -y
-      apt-get install -y docker-ce docker-ce-cli containerd.io
-      systemctl enable --now docker
-    fi
-
-    # Install the Ops Agent for memory/disk monitoring metrics
-    if ! systemctl is-active --quiet google-cloud-ops-agent; then
-      curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-      bash add-google-cloud-ops-agent-repo.sh --also-install
-      rm -f add-google-cloud-ops-agent-repo.sh
-    fi
-
-    # Authenticate Docker with Artifact Registry
-    gcloud auth configure-docker ${split("/", var.docker_image)[0]} --quiet
-
-    # Stop and remove existing container (if any) before starting fresh
-    docker stop scratch-git 2>/dev/null || true
-    docker rm scratch-git 2>/dev/null || true
-
-    # Clean up old Docker images to prevent boot disk from filling up
-    docker system prune -af
-
-    # Also clean up journal logs that may have filled the disk
-    journalctl --vacuum-size=100M 2>/dev/null || true
-
-    # Pull the latest image
-    docker pull ${var.docker_image}
-
-    docker run -d \
-      --name scratch-git \
-      --restart unless-stopped \
-      --log-driver=gcplogs \
-      --log-opt labels=service,env \
-      --label service=scratch-git \
-      --label env=${var.gcp_project_id} \
-      -p 3100:3100 \
-      -p 3101:3101 \
-      -v /mnt/disks/data:/data \
-      ${var.docker_image}
+    # --- Main startup logic ---
+    ${file("${path.module}/scripts/startup.sh")}
   EOT
 
   # Enable Shielded VM
@@ -206,7 +154,7 @@ resource "google_compute_instance" "scratch_git" {
   }
 
   lifecycle {
-    ignore_changes  = [metadata["ssh-keys"]]
+    ignore_changes       = [metadata["ssh-keys"]]
     replace_triggered_by = [google_compute_disk.data.id]
   }
 }
@@ -239,10 +187,6 @@ resource "google_compute_instance_group" "scratch_git" {
   zone    = var.zone
   network = var.network
 
-  instances = [
-    google_compute_instance.scratch_git.self_link,
-  ]
-
   named_port {
     name = "git-scratch-api"
     port = 3100
@@ -252,6 +196,13 @@ resource "google_compute_instance_group" "scratch_git" {
     name = "git-http-backend"
     port = 3101
   }
+}
+
+resource "google_compute_instance_group_membership" "scratch_git" {
+  instance_group = google_compute_instance_group.scratch_git.name
+  instance       = google_compute_instance.scratch_git.self_link
+  zone           = var.zone
+  project        = var.gcp_project_id
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
