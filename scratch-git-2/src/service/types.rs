@@ -1,13 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-// TODO(v2-routes): used in final phase for list-files endpoint response
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// pub struct GitFile {
-//     pub name: String,
-//     pub path: String,
-//     #[serde(rename = "type")]
-//     pub file_type: String, // "file" or "directory"
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirtyFile {

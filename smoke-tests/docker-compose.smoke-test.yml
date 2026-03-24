@@ -41,7 +41,6 @@ services:
       - "3111:3101"
     environment:
       GIT_REPOS_DIR: /data/repos
-      GIT_REPOS_V2_DIR: /data/repos-v2
       RUST_LOG: info
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/3100"]

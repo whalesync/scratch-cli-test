@@ -57,14 +57,6 @@ pub async fn run() {
         "[API] Repos directory (v1) exists: {}",
         config.repos_dir.exists()
     );
-    tracing::info!(
-        "[API] Repos directory (v2): {}",
-        config.repos_v2_dir.display()
-    );
-    tracing::info!(
-        "[API] Repos directory (v2) exists: {}",
-        config.repos_v2_dir.exists()
-    );
     tracing::info!("[API] Index directory: {}", config.index_dir.display());
 
     let app = Router::new()
