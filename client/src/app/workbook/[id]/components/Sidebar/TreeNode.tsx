@@ -5,30 +5,24 @@ import { PulsingIcon } from '@/app/components/Icons/PulsingIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
-import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
-import { workbookApi, type GitIndexDump } from '@/lib/api/workbook';
+import { workbookApi } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { selectJobsForConnector, useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { initiateOAuth } from '@/utils/oauth';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
-  AuthType,
   type ConnectorAccount,
   type DataFolder,
   type DataFolderGroup,
   type DataFolderId,
   type FileRefEntity,
-  type GitGcResponse,
-  type GitObjectCountsResponse,
   type WorkbookId,
 } from '@spinner/shared-types';
 import {
@@ -40,22 +34,16 @@ import {
   Edit2Icon,
   EyeIcon,
   EyeOffIcon,
-  FileCodeIcon,
   FileJsonIcon,
   FilePlusIcon,
   FlaskRoundIcon,
   FolderIcon,
-  GitGraphIcon,
-  GitMergeIcon,
   ImageIcon,
-  InfoIcon,
   MoreHorizontalIcon,
-  MoveIcon,
   RefreshCwIcon,
   RouteIcon,
   SettingsIcon,
   StickyNoteIcon,
-  TableIcon,
   Trash2Icon,
   UnlinkIcon,
 } from 'lucide-react';
@@ -65,26 +53,19 @@ import React, { useCallback, useMemo, useState, type MouseEvent } from 'react';
 import useSWR from 'swr';
 import { useShallow } from 'zustand/react/shallow';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
-import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
-import { GitGcModal } from '../modals/GitGcModal';
-import { GitGraphModal } from '../modals/GitGraphModal';
-import { GitIndexModal } from '../modals/GitIndexModal';
-import { GitObjectCountsModal } from '../modals/GitObjectCountsModal';
-import { MoveRepoModal } from '../modals/MoveRepoModal';
 import { PublishPlansModal } from '../modals/PublishPlansModal';
 import { TestTransformerModal } from '../modals/TestTransformerModal';
 import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsModal';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
+import { ConnectionContextMenu } from '../shared/ConnectionContextMenu';
 import { ContextMenu } from '../shared/ContextMenu';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
 import { PullScheduleModal } from '../shared/PullScheduleModal';
-import { RemoveConnectionModal } from '../shared/RemoveConnectionModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
 import { RenameFileModal } from '../shared/RenameFileModal';
-import { UpdateConnectionModal } from '../shared/UpdateConnectionModal';
 import { ActiveDataFolderJobIndicator } from './ActiveDataFolderJobIndicator';
 
 const SCRATCH_GROUP_NAME = 'Scratch';
@@ -243,7 +224,6 @@ interface ConnectionNodeProps {
 export function ConnectionNode({ group, workbookId, connectorAccount }: ConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
-  const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders } = useActiveWorkbook();
@@ -271,166 +251,11 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
-  // Choose tables modal state
-  const [chooseTablesOpened, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
-
-  // Remove connection modal state
-  const [removeModalOpened, { open: openRemoveModal, close: closeRemoveModal }] = useDisclosure(false);
-
-  // Update connection modal state
-  const [updateConnectionModalOpened, { open: openUpdateConnectionModal, close: closeUpdateConnectionModal }] =
-    useDisclosure(false);
-
   // Publish V2 modal state
   const [publishV2ModalOpened, { close: closePublishV2Modal }] = useDisclosure(false);
 
-  // Git Tools state (V2 workbooks only — repo belongs to the connection)
-  const { isDevToolsEnabled } = useDevTools();
-  const [gitGraphOpen, setGitGraphOpen] = useState(false);
-  const [gitFileBrowserOpen, setGitFileBrowserOpen] = useState(false);
-  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
-  const [gcModalOpen, setGcModalOpen] = useState(false);
-  const [isGcing, setIsGcing] = useState(false);
-  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
-  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
-  const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
-  const [isRebasing, setIsRebasing] = useState(false);
-  const [moveRepoOpen, setMoveRepoOpen] = useState(false);
-  const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
-  const [indexModalOpen, setIndexModalOpen] = useState(false);
-  const [isBuildingIndex, setIsBuildingIndex] = useState(false);
-  const [isBuildingPublishPlan, setIsBuildingPublishPlan] = useState(false);
-
-  const handleBuildPublishPlan = async () => {
-    if (!connectorAccount) return;
-    setIsBuildingPublishPlan(true);
-    try {
-      await workbookApi.gitServiceProxy(
-        workbookId,
-        connectorAccount.id,
-        'api/repo/publish-plan/:repoId/build',
-        'POST',
-        { connectionName: connectorAccount.displayName || connectorAccount.id, connectionId: connectorAccount.id },
-      );
-      notifications.show({ title: 'Success', message: 'Publish plan build triggered', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to build publish plan', color: 'red' });
-    } finally {
-      setIsBuildingPublishPlan(false);
-    }
-  };
-
-  const handleBuildIndex = async () => {
-    if (!connectorAccount) return;
-    setIsBuildingIndex(true);
-    try {
-      const result = await workbookApi.buildIndex(workbookId, connectorAccount.id);
-      notifications.show({ title: 'Success', message: `Index built: ${result.count} files`, color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to build index', color: 'red' });
-    } finally {
-      setIsBuildingIndex(false);
-    }
-  };
-
-  const handleViewIndex = async () => {
-    if (!connectorAccount) return;
-    try {
-      const result = await workbookApi.dumpIndex(workbookId, connectorAccount.id);
-      setIndexData(result);
-      setIndexModalOpen(true);
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to load index (build it first)', color: 'red' });
-    }
-  };
-
-  const handleGitGc = async (aggressive: boolean = false) => {
-    if (!connectorAccount) return;
-    setIsGcing(true);
-    try {
-      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccount.id);
-      setGcData(result);
-      setGcModalOpen(true);
-      notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to run Git GC', color: 'red' });
-    } finally {
-      setIsGcing(false);
-    }
-  };
-
-  const handleGetObjectCounts = async () => {
-    if (!connectorAccount) return;
-    setIsLoadingObjectCounts(true);
-    try {
-      const result = await workbookApi.getObjectCounts(workbookId, connectorAccount.id);
-      setObjectCountsData(result);
-      setObjectCountsModalOpen(true);
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to get object counts', color: 'red' });
-    } finally {
-      setIsLoadingObjectCounts(false);
-    }
-  };
-
-  const handleManualRebase = async () => {
-    if (!connectorAccount) return;
-    setIsRebasing(true);
-    try {
-      await workbookApi.rebaseDirty(workbookId, connectorAccount.id);
-      notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
-    } finally {
-      setIsRebasing(false);
-    }
-  };
-
-  const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
-  const handleResetConnection = () => {
-    if (!connectorAccount) return;
-    openResetConnectionDialog({
-      title: 'Reset Connection',
-      message:
-        'This will delete all data folders and the git repository for this connection. Any unpublished changes will be lost. This action cannot be undone.',
-      confirmLabel: 'Reset',
-      variant: 'danger',
-      onConfirm: async () => {
-        try {
-          await connectorAccountsApi.reset(workbookId, connectorAccount.id);
-          window.location.reload();
-        } catch {
-          notifications.show({ title: 'Error', message: 'Failed to reset connection', color: 'red' });
-        }
-      },
-    });
-  };
-
-  // Reauthorize handler (OAuth connections)
-  const handleReauthorize = async () => {
-    if (!connectorAccount || connectorAccount.authType !== AuthType.OAUTH) {
-      return;
-    }
-    setIsReauthorizing(true);
-    try {
-      await initiateOAuth(connectorAccount.service, {
-        workbookId: workbookId,
-        redirectPrefix: `${window.location.protocol}//${window.location.host}`,
-        connectionMethod: 'OAUTH_SYSTEM',
-        connectionName: connectorAccount.displayName,
-        returnPage: window.location.pathname,
-        connectorAccountId: connectorAccount.id,
-      });
-    } catch (error) {
-      console.error('OAuth initiation failed:', error);
-      setWorkbookError({
-        description: `Failed to reauthorize connection to ${connectorAccount.displayName}. Please try again.`,
-        cause: error as Error,
-      });
-    } finally {
-      setIsReauthorizing(false);
-    }
-  };
+  // Inline "Choose tables" link (separate from the context menu's modal)
+  const [inlineChooseTablesOpen, { open: openChooseTables, close: closeInlineChooseTables }] = useDisclosure(false);
 
   // Pull handler - pull only the tables belonging to this connection
   const connectionFolderIds = useMemo(() => group.dataFolders.map((f) => f.id), [group.dataFolders]);
@@ -579,199 +404,42 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
         </Stack>
       </Collapse>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <ContextMenu
-          opened={true}
-          onClose={() => setContextMenu(null)}
+      {/* Context Menu + Modals (always mounted so modal state survives menu close) */}
+      {connectorAccount && !isScratch && (
+        <ConnectionContextMenu
+          connectorAccount={connectorAccount}
+          workbookId={workbookId}
           position={contextMenu}
-          items={[
-            { label: 'Pull All Tables', icon: DownloadIcon, onClick: handlePullAll },
-            ...(connectorAccount && !isScratch
-              ? [{ label: 'Choose tables', icon: TableIcon, onClick: openChooseTables }]
-              : []),
-            ...(connectorAccount
-              ? [
-                  connectorAccount.authType === AuthType.OAUTH
-                    ? { label: 'Reauthorize', icon: CloudCogIcon, onClick: handleReauthorize }
-                    : { label: 'Edit Connection', icon: SettingsIcon, onClick: openUpdateConnectionModal },
-                ]
-              : []),
-            ...(connectorAccount
-              ? [
-                  {
-                    label: showHidden ? 'Hide hidden files' : 'Show hidden files',
-                    icon: showHidden ? EyeOffIcon : EyeIcon,
-                    onClick: () => {
-                      toggleHiddenFiles(connectorAccount.id);
-                      setContextMenu(null);
-                    },
-                  },
-                ]
-              : []),
-            { type: 'divider' as const },
-            ...(isDevToolsEnabled && connectorAccount && (workbook?.version ?? 1) >= 2
-              ? [
-                  {
-                    type: 'submenu' as const,
-                    label: 'Git',
-                    icon: GitGraphIcon,
-                    devtool: true,
-                    children: [
-                      { label: 'Git Graph', icon: GitGraphIcon, devtool: true, onClick: () => setGitGraphOpen(true) },
-                      {
-                        label: 'Git File Browser',
-                        icon: FileCodeIcon,
-                        devtool: true,
-                        onClick: () => setGitFileBrowserOpen(true),
-                      },
-                      {
-                        label: 'Manual Rebase',
-                        icon: GitMergeIcon,
-                        devtool: true,
-                        onClick: () => void handleManualRebase(),
-                        disabled: isRebasing,
-                      },
-                      {
-                        label: 'Run Git GC (Standard)',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleGitGc(false),
-                        disabled: isGcing,
-                      },
-                      {
-                        label: 'Run Git GC (Aggressive)',
-                        icon: Trash2Icon,
-                        devtool: true,
-                        onClick: () => void handleGitGc(true),
-                        disabled: isGcing,
-                      },
-                      {
-                        label: 'Repo Info',
-                        icon: InfoIcon,
-                        devtool: true,
-                        onClick: () => void handleGetObjectCounts(),
-                        disabled: isLoadingObjectCounts,
-                      },
-                      {
-                        label: 'Move Repo',
-                        icon: MoveIcon,
-                        devtool: true,
-                        onClick: () => setMoveRepoOpen(true),
-                      },
-                      { type: 'divider' as const },
-                      {
-                        label: 'Build Index',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleBuildIndex(),
-                        disabled: isBuildingIndex,
-                      },
-                      {
-                        label: 'View Index',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleViewIndex(),
-                      },
-                      { type: 'divider' as const },
-                      {
-                        label: 'Build Publish Plan',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleBuildPublishPlan(),
-                        disabled: isBuildingPublishPlan,
-                      },
-                    ],
-                  },
-                ]
-              : []),
-            ...(isDevToolsEnabled && connectorAccount && !isScratch
-              ? [
-                  {
-                    label: 'Reset Connection',
-                    icon: Trash2Icon,
-                    onClick: handleResetConnection,
-                    devtool: true,
-                    delete: true,
-                  },
-                ]
-              : []),
-            ...(connectorAccount && !isScratch
-              ? [{ label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true }]
-              : []),
+          onClose={() => setContextMenu(null)}
+          extraItemsBefore={[{ label: 'Pull All Tables', icon: DownloadIcon, onClick: handlePullAll }]}
+          extraItemsAfter={[
+            {
+              label: showHidden ? 'Hide hidden files' : 'Show hidden files',
+              icon: showHidden ? EyeOffIcon : EyeIcon,
+              onClick: () => {
+                toggleHiddenFiles(connectorAccount.id);
+                setContextMenu(null);
+              },
+            },
           ]}
+          onReauthorizeStart={() => setIsReauthorizing(true)}
+          onReauthorizeEnd={() => setIsReauthorizing(false)}
         />
       )}
 
-      {/* Reset Connection Confirm Dialog */}
-      <ConfirmDialog {...resetConnectionDialogProps} />
-
-      {/* Choose Tables Modal */}
+      {/* Inline "Choose tables" modal (for empty folder state link) */}
       {connectorAccount && (
         <ChooseTablesModal
-          opened={chooseTablesOpened}
-          onClose={closeChooseTables}
+          opened={inlineChooseTablesOpen}
+          onClose={closeInlineChooseTables}
           workbookId={workbookId}
           connectorAccount={connectorAccount}
-        />
-      )}
-
-      {/* Remove Connection Modal */}
-      {connectorAccount && (
-        <RemoveConnectionModal
-          opened={removeModalOpened}
-          onClose={closeRemoveModal}
-          connectorAccount={connectorAccount}
-          workbookId={workbookId}
         />
       )}
 
       {/* Test Publish V2 Modal */}
       {connectorAccount && (
         <PublishPlansModal opened={publishV2ModalOpened} onClose={closePublishV2Modal} workbookId={workbookId} />
-      )}
-
-      {/* Update Connection Modal */}
-      {connectorAccount && (
-        <UpdateConnectionModal
-          opened={updateConnectionModalOpened}
-          onClose={closeUpdateConnectionModal}
-          connectorAccount={connectorAccount}
-        />
-      )}
-
-      {/* Git Tools Modals (V2 workbooks — repo scoped to this connection) */}
-      {connectorAccount && (
-        <>
-          <GitGraphModal
-            opened={gitGraphOpen}
-            onClose={() => setGitGraphOpen(false)}
-            workbookId={workbookId}
-            connectorAccountId={connectorAccount.id}
-          />
-          <GitFileBrowserModal
-            opened={gitFileBrowserOpen}
-            onClose={() => setGitFileBrowserOpen(false)}
-            workbookId={workbookId}
-            connectorAccountId={connectorAccount.id}
-          />
-          <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
-          <GitObjectCountsModal
-            opened={objectCountsModalOpen}
-            onClose={() => setObjectCountsModalOpen(false)}
-            data={objectCountsData}
-            repoPath={connectorAccount.repoPath}
-          />
-          {connectorAccount.repoPath && (
-            <MoveRepoModal
-              opened={moveRepoOpen}
-              onClose={() => setMoveRepoOpen(false)}
-              connectorAccountId={connectorAccount.id}
-              currentRepoPath={connectorAccount.repoPath}
-            />
-          )}
-          <GitIndexModal opened={indexModalOpen} onClose={() => setIndexModalOpen(false)} data={indexData} />
-        </>
       )}
     </>
   );
@@ -1352,123 +1020,7 @@ interface EmptyConnectionNodeProps {
 export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
-  const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
-  const { workbook } = useActiveWorkbook();
-  const { isDevToolsEnabled } = useDevTools();
-
-  // Git Tools state (V2 workbooks only)
-  const [gitGraphOpen, setGitGraphOpen] = useState(false);
-  const [gitFileBrowserOpen, setGitFileBrowserOpen] = useState(false);
-  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
-  const [gcModalOpen, setGcModalOpen] = useState(false);
-  const [isGcing, setIsGcing] = useState(false);
-  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
-  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
-  const [isLoadingObjectCounts, setIsLoadingObjectCounts] = useState(false);
-  const [isRebasing, setIsRebasing] = useState(false);
-  const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
-  const [indexModalOpen, setIndexModalOpen] = useState(false);
-  const [isBuildingIndex, setIsBuildingIndex] = useState(false);
-  const [isBuildingPublishPlan, setIsBuildingPublishPlan] = useState(false);
-
-  const handleBuildPublishPlan = async () => {
-    setIsBuildingPublishPlan(true);
-    try {
-      await workbookApi.gitServiceProxy(
-        workbookId,
-        connectorAccount.id,
-        'api/repo/publish-plan/:repoId/build',
-        'POST',
-        { connectionName: connectorAccount.displayName || connectorAccount.id, connectionId: connectorAccount.id },
-      );
-      notifications.show({ title: 'Success', message: 'Publish plan build triggered', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to build publish plan', color: 'red' });
-    } finally {
-      setIsBuildingPublishPlan(false);
-    }
-  };
-
-  const handleBuildIndex = async () => {
-    setIsBuildingIndex(true);
-    try {
-      const result = await workbookApi.buildIndex(workbookId, connectorAccount.id);
-      notifications.show({ title: 'Success', message: `Index built: ${result.count} files`, color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to build index', color: 'red' });
-    } finally {
-      setIsBuildingIndex(false);
-    }
-  };
-
-  const handleViewIndex = async () => {
-    try {
-      const result = await workbookApi.dumpIndex(workbookId, connectorAccount.id);
-      setIndexData(result);
-      setIndexModalOpen(true);
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to load index (build it first)', color: 'red' });
-    }
-  };
-
-  const handleGitGc = async (aggressive: boolean = false) => {
-    setIsGcing(true);
-    try {
-      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccount.id);
-      setGcData(result);
-      setGcModalOpen(true);
-      notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to run Git GC', color: 'red' });
-    } finally {
-      setIsGcing(false);
-    }
-  };
-
-  const handleGetObjectCounts = async () => {
-    setIsLoadingObjectCounts(true);
-    try {
-      const result = await workbookApi.getObjectCounts(workbookId, connectorAccount.id);
-      setObjectCountsData(result);
-      setObjectCountsModalOpen(true);
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to get object counts', color: 'red' });
-    } finally {
-      setIsLoadingObjectCounts(false);
-    }
-  };
-
-  const handleManualRebase = async () => {
-    setIsRebasing(true);
-    try {
-      await workbookApi.rebaseDirty(workbookId, connectorAccount.id);
-      notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
-    } finally {
-      setIsRebasing(false);
-    }
-  };
-
-  const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
-  const handleResetConnection = () => {
-    openResetConnectionDialog({
-      title: 'Reset Connection',
-      message:
-        'This will delete all data folders and the git repository for this connection. Any unpublished changes will be lost. This action cannot be undone.',
-      confirmLabel: 'Reset',
-      variant: 'danger',
-      onConfirm: async () => {
-        try {
-          await connectorAccountsApi.reset(workbookId, connectorAccount.id);
-          window.location.reload();
-        } catch {
-          notifications.show({ title: 'Error', message: 'Failed to reset connection', color: 'red' });
-        }
-      },
-    });
-  };
 
   const nodeId = `connection-${connectorAccount.displayName || connectorAccount.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -1479,14 +1031,8 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
-  // Choose tables modal state
-  const [chooseTablesOpened, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
-
-  // Remove connection modal state
-  const [removeModalOpened, { open: openRemoveModal, close: closeRemoveModal }] = useDisclosure(false);
-
-  // Update connection modal state
-  const [updateConnectionModalOpened, { open: openUpdateConnectionModal, close: closeUpdateConnectionModal }] =
+  // Inline "Choose tables" link (separate from the one inside ConnectionContextMenu)
+  const [inlineChooseTablesOpened, { open: openInlineChooseTables, close: closeInlineChooseTables }] =
     useDisclosure(false);
 
   const handleToggle = useCallback(() => {
@@ -1503,39 +1049,6 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
     // Position menu near the button
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setContextMenu({ x: rect.right, y: rect.bottom });
-  };
-
-  const handleReauthorize = async () => {
-    if (connectorAccount.authType !== AuthType.OAUTH) {
-      // Only necessary for OAuth connections
-      return;
-    }
-    /*
-     * This turns on a temporary overlay until the OAuth does the first redirect to the service
-     * just in case the server is lagging when generating the OAuth URL.
-     */
-    setIsReauthorizing(true);
-
-    try {
-      await initiateOAuth(connectorAccount.service, {
-        workbookId: workbookId,
-        redirectPrefix: `${window.location.protocol}//${window.location.host}`,
-        connectionMethod: 'OAUTH_SYSTEM',
-        connectionName: connectorAccount.displayName,
-        returnPage: window.location.pathname,
-        // setting the connector ID is what makes this a reauthorization
-        connectorAccountId: connectorAccount.id,
-      });
-      // The initiateOAuth function will redirect the user, so we don't need to do anything else here
-    } catch (error) {
-      console.error('OAuth initiation failed:', error);
-      setWorkbookError({
-        description: `Failed to reauthorize connection to ${connectorAccount.displayName}. Please try again.`,
-        cause: error as Error,
-      });
-    } finally {
-      setIsReauthorizing(false);
-    }
   };
 
   return (
@@ -1616,7 +1129,7 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
       {/* Expanded content - show "Choose tables" link */}
       <Collapse in={isExpanded}>
         <Box pl={INDENT_PX * 3 + 34} py={4}>
-          <UnstyledButton onClick={openChooseTables}>
+          <UnstyledButton onClick={openInlineChooseTables}>
             <Text12Regular c="var(--mantine-color-blue-6)" style={{ cursor: 'pointer' }}>
               Choose tables
             </Text12Regular>
@@ -1624,140 +1137,21 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
         </Box>
       </Collapse>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <ContextMenu
-          opened={true}
-          onClose={() => setContextMenu(null)}
-          position={contextMenu}
-          items={[
-            { label: 'Choose tables', icon: TableIcon, onClick: openChooseTables },
-            connectorAccount.authType === AuthType.OAUTH
-              ? { label: 'Reauthorize', icon: CloudCogIcon, onClick: handleReauthorize }
-              : { label: 'Edit Connection', icon: SettingsIcon, onClick: openUpdateConnectionModal },
-            { type: 'divider' as const },
-            ...(isDevToolsEnabled && (workbook?.version ?? 1) >= 2
-              ? [
-                  {
-                    type: 'submenu' as const,
-                    label: 'Git',
-                    icon: GitGraphIcon,
-                    devtool: true,
-                    children: [
-                      { label: 'Git Graph', icon: GitGraphIcon, devtool: true, onClick: () => setGitGraphOpen(true) },
-                      {
-                        label: 'Git File Browser',
-                        icon: FileCodeIcon,
-                        devtool: true,
-                        onClick: () => setGitFileBrowserOpen(true),
-                      },
-                      {
-                        label: 'Manual Rebase',
-                        icon: GitMergeIcon,
-                        devtool: true,
-                        onClick: () => void handleManualRebase(),
-                        disabled: isRebasing,
-                      },
-                      {
-                        label: 'Get Object Counts',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleGetObjectCounts(),
-                        disabled: isLoadingObjectCounts,
-                      },
-                      {
-                        label: 'Run Git GC (Standard)',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleGitGc(false),
-                        disabled: isGcing,
-                      },
-                      {
-                        label: 'Run Git GC (Aggressive)',
-                        icon: Trash2Icon,
-                        devtool: true,
-                        onClick: () => void handleGitGc(true),
-                        disabled: isGcing,
-                      },
-                      { type: 'divider' as const },
-                      {
-                        label: 'Build Index',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleBuildIndex(),
-                        disabled: isBuildingIndex,
-                      },
-                      {
-                        label: 'View Index',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleViewIndex(),
-                      },
-                      { type: 'divider' as const },
-                      {
-                        label: 'Build Publish Plan',
-                        icon: GitGraphIcon,
-                        devtool: true,
-                        onClick: () => void handleBuildPublishPlan(),
-                        disabled: isBuildingPublishPlan,
-                      },
-                    ],
-                  },
-                  {
-                    label: 'Reset Connection',
-                    icon: Trash2Icon,
-                    devtool: true,
-                    delete: true,
-                    onClick: handleResetConnection,
-                  },
-                ]
-              : []),
-            { label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true },
-          ]}
-        />
-      )}
-
-      {/* Git Tools Modals (V2 workbooks) */}
-      <GitGraphModal
-        opened={gitGraphOpen}
-        onClose={() => setGitGraphOpen(false)}
+      {/* Context Menu + Modals (always mounted so modal state survives menu close) */}
+      <ConnectionContextMenu
+        connectorAccount={connectorAccount}
         workbookId={workbookId}
-        connectorAccountId={connectorAccount.id}
+        position={contextMenu}
+        onClose={() => setContextMenu(null)}
+        onReauthorizeStart={() => setIsReauthorizing(true)}
+        onReauthorizeEnd={() => setIsReauthorizing(false)}
       />
-      <GitFileBrowserModal
-        opened={gitFileBrowserOpen}
-        onClose={() => setGitFileBrowserOpen(false)}
-        workbookId={workbookId}
-        connectorAccountId={connectorAccount.id}
-      />
-      <GitGcModal opened={gcModalOpen} onClose={() => setGcModalOpen(false)} data={gcData} />
-      <GitObjectCountsModal
-        opened={objectCountsModalOpen}
-        onClose={() => setObjectCountsModalOpen(false)}
-        data={objectCountsData}
-      />
-      <GitIndexModal opened={indexModalOpen} onClose={() => setIndexModalOpen(false)} data={indexData} />
-      <ConfirmDialog {...resetConnectionDialogProps} />
 
-      {/* Choose Tables Modal */}
+      {/* Inline Choose Tables Modal (for the link inside the collapsed area) */}
       <ChooseTablesModal
-        opened={chooseTablesOpened}
-        onClose={closeChooseTables}
+        opened={inlineChooseTablesOpened}
+        onClose={closeInlineChooseTables}
         workbookId={workbookId}
-        connectorAccount={connectorAccount}
-      />
-
-      {/* Remove Connection Modal */}
-      <RemoveConnectionModal
-        opened={removeModalOpened}
-        onClose={closeRemoveModal}
-        connectorAccount={connectorAccount}
-        workbookId={workbookId}
-      />
-
-      <UpdateConnectionModal
-        opened={updateConnectionModalOpened}
-        onClose={closeUpdateConnectionModal}
         connectorAccount={connectorAccount}
       />
     </>

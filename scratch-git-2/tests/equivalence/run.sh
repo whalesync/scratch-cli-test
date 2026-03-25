@@ -8,20 +8,20 @@
 #   ./run.sh
 #
 # Optional overrides:
-#   GO_CLI=scratchmd                                    Path to Go CLI binary
-#   RUST_CLI=./target/debug/scratchmd2                  Path to Rust CLI binary
-#   SCRATCH_URL=http://localhost:3010                    Server URL
+#   GO_CLI=/Users/ijd/repos/spinner/scratch-cli/scratchmd
+#   RUST_CLI=/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd
+#   SCRATCH_URL=http://localhost:3010
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-GO="${GO_CLI:-scratchmd}"
-RUST="${RUST_CLI:-$SCRIPT_DIR/../../target/debug/scratchmd2}"
+GO="${GO_CLI:-/Users/ijd/repos/spinner/scratch-cli/scratchmd}"
+RUST="${RUST_CLI:-/Users/ijd/repos/spinner/scratch-git-2/target/debug/scratchmd}"
 URL="${SCRATCH_URL:-http://localhost:3010}"
-WB="${WORKBOOK_ID:?WORKBOOK_ID env var required}"
-CONN1="${CONNECTION_1_ID:?CONNECTION_1_ID env var required}"
-CONN2="${CONNECTION_2_ID:?CONNECTION_2_ID env var required}"
+WB="${WORKBOOK_ID:-wkb_F1viTZ5vqL}"
+CONN1="${CONNECTION_1_ID:-coa_t4oJ3s0we5}"
+CONN2="${CONNECTION_2_ID:-coa_pF9Y0gtVuK}"
 
 PASS=0
 FAIL=0
@@ -38,7 +38,7 @@ normalize() {
     walk(
       if type == "object"
       then
-        del(.createdAt, .updatedAt, .lastSyncTime, .initializedAt, .expiresAt)
+        del(.createdAt, .updatedAt, .lastSyncTime, .initializedAt, .expiresAt, .elapsedMs)
         | del(.metadata, .disabled, .disabledCreates)
         | del(.displayOrder, .syncStateLastChanged)
         | if has("messages") and .messages == null then .messages = [] else . end
@@ -145,11 +145,11 @@ echo ""
 echo "=== workbooks ==="
 
 run_test "workbooks list" \
-  "workbooks list" \
+  "workspaces list" \
   "workspaces list"
 
 run_test "workbooks show" \
-  "workbooks show $WB" \
+  "workspaces show $WB" \
   "workspaces show $WB"
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ echo ""
 echo "=== workbooks init ==="
 
 set +e
-go_init_out=$($GO   --scratch-url "$URL" workbooks init "$WB" --output "$GO_TMP"   --force --json 2>&1); exit_go=$?
+go_init_out=$($GO   --scratch-url "$URL" workspaces init "$WB" --output "$GO_TMP"   --force --json 2>&1); exit_go=$?
 rust_init_out=$($RUST --scratch-url "$URL" workspaces init "$WB" --output "$RUST_TMP" --force --json 2>&1); exit_rust=$?
 set -e
 
@@ -172,8 +172,8 @@ elif [[ $exit_rust -ne 0 ]]; then
   ((FAIL++)) || true
 else
   # Compare JSON output, excluding the `directory` field (always differs)
-  go_init_norm=$(echo "$go_init_out"   | jq -S 'del(.directory)')
-  rust_init_norm=$(echo "$rust_init_out" | jq -S 'del(.directory)')
+  go_init_norm=$(echo "$go_init_out"   | jq -S 'del(.directory, .elapsedMs)')
+  rust_init_norm=$(echo "$rust_init_out" | jq -S 'del(.directory, .elapsedMs)')
   compare_text "workbooks init json" "$go_init_norm" "$rust_init_norm"
 
   # Derive workbook directory from JSON output
@@ -183,9 +183,9 @@ else
 
   # Compare file trees (paths relative to workbook dir, excluding .git internals and .scratch/)
   go_tree=$(find "$GO_WB_DIR"   ! -path '*/.git/*' ! -path '*/.git' ! -path '*/.scratch*' \
-            | sed "s|^$GO_WB_DIR/\{0,1\}||" | grep -v '^$' | grep -v '^\.gitignore$' | sort)
+            | sed "s|^$GO_WB_DIR/\{0,1\}||" | grep -v '^$' | grep -v '^\.gitignore$' | grep -v '^CLAUDE.md$' | sort)
   rust_tree=$(find "$RUST_WB_DIR" ! -path '*/.git/*' ! -path '*/.git' ! -path '*/.scratch*' \
-              | sed "s|^$RUST_WB_DIR/\{0,1\}||" | grep -v '^$' | grep -v '^\.gitignore$' | sort)
+              | sed "s|^$RUST_WB_DIR/\{0,1\}||" | grep -v '^$' | grep -v '^\.gitignore$' | grep -v '^CLAUDE.md$' | sort)
   compare_text "workbooks init file tree" "$go_tree" "$rust_tree"
 fi
 
@@ -197,15 +197,15 @@ echo ""
 echo "=== connections ==="
 
 run_test "connections list" \
-  "connections list --workbook $WB" \
+  "connections list --workspace $WB" \
   "connections --workspace $WB list"
 
 run_test "connections show (conn1)" \
-  "connections show $CONN1 --workbook $WB" \
+  "connections show $CONN1 --workspace $WB" \
   "connections --workspace $WB show $CONN1"
 
 run_test "connections show (conn2)" \
-  "connections show $CONN2 --workbook $WB" \
+  "connections show $CONN2 --workspace $WB" \
   "connections --workspace $WB show $CONN2"
 
 # ---------------------------------------------------------------------------

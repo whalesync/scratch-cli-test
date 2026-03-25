@@ -387,7 +387,7 @@ export class DevToolsController {
         include: {
           organization: { select: { name: true } },
           connectorAccounts: {
-            select: { id: true, displayName: true, service: true, createdAt: true, repoPath: true },
+            select: { id: true, displayName: true, service: true, authType: true, createdAt: true, repoPath: true },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -403,6 +403,7 @@ export class DevToolsController {
         id: ca.id,
         displayName: ca.displayName,
         service: ca.service,
+        authType: ca.authType,
         createdAt: ca.createdAt.toISOString(),
         repoPath: ca.repoPath,
       }));

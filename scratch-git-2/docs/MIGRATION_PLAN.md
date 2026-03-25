@@ -3,6 +3,7 @@
 The big picture is a migration of business logic from NestJS into Rust, and a migration of source of truth for key entities (syncs, publish plans, indices) from PostgreSQL into git-tracked files.
 
 The motivation is threefold:
+
 1. **Speed** — running business logic locally on the user's machine (CLI or browser via the Rust service) is orders of magnitude faster than round-tripping through the NestJS API and Postgres.
 2. **Shared implementation** — the CLI and the web UI should reach identical git state. Today only the CLI can build publish plans and run syncs locally. The Rust git service needs the same capabilities so the web UI can do everything the CLI can.
 3. **Simplicity** — once git is the source of truth, the NestJS layer becomes a thin executor rather than a stateful database. Several Postgres tables can be dropped entirely.
@@ -40,7 +41,7 @@ The NestJS business logic for publish plans, syncs, and indices is replaced by c
 
 ### Step 2: Rust git service has full feature parity with the CLI
 
-- [ ] **2.1** Port `plan_publish.rs` into the Rust service as an HTTP endpoint — `POST /api/repo/:id/publish-plan/build`. _Test by: call the endpoint directly (curl or test), confirm `plan.json` + phase dirs are written to the dirty branch without running the CLI._
+- [x] **2.1** Port `plan_publish.rs` into the Rust service as an HTTP endpoint — `POST /api/repo/:id/publish-plan/build`. _Test by: call the endpoint directly (curl or test), confirm `plan.json` + phase dirs are written to the dirty branch without running the CLI._
 - [ ] **2.2** Port sync execution into the Rust service — `POST /api/repo/:id/syncs/run`. _Test by: call the endpoint with a sync config path, confirm destination files in the repo match what `syncs run-local` would produce._
 - [ ] **2.3** Sync config files stored in git (`syncs/` directory) and readable by the Rust service. _Test by: commit a sync config file to the repo, call the list endpoint, and confirm it appears without any Postgres `Sync` row existing._
 - [ ] **2.4** Publish plan status tracked in git instead of `PublishPlan` Postgres rows. _Test by: trigger a publish, confirm `plan-status.json` appears in the dirty branch, and confirm no `PublishPlan` row is created in Postgres._
@@ -65,12 +66,14 @@ The NestJS business logic for publish plans, syncs, and indices is replaced by c
 **What it does (NestJS reference: `string-to-number.transformer.ts`)**
 
 Converts a string or number value to a number. Options:
+
 - `stripCurrency: bool` — removes common currency symbols (`$€£¥…`) and thousands-separator commas before parsing
 - `parseInteger: bool` — uses integer truncation instead of float parsing
 
 **How to implement in Rust (`syncs.rs`)**
 
 1. Extend the `FieldMapping` struct to include an optional `transformer` field:
+
    ```rust
    #[derive(Debug, Deserialize)]
    #[serde(rename_all = "camelCase")]
@@ -100,6 +103,7 @@ Converts a string or number value to a number. Options:
    ```
 
 2. In `run_local()`, after reading the source field value and before writing to the destination, call `apply_transformer(value, transformer)`:
+
    ```rust
    fn apply_string_to_number(value: &Value, opts: &StringToNumberOptions) -> Value {
        let s = match value {
@@ -229,6 +233,7 @@ fn apply_auto_convert(value: &Value, opts: &AutoConvertOptions) -> Value {
 **Design**
 
 A custom transformer is declared in the sync config as:
+
 ```json
 {
   "sourceField": "price",
@@ -241,6 +246,7 @@ A custom transformer is declared in the sync config as:
 ```
 
 The script receives the source value as a variable named `value` and returns the transformed value:
+
 ```rhai
 // scripts/price_to_usd.rhai
 if value == () { return (); }
@@ -251,11 +257,13 @@ let n = parse_float(value.to_string());
 **How to implement in Rust**
 
 1. Add `rhai` to `Cargo.toml`:
+
    ```toml
    rhai = { version = "1", features = ["sync"] }
    ```
 
 2. Add `Rhai(RhaiOptions)` to the `Transformer` enum:
+
    ```rust
    #[derive(Debug, Deserialize)]
    struct RhaiOptions {
@@ -264,6 +272,7 @@ let n = parse_float(value.to_string());
    ```
 
 3. Load scripts once at the start of `run_local()` (avoid re-parsing per record). Use a `HashMap<String, rhai::AST>` keyed by script path:
+
    ```rust
    let engine = rhai::Engine::new();
    let mut script_cache: HashMap<String, rhai::AST> = HashMap::new();
@@ -285,6 +294,7 @@ let n = parse_float(value.to_string());
    ```
 
 4. Evaluate per record:
+
    ```rust
    fn apply_rhai(engine: &rhai::Engine, ast: &rhai::AST, value: &Value) -> anyhow::Result<Value> {
        let mut scope = rhai::Scope::new();
@@ -305,6 +315,7 @@ let n = parse_float(value.to_string());
    - `Value::Object` ↔ `Dynamic::from(BTreeMap<String, Dynamic>)` (via `rhai::Map`)
 
 **Notes**
+
 - Scripts live in the workspace directory alongside the sync config, so they're git-tracked.
 - Disable file I/O and module loading on the engine (`engine.set_max_modules(0)`, `engine.on_print(|_| {})`) to keep execution sandboxed.
 - Script compile errors should fail fast at startup (before processing any records), not silently per record.
@@ -320,6 +331,7 @@ let n = parse_float(value.to_string());
 The `plan.json` already contains a `changedFields` map (`relPath → { fieldName: value, ... }`). The publish job (`PublishFromGitService.dispatchUpdateBatch`) currently passes the full file content to `connector.updateRecords()`.
 
 The fix:
+
 1. Read `changedFields` from `plan.json` for each `relPath` in the `edit` phase (already loaded into `PhaseOperation.changedFields`).
 2. Build a `changedKeys` array from `Object.keys(changedFields)`.
 3. Pass it to `connector.updateRecords(tableSpec, contents, changedKeysArray)` — the connector already supports a sparse update via the third argument.
@@ -330,17 +342,20 @@ The fix:
 ### 2.1 — Publish plan build endpoint in Rust service
 
 **Current state**
+
 - The CLI builds a `plan.json` + phase directories into the dirty git branch (`plan_publish.rs`)
 - The server already reads from git to execute the plan (`PublishFromGitService.runFromGit`)
 - The server still creates `PublishPlan` + `PublishPlanOperation` DB rows to track status
 
 **What needs to change**
+
 - New endpoint `POST /api/repo/:id/publish-plan/build` in the Rust service that ports `plan_publish.rs`: scans dirty vs master, builds `plan.json` + phase dirs, strips FK refs using the SQLite index, writes everything back to dirty.
 - Status tracking moves to git: the BullMQ job writes `plan-status.json` into the dirty branch instead of updating a `PublishPlan` row.
 - The publish button becomes a two-step flow: "Build Plan" → review summary → "Run".
 - `PublishPlan` + `PublishPlanOperation` tables can be dropped.
 
 **Key files**
+
 - `scratch-git-2/src/cli/commands/plan_publish.rs` — port this logic into the Rust service
 - `server/src/publish-plan/publish-from-git.service.ts` — status writing needs to move to git
 - `server/src/publish-plan/publish-plan-crud.service.ts` — can be deleted
@@ -350,10 +365,12 @@ The fix:
 ### 2.3 / 3.3 — Syncs: Configs to git
 
 **Current state**
+
 - Sync configs live in Postgres `Sync` + `SyncTablePair` tables
 - The CLI can `syncs download` to export them and `syncs run-local` to execute locally
 
 **What needs to change**
+
 - Store each sync as a JSON file in `.scratch/workbook/syncs/` in the workbook's git repo (format matches `syncs download` output). `Sync` + `SyncTablePair` become derived, not authoritative.
 - `SyncService` reads sync configs from git via the Rust service instead of Postgres.
 - The execution engine (two-phase, transformers, match key caches) stays on the NestJS server — only config storage moves.
@@ -362,6 +379,7 @@ The fix:
 - `Sync` + `SyncTablePair` tables can be dropped once all reads/writes go through git.
 
 **Key files**
+
 - `server/src/sync/sync.service.ts` — replace DB reads with git-backed config loading
 - `scratch-git-2/src/cli/commands/syncs.rs` — target file format
 - `server/prisma/schema.prisma` lines 529–572 — `Sync` + `SyncTablePair` to remove
@@ -371,16 +389,19 @@ The fix:
 ### 3.1 — Complete SQLite index migration
 
 **Current state**
+
 - `PublishFromGitService` is now fully migrated to SQLite — no Postgres `FileIndex` calls remain there.
 - `publish-plan-run.service.ts`, `publish-plan-build.service.ts`, and `ref-resolver.service.ts` still call `FileIndexService` (old DB-backed publish path).
 
 **What needs to change**
+
 - Migrate `publish-plan-run.service.ts` and `publish-plan-build.service.ts` off `FileIndexService` (same pattern as the migration already done in `PublishFromGitService`).
 - Migrate `ref-resolver.service.ts` off `FileIndexService.getRecordIds` — replace with a batch SQLite lookup via the Rust service.
 - Replace `FileReferenceService` (writes to Postgres `FileReference`) with equivalent SQLite index updates after publish.
 - Once all callers are migrated, remove `FileIndex`, `FileReference`, `FileIndexService`, and `FileReferenceService`.
 
 **Key files**
+
 - `server/src/publish-plan/file-index.service.ts` — remove once all callers migrated
 - `server/src/publish-plan/ref-resolver.service.ts` — migrate `getRecordIds` to Rust service
 - `server/src/publish-plan/file-reference.service.ts` — remove once replaced

@@ -25,7 +25,7 @@ interface ContextMenuProps {
   items: ContextMenuItem[];
 }
 
-function renderIcon(icon: LucideIcon | React.ReactNode | undefined) {
+export function renderIcon(icon: LucideIcon | React.ReactNode | undefined) {
   if (!icon) return undefined;
 
   // Check if it's already a React element (already rendered JSX)
@@ -177,4 +177,38 @@ export function ContextMenu({ opened, onClose, position, items }: ContextMenuPro
       </Menu.Dropdown>
     </Menu>
   );
+}
+
+/**
+ * Renders `ContextMenuItem[]` as Mantine `Menu.Item` components.
+ * Useful for embedding shared menu items inside a standard `<Menu>` dropdown
+ * (as opposed to the right-click positioned `<ContextMenu>`).
+ * Submenus are flattened into labeled sections.
+ */
+export function renderMenuItems(items: ContextMenuItem[], onItemClick: () => void) {
+  return items.map((item, index) => {
+    if (item.type === 'divider') return <Menu.Divider key={index} />;
+    if (item.type === 'submenu' && item.children) {
+      return (
+        <span key={index}>
+          <Menu.Label>{item.label}</Menu.Label>
+          {renderMenuItems(item.children, onItemClick)}
+        </span>
+      );
+    }
+    return (
+      <Menu.Item
+        key={index}
+        leftSection={renderIcon(item.icon)}
+        disabled={item.disabled}
+        color={item.delete ? 'red' : item.devtool ? 'devTool' : undefined}
+        onClick={() => {
+          item.onClick?.();
+          onItemClick();
+        }}
+      >
+        {item.label}
+      </Menu.Item>
+    );
+  });
 }
