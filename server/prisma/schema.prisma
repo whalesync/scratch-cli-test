@@ -367,7 +367,6 @@ model DataFolder {
   // Will be an object matching any of the Connector options interfaces such as ConnectorPullOptions.
   options Json? @default("{}")
 
-  @@unique([workbookId, name])
   @@index([workbookId])
   @@index([connectorAccountId])
   @@index([path])
