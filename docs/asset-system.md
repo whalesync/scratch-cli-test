@@ -254,7 +254,7 @@ These are written into destination record content during sync and resolved to co
 
 ## Publishing Assets
 
-See `docs/asset-publishing-workflow-concept.md` for the full design of the publishing pipeline. Key points:
+See `docs/asset-publishing-workflow-concept.md` for the original design. The pipeline is now implemented.
 
 ### How Asset References Get Modified
 
@@ -264,21 +264,26 @@ Asset references in record files change through three pathways:
 2. **CLI** — Users edit record JSON directly on the dirty branch (no built-in asset upload flow yet).
 3. **Scratch UI** — Drag-and-drop, asset browser, or metadata editing in the web app.
 
-### Proposed Publish Pipeline
+### Publish Pipeline
 
 ```
-upload-assets → edit → create → delete → backfill → rename-files
-↑ NEW PHASE
+asset-upload → edit → create → delete → backfill → rename-files
 ```
 
-The `upload-assets` phase runs first:
+#### Phase 0: asset-upload
 
-1. For each new/replaced asset reference, download from `rehostedUrl`.
-2. Call `connector.uploadFile(buffer, filename, mimeType, metadata)` → `ConnectorAssetResult`.
-3. Upsert into Asset table with the new `remoteAssetId` and URL.
-4. Build resolution map: `@asset/id` → connector-native reference.
+The `asset-upload` phase runs first (only when the destination connector has `supportsFileUpload = true`):
 
-During edit/create phases, an asset resolver walks `x-scratch-asset-field` paths and replaces pseudo-references with connector-native formats.
+1. `findUnuploadedDestinationAssets()` finds destination assets with `sourceAssetId != null`, `rehostedUrl != null`, `uploadedAt == null`. Each becomes an `asset-upload` plan operation.
+2. For each operation, download the file from `rehostedUrl`.
+3. Call `connector.uploadFile(buffer, filename, mimeType, metadata)` → `ConnectorAssetResult` with the connector-native `remoteAssetId` and URL.
+4. Update the destination `Asset` row with the real `remoteAssetId`, `url`, and `uploadedAt`.
+
+Asset uploads are processed one at a time (batch size 1) to respect connector rate limits.
+
+#### Pseudo-reference resolution
+
+During the edit/create phases, the `RefResolverService` replaces `@asset/{id}` pseudo-references in record content with the now-known real `remoteAssetId` from the Asset table. Any `@asset/` references that could not be resolved (e.g. upload failed) are stripped by `RefCleanerService`.
 
 ### Connector Upload Interface
 
@@ -298,12 +303,12 @@ uploadFile(
 
 | Connector | Field Types                   | URL Expiry | Upload Support |
 | --------- | ----------------------------- | ---------- | -------------- |
-| Airtable  | `multipleAttachments` (array) | Yes (~2hr) | Yes            |
+| Airtable  | `multipleAttachments` (array) | Yes (~2hr) | No             |
 | Webflow   | Image, File, MultiImage       | No         | Yes            |
 | Webflow   | `__assets__` table            | No         | Yes            |
-| Notion    | files (array), cover, icon    | Yes        | Yes            |
+| Notion    | files (array), cover, icon    | Yes        | No             |
 | WordPress | media table                   | No         | Yes            |
-| Wix Blog  | heroImage, richContent blocks | No         | TBD            |
+| Wix Blog  | heroImage, richContent blocks | No         | No             |
 | Shopify   | Files, ProductMedia           | No         | No (read-only) |
 
 ### Notion Content Blocks
@@ -350,6 +355,8 @@ A modal that displays all extracted assets for a data folder. Shows:
 | Pull job (extraction) | `server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts`                 |
 | Sync transformer      | `server/src/sync/transformers/implementations/source-asset-to-dest-asset.transformer.ts` |
 | Sync lookup tools     | `server/src/sync/transformers/lookup-tools.ts`                                           |
+| Ref resolver          | `server/src/publish-plan/ref-resolver.service.ts`                                        |
+| Ref cleaner           | `server/src/publish-plan/ref-cleaner.service.ts`                                         |
 | API (rehost)          | `server/src/workbook/workbook.controller.ts`                                             |
 | API (index)           | `server/src/publish-plan/publish-plan.controller.ts`                                     |
 | Client modal          | `client/src/app/workbook/[id]/components/modals/AssetIndexModal.tsx`                     |
