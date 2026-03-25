@@ -23,9 +23,9 @@ export interface UseWorkspacePermissionsReturn {
 }
 
 export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorkspacePermissionsReturn => {
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<WorkspacePermission[], Error>(
     workbookId ? SWR_KEYS.workbook.permissions(workbookId) : null,
-    () => (workbookId ? workbookApi.listPermissions(workbookId) : undefined),
+    () => workbookApi.listPermissions(workbookId!),
     {
       revalidateOnFocus: false,
     },
@@ -36,9 +36,9 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
     error: invitesError,
     isLoading: invitesLoading,
     mutate: mutateInvites,
-  } = useSWR(
+  } = useSWR<WorkspaceInvite[], Error>(
     workbookId ? SWR_KEYS.workbook.invites(workbookId) : null,
-    () => (workbookId ? workbookApi.listInvites(workbookId) : undefined),
+    () => workbookApi.listInvites(workbookId!),
     {
       revalidateOnFocus: false,
     },

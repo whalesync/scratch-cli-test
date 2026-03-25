@@ -15,7 +15,7 @@ export const useJobsDevTools = (params?: {
   userId?: string;
   autoRefresh?: boolean;
 }) => {
-  const { data, error, isLoading, mutate } = useSWR<GetAllJobsResponseDto>(
+  const { data, error, isLoading, mutate } = useSWR<GetAllJobsResponseDto, Error>(
     SWR_KEYS.jobs.allJobs(params?.limit, params?.offset, params?.statuses, params?.userId),
     () => devToolsApi.getAllJobs(params),
     {

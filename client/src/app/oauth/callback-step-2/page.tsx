@@ -129,7 +129,7 @@ export default function OAuthCallbackPage() {
 
       // Decode the base64 state parameter
       const decoded = atob(state);
-      const parsed = JSON.parse(decoded);
+      const parsed = JSON.parse(decoded) as Record<string, unknown>;
 
       // Extract service from the parsed state
       return (parsed.service as Service) || null;
@@ -145,7 +145,7 @@ export default function OAuthCallbackPage() {
 
       // Decode the base64 state parameter
       const decoded = atob(state);
-      const parsed = JSON.parse(decoded);
+      const parsed = JSON.parse(decoded) as Record<string, unknown>;
 
       // Extract returnPage from the parsed state
       return (parsed.returnPage as string) || null;

@@ -12,9 +12,9 @@ export interface UseSchedulesReturn {
 }
 
 export const useSchedules = (workbookId: WorkbookId | null): UseSchedulesReturn => {
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<Schedule[], Error>(
     workbookId ? SWR_KEYS.schedules.list(workbookId) : null,
-    () => (workbookId ? scheduleApi.list(workbookId) : undefined),
+    () => scheduleApi.list(workbookId!),
     {
       revalidateOnFocus: false,
     },

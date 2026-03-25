@@ -192,14 +192,20 @@ export const useWorkbookUIStore = create<WorkbookUIStore>()(
         getItem: (name) => {
           const str = localStorage.getItem(name);
           if (!str) return null;
-          const parsed = JSON.parse(str);
+          const parsed = JSON.parse(str) as {
+            state: {
+              expandedNodes?: string[];
+              showHiddenConnections?: string[];
+              hiddenFileFolders?: string[];
+            };
+          };
           return {
             ...parsed,
             state: {
               ...parsed.state,
-              expandedNodes: new Set(parsed.state.expandedNodes || []),
-              showHiddenConnections: new Set(parsed.state.showHiddenConnections || []),
-              hiddenFileFolders: new Set(parsed.state.hiddenFileFolders || []),
+              expandedNodes: new Set(parsed.state.expandedNodes ?? []),
+              showHiddenConnections: new Set(parsed.state.showHiddenConnections ?? []),
+              hiddenFileFolders: new Set(parsed.state.hiddenFileFolders ?? []),
             },
           };
         },

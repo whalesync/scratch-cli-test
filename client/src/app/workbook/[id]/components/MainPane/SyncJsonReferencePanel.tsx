@@ -24,11 +24,11 @@ export function SyncJsonReferencePanel({
 }: SyncJsonReferencePanelProps) {
   const referencedFolders = useMemo(() => {
     try {
-      const parsed = JSON.parse(jsonContent);
+      const parsed = JSON.parse(jsonContent) as Record<string, unknown>;
       if (!parsed?.tableMappings || !Array.isArray(parsed.tableMappings)) return [];
 
       const folderIds = new Set<string>();
-      for (const tm of parsed.tableMappings) {
+      for (const tm of parsed.tableMappings as Record<string, unknown>[]) {
         if (typeof tm.sourceDataFolderId === 'string') folderIds.add(tm.sourceDataFolderId);
         if (typeof tm.destinationDataFolderId === 'string') folderIds.add(tm.destinationDataFolderId);
       }

@@ -26,7 +26,9 @@ export function DataFolderSchemaModal({ opened, onClose, folder, mode = 'view' }
     data: schema,
     isLoading: loading,
     error: swrError,
-  } = useSWR(opened ? SWR_KEYS.dataFolders.schema(folder.id, mode) : null, () => fetchFn(folder.id));
+  } = useSWR<Record<string, unknown>, Error>(opened ? SWR_KEYS.dataFolders.schema(folder.id, mode) : null, () =>
+    fetchFn(folder.id),
+  );
 
   const error = swrError ? (swrError instanceof Error ? swrError.message : 'Failed to load schema') : null;
 

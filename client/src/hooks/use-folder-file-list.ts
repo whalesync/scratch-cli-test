@@ -1,14 +1,14 @@
 import { isUnauthorizedError } from '@/lib/api/error';
 import { filesApi } from '@/lib/api/files';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { DataFolderId, FileOrFolderRefEntity, WorkbookId } from '@spinner/shared-types';
+import { DataFolderId, FileOrFolderRefEntity, ListFilesResponseDto, WorkbookId } from '@spinner/shared-types';
 import { useMemo } from 'react';
 import useSWR from 'swr';
 
 export interface UseFolderFileListReturn {
   files: FileOrFolderRefEntity[];
   isLoading: boolean;
-  error: Error | undefined;
+  error: string | undefined;
   dirtyCount: number;
   refreshFiles: () => Promise<void>;
 }
@@ -21,9 +21,9 @@ export const useFolderFileList = (
   workbookId: WorkbookId | null,
   folderId: DataFolderId | null,
 ): UseFolderFileListReturn => {
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<ListFilesResponseDto, Error>(
     workbookId && folderId ? SWR_KEYS.files.listByFolder(workbookId, folderId) : null,
-    () => (workbookId && folderId ? filesApi.listFilesByFolder(workbookId, folderId) : undefined),
+    () => filesApi.listFilesByFolder(workbookId!, folderId!),
     {
       revalidateOnFocus: false,
     },

@@ -16,9 +16,9 @@ export interface UseDirtyFilesReturn {
 }
 
 export const useDirtyFiles = (workbookId: WorkbookId | null): UseDirtyFilesReturn => {
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<DirtyFile[], Error>(
     workbookId ? SWR_KEYS.dirtyFiles.list(workbookId) : null,
-    () => (workbookId ? (workbookApi.getStatus(workbookId) as Promise<DirtyFile[]>) : undefined),
+    () => workbookApi.getStatus(workbookId!) as Promise<DirtyFile[]>,
     {
       revalidateOnFocus: false,
     },

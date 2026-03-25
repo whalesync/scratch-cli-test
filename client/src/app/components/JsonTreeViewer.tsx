@@ -23,14 +23,14 @@ function transformJsonToTreeData(json: object, path: string = ''): TreeNodeData[
           label: `[${index}]`,
         };
         if (typeof item === 'object' && item !== null) {
-          childNode.children = transformJsonToTreeData(item, itemPath);
+          childNode.children = transformJsonToTreeData(item as object, itemPath);
         } else {
           childNode.label = `[${index}]: ${JSON.stringify(item)}`;
         }
         return childNode;
       });
     } else if (typeof value === 'object' && value !== null) {
-      node.children = transformJsonToTreeData(value, newPath);
+      node.children = transformJsonToTreeData(value as object, newPath);
     } else {
       node.label = `${key}: ${JSON.stringify(value)}`;
     }

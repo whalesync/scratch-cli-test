@@ -8,7 +8,7 @@ import useSWR, { useSWRConfig } from 'swr';
 export interface UseFileReturn {
   file: FileDetailsResponseDto | undefined;
   isLoading: boolean;
-  error: Error | undefined;
+  error: string | undefined;
   updateFile: (dto: UpdateFileDto) => Promise<void>;
   deleteFile: () => Promise<void>;
   refreshFile: () => Promise<void>;
@@ -22,9 +22,9 @@ export interface UseFileReturn {
 export const useFileByPath = (workbookId: WorkbookId | null, path: string | null): UseFileReturn => {
   const { mutate: globalMutate } = useSWRConfig();
 
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<FileDetailsResponseDto, Error>(
     workbookId && path ? SWR_KEYS.files.detail(workbookId, path) : null,
-    () => (workbookId && path ? filesApi.getFileByPath(workbookId, path) : undefined),
+    () => filesApi.getFileByPath(workbookId!, path!),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,

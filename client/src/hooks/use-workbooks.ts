@@ -15,7 +15,7 @@ export interface UseWorkbooksOptions {
 export interface UseWorkbooksReturn {
   workbooks: Workbook[] | undefined;
   isLoading: boolean;
-  error: Error | undefined;
+  error: string | undefined;
   createWorkbook: (dto: CreateWorkbookDto) => Promise<Workbook>;
   updateWorkbook: (id: WorkbookId, updateDto: UpdateWorkbookDto) => Promise<Workbook>;
   deleteWorkbook: (id: WorkbookId) => Promise<void>;
@@ -26,7 +26,7 @@ export interface UseWorkbooksReturn {
 export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksReturn => {
   const { connectorAccountId, sortBy = 'createdAt', sortOrder = 'desc' } = options;
   const { mutate } = useSWRConfig();
-  const { data, error, isLoading } = useSWR(
+  const { data, error, isLoading } = useSWR<Workbook[], Error>(
     SWR_KEYS.workbook.list(sortBy, sortOrder),
     () => workbookApi.list(connectorAccountId, sortBy, sortOrder),
     {

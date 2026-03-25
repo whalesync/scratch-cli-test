@@ -17,6 +17,7 @@ const eslintConfig = [
     files: ['**/*.{js,jsx,ts,tsx}'],
     languageOptions: {
       parserOptions: {
+        projectService: true,
         tsconfigRootDir: __dirname,
       },
     },
@@ -38,6 +39,8 @@ const eslintConfig = [
         },
       ],
       '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unsafe-argument': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
       'no-restricted-imports': [
         'error',
         {

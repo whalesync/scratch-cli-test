@@ -14,9 +14,9 @@ export const useJob = <TPublicProgress extends object>(
   jobId: string | null,
   continuePolling = false,
 ): JobResult<TPublicProgress> => {
-  const { data, error, isLoading, mutate } = useSWR<JobEntity<TPublicProgress>>(
+  const { data, error, isLoading, mutate } = useSWR<JobEntity<TPublicProgress>, Error>(
     jobId ? `progress-${jobId}` : null,
-    jobId ? () => progressApi.getJobProgress<TPublicProgress>(jobId) : null,
+    () => progressApi.getJobProgress<TPublicProgress>(jobId!),
     {
       refreshInterval: continuePolling ? 1000 : 0, // Poll every second if continuePolling is true
       revalidateOnFocus: false,

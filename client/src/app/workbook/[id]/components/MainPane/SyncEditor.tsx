@@ -437,7 +437,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     } else {
       // JSON → Visual: parse and validate
       try {
-        const parsed = JSON.parse(jsonContent);
+        const parsed: unknown = JSON.parse(jsonContent);
         if (!isSyncMapping(parsed)) {
           setJsonError(
             'Invalid SyncMapping structure. Must have version: 1, tableMappings array, and each table mapping needs sourceDataFolderId, destinationDataFolderId, and columnMappings.',
@@ -679,7 +679,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
 
       if (editorMode === 'json') {
         try {
-          const parsed = JSON.parse(jsonContent);
+          const parsed: unknown = JSON.parse(jsonContent);
           if (!isSyncMapping(parsed)) {
             setErrorBanner({
               title: 'Invalid JSON structure',

@@ -40,7 +40,7 @@ describe('toggleHiddenFiles', () => {
     // Verify localStorage contains the value
     const stored = localStorage.getItem('workbook-ui-store');
     expect(stored).toBeTruthy();
-    const parsed = JSON.parse(stored!);
+    const parsed = JSON.parse(stored!) as { state: { showHiddenConnections: string[] } };
     expect(parsed.state.showHiddenConnections).toContain('conn-1');
   });
 });

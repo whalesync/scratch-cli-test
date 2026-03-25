@@ -5,7 +5,10 @@ import capitalize from 'lodash/capitalize';
 import useSWR from 'swr';
 
 export const useConnectorsMetadata = () => {
-  const { data, error, isLoading } = useSWR(SWR_KEYS.connectorsMetadata.all(), () => connectorsMetadataApi.getAll());
+  const { data, error, isLoading } = useSWR<Record<Service, ConnectorMetadata>, Error>(
+    SWR_KEYS.connectorsMetadata.all(),
+    () => connectorsMetadataApi.getAll(),
+  );
 
   return {
     metadata: data,

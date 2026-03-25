@@ -42,7 +42,7 @@ export const useFolderFileListPaginated = (
     [workbookId, folderId, pageSize],
   );
 
-  const { data, error, isLoading, size, setSize, mutate } = useSWRInfinite(getKey, fetcher, {
+  const { data, error, isLoading, size, setSize, mutate } = useSWRInfinite<ListFilesResponseDto, Error>(getKey, fetcher, {
     revalidateOnFocus: false,
     revalidateFirstPage: false,
   });

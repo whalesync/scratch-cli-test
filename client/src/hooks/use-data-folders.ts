@@ -25,9 +25,9 @@ export const useDataFolders = (overrideWorkbookId?: WorkbookId): UseDataFoldersR
   const { workbook } = useActiveWorkbook();
   const workbookId = overrideWorkbookId ?? workbook?.id ?? null;
 
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<DataFolderGroup[], Error>(
     workbookId ? SWR_KEYS.dataFolders.list(workbookId) : null,
-    () => (workbookId ? workbookApi.listDataFolders(workbookId) : undefined),
+    () => workbookApi.listDataFolders(workbookId!),
     {
       revalidateOnFocus: false,
     },

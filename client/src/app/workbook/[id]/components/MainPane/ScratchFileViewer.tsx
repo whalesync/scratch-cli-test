@@ -26,7 +26,7 @@ export function ScratchFileViewer({ workbookId, filePath, connectorAccountId }: 
     data: content,
     isLoading,
     error,
-  } = useSWR(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId), () =>
+  } = useSWR<string, Error>(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId), () =>
     workbookApi.getRepoFile(workbookId, filePath, 'dirty', connectorAccountId).then((r) => r?.content ?? ''),
   );
 

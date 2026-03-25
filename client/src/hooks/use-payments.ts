@@ -10,7 +10,7 @@ import useSWR from 'swr';
 export const usePayments = () => {
   const [portalRedirectInProgress, setPortalRedirectInProgress] = useState(false);
   const [portalRedirectError, setPortalRedirectError] = useState<string | null>(null);
-  const { data, error, isLoading } = useSWR<SubscriptionPlan[]>(SWR_KEYS.billing.plans(), () => paymentApi.listPlans());
+  const { data, error, isLoading } = useSWR<SubscriptionPlan[], Error>(SWR_KEYS.billing.plans(), () => paymentApi.listPlans());
 
   const sortedPlans = useMemo(() => {
     return data ? data.sort((a, b) => a.costUSD - b.costUSD) : [];

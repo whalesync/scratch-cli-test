@@ -10,7 +10,7 @@ export const useJobs = (
   workbookId?: string,
   filter?: { type?: string; syncId?: string; dataFolderId?: string },
 ) => {
-  const { data, error, isLoading, mutate } = useSWR<JobEntity[]>(
+  const { data, error, isLoading, mutate } = useSWR<JobEntity[], Error>(
     `jobs-${limit}-${offset}-${workbookId || 'all'}-${filter?.type || 'all'}-${filter?.syncId || 'all'}-${filter?.dataFolderId || 'all'}`,
     () => jobApi.getJobs(limit, offset, workbookId, filter),
     {

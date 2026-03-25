@@ -43,7 +43,7 @@ function jsonDiff(left: string, right: string): Change[] {
   // Falls back to line-based diff for non-JSON content.
   try {
     if (left && right) {
-      return diffJson(JSON.parse(left), JSON.parse(right));
+      return diffJson(JSON.parse(left) as object, JSON.parse(right) as object);
     }
   } catch {
     // not valid JSON on one or both sides

@@ -17,9 +17,9 @@ export interface UseDataFolderReturn {
  * Uses SWR for caching and automatic revalidation.
  */
 export const useDataFolder = (dataFolderId: DataFolderId | null): UseDataFolderReturn => {
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<DataFolder, Error>(
     dataFolderId ? SWR_KEYS.dataFolders.detail(dataFolderId) : null,
-    () => (dataFolderId ? dataFolderApi.findOne(dataFolderId) : undefined),
+    () => dataFolderApi.findOne(dataFolderId!),
     {
       revalidateOnFocus: false,
     },

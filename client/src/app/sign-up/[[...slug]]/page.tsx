@@ -8,6 +8,7 @@ import { useSearchParams } from 'next/navigation';
 
 export default function SignUpPage() {
   const searchParams = useSearchParams();
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- ClerkAppearanceRegistry augmentation not resolved
   const appearance = useClerkAppearance();
 
   /*
@@ -21,6 +22,7 @@ export default function SignUpPage() {
 
   return (
     <AuthLayout title="Sign Up - Scratch">
+      {/* eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- ClerkAppearanceRegistry augmentation not resolved */}
       <SignUp appearance={appearance} routing="hash" {...redirectURLProps} />
     </AuthLayout>
   );

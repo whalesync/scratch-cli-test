@@ -20,7 +20,7 @@ import { dataFolderApi } from '../lib/api/data-folder';
 export interface UseWorkbookReturn {
   workbook: Workbook | undefined;
   isLoading: boolean;
-  error: Error | undefined;
+  error: string | undefined;
   refreshWorkbook: () => Promise<void>;
   updateWorkbook: (updateDto: UpdateWorkbookDto) => Promise<void>;
   addLinkedDataFolder: (
@@ -40,9 +40,9 @@ export interface UseWorkbookReturn {
 
 export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR<Workbook, Error>(
     id ? SWR_KEYS.workbook.detail(id) : null,
-    () => (id ? workbookApi.detail(id) : undefined),
+    () => workbookApi.detail(id!),
     {
       revalidateOnFocus: false,
     },

@@ -21,8 +21,9 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     error,
     isLoading,
     mutate: mutateConnectorAccounts,
-  } = useSWR(workbookId ? SWR_KEYS.connectorAccounts.list(workbookId) : null, () =>
-    workbookId ? connectorAccountsApi.list(workbookId) : null,
+  } = useSWR<ConnectorAccount[], Error>(
+    workbookId ? SWR_KEYS.connectorAccounts.list(workbookId) : null,
+    () => connectorAccountsApi.list(workbookId!),
   );
 
   const createConnectorAccount = async (dto: CreateConnectorAccountDto): Promise<ConnectorAccount> => {
@@ -102,9 +103,9 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
 };
 
 export const useConnectorAccount = (workbookId: string | undefined, id?: string) => {
-  const { data, error, isLoading } = useSWR(
+  const { data, error, isLoading } = useSWR<ConnectorAccount, Error>(
     workbookId && id ? SWR_KEYS.connectorAccounts.detail(workbookId, id) : null,
-    () => (workbookId && id ? connectorAccountsApi.detail(workbookId, id) : null),
+    () => connectorAccountsApi.detail(workbookId!, id!),
   );
 
   return {

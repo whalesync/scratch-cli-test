@@ -39,9 +39,9 @@ const ProductCheckoutRedirect = (): JSX.Element => {
     if (isSignedIn && planType) {
       goToPaymentCheckoutUrl({
         planType,
-      }).catch((e) => {
+      }).catch((e: unknown) => {
         console.error('Failed to load payment checkout URL: ', e);
-        setError(e.message);
+        setError(e instanceof Error ? e.message : 'Unknown error');
       });
     }
   }, [planType, isSignedIn]);
