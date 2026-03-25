@@ -345,4 +345,8 @@ export class ScratchGitService {
       return null;
     }
   }
+
+  async proxyToGitService(repoId: string, path: string, method: string, body?: Record<string, unknown>) {
+    return this.scratchGitClient.proxyRequest(repoId, path, method, body);
+  }
 }

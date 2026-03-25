@@ -90,9 +90,7 @@ export function ChevronToggle({ isExpanded, onClick }: ChevronToggleProps) {
     );
   }
 
-  return (
-    <StyledLucideIcon Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-secondary)" />
-  );
+  return <StyledLucideIcon Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-secondary)" />;
 }
 
 // ============================================================================

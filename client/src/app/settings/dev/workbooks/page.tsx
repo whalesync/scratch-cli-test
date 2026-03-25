@@ -4,9 +4,11 @@ import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import MainContent from '@/app/components/layouts/MainContent';
 import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
 import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
+import { GitIndexModal } from '@/app/workbook/[id]/components/modals/GitIndexModal';
 import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
+import { useGitActions, type GitActions } from '@/hooks/use-git-actions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { workbookApi } from '@/lib/api/workbook';
 import {
@@ -28,14 +30,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import {
-  AdminWorkbookConnectionDto,
-  AdminWorkbookDto,
-  GitGcResponse,
-  GitObjectCountsResponse,
-  WorkbookId,
-} from '@spinner/shared-types';
+import { AdminWorkbookConnectionDto, AdminWorkbookDto, WorkbookId } from '@spinner/shared-types';
 import {
   BookOpenIcon,
   DatabaseIcon,
@@ -56,118 +51,12 @@ function serviceLabel(s: string): string {
   return s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
-// ── Git actions hook ───────────────────────────────────────────────────────────
-
-function useGitActions() {
-  const [objectCountsData, setObjectCountsData] = useState<GitObjectCountsResponse | null>(null);
-  const [objectCountsModalOpen, setObjectCountsModalOpen] = useState(false);
-  const [gcData, setGcData] = useState<GitGcResponse | null>(null);
-  const [gcModalOpen, setGcModalOpen] = useState(false);
-  const [stripPrefixData, setStripPrefixData] = useState<
-    import('@/lib/api/workbook').StripPrefixConnectionResult[] | null
-  >(null);
-  const [stripPrefixModalOpen, setStripPrefixModalOpen] = useState(false);
-
-  const [gitGraphTarget, setGitGraphTarget] = useState<{ workbookId: WorkbookId; connectorAccountId: string } | null>(
-    null,
-  );
-  const [gitBrowserTarget, setGitBrowserTarget] = useState<{
-    workbookId: WorkbookId;
-    connectorAccountId: string;
-  } | null>(null);
-
-  const handleGetObjectCounts = async (workbookId: WorkbookId, connectorAccountId?: string) => {
-    try {
-      const result = await workbookApi.getObjectCounts(workbookId, connectorAccountId);
-      setObjectCountsData(result);
-      setObjectCountsModalOpen(true);
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to get object counts', color: 'red' });
-    }
-  };
-
-  const handleRunGc = async (workbookId: WorkbookId, aggressive: boolean, connectorAccountId?: string) => {
-    try {
-      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccountId);
-      setGcData(result);
-      setGcModalOpen(true);
-      notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to run Git GC', color: 'red' });
-    }
-  };
-
-  const handleRebase = async (workbookId: WorkbookId, connectorAccountId?: string) => {
-    try {
-      await workbookApi.rebaseDirty(workbookId, connectorAccountId);
-      notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
-    }
-  };
-
-  const handleStripPrefix = async (workbookId: WorkbookId, connectorAccountId: string) => {
-    try {
-      const result = await workbookApi.stripConnectionPrefix(workbookId, connectorAccountId);
-      setStripPrefixData(result.results);
-      setStripPrefixModalOpen(true);
-      notifications.show({ title: 'Success', message: 'Strip prefix complete', color: 'green' });
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to strip connection prefix', color: 'red' });
-    }
-  };
-
-  const handleStripAllPrefixes = async (workbookId: WorkbookId) => {
-    try {
-      const result = await workbookApi.stripConnectionPrefix(workbookId);
-      setStripPrefixData(result.results);
-      setStripPrefixModalOpen(true);
-      const errors = result.results.filter((r) => r.error).length;
-      if (errors > 0) {
-        notifications.show({
-          title: 'Partial success',
-          message: `${errors} connection(s) failed — see results`,
-          color: 'yellow',
-        });
-      } else {
-        notifications.show({
-          title: 'Success',
-          message: `Stripped ${result.results.length} connection(s)`,
-          color: 'green',
-        });
-      }
-    } catch {
-      notifications.show({ title: 'Error', message: 'Failed to strip connection prefixes', color: 'red' });
-    }
-  };
-
-  return {
-    objectCountsData,
-    objectCountsModalOpen,
-    setObjectCountsModalOpen,
-    gcData,
-    gcModalOpen,
-    setGcModalOpen,
-    stripPrefixData,
-    stripPrefixModalOpen,
-    setStripPrefixModalOpen,
-    gitGraphTarget,
-    setGitGraphTarget,
-    gitBrowserTarget,
-    setGitBrowserTarget,
-    handleGetObjectCounts,
-    handleRunGc,
-    handleRebase,
-    handleStripPrefix,
-    handleStripAllPrefixes,
-  };
-}
-
 // ── Git actions menu ───────────────────────────────────────────────────────────
 
 function GitActionsMenu({
   workbookId,
   connectorAccountId,
+  connectionName,
   repoPath,
   gitActions,
   onMoveRepo,
@@ -175,8 +64,9 @@ function GitActionsMenu({
 }: {
   workbookId: WorkbookId;
   connectorAccountId?: string;
+  connectionName?: string;
   repoPath?: string | null;
-  gitActions: ReturnType<typeof useGitActions>;
+  gitActions: GitActions;
   onMoveRepo?: () => void;
   onShowDataFolders?: () => void;
 }) {
@@ -202,6 +92,28 @@ function GitActionsMenu({
               onClick={() => gitActions.setGitBrowserTarget({ workbookId, connectorAccountId })}
             >
               Git File Browser
+            </Menu.Item>
+            <Menu.Divider />
+            <Menu.Label>Index</Menu.Label>
+            <Menu.Item
+              leftSection={<BookOpenIcon size={14} />}
+              onClick={() => void gitActions.handleViewIndex(workbookId, connectorAccountId)}
+            >
+              View Index
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<DatabaseIcon size={14} />}
+              onClick={() => void gitActions.handleBuildIndex(workbookId, connectorAccountId)}
+            >
+              Rebuild Index
+            </Menu.Item>
+            <Menu.Divider />
+            <Menu.Label>Publish</Menu.Label>
+            <Menu.Item
+              leftSection={<FileCodeIcon size={14} />}
+              onClick={() => void gitActions.handleBuildPublishPlan(workbookId, connectorAccountId, connectionName || '')}
+            >
+              Build Publish Plan
             </Menu.Item>
           </>
         )}
@@ -271,7 +183,7 @@ function ConnectionsModal({
 }: {
   workbook: AdminWorkbookDto | null;
   onClose: () => void;
-  gitActions: ReturnType<typeof useGitActions>;
+  gitActions: GitActions;
   onRefresh: () => void;
 }) {
   const [moveConn, setMoveConn] = useState<AdminWorkbookConnectionDto | null>(null);
@@ -336,6 +248,7 @@ function ConnectionsModal({
                       <GitActionsMenu
                         workbookId={workbook.id}
                         connectorAccountId={conn.id}
+                        connectionName={conn.displayName}
                         repoPath={conn.repoPath}
                         gitActions={gitActions}
                         onMoveRepo={() => setMoveConn(conn)}
@@ -513,7 +426,7 @@ function WorkbookRow({
 }: {
   workbook: AdminWorkbookDto;
   onShowConnections: (w: AdminWorkbookDto) => void;
-  gitActions: ReturnType<typeof useGitActions>;
+  gitActions: GitActions;
 }) {
   return (
     <Table.Tr>
@@ -832,6 +745,11 @@ export default function WorkbooksDevPage() {
           </Stack>
         )}
       </Modal>
+      <GitIndexModal
+        opened={gitActions.indexModalOpen}
+        onClose={() => gitActions.setIndexModalOpen(false)}
+        data={gitActions.indexData}
+      />
       {gitActions.gitGraphTarget && (
         <GitGraphModal
           opened={!!gitActions.gitGraphTarget}

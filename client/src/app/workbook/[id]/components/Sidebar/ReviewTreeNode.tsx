@@ -6,13 +6,7 @@ import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { Box, Collapse, Group, Stack } from '@mantine/core';
-import type {
-  ConnectorAccount,
-  DataFolder,
-  DataFolderGroup,
-  FileDiffStatus,
-  WorkbookId,
-} from '@spinner/shared-types';
+import type { ConnectorAccount, DataFolder, DataFolderGroup, FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import { FolderIcon, StickyNoteIcon } from 'lucide-react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
@@ -27,10 +21,7 @@ const REVIEW_FILES_PER_PAGE = 50;
 
 function getIntermediateSegments(folderPath: string, connectionName?: string): string[] {
   const segments = folderPath.replace(/^\//, '').split('/');
-  const adjusted =
-    connectionName && segments[0] === connectionName
-      ? segments.slice(1)
-      : segments;
+  const adjusted = connectionName && segments[0] === connectionName ? segments.slice(1) : segments;
   if (adjusted.length <= 1) return [];
   return adjusted.slice(0, -1);
 }
@@ -141,11 +132,7 @@ function ReviewFolderTreeRenderer({
       })}
       {tree.folders.map((folder, folderIndex) => (
         <Box key={folder.id ?? `folder-${folderIndex}`} component="span" style={{ display: 'contents' }}>
-          <ReviewTableNode
-            folder={folder}
-            workbookId={workbookId}
-            dirtyFilePaths={dirtyFilePaths}
-          />
+          <ReviewTableNode folder={folder} workbookId={workbookId} dirtyFilePaths={dirtyFilePaths} />
         </Box>
       ))}
     </>
@@ -163,11 +150,7 @@ interface ReviewConnectionNodeProps {
   dirtyFilePaths: Map<string, FileDiffStatus>;
 }
 
-export function ReviewConnectionNode({
-  group,
-  workbookId,
-  dirtyFilePaths,
-}: ReviewConnectionNodeProps) {
+export function ReviewConnectionNode({ group, workbookId, dirtyFilePaths }: ReviewConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
 

@@ -416,6 +416,17 @@ export class ScratchGitClient {
       entries: entries.map((e) => [e.folder, e.filename]),
     });
   }
+
+  /**
+   * Generic proxy for Git service requests.
+   * Path should be the full path in the git service but with a ':repoId' placeholder.
+   * Example: '/api/repo/publish-plan/:repoId/build'
+   */
+  async proxyRequest(repoId: string, path: string, method: string, body?: Record<string, unknown>): Promise<unknown> {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    const resolvedPath = normalizedPath.replace(':repoId', this.encodeRepoId(repoId));
+    return this.callGitApi(resolvedPath, method, body);
+  }
 }
 
 export interface StripPrefixResult {

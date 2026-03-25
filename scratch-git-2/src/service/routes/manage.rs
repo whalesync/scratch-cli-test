@@ -39,6 +39,9 @@ pub async fn delete_repo(State(state): State<AppState>, Path(id): Path<String>) 
                 std::fs::remove_dir_all(&repo_path)
                     .map_err(|e| AppError::internal(format!("Failed to delete repo: {}", e)))?;
             }
+            // Best-effort cleanup of index DB
+            let index_path = state.index_db_path(&id);
+            let _ = std::fs::remove_file(&index_path);
             // Best-effort cleanup of empty parent dirs up to repos_dir
             let mut dir = repo_path.parent();
             while let Some(parent) = dir {

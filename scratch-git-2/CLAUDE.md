@@ -28,3 +28,4 @@ Always run commands from inside `scratch-git-2/` (or the repo root using Turbore
 - [PARITY.md](docs/PARITY.md) — Rust vs Go CLI feature gap tracking
 - [MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) — plan to migrate business logic from NestJS/Postgres into Rust/git
 - [TEST_LOOP.md](docs/TEST_LOOP.md) — end-to-end test guide ⚠️ partially outdated (uses old binary name `scratchmd2` and old workspace paths — treat as conceptual reference)
+- [REPO_STRUCTURES.md](docs/REPO_STRUCTURES.md) — CLI and service directory layouts, repo identity, branch conventions, materialize-perform-commit-cleanup pattern

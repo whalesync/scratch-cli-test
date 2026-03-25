@@ -3,6 +3,7 @@ pub mod debug;
 pub mod diff;
 pub mod index;
 pub mod manage;
+pub mod plan_publish;
 pub mod read;
 pub mod system;
 pub mod write;

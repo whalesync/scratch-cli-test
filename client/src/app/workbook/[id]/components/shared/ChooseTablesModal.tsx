@@ -348,39 +348,33 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     });
   };
 
-  const handleSelectAll = useCallback(
-    (tables: TablePreview[]) => {
-      const enabledTables = tables.filter((t) => !t.disabled);
-      setSelectedTableIds((prev) => {
-        const next = new Set(prev);
-        enabledTables.forEach((t) => next.add(t.id.remoteId.join('/')));
-        return next;
-      });
-      setSelectedTableMap((prev) => {
-        const next = new Map(prev);
-        enabledTables.forEach((t) => next.set(t.id.remoteId.join('/'), t));
-        return next;
-      });
-    },
-    [],
-  );
+  const handleSelectAll = useCallback((tables: TablePreview[]) => {
+    const enabledTables = tables.filter((t) => !t.disabled);
+    setSelectedTableIds((prev) => {
+      const next = new Set(prev);
+      enabledTables.forEach((t) => next.add(t.id.remoteId.join('/')));
+      return next;
+    });
+    setSelectedTableMap((prev) => {
+      const next = new Map(prev);
+      enabledTables.forEach((t) => next.set(t.id.remoteId.join('/'), t));
+      return next;
+    });
+  }, []);
 
-  const handleDeselectAll = useCallback(
-    (tables: TablePreview[]) => {
-      const enabledTables = tables.filter((t) => !t.disabled);
-      setSelectedTableIds((prev) => {
-        const next = new Set(prev);
-        enabledTables.forEach((t) => next.delete(t.id.remoteId.join('/')));
-        return next;
-      });
-      setSelectedTableMap((prev) => {
-        const next = new Map(prev);
-        enabledTables.forEach((t) => next.delete(t.id.remoteId.join('/')));
-        return next;
-      });
-    },
-    [],
-  );
+  const handleDeselectAll = useCallback((tables: TablePreview[]) => {
+    const enabledTables = tables.filter((t) => !t.disabled);
+    setSelectedTableIds((prev) => {
+      const next = new Set(prev);
+      enabledTables.forEach((t) => next.delete(t.id.remoteId.join('/')));
+      return next;
+    });
+    setSelectedTableMap((prev) => {
+      const next = new Map(prev);
+      enabledTables.forEach((t) => next.delete(t.id.remoteId.join('/')));
+      return next;
+    });
+  }, []);
 
   const handleFilterChange = useCallback((tableKey: string, value: string) => {
     setFilterValues((prev) => {
@@ -711,48 +705,48 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                     groupEnabledTables.length > 0 &&
                     groupEnabledTables.every((t) => selectedTableIds.has(t.id.remoteId.join('/')));
                   return (
-                  <Box key={group.groupLabel ?? gi}>
-                    {group.groupLabel && (
-                      <Group gap="xs" align="center" mb={4} mt={gi > 0 ? 'sm' : 0}>
-                        <Text13Medium>{group.groupLabel}</Text13Medium>
-                        {groupEnabledTables.length > 1 && (
-                          <ButtonSecondaryInline
-                            onClick={() =>
-                              allGroupSelected
-                                ? handleDeselectAll(groupEnabledTables)
-                                : handleSelectAll(groupEnabledTables)
-                            }
-                          >
-                            {allGroupSelected ? 'Deselect all' : 'Select all'}
-                          </ButtonSecondaryInline>
-                        )}
-                      </Group>
-                    )}
-                    {group.subGroups.map((sg, si) => (
-                      <Box key={sg.subGroupLabel ?? si} ml={group.groupLabel ? 'xs' : 0}>
-                        {sg.subGroupLabel && (
-                          <Text12Regular c="dimmed" mb={2} mt={4}>
-                            {sg.subGroupLabel}
-                          </Text12Regular>
-                        )}
-                        <Stack gap={4} ml={sg.subGroupLabel ? 'xs' : 0}>
-                          {sg.tables.map((table) => {
-                            const tableKey = table.id.remoteId.join('/');
-                            const isChecked = selectedTableIds.has(tableKey);
-                            return (
-                              <Checkbox
-                                key={tableKey}
-                                label={<TableLabel table={table} />}
-                                checked={isChecked}
-                                disabled={table.disabled}
-                                onChange={() => handleToggleTable(table)}
-                              />
-                            );
-                          })}
-                        </Stack>
-                      </Box>
-                    ))}
-                  </Box>
+                    <Box key={group.groupLabel ?? gi}>
+                      {group.groupLabel && (
+                        <Group gap="xs" align="center" mb={4} mt={gi > 0 ? 'sm' : 0}>
+                          <Text13Medium>{group.groupLabel}</Text13Medium>
+                          {groupEnabledTables.length > 1 && (
+                            <ButtonSecondaryInline
+                              onClick={() =>
+                                allGroupSelected
+                                  ? handleDeselectAll(groupEnabledTables)
+                                  : handleSelectAll(groupEnabledTables)
+                              }
+                            >
+                              {allGroupSelected ? 'Deselect all' : 'Select all'}
+                            </ButtonSecondaryInline>
+                          )}
+                        </Group>
+                      )}
+                      {group.subGroups.map((sg, si) => (
+                        <Box key={sg.subGroupLabel ?? si} ml={group.groupLabel ? 'xs' : 0}>
+                          {sg.subGroupLabel && (
+                            <Text12Regular c="dimmed" mb={2} mt={4}>
+                              {sg.subGroupLabel}
+                            </Text12Regular>
+                          )}
+                          <Stack gap={4} ml={sg.subGroupLabel ? 'xs' : 0}>
+                            {sg.tables.map((table) => {
+                              const tableKey = table.id.remoteId.join('/');
+                              const isChecked = selectedTableIds.has(tableKey);
+                              return (
+                                <Checkbox
+                                  key={tableKey}
+                                  label={<TableLabel table={table} />}
+                                  checked={isChecked}
+                                  disabled={table.disabled}
+                                  onChange={() => handleToggleTable(table)}
+                                />
+                              );
+                            })}
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Box>
                   );
                 })
               : availableTables.map((table) => {

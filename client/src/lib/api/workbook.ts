@@ -756,4 +756,25 @@ export const workbookApi = {
       throw error;
     }
   },
+  gitServiceProxy: async (
+    workbookId: WorkbookId,
+    connectionId: string,
+    path: string,
+    method: string,
+    body?: Record<string, unknown>,
+  ): Promise<unknown> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
+      const res = await axios({
+        method,
+        url: `/scratch-git/${workbookId}/git-service/${connectionId}/${normalizedPath}`,
+        data: body,
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, `Git service proxy error: ${path}`);
+      throw error;
+    }
+  },
 };

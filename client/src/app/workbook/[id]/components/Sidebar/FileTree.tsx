@@ -172,12 +172,7 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
           }
 
           return (
-            <ConnectionNode
-              key={key}
-              group={group}
-              workbookId={workbook.id}
-              connectorAccount={connectorAccount}
-            />
+            <ConnectionNode key={key} group={group} workbookId={workbook.id} connectorAccount={connectorAccount} />
           );
         })}
 

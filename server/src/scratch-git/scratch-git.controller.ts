@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { All, Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type {
   DirtyFileCountResponse,
   GitGcResponse,
@@ -310,5 +310,30 @@ export class ScratchGitController {
     checkWorkspacePermissions(actor, workbookId);
     const results = await this.migrationService.stripConnectionPrefixForWorkbook(workbookId, connectorAccountId);
     return { results };
+  }
+
+  @All(':id/git-service/:connectionId/*')
+  async proxyToGitService(
+    @Param('id') workbookId: WorkbookId,
+    @Param('connectionId') connectorAccountId: string,
+    @Body() body: Record<string, unknown>,
+    @Req() req: RequestWithUser,
+  ): Promise<unknown> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+
+    // Extract path robustly from the raw URL to bypass NestJS/Express parameter mapping inconsistencies.
+    // URL typically looks like: /api/scratch-git/{id}/git-service/{connectionId}/api/repo/...
+    const urlParts = req.url.split('/git-service/');
+    let path = '';
+    if (urlParts.length > 1) {
+      const remaining = urlParts[1].split('?')[0]; // strip query string
+      const segments = remaining.split('/');
+      segments.shift(); // remove connectionId
+      path = segments.join('/');
+    }
+
+    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    return this.scratchGitService.proxyToGitService(repoId, path, req.method, body);
   }
 }

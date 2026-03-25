@@ -1,12 +1,6 @@
 'use client';
 
-import {
-  Text12Medium,
-  Text12Regular,
-  Text13Medium,
-  Text13Regular,
-  Text16Regular,
-} from '@/app/components/base/text';
+import { Text12Medium, Text12Regular, Text13Medium, Text13Regular, Text16Regular } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
@@ -234,10 +228,7 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
               {folder}
             </Text12Regular>
           )}
-          <Text12Medium
-            c="var(--fg-primary)"
-            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-          >
+          <Text12Medium c="var(--fg-primary)" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
             {filename}
           </Text12Medium>
         </Group>
@@ -249,16 +240,14 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
           <Text12Regular c="var(--fg-muted)" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
             {diffCounts.added > 0 && <span style={{ color: 'var(--mantine-color-green-7)' }}>+{diffCounts.added}</span>}
             {diffCounts.added > 0 && diffCounts.removed > 0 && ' / '}
-            {diffCounts.removed > 0 && <span style={{ color: 'var(--mantine-color-red-6)' }}>-{diffCounts.removed}</span>}
+            {diffCounts.removed > 0 && (
+              <span style={{ color: 'var(--mantine-color-red-6)' }}>-{diffCounts.removed}</span>
+            )}
           </Text12Regular>
         )}
 
         {/* Publish button (hover) */}
-        <Box
-          className="review-file-actions"
-          style={{ flexShrink: 0, opacity: 0 }}
-          onClick={handlePublish}
-        >
+        <Box className="review-file-actions" style={{ flexShrink: 0, opacity: 0 }} onClick={handlePublish}>
           <Tooltip label="Publish" position="left">
             <UnstyledButton
               disabled={isPublishing}
@@ -270,11 +259,7 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
         </Box>
 
         {/* Discard button (hover) */}
-        <Box
-          className="review-file-actions"
-          style={{ flexShrink: 0, opacity: 0 }}
-          onClick={handleDiscard}
-        >
+        <Box className="review-file-actions" style={{ flexShrink: 0, opacity: 0 }} onClick={handleDiscard}>
           <Tooltip label="Discard" position="left">
             <UnstyledButton
               style={{ padding: 2, borderRadius: 3, display: 'flex', color: 'var(--mantine-color-red-6)' }}
@@ -362,13 +347,7 @@ function SourceGroupSection({ group, workbookId, folders, onDiscard }: SourceGro
 
       {/* Files */}
       {displayedFiles.map((file) => (
-        <ReviewFileRow
-          key={file.path}
-          file={file}
-          workbookId={workbookId}
-          folders={folders}
-          onDiscard={onDiscard}
-        />
+        <ReviewFileRow key={file.path} file={file} workbookId={workbookId} folders={folders} onDiscard={onDiscard} />
       ))}
 
       {/* Load more */}

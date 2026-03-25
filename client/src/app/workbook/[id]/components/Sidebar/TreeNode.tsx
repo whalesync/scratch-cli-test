@@ -31,7 +31,6 @@ import {
   type GitObjectCountsResponse,
   type WorkbookId,
 } from '@spinner/shared-types';
-import { useShallow } from 'zustand/react/shallow';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -64,6 +63,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import React, { useCallback, useMemo, useState, type MouseEvent } from 'react';
 import useSWR from 'swr';
+import { useShallow } from 'zustand/react/shallow';
 import { AssetIndexModal } from '../modals/AssetIndexModal';
 import { GitFileBrowserModal } from '../modals/GitFileBrowserModal';
 import { GitGcModal } from '../modals/GitGcModal';
@@ -202,13 +202,7 @@ interface FolderTreeRendererProps {
   idPrefix: string;
 }
 
-function FolderTreeRenderer({
-  tree,
-  depth,
-  groupName,
-  workbookId,
-  idPrefix,
-}: FolderTreeRendererProps) {
+function FolderTreeRenderer({ tree, depth, groupName, workbookId, idPrefix }: FolderTreeRendererProps) {
   return (
     <>
       {Array.from(tree.children.entries()).map(([segName, childNode], childIndex) => {
@@ -229,11 +223,7 @@ function FolderTreeRenderer({
       })}
       {tree.folders.map((folder, folderIndex) => (
         <Box key={folder.id ?? `folder-${folderIndex}`} component="span" style={{ display: 'contents' }}>
-          <TableNode
-            folder={folder}
-            workbookId={workbookId}
-            groupName={groupName}
-          />
+          <TableNode folder={folder} workbookId={workbookId} groupName={groupName} />
         </Box>
       ))}
     </>
@@ -250,11 +240,7 @@ interface ConnectionNodeProps {
   connectorAccount?: ConnectorAccount;
 }
 
-export function ConnectionNode({
-  group,
-  workbookId,
-  connectorAccount,
-}: ConnectionNodeProps) {
+export function ConnectionNode({ group, workbookId, connectorAccount }: ConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
@@ -313,6 +299,26 @@ export function ConnectionNode({
   const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
   const [indexModalOpen, setIndexModalOpen] = useState(false);
   const [isBuildingIndex, setIsBuildingIndex] = useState(false);
+  const [isBuildingPublishPlan, setIsBuildingPublishPlan] = useState(false);
+
+  const handleBuildPublishPlan = async () => {
+    if (!connectorAccount) return;
+    setIsBuildingPublishPlan(true);
+    try {
+      await workbookApi.gitServiceProxy(
+        workbookId,
+        connectorAccount.id,
+        'api/repo/publish-plan/:repoId/build',
+        'POST',
+        { connectionName: connectorAccount.displayName || connectorAccount.id, connectionId: connectorAccount.id },
+      );
+      notifications.show({ title: 'Success', message: 'Publish plan build triggered', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to build publish plan', color: 'red' });
+    } finally {
+      setIsBuildingPublishPlan(false);
+    }
+  };
 
   const handleBuildIndex = async () => {
     if (!connectorAccount) return;
@@ -666,6 +672,14 @@ export function ConnectionNode({
                         icon: GitGraphIcon,
                         devtool: true,
                         onClick: () => void handleViewIndex(),
+                      },
+                      { type: 'divider' as const },
+                      {
+                        label: 'Build Publish Plan',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleBuildPublishPlan(),
+                        disabled: isBuildingPublishPlan,
                       },
                     ],
                   },
@@ -1356,6 +1370,25 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
   const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
   const [indexModalOpen, setIndexModalOpen] = useState(false);
   const [isBuildingIndex, setIsBuildingIndex] = useState(false);
+  const [isBuildingPublishPlan, setIsBuildingPublishPlan] = useState(false);
+
+  const handleBuildPublishPlan = async () => {
+    setIsBuildingPublishPlan(true);
+    try {
+      await workbookApi.gitServiceProxy(
+        workbookId,
+        connectorAccount.id,
+        'api/repo/publish-plan/:repoId/build',
+        'POST',
+        { connectionName: connectorAccount.displayName || connectorAccount.id, connectionId: connectorAccount.id },
+      );
+      notifications.show({ title: 'Success', message: 'Publish plan build triggered', color: 'green' });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to build publish plan', color: 'red' });
+    } finally {
+      setIsBuildingPublishPlan(false);
+    }
+  };
 
   const handleBuildIndex = async () => {
     setIsBuildingIndex(true);
@@ -1659,6 +1692,14 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
                         icon: GitGraphIcon,
                         devtool: true,
                         onClick: () => void handleViewIndex(),
+                      },
+                      { type: 'divider' as const },
+                      {
+                        label: 'Build Publish Plan',
+                        icon: GitGraphIcon,
+                        devtool: true,
+                        onClick: () => void handleBuildPublishPlan(),
+                        disabled: isBuildingPublishPlan,
                       },
                     ],
                   },
