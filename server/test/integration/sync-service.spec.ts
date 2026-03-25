@@ -101,7 +101,6 @@ describe('SyncService - fillSyncCaches', () => {
         id: srcFolderId,
         name: 'Source Folder',
         workbookId,
-        lastSchemaRefreshAt: new Date(),
       },
     });
     sourceFolderId = srcFolderId;
@@ -112,7 +111,6 @@ describe('SyncService - fillSyncCaches', () => {
         id: dstFolderId,
         name: 'Destination Folder',
         workbookId,
-        lastSchemaRefreshAt: new Date(),
       },
     });
     destFolderId = dstFolderId;
@@ -438,7 +436,6 @@ describe('SyncService - syncTableMapping', () => {
         name: 'Source Folder',
         workbookId,
         path: '/src',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     sourceFolderId = srcFolderId;
@@ -450,7 +447,6 @@ describe('SyncService - syncTableMapping', () => {
         name: 'Destination Folder',
         workbookId,
         path: '/dest',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     destFolderId = dstFolderId;
@@ -1306,7 +1302,6 @@ describe('SyncService - syncTableMapping', () => {
         name: 'Nested ID Source',
         workbookId,
         path: '/nested-src',
-        lastSchemaRefreshAt: new Date(),
       },
     });
 
@@ -1710,7 +1705,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Source Authors',
         workbookId,
         path: '/src-authors',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     sourceAuthorsFolderId = srcAuthId;
@@ -1722,7 +1716,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Dest Authors',
         workbookId,
         path: '/dest-authors',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     destAuthorsFolderId = dstAuthId;
@@ -1734,7 +1727,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     sourcePostsFolderId = srcPostsId;
@@ -1746,7 +1738,6 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         name: 'Dest Posts',
         workbookId,
         path: '/dest-posts',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     destPostsFolderId = dstPostsId;
@@ -2460,7 +2451,6 @@ describe('SyncService - lookup_field transformer', () => {
         name: 'Source Categories',
         workbookId,
         path: '/src-categories',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     sourceCategoriesFolderId = srcCatId;
@@ -2472,7 +2462,6 @@ describe('SyncService - lookup_field transformer', () => {
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     sourcePostsFolderId = srcPostsId;
@@ -2484,7 +2473,6 @@ describe('SyncService - lookup_field transformer', () => {
         name: 'Dest Posts',
         workbookId,
         path: '/dest-posts',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     destPostsFolderId = dstPostsId;

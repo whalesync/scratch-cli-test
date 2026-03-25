@@ -6,7 +6,6 @@ export interface DataFolderSummary {
   connectorService: string | null;
   path: string | null;
   lock: string | null;
-  lastSyncTime: Date | null;
   options: Record<string, unknown> | null;
 }
 

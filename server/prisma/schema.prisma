@@ -336,15 +336,6 @@ model DataFolder {
   // Service type (required when linked to a connector, optional otherwise)
   connectorService String?
 
-  // @deprecated — schema is now stored in git (.schema.json). This column will be dropped in a future migration.
-  schema              Json?
-  lastSchemaRefreshAt DateTime
-
-  // Optional folder hierarchy
-  parent   DataFolder?  @relation("DataFolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
-  parentId String?
-  children DataFolder[] @relation("DataFolderHierarchy")
-
   // Path of this folder in the File Store that contains the actual files
   path String?
 
@@ -376,10 +367,9 @@ model DataFolder {
   // Will be an object matching any of the Connector options interfaces such as ConnectorPullOptions.
   options Json? @default("{}")
 
-  @@unique([workbookId, parentId, name])
+  @@unique([workbookId, name])
   @@index([workbookId])
   @@index([connectorAccountId])
-  @@index([parentId])
   @@index([path])
 }
 

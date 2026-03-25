@@ -718,7 +718,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       await expect(handler.run({ ...params, jobId: 'test-job-id' })).rejects.toThrow('Invalid job data: dataFolderIds');
     });
 
-    it('should update dataFolder lock and lastSyncTime on success', async () => {
+    it('should update dataFolder lock on success', async () => {
       const dataFolder = createMockDataFolder();
       const connectorAccount = createMockConnectorAccount();
       const mockConnector = createMockConnector();
@@ -744,8 +744,6 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         where: { id: 'dfld_123' },
         data: {
           lock: null,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          lastSyncTime: expect.any(Date),
         },
       });
     });
@@ -909,18 +907,6 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         wsId: 'tbl_abc',
         remoteId: ['tbl_abc'],
       });
-
-      // Verify lastSchemaRefreshAt was saved to DB (schema column no longer written)
-      expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'dfld_123' },
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          data: expect.objectContaining({
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            lastSchemaRefreshAt: expect.any(Date),
-          }),
-        }),
-      );
 
       // Verify fresh schema was written to git
       expect(mockScratchGitService.writeSchemaToGit).toHaveBeenCalledWith('wkb_123', '/test-folder', freshSchema);

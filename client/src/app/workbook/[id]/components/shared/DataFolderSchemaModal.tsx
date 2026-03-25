@@ -32,7 +32,7 @@ export function DataFolderSchemaModal({ opened, onClose, folder, mode = 'view' }
 
   const error = swrError ? (swrError instanceof Error ? swrError.message : 'Failed to load schema') : null;
 
-  const lastUpdated = mode === 'refresh' && schema ? new Date().toISOString() : folder.lastSchemaRefreshAt;
+  const lastUpdated = mode === 'refresh' && schema ? new Date().toISOString() : new Date().toISOString();
   const lastUpdatedLabel = lastUpdated ? `Last updated ${new Date(lastUpdated).toLocaleString()}` : null;
 
   const extensions = useMemo(() => [json(), EditorView.lineWrapping], []);

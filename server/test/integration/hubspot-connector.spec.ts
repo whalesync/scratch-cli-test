@@ -57,10 +57,7 @@ function seedDeals(deals: Record<string, string | null>[]) {
 }
 
 /** Collect all files from a pull operation into a flat array. */
-async function collectPulledFiles(
-  connector: HubspotConnector,
-  tableSpec: BaseJsonTableSpec,
-): Promise<ConnectorFile[]> {
+async function collectPulledFiles(connector: HubspotConnector, tableSpec: BaseJsonTableSpec): Promise<ConnectorFile[]> {
   const allFiles: ConnectorFile[] = [];
   await connector.pullRecordFiles(
     tableSpec,
@@ -275,9 +272,7 @@ describe('HubspotConnector with fake API', () => {
       });
 
       expect(files).toHaveLength(2);
-      const emails = files.map(
-        (f) => (f as unknown as { properties: Record<string, string> }).properties.email,
-      );
+      const emails = files.map((f) => (f as unknown as { properties: Record<string, string> }).properties.email);
       expect(emails).toContain('a@example.com');
       expect(emails).toContain('c@example.com');
       expect(emails).not.toContain('b@example.com');
@@ -439,9 +434,7 @@ describe('HubspotConnector with fake API', () => {
       const connector = createConnector();
       const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
 
-      await expect(
-        connector.deleteRecords(spec, [{ id: '99999' } as ConnectorFile]),
-      ).resolves.toBeUndefined();
+      await expect(connector.deleteRecords(spec, [{ id: '99999' } as ConnectorFile])).resolves.toBeUndefined();
     });
   });
 

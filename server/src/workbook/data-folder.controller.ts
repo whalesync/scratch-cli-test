@@ -17,17 +17,10 @@ import type {
   DataFolder,
   DataFolderId,
   ValidatedCreateDataFolderDto,
-  ValidatedMoveDataFolderDto,
-  ValidatedRenameDataFolderDto,
   ValidatedUpdateDataFolderDto,
   WorkbookId,
 } from '@spinner/shared-types';
-import {
-  CreateDataFolderDto,
-  MoveDataFolderDto,
-  RenameDataFolderDto,
-  UpdateDataFolderDto,
-} from '@spinner/shared-types';
+import { CreateDataFolderDto, UpdateDataFolderDto } from '@spinner/shared-types';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -88,26 +81,6 @@ export class DataFolderController {
   ): Promise<DataFolder> {
     const dto = updateDto as ValidatedUpdateDataFolderDto;
     return await this.dataFolderService.updateFolder(id, dto, userToActor(req.user));
-  }
-
-  @Patch(':id/rename')
-  async rename(
-    @Param('id') id: DataFolderId,
-    @Body() renameDto: RenameDataFolderDto,
-    @Req() req: RequestWithUser,
-  ): Promise<DataFolder> {
-    const dto = renameDto as ValidatedRenameDataFolderDto;
-    return await this.dataFolderService.renameFolder(id, dto.name, userToActor(req.user));
-  }
-
-  @Patch(':id/move')
-  async move(
-    @Param('id') id: DataFolderId,
-    @Body() moveDto: MoveDataFolderDto,
-    @Req() req: RequestWithUser,
-  ): Promise<DataFolder> {
-    const dto = moveDto as ValidatedMoveDataFolderDto;
-    return await this.dataFolderService.moveFolder(id, dto.parentFolderId ?? null, userToActor(req.user));
   }
 
   @Post(':id/files')

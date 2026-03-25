@@ -91,7 +91,6 @@ export class DataFolderService {
     const schedulesByEntityId = await this.workbookService.fetchSchedulesByEntityId(workbookId);
 
     // Group data folders by connector account
-    const scratchFolders: DataFolderCluster.DataFolder[] = [];
     const connectorAccountGroups = new Map<
       string,
       {
@@ -102,9 +101,7 @@ export class DataFolderService {
     >();
 
     for (const folder of dataFolders) {
-      if (!folder.connectorAccountId || !folder.connectorAccount) {
-        scratchFolders.push(folder);
-      } else {
+      if (folder.connectorAccountId && folder.connectorAccount) {
         const accountId = folder.connectorAccountId;
         if (!connectorAccountGroups.has(accountId)) {
           connectorAccountGroups.set(accountId, {
@@ -119,17 +116,6 @@ export class DataFolderService {
 
     // Build the result array with Scratch group first
     const groups: DataFolderGroupEntity[] = [];
-
-    // Add Scratch group first (if there are any scratch folders)
-    if (scratchFolders.length > 0) {
-      groups.push(
-        new DataFolderGroupEntity(
-          'Scratch',
-          null,
-          scratchFolders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? [])),
-        ),
-      );
-    }
 
     // Add connector account groups
     for (const [, group] of connectorAccountGroups) {
@@ -195,216 +181,182 @@ export class DataFolderService {
       }
     }
 
+    if (!connectorAccountId) {
+      throw new BadRequestException('Connector account is required to create a data folder');
+    }
+
+    if (!dto.tableId || dto.tableId.length === 0) {
+      throw new BadRequestException('A remote table ID is required to create a data folder');
+    }
+
     const dataFolderId = createDataFolderId();
 
-    if (connectorAccountId && dto.tableId && dto.tableId.length > 0) {
-      // Case 1: Connected folder with connector account and table IDs
-      const connectorAccount = await this.connectorAccountService.findOneById(connectorAccountId, actor);
-      if (!connectorAccount) {
-        throw new NotFoundException('Connector account not found');
+    // Case 1: Connected folder with connector account and table IDs
+    const connectorAccount = await this.connectorAccountService.findOneById(connectorAccountId, actor);
+    if (!connectorAccount) {
+      throw new NotFoundException('Connector account not found');
+    }
+
+    const service = connectorAccount.service;
+
+    // Get connector and fetch table spec
+    const connector = await this.connectorService.getConnector({
+      service,
+      connectorAccount: connectorAccount as ConnectorAccount,
+      decryptedCredentials: connectorAccount as unknown as DecryptedCredentials,
+    });
+
+    // Validate filter support
+    if (filter && !connector.supportsFilters()) {
+      throw new BadRequestException('This connector does not support filters');
+    }
+
+    // Fetch table spec for the first tableId
+    let tableSpec: BaseJsonTableSpec;
+    try {
+      tableSpec = await connector.fetchJsonTableSpec({ wsId: dto.tableId[0], remoteId: dto.tableId });
+    } catch (error) {
+      throw exceptionForConnectorError(error, connector);
+    }
+
+    // Apply user field overrides to the schema
+    const { idFieldOverride, nameFieldOverride } = dto;
+    if (idFieldOverride || nameFieldOverride) {
+      const schemaProps = (tableSpec.schema as Record<string, unknown>)?.properties as
+        | Record<string, unknown>
+        | undefined;
+      if (idFieldOverride) {
+        if (!schemaProps?.[idFieldOverride]) {
+          throw new BadRequestException(`ID field "${idFieldOverride}" does not exist in the table schema`);
+        }
+        tableSpec.idColumnRemoteId = idFieldOverride;
       }
+      if (nameFieldOverride) {
+        if (!schemaProps?.[nameFieldOverride]) {
+          throw new BadRequestException(`Name field "${nameFieldOverride}" does not exist in the table schema`);
+        }
+        tableSpec.titleColumnRemoteId = [nameFieldOverride];
+      }
+    }
 
-      const service = connectorAccount.service;
+    // Build path from connector display name, base path, and table name
+    let folderPath = this.buildConnectorFolderPath(
+      connectorAccount.displayName,
+      tableSpec,
+      parentFolder?.path ?? undefined,
+    );
 
-      // Get connector and fetch table spec
-      const connector = await this.connectorService.getConnector({
-        service,
-        connectorAccount: connectorAccount as ConnectorAccount,
-        decryptedCredentials: connectorAccount as unknown as DecryptedCredentials,
+    // Ensure path is unique within the workbook
+    folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
+
+    // Create the DataFolder
+    const isAssetTable = Boolean(tableSpec.schema[ASSET_TABLE]);
+    const createdDataFolder = await this.db.client.dataFolder.create({
+      data: {
+        id: dataFolderId,
+        name,
+        workbookId,
+        connectorAccountId,
+        connectorService: service,
+        path: folderPath,
+        lock: 'pull',
+        version: 1,
+        tableId: dto.tableId,
+        isAssetTable,
+        options: {
+          ...(dto.options ?? {}),
+          ...(filter ? { filter } : {}),
+          ...(idFieldOverride ? { idFieldOverride } : {}),
+          ...(nameFieldOverride ? { nameFieldOverride } : {}),
+        } as Prisma.InputJsonValue,
+      },
+      include: DataFolderCluster._validator.include,
+    });
+
+    // Write schema to git repo
+    try {
+      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+      await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
+    } catch (error) {
+      WSLogger.error({
+        source: 'DataFolderService.createFolder',
+        message: 'Failed to write schema to git',
+        error,
+        workbookId,
+        dataFolderId,
       });
+    }
 
-      // Validate filter support
-      if (filter && !connector.supportsFilters()) {
-        throw new BadRequestException('This connector does not support filters');
-      }
+    this.workbookEventService.sendWorkbookEvent(workbookId, {
+      type: 'folder-created',
+      data: { source: 'user', entityId: dataFolderId, message: 'Folder created' },
+    });
 
-      // Fetch table spec for the first tableId
-      let tableSpec: BaseJsonTableSpec;
+    // Trigger pull job (defaults to true if not specified)
+    if (dto.triggerPull !== false) {
       try {
-        tableSpec = await connector.fetchJsonTableSpec({ wsId: dto.tableId[0], remoteId: dto.tableId });
-      } catch (error) {
-        throw exceptionForConnectorError(error, connector);
-      }
-
-      // Apply user field overrides to the schema
-      const { idFieldOverride, nameFieldOverride } = dto;
-      if (idFieldOverride || nameFieldOverride) {
-        const schemaProps = (tableSpec.schema as Record<string, unknown>)?.properties as
-          | Record<string, unknown>
-          | undefined;
-        if (idFieldOverride) {
-          if (!schemaProps?.[idFieldOverride]) {
-            throw new BadRequestException(`ID field "${idFieldOverride}" does not exist in the table schema`);
-          }
-          tableSpec.idColumnRemoteId = idFieldOverride;
-        }
-        if (nameFieldOverride) {
-          if (!schemaProps?.[nameFieldOverride]) {
-            throw new BadRequestException(`Name field "${nameFieldOverride}" does not exist in the table schema`);
-          }
-          tableSpec.titleColumnRemoteId = [nameFieldOverride];
-        }
-      }
-
-      // Build path from connector display name, base path, and table name
-      let folderPath = this.buildConnectorFolderPath(
-        connectorAccount.displayName,
-        tableSpec,
-        parentFolder?.path ?? undefined,
-      );
-
-      // Ensure path is unique within the workbook
-      folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
-
-      // Create the DataFolder
-      const isAssetTable = Boolean(tableSpec.schema[ASSET_TABLE]);
-      const createdDataFolder = await this.db.client.dataFolder.create({
-        data: {
-          id: dataFolderId,
-          name,
+        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
           workbookId,
-          connectorAccountId,
-          connectorService: service,
-          parentId: parentFolderId ?? null,
-          path: folderPath,
-          lock: 'pull',
-          lastSchemaRefreshAt: new Date(),
-          version: 1,
-          tableId: dto.tableId,
-          isAssetTable,
-          options: {
-            ...(dto.options ?? {}),
-            ...(filter ? { filter } : {}),
-            ...(idFieldOverride ? { idFieldOverride } : {}),
-            ...(nameFieldOverride ? { nameFieldOverride } : {}),
-          } as Prisma.InputJsonValue,
-        },
-        include: DataFolderCluster._validator.include,
-      });
-
-      // Write schema to git repo
-      try {
-        const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
-        await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
+          actor,
+          [dataFolderId],
+          {
+            totalFiles: 0,
+            folderCount: 1,
+            connectionName: createdDataFolder.connectorAccount?.displayName ?? 'Unknown connection',
+            folderId: dataFolderId,
+            folderName: createdDataFolder.name,
+            connector: createdDataFolder.connectorService ?? 'unknown',
+            filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+            status: 'pending',
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          },
+          runContext,
+        );
+        WSLogger.info({
+          source: 'DataFolderService.createFolder',
+          message: 'Started pulling files for newly created data folder',
+          workbookId,
+          dataFolderId,
+        });
       } catch (error) {
         WSLogger.error({
           source: 'DataFolderService.createFolder',
-          message: 'Failed to write schema to git',
+          message: 'Failed to start pull job for newly created data folder',
           error,
           workbookId,
           dataFolderId,
         });
       }
-
-      this.workbookEventService.sendWorkbookEvent(workbookId, {
-        type: 'folder-created',
-        data: { source: 'user', entityId: dataFolderId, message: 'Folder created' },
-      });
-
-      // Trigger pull job (defaults to true if not specified)
-      if (dto.triggerPull !== false) {
-        try {
-          await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
-            workbookId,
-            actor,
-            [dataFolderId],
-            {
-              totalFiles: 0,
-              folderCount: 1,
-              connectionName: createdDataFolder.connectorAccount?.displayName ?? 'Unknown connection',
-              folderId: dataFolderId,
-              folderName: createdDataFolder.name,
-              connector: createdDataFolder.connectorService ?? 'unknown',
-              filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
-              status: 'pending',
-              createdPaths: [],
-              updatedPaths: [],
-              deletedPaths: [],
-            },
-            runContext,
-          );
-          WSLogger.info({
-            source: 'DataFolderService.createFolder',
-            message: 'Started pulling files for newly created data folder',
-            workbookId,
-            dataFolderId,
-          });
-        } catch (error) {
-          WSLogger.error({
-            source: 'DataFolderService.createFolder',
-            message: 'Failed to start pull job for newly created data folder',
-            error,
-            workbookId,
-            dataFolderId,
-          });
-        }
-      } else {
-        WSLogger.info({
-          source: 'DataFolderService.createFolder',
-          message: 'Skipped pull job for newly created data folder (triggerPull=false)',
-          workbookId,
-          dataFolderId,
-        });
-      }
-
-      // Log audit event
-      await this.auditLogService.logEvent({
-        actor,
-        eventType: 'create',
-        message: `Created linked data folder ${name} in workbook ${workbook.name}`,
-        entityId: dataFolderId,
-        organizationId: workbook.organizationId,
-        context: {
-          workbookId,
-          connectorAccountId,
-          service,
-          tableSpec: tableSpec?.name,
-          ...(idFieldOverride ? { idFieldOverride } : {}),
-          ...(nameFieldOverride ? { nameFieldOverride } : {}),
-        },
-      });
-
-      this.posthogService.trackAddDataFolder(actor, createdDataFolder);
-      return new DataFolderEntity(createdDataFolder);
     } else {
-      // Case 2: Scratch folder with no connector
-      let folderPath = parentFolder ? `${parentFolder.path}/${name}` : '/' + name;
-
-      // Ensure path is unique within the workbook
-      folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
-
-      const createdDataFolder = await this.db.client.dataFolder.create({
-        data: {
-          id: dataFolderId,
-          name,
-          workbookId,
-          connectorAccountId: null,
-          connectorService: null,
-          parentId: parentFolderId ?? null,
-          path: folderPath,
-          lastSchemaRefreshAt: new Date(),
-          version: 1,
-          options: { ...(dto.options ?? {}), ...(filter ? { filter } : {}) } as Prisma.InputJsonValue,
-        },
-        include: DataFolderCluster._validator.include,
+      WSLogger.info({
+        source: 'DataFolderService.createFolder',
+        message: 'Skipped pull job for newly created data folder (triggerPull=false)',
+        workbookId,
+        dataFolderId,
       });
-
-      // Log audit event
-      await this.auditLogService.logEvent({
-        actor,
-        eventType: 'create',
-        message: `Created scratch data folder ${name} in workbook ${workbook.name}`,
-        entityId: dataFolderId,
-        organizationId: workbook.organizationId,
-        context: {
-          workbookId,
-          parentFolderId: parentFolderId ?? null,
-        },
-      });
-
-      this.posthogService.trackAddDataFolder(actor, createdDataFolder);
-      return new DataFolderEntity(createdDataFolder);
     }
+
+    // Log audit event
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'create',
+      message: `Created linked data folder ${name} in workbook ${workbook.name}`,
+      entityId: dataFolderId,
+      organizationId: workbook.organizationId,
+      context: {
+        workbookId,
+        connectorAccountId,
+        service,
+        tableSpec: tableSpec?.name,
+        ...(idFieldOverride ? { idFieldOverride } : {}),
+        ...(nameFieldOverride ? { nameFieldOverride } : {}),
+      },
+    });
+
+    this.posthogService.trackAddDataFolder(actor, createdDataFolder);
+    return new DataFolderEntity(createdDataFolder);
   }
 
   async deleteFolder(id: DataFolderId, actor: Actor): Promise<void> {
@@ -460,142 +412,6 @@ export class DataFolderService {
         folderName: dataFolder.name,
       },
     });
-  }
-
-  async renameFolder(id: DataFolderId, newName: string, actor: Actor): Promise<DataFolderEntity> {
-    // Fetch the data folder
-    const dataFolder = await this.db.client.dataFolder.findUnique({
-      where: { id },
-      include: DataFolderCluster._validator.include,
-    });
-
-    if (!dataFolder) {
-      throw new NotFoundException('Data folder not found');
-    }
-
-    // Only scratch folders can be renamed
-    if (dataFolder.connectorAccountId) {
-      throw new BadRequestException('Only scratch folders can be renamed');
-    }
-
-    // Verify user has access to the workbook
-    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
-    const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    // Build the new path
-    const parentPath = dataFolder.parentId ? dataFolder.path?.substring(0, dataFolder.path.lastIndexOf('/')) || '' : '';
-    const newPath = parentPath ? `${parentPath}/${newName}` : '/' + newName;
-
-    // Update the folder name and path
-    const updatedDataFolder = await this.db.client.dataFolder.update({
-      where: { id },
-      data: {
-        name: newName,
-        path: newPath,
-      },
-      include: DataFolderCluster._validator.include,
-    });
-
-    // Update paths of all children recursively
-    await this.updateChildrenPaths(id, newPath);
-
-    // Log audit event
-    await this.auditLogService.logEvent({
-      actor,
-      eventType: 'update',
-      message: `Renamed data folder from ${dataFolder.name} to ${newName} in workbook ${workbook.name}`,
-      entityId: id,
-      organizationId: workbook.organizationId,
-      context: {
-        workbookId: dataFolder.workbookId,
-        oldName: dataFolder.name,
-        newName,
-      },
-    });
-
-    return new DataFolderEntity(updatedDataFolder);
-  }
-
-  async moveFolder(id: DataFolderId, newParentFolderId: string | null, actor: Actor): Promise<DataFolderEntity> {
-    // Fetch the data folder
-    const dataFolder = await this.db.client.dataFolder.findUnique({
-      where: { id },
-      include: DataFolderCluster._validator.include,
-    });
-
-    if (!dataFolder) {
-      throw new NotFoundException('Data folder not found');
-    }
-
-    // Only scratch folders can be moved
-    if (dataFolder.connectorAccountId) {
-      throw new BadRequestException('Only scratch folders can be moved');
-    }
-
-    // Verify user has access to the workbook
-    const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
-
-    // Load new parent folder if specified
-    let newParentFolder: DataFolderCluster.DataFolder | null = null;
-    if (newParentFolderId) {
-      newParentFolder = await this.db.client.dataFolder.findUnique({
-        where: { id: newParentFolderId },
-        include: DataFolderCluster._validator.include,
-      });
-      if (!newParentFolder) {
-        throw new NotFoundException('Parent folder not found');
-      }
-      // Verify parent folder belongs to the same workbook
-      if (newParentFolder.workbookId !== dataFolder.workbookId) {
-        throw new BadRequestException('Parent folder does not belong to the same workbook');
-      }
-      // Prevent moving a folder into itself or its descendants
-      if (newParentFolderId === id || newParentFolder.path?.startsWith(dataFolder.path + '/')) {
-        throw new BadRequestException('Cannot move a folder into itself or its descendants');
-      }
-    }
-
-    // Build the new path
-    const newPath = newParentFolder ? `${newParentFolder.path}/${dataFolder.name}` : '/' + dataFolder.name;
-
-    // Update the folder
-    const updatedDataFolder = await this.db.client.dataFolder.update({
-      where: { id },
-      data: {
-        parentId: newParentFolderId,
-        path: newPath,
-      },
-      include: DataFolderCluster._validator.include,
-    });
-
-    // Update paths of all children recursively
-    await this.updateChildrenPaths(id, newPath);
-
-    // Log audit event
-    await this.auditLogService.logEvent({
-      actor,
-      eventType: 'update',
-      message: `Moved data folder ${dataFolder.name} in workbook ${workbook.name}`,
-      entityId: id,
-      organizationId: workbook.organizationId,
-      context: {
-        workbookId: dataFolder.workbookId,
-        oldParentId: dataFolder.parentId,
-        newParentId: newParentFolderId,
-        oldPath: dataFolder.path,
-        newPath,
-      },
-    });
-
-    return new DataFolderEntity(updatedDataFolder);
   }
 
   async updateFolder(id: DataFolderId, dto: ValidatedUpdateDataFolderDto, actor: Actor): Promise<DataFolderEntity> {
@@ -670,22 +486,6 @@ export class DataFolderService {
     }
 
     return path;
-  }
-
-  private async updateChildrenPaths(parentId: string, parentPath: string): Promise<void> {
-    const children = await this.db.client.dataFolder.findMany({
-      where: { parentId },
-    });
-
-    for (const child of children) {
-      const childPath = `${parentPath}/${child.name}`;
-      await this.db.client.dataFolder.update({
-        where: { id: child.id },
-        data: { path: childPath },
-      });
-      // Recursively update grandchildren
-      await this.updateChildrenPaths(child.id, childPath);
-    }
   }
 
   async getNewFileTemplate(id: DataFolderId, actor: Actor): Promise<Record<string, unknown>> {
@@ -965,12 +765,6 @@ export class DataFolderService {
       if (typeof nameOverride === 'string') {
         tableSpec.titleColumnRemoteId = [nameOverride];
       }
-
-      // Persist refreshed schema with overrides
-      await this.db.client.dataFolder.update({
-        where: { id },
-        data: { lastSchemaRefreshAt: new Date() },
-      });
 
       // Write schema to git repo
       try {

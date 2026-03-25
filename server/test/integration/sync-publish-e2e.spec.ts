@@ -207,7 +207,11 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       updateRecords: jest
         .fn()
         .mockImplementation(
-          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> | undefined)[]) => {
+          (
+            tableSpec: BaseJsonTableSpec,
+            files: ConnectorFile[],
+            changedFields?: (Record<string, unknown> | undefined)[],
+          ) => {
             const idField = tableSpec.idColumnRemoteId;
             for (const file of files) {
               const idValue = file[idField];
@@ -223,7 +227,9 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
               for (const cf of changedFields) {
                 if (!cf) continue;
                 if (typeof cf !== 'object' || Array.isArray(cf)) {
-                  throw new Error(`updateRecords: changedFields should be plain objects, but got: ${JSON.stringify(cf)}`);
+                  throw new Error(
+                    `updateRecords: changedFields should be plain objects, but got: ${JSON.stringify(cf)}`,
+                  );
                 }
               }
             }
@@ -335,7 +341,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         name: 'Source Tags',
         workbookId,
         path: '/src-tags',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(sourceTagsFolderId, 'src-tags');
@@ -348,7 +353,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         workbookId,
         path: '/dest-tags',
         connectorAccountId,
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(destTagsFolderId, 'dest-tags');
@@ -360,7 +364,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(sourcePostsFolderId, 'src-posts');
@@ -373,7 +376,6 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         workbookId,
         path: '/dest-posts',
         connectorAccountId,
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(destPostsFolderId, 'dest-posts');
@@ -1294,7 +1296,11 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       updateRecords: jest
         .fn()
         .mockImplementation(
-          (tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> | undefined)[]) => {
+          (
+            tableSpec: BaseJsonTableSpec,
+            files: ConnectorFile[],
+            changedFields?: (Record<string, unknown> | undefined)[],
+          ) => {
             const idField = tableSpec.idColumnRemoteId;
             for (const file of files) {
               const idValue = file[idField];
@@ -1310,7 +1316,9 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
               for (const cf of changedFields) {
                 if (!cf) continue;
                 if (typeof cf !== 'object' || Array.isArray(cf)) {
-                  throw new Error(`updateRecords: changedFields should be plain objects, but got: ${JSON.stringify(cf)}`);
+                  throw new Error(
+                    `updateRecords: changedFields should be plain objects, but got: ${JSON.stringify(cf)}`,
+                  );
                 }
               }
             }
@@ -1424,7 +1432,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         name: 'Source Tags',
         workbookId,
         path: '/src-tags',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(sourceTagsFolderId, 'src-tags');
@@ -1437,7 +1444,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         workbookId,
         path: '/dest-tags',
         connectorAccountId,
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(destTagsFolderId, 'dest-tags');
@@ -1449,7 +1455,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         name: 'Source Posts',
         workbookId,
         path: '/src-posts',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(sourcePostsFolderId, 'src-posts');
@@ -1462,7 +1467,6 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         workbookId,
         path: '/dest-posts',
         connectorAccountId,
-        lastSchemaRefreshAt: new Date(),
       },
     });
     folderPathMap.set(destPostsFolderId, 'dest-posts');

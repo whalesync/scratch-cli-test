@@ -18,11 +18,8 @@ export class DataFolderEntity implements DataFolder {
   connectorAccountId: string | null;
   connectorService: Service | null;
   connectorDisplayName: string | null;
-  parentId: string | null;
   path: string | null;
-  lastSchemaRefreshAt: string | null;
   lock: string | null;
-  lastSyncTime: string | null;
   version: number;
   tableId: string[];
   isAssetTable: boolean;
@@ -38,11 +35,8 @@ export class DataFolderEntity implements DataFolder {
     this.connectorAccountId = dataFolder.connectorAccountId;
     this.connectorService = dataFolder.connectorService ? dataFolder.connectorService : null;
     this.connectorDisplayName = dataFolder.connectorAccount ? dataFolder.connectorAccount.displayName : null;
-    this.parentId = dataFolder.parentId;
     this.path = dataFolder.path;
-    this.lastSchemaRefreshAt = dataFolder.lastSchemaRefreshAt ? dataFolder.lastSchemaRefreshAt.toISOString() : null;
     this.lock = dataFolder.lock;
-    this.lastSyncTime = dataFolder.lastSyncTime ? dataFolder.lastSyncTime.toISOString() : null;
     this.version = dataFolder.version;
     this.tableId = dataFolder.tableId;
     this.isAssetTable = dataFolder.isAssetTable;

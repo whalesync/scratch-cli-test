@@ -16,7 +16,6 @@ function makeFolder(overrides: Partial<DataFolder> & { id: DataFolderId; path: s
     lastSchemaRefreshAt: null,
     parentId: null,
     lock: null,
-    lastSyncTime: null,
     version: 1,
     tableId: [],
     options: null,

@@ -348,7 +348,6 @@ describe('Fetch → Edit → Publish Integration', () => {
         workbookId,
         connectorAccountId,
         connectorService: Service.POSTGRES,
-        lastSchemaRefreshAt: new Date(),
         tableId: ['public', AUTHORS_TABLE],
       },
     });
@@ -362,7 +361,6 @@ describe('Fetch → Edit → Publish Integration', () => {
         workbookId,
         connectorAccountId,
         connectorService: Service.POSTGRES,
-        lastSchemaRefreshAt: new Date(),
         tableId: ['public', POSTS_TABLE],
       },
     });

@@ -364,7 +364,6 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
           where: { id: dataFolder.id },
           data: {
             lock: null,
-            lastSyncTime: new Date(),
           },
         });
 

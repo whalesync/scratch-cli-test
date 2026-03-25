@@ -41,13 +41,11 @@ export interface WorkbookExportJson {
       name: string;
       connectorAccountId: string | null;
       connectorService: string | null;
-      parentId: string | null;
       path: string | null;
       version: number;
       tableId: string[];
       isAssetTable: boolean;
       options: unknown;
-      lastSchemaRefreshAt: string;
     }
   >;
   syncs: Record<
@@ -123,13 +121,11 @@ export class DevToolsService {
         name: df.name,
         connectorAccountId: df.connectorAccountId,
         connectorService: df.connectorService,
-        parentId: df.parentId,
         path: df.path,
         version: df.version,
         tableId: df.tableId,
         isAssetTable: df.isAssetTable,
         options: df.options,
-        lastSchemaRefreshAt: df.lastSchemaRefreshAt.toISOString(),
       };
     }
 
@@ -254,7 +250,7 @@ export class DevToolsService {
         }
       }
 
-      // 3. Create DataFolders (topological sort by parentId)
+      // 3. Create DataFolders
       const dataFolderIdMap = new Map<string, string>();
       const dfEntries = Object.entries(json.dataFolders);
 
@@ -263,9 +259,6 @@ export class DevToolsService {
       let safety = pending.size + 1;
       while (pending.size > 0 && safety-- > 0) {
         for (const [oldId, df] of pending) {
-          const parentResolved = !df.parentId || dataFolderIdMap.has(df.parentId);
-          if (!parentResolved) continue;
-
           const newId = createDataFolderId();
           dataFolderIdMap.set(oldId, newId);
 
@@ -278,13 +271,11 @@ export class DevToolsService {
                 ? (connectorAccountIdMap.get(df.connectorAccountId) ?? null)
                 : null,
               connectorService: df.connectorService,
-              parentId: df.parentId ? (dataFolderIdMap.get(df.parentId) ?? null) : null,
               path: df.path,
               version: df.version,
               tableId: df.tableId,
               isAssetTable: df.isAssetTable,
               options: df.options as object | undefined,
-              lastSchemaRefreshAt: new Date(df.lastSchemaRefreshAt),
             },
           });
 

@@ -9,7 +9,6 @@ export class DataFolderSummary {
   connectorService: string | null;
   path: string | null;
   lock: string | null;
-  lastSyncTime: Date | null;
   options: Record<string, unknown> | null;
 
   constructor(dataFolder: WorkbookCluster.DataFolder) {
@@ -17,7 +16,6 @@ export class DataFolderSummary {
     this.connectorService = dataFolder.connectorAccount?.service?.toString() ?? null;
     this.path = dataFolder.path;
     this.lock = dataFolder.lock;
-    this.lastSyncTime = dataFolder.lastSyncTime;
     this.options = dataFolder.options as Record<string, unknown> | null;
   }
 }

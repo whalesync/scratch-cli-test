@@ -16,12 +16,9 @@ export interface DataFolder {
   connectorAccountId: string | null;
   connectorDisplayName: string | null;
   connectorService: Service | null;
-  lastSchemaRefreshAt: string | null;
-  parentId: string | null;
   path: string | null;
   // TODO - instead of returning the raw lock this should be a status object that denotes "downloading" or "syncing"
   lock: string | null;
-  lastSyncTime: string | null;
   version: number;
   tableId: string[];
   isAssetTable: boolean;

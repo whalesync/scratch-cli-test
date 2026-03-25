@@ -45,7 +45,6 @@ async function bootstrap() {
         workbookId: workbook.id,
         name: 'Folder A',
         path: 'folder_a',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     console.log(`DataFolder created: ${dataFolder.id} (path: ${dataFolder.path})`);

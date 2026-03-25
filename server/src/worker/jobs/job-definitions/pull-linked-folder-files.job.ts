@@ -292,12 +292,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       tableSpec.titleColumnRemoteId = [nameOverride];
     }
 
-    // Persist refreshed schema to DB
-    await this.prisma.dataFolder.update({
-      where: { id: dataFolder.id },
-      data: { lastSchemaRefreshAt: new Date() },
-    });
-
     // Write refreshed schema to git
     if (dataFolder.path) {
       await this.scratchGitService.writeSchemaToGit(repoId, dataFolder.path, tableSpec);
@@ -549,12 +543,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         connectorProgress: {},
       });
 
-      // Set lock=null and update lastSyncTime on success
+      // Set lock=null on success
       await this.prisma.dataFolder.update({
         where: { id: dataFolder.id },
         data: {
           lock: null,
-          lastSyncTime: new Date(),
         },
       });
 

@@ -191,7 +191,7 @@ export class SchemaHelperService {
 
   /**
    * Refreshes schemas from the remote connector for all data folders belonging to a connection.
-   * Fetches fresh schema via the connector, updates lastSchemaRefreshAt in DB, and writes to git.
+   * Fetches fresh schema via the connector and writes to git.
    * Follows the same pattern used in the pull job (pull-linked-folder-files.job.ts).
    */
   async refreshSchemasForConnection(workbookId: string, connectorAccountId: string, repoId: string): Promise<void> {
@@ -253,12 +253,6 @@ export class SchemaHelperService {
         if (typeof nameOverride === 'string') {
           tableSpec.titleColumnRemoteId = [nameOverride];
         }
-
-        // Persist refreshed schema timestamp
-        await this.db.client.dataFolder.update({
-          where: { id: folder.id },
-          data: { lastSchemaRefreshAt: new Date() },
-        });
 
         // Write refreshed schema to git
         await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);

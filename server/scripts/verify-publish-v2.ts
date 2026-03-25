@@ -81,7 +81,6 @@ async function bootstrap() {
         workbookId: wkbId,
         path: '/folder',
         name: 'folder',
-        lastSchemaRefreshAt: new Date(),
       },
     });
     const dfId = dataFolder.id;

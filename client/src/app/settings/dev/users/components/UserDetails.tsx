@@ -321,7 +321,6 @@ export const UserDetailsCard = ({
                               <Table.Td>{df.path ?? '-'}</Table.Td>
                               <Table.Td>{df.connectorService ?? '-'}</Table.Td>
                               <Table.Td>{df.lock ?? '-'}</Table.Td>
-                              <Table.Td>{df.lastSyncTime ? new Date(df.lastSyncTime).toLocaleString() : '-'}</Table.Td>
                             </Table.Tr>
                           ))}
                         </Table.Tbody>
