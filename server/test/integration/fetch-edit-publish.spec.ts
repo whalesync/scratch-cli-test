@@ -371,6 +371,7 @@ describe('Fetch → Edit → Publish Integration', () => {
     mockScratchGitService = {
       initRepo: jest.fn().mockResolvedValue(undefined),
       resolveRepoId: jest.fn().mockImplementation(async (wkbId: WorkbookId) => wkbId),
+      resolveConnectionRepoPath: jest.fn().mockImplementation(async (connectorAccountId: string) => connectorAccountId),
       commitFilesToBranch: jest
         .fn()
         .mockImplementation(async (_repoId: string, branch: string, files: { path: string; content: string }[]) => {

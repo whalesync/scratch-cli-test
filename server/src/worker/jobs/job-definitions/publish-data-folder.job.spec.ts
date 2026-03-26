@@ -99,7 +99,7 @@ describe('PublishDataFolderJobHandler', () => {
     } as unknown as jest.Mocked<BullEnqueuerService>;
 
     mockScratchGitService = {
-      resolveRepoId: jest.fn().mockResolvedValue(WORKBOOK_ID),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue(WORKBOOK_ID),
       readSchemaFromGit: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<ScratchGitService>;
 

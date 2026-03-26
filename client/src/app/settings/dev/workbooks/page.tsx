@@ -43,12 +43,10 @@ function serviceLabel(s: string): string {
 function ConnectionRowActions({
   workbookId,
   connection,
-  isV2,
   onShowDataFolders,
 }: {
   workbookId: WorkbookId;
   connection: AdminWorkbookConnectionDto;
-  isV2: boolean;
   onShowDataFolders: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,8 +55,9 @@ function ConnectionRowActions({
     id: connection.id,
     displayName: connection.displayName,
     service: connection.service,
-    repoPath: connection.repoPath,
-    authType: connection.authType,
+    repoPath: connection.repoPath!,
+    // authType is not available on AdminWorkbookConnectionDto, so reconnection will not be shown in admin view.
+    // This is intentional as admins don't typically reauthorize connections.
   };
 
   const extraItemsAfter: ContextMenuItem[] = [
@@ -67,7 +66,6 @@ function ConnectionRowActions({
 
   const { items, modals } = useConnectionMenu(workbookId, target, {
     extraItemsAfter,
-    isV2,
   });
 
   return (
@@ -89,7 +87,6 @@ function ConnectionRowActions({
 
 function ConnectionsModal({ workbook, onClose }: { workbook: AdminWorkbookDto | null; onClose: () => void }) {
   const [showDataFoldersConn, setShowDataFoldersConn] = useState<AdminWorkbookConnectionDto | null>(null);
-  const isV2 = (workbook?.version ?? 1) >= 2;
 
   return (
     <>
@@ -150,7 +147,6 @@ function ConnectionsModal({ workbook, onClose }: { workbook: AdminWorkbookDto | 
                       <ConnectionRowActions
                         workbookId={workbook.id}
                         connection={conn}
-                        isV2={isV2}
                         onShowDataFolders={() => setShowDataFoldersConn(conn)}
                       />
                     </Table.Td>

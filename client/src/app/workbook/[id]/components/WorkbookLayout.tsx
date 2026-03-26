@@ -32,21 +32,18 @@ export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Determine sidebar mode from pathname
+  // Determine sidebar mode from pathname — match only the top-level segment
+  // after /workbook/{id}/ to avoid false matches on nested paths like
+  // /workbook-repo/syncs/foo.json
   const sidebarMode = useMemo(() => {
-    if (pathname.includes('/syncs')) {
-      return 'syncs';
-    }
-    if (pathname.includes('/review')) {
-      return 'review';
-    }
-    if (pathname.includes('/runs')) {
-      return 'runs';
-    }
+    const segment = pathname.split('/').at(3);
+    if (segment === 'syncs') return 'syncs';
+    if (segment === 'review') return 'review';
+    if (segment === 'runs') return 'runs';
     return 'files';
   }, [pathname]);
 
-  const isFilesPage = pathname.includes('/files');
+  const isFilesPage = pathname.split('/').at(3) === 'files';
   const isReviewPage = pathname.includes('/review');
 
   // File tree mode (only for files/review)

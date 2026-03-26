@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
 import { DbService } from '../db/db.service';
 
 import { WSLogger } from 'src/logger';
@@ -29,10 +28,7 @@ export class SchemaHelperService {
   ): Promise<BaseJsonTableSpec | null> {
     if (folderPath) {
       try {
-        const repoId = await this.scratchGitService.resolveRepoId(
-          workbookId as WorkbookId,
-          connectorAccountId ?? undefined,
-        );
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId ?? undefined);
         const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
         if (gitSchema) return gitSchema;
       } catch (error) {

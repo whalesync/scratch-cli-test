@@ -87,7 +87,7 @@ describe('PublishPlanRunService', () => {
     } as unknown as jest.Mocked<ConnectorsService>;
 
     scratchGitService = {
-      resolveRepoId: jest.fn().mockResolvedValue(REPO_ID),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue(REPO_ID),
       commitFilesToBranch: jest.fn().mockResolvedValue({ created: [], updated: [], unchanged: [] }),
       deleteFilesFromBranch: jest.fn().mockResolvedValue(undefined),
       rebaseDirty: jest.fn().mockResolvedValue(undefined),

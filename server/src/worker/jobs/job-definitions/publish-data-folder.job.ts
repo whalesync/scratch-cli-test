@@ -199,10 +199,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
       let tableSpec: BaseJsonTableSpec | null = null;
       if (dataFolder.path && dataFolder.connectorAccountId) {
         try {
-          const schemaRepoId = await this.scratchGitService.resolveRepoId(
-            data.workbookId,
-            dataFolder.connectorAccountId,
-          );
+          const schemaRepoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder.connectorAccountId);
           tableSpec = await this.scratchGitService.readSchemaFromGit(schemaRepoId, dataFolder.path);
         } catch {
           // schema will remain null
@@ -275,8 +272,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
         const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
 
         // Resolve the correct repo ID (V1: plain workbookId, V2: composite ID per connection)
-        const repoId = await this.scratchGitService.resolveRepoId(
-          data.workbookId,
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(
           dataFolder.connectorAccountId ?? undefined,
         );
 

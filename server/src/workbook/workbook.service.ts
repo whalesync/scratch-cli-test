@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   ConnectorPullOptions,
   createWorkbookId,
@@ -25,7 +25,7 @@ import { WorkbookEventService } from './workbook-event.service';
 import { Schedule } from '@prisma/client';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
-import { WorkbookConfigService } from './workbook-config.service';
+import { WorkbookRepoService } from './workbook-repo.service';
 
 @Injectable()
 export class WorkbookService {
@@ -39,7 +39,7 @@ export class WorkbookService {
     private readonly scratchGitService: ScratchGitService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
-    private readonly workbookConfigService: WorkbookConfigService,
+    private readonly workbookRepoService: WorkbookRepoService,
   ) {}
 
   async create(createWorkbookDto: ValidatedCreateWorkbookDto, actor: Actor): Promise<WorkbookCluster.Workbook> {
@@ -94,7 +94,7 @@ export class WorkbookService {
     });
     for (const ca of connectorAccounts) {
       try {
-        const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(ca.id);
         await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {
         WSLogger.error({
@@ -107,8 +107,8 @@ export class WorkbookService {
       }
     }
 
-    // Delete workbook config git repo (best-effort)
-    await this.workbookConfigService.deleteConfigRepo(workbook.organizationId, id);
+    // Delete workbook git repo (best-effort)
+    await this.workbookRepoService.deleteWorkbookRepo(workbook.organizationId, id);
 
     // Cleanup index and references
     await this.fileIndexService.deleteForWorkbook(id);
@@ -149,7 +149,10 @@ export class WorkbookService {
         where: { workbookId, path: folderPath },
         select: { connectorAccountId: true },
       });
-      const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId);
+      if (!dataFolder?.connectorAccountId) {
+        throw new BadRequestException('Cannot discard changes for a file without a connector account');
+      }
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder.connectorAccountId);
       await this.scratchGitService.discardChanges(repoId, path);
     } else {
       // Discard all: reset every per-connection repo
@@ -159,7 +162,7 @@ export class WorkbookService {
       });
       await Promise.all(
         connAccounts.map(async (ca) => {
-          const repoId = await this.scratchGitService.resolveRepoId(workbookId, ca.id);
+          const repoId = await this.scratchGitService.resolveConnectionRepoPath(ca.id);
           return this.scratchGitService.discardChanges(repoId);
         }),
       );
@@ -191,7 +194,7 @@ export class WorkbookService {
       select: { id: true },
     });
     for (const ca of connectorAccounts) {
-      const repoId = await this.scratchGitService.resolveRepoId(id, ca.id);
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(ca.id);
       try {
         await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {

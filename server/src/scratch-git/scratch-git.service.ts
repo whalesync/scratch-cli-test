@@ -41,15 +41,15 @@ export class ScratchGitService {
    * Returns the composite `{orgId}--{workbookId}--{connAccountId}` ID from the connector account's repoPath.
    * Throws if connectorAccountId is missing or has no repoPath.
    */
-  async resolveRepoId(_workbookId: WorkbookId, connectorAccountId: string | undefined | null): Promise<RepoId> {
+  async resolveConnectionRepoPath(connectorAccountId?: string | null): Promise<RepoId> {
     if (!connectorAccountId) {
-      throw new Error('No connector account ID provided');
+      throw new BadRequestException('Connector account ID is required');
     }
     const account = await this.db.client.connectorAccount.findUnique({ where: { id: connectorAccountId } });
-    if (account?.repoPath) {
-      return account.repoPath as RepoId;
+    if (!account?.repoPath) {
+      throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
     }
-    throw new BadRequestException(`Connector account ${connectorAccountId} has no repoPath`);
+    return account.repoPath as RepoId;
   }
 
   async initRepo(repoId: string): Promise<void> {

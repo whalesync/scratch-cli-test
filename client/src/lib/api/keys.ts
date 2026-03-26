@@ -49,8 +49,8 @@ export const SWR_KEYS = {
       Array.isArray(key) && key[0] === 'files' && key[2] === workbookId,
     resolveReferences: (workbookId: WorkbookId, path: string, branch: string) =>
       ['files', 'resolve-references', workbookId, path, branch] as const,
-    repoFile: (workbookId: WorkbookId, filePath: string, connectorAccountId?: string) =>
-      ['files', 'repo-file', workbookId, filePath, connectorAccountId] as const,
+    repoFile: (workbookId: WorkbookId, filePath: string, connectorAccountId?: string, useConfigRepo?: boolean) =>
+      ['files', 'repo-file', workbookId, filePath, connectorAccountId, useConfigRepo ? 'config' : undefined] as const,
   },
   jobs: {
     activeByWorkbook: (workbookId: WorkbookId) => ['jobs', 'active-by-workbook', workbookId] as const,

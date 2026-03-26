@@ -270,12 +270,12 @@ export class DataFolderService {
           ...(nameFieldOverride ? { nameFieldOverride } : {}),
         } as Prisma.InputJsonValue,
       },
-      include: DataFolderCluster._validator.include,
+      include: { connectorAccount: true },
     });
 
     // Write schema to git repo
     try {
-      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
     } catch (error) {
       WSLogger.error({
@@ -595,7 +595,7 @@ export class DataFolderService {
     const allFiles: { folderId: DataFolderId; path: string; content: string }[] = [];
     let cursor: string | undefined;
 
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
 
     do {
       const page = await this.scratchGitService.getRepoFilesPaginated(
@@ -641,7 +641,7 @@ export class DataFolderService {
 
     const folderPath = folder.path.replace(/^\//, ''); // remove preceding / for git paths
 
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
     const page = await this.scratchGitService.getRepoFilesPaginated(
       repoId,
       branch,
@@ -704,7 +704,7 @@ export class DataFolderService {
   ): Promise<BaseJsonTableSpec | null> {
     if (!folderPath) return null;
     try {
-      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId ?? undefined);
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
       if (gitSchema) return gitSchema;
     } catch (error) {
@@ -768,10 +768,7 @@ export class DataFolderService {
 
       // Write schema to git repo
       try {
-        const repoId = await this.scratchGitService.resolveRepoId(
-          folder.workbookId,
-          folder.connectorAccountId ?? undefined,
-        );
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
         await this.scratchGitService.writeSchemaToGit(repoId, folder.path!, tableSpec);
       } catch (error) {
         WSLogger.error({

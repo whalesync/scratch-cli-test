@@ -4,12 +4,12 @@ import { DbService } from 'src/db/db.service';
 import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
 import { Actor } from 'src/users/types';
 
-/** Repo ID for the workbook config repo: same pattern as connector repos but uses workbookId twice. */
-export function getConfigRepoId(orgId: string, workbookId: WorkbookId): string {
+/** Repo ID for the workbook repo: same pattern as connector repos but uses workbookId twice. */
+export function getWorkbookRepoPath(orgId: string, workbookId: WorkbookId): string {
   return `${orgId}/${workbookId}/${workbookId}`;
 }
 
-/** Portable sync config format stored in the workbook config git repo (mirrors experimental v4 format). */
+/** Portable sync config format stored in the workbook git repo (mirrors experimental v4 format). */
 export interface WorkbookSyncConfig {
   version: 1;
   displayName: string;
@@ -20,19 +20,19 @@ export interface WorkbookSyncConfig {
 }
 
 @Injectable()
-export class WorkbookConfigService {
+export class WorkbookRepoService {
   constructor(
     private readonly db: DbService,
     private readonly scratchGitClient: ScratchGitClient,
   ) {}
 
-  async initConfigRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
-    const repoId = getConfigRepoId(orgId, workbookId);
+  async initWorkbookRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
+    const repoId = getWorkbookRepoPath(orgId, workbookId);
     await this.scratchGitClient.initRepo(repoId);
   }
 
-  async deleteConfigRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
-    const repoId = getConfigRepoId(orgId, workbookId);
+  async deleteWorkbookRepo(orgId: string, workbookId: WorkbookId): Promise<void> {
+    const repoId = getWorkbookRepoPath(orgId, workbookId);
     // Best-effort delete — ignore if repo doesn't exist
     try {
       await this.scratchGitClient.deleteRepo(repoId);
@@ -43,7 +43,7 @@ export class WorkbookConfigService {
 
   /**
    * Convert all syncs for a workbook to the portable v4 format and commit them to the
-   * workbook config repo at syncs/{slug}.json on the main branch.
+   * workbook repo at syncs/{slug}.json on the main branch.
    */
   async pushSyncs(orgId: string, workbookId: WorkbookId, actor: Actor): Promise<{ count: number }> {
     const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
@@ -118,7 +118,7 @@ export class WorkbookConfigService {
     }
 
     if (files.length > 0) {
-      const repoId = getConfigRepoId(orgId, workbookId);
+      const repoId = getWorkbookRepoPath(orgId, workbookId);
       await this.scratchGitClient.commitFiles(repoId, 'main', files, `Update syncs (${actor.userId})`);
     }
 

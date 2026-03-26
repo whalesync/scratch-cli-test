@@ -88,7 +88,7 @@ describe('CliWorkbookController', () => {
     } as unknown as jest.Mocked<DbService>;
 
     scratchGitService = {
-      resolveRepoId: jest.fn(),
+      resolveConnectionRepoPath: jest.fn(),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     controller = new CliWorkbookController(
@@ -169,9 +169,9 @@ describe('CliWorkbookController', () => {
       );
     });
 
-    it('returns 404 JSON when resolveRepoId throws', async () => {
+    it('returns 404 JSON when resolveConnectionRepoPath throws', async () => {
       workbookService.findOne.mockResolvedValue(makeWorkbook({ version: 2 }));
-      scratchGitService.resolveRepoId.mockRejectedValue(new Error('not found'));
+      scratchGitService.resolveConnectionRepoPath.mockRejectedValue(new Error('not found'));
       const mockJson = jest.fn();
       const mockStatus = jest.fn().mockReturnValue({ json: mockJson });
       const res = { status: mockStatus, json: mockJson } as unknown as Response;

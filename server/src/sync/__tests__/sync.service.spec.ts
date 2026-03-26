@@ -11,6 +11,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { FkMappingResult, LookupTools } from 'src/sync/transformers/transformer.types';
 import type { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
+import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { SyncService, transformRecordAsync } from '../sync.service';
 
@@ -78,6 +79,7 @@ describe('SyncService', () => {
   let posthogService: jest.Mocked<PostHogService>;
   let scheduleService: jest.Mocked<ScheduleService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
+  let workbookRepoService: jest.Mocked<WorkbookRepoService>;
   let workbookService: jest.Mocked<WorkbookService>;
 
   beforeEach(() => {
@@ -111,6 +113,11 @@ describe('SyncService', () => {
       getRepoFile: jest.fn(),
     } as unknown as jest.Mocked<ScratchGitService>;
 
+    workbookRepoService = {
+      initWorkbookRepo: jest.fn().mockResolvedValue(undefined),
+      pushSyncs: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<WorkbookRepoService>;
+
     workbookService = {
       findOne: jest.fn(),
     } as unknown as jest.Mocked<WorkbookService>;
@@ -127,6 +134,7 @@ describe('SyncService', () => {
       posthogService,
       scheduleService,
       scratchGitService,
+      workbookRepoService,
       workbookService,
     );
   });

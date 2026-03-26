@@ -135,7 +135,7 @@ export class FilesController {
    * DELETE /workbooks/:workbookId/files/by-path?path=/folder/file.md
    */
   /** Resolve the repoId for a file path by looking up the owning DataFolder's connectorAccountId. */
-  private async resolveRepoIdForPath(workbookId: WorkbookId, path: string): Promise<string> {
+  private async resolveConnectionRepoPathForPath(workbookId: WorkbookId, path: string): Promise<string> {
     const rawFolder = path.substring(0, path.lastIndexOf('/'));
     // DataFolder.path always starts with '/'; normalize incoming path accordingly
     const folderPath = rawFolder ? (rawFolder.startsWith('/') ? rawFolder : `/${rawFolder}`) : '/';
@@ -143,7 +143,7 @@ export class FilesController {
       where: { workbookId, path: folderPath },
       select: { connectorAccountId: true },
     });
-    return this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    return this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId ?? '');
   }
 
   @Delete('by-path')
@@ -157,7 +157,7 @@ export class FilesController {
     checkWorkspacePermissions(actor, workbookId);
 
     try {
-      const repoId = await this.resolveRepoIdForPath(workbookId, path);
+      const repoId = await this.resolveConnectionRepoPathForPath(workbookId, path);
       await this.scratchGitService.deleteFile(repoId, [path], `Delete ${path}`);
     } catch (e) {
       WSLogger.error({
@@ -203,7 +203,7 @@ export class FilesController {
     const { path } = body;
 
     try {
-      const repoId = await this.resolveRepoIdForPath(workbookId, path);
+      const repoId = await this.resolveConnectionRepoPathForPath(workbookId, path);
       const fileContent = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, path);
 
       if (!fileContent) {
@@ -242,7 +242,7 @@ export class FilesController {
       throw new NotFoundException('Data folder not found');
     }
 
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
     const folderPath = folder.path.replace(/^\//, '');
     const zipName = `${folder.name}.zip`;
 

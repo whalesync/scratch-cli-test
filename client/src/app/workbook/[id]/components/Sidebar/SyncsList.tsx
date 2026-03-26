@@ -41,7 +41,7 @@ export function SyncsList({ workbookId }: SyncsListProps) {
       const result = await workbookApi.pushSyncsToGit(workbookId);
       notifications.show({
         title: 'Syncs pushed to git',
-        message: `${result.count} sync${result.count !== 1 ? 's' : ''} written to the workbook config repo`,
+        message: `${result.count} sync${result.count !== 1 ? 's' : ''} written to the workbook repo`,
         color: 'green',
       });
     } catch {

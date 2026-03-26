@@ -17,10 +17,13 @@ import { ConnectToCLIModal } from '../shared/ConnectToCLIModal';
 import { DebugMenu } from './DebugMenu';
 
 function getPageName(pathname: string): { label: string; id: string } {
-  if (pathname.includes('/review')) return { label: 'Review & Publish', id: 'review' };
-  if (pathname.includes('/syncs')) return { label: 'Syncs', id: 'syncs' };
-  if (pathname.includes('/runs/scheduled')) return { label: 'Scheduled runs', id: 'runs/scheduled' };
-  if (pathname.includes('/runs')) return { label: 'Recent runs', id: 'runs' };
+  const segment = pathname.split('/').at(3);
+  if (segment === 'review') return { label: 'Review & Publish', id: 'review' };
+  if (segment === 'syncs') return { label: 'Syncs', id: 'syncs' };
+  if (segment === 'runs') {
+    if (pathname.split('/').at(4) === 'scheduled') return { label: 'Scheduled runs', id: 'runs/scheduled' };
+    return { label: 'Recent runs', id: 'runs' };
+  }
   return { label: 'Files', id: 'files' };
 }
 

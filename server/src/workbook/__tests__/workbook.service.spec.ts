@@ -10,8 +10,8 @@ import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
-import { WorkbookConfigService } from '../workbook-config.service';
 import { WorkbookEventService } from '../workbook-event.service';
+import { WorkbookRepoService } from '../workbook-repo.service';
 import { WorkbookService } from '../workbook.service';
 
 const WORKBOOK_ID = 'wkb_test' as WorkbookId;
@@ -69,7 +69,7 @@ describe('WorkbookService', () => {
 
     scratchGitService = {
       deleteRepo: jest.fn().mockResolvedValue(undefined),
-      resolveRepoId: jest.fn().mockResolvedValue('resolved-repo-id'),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue('resolved-repo-id'),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     fileIndexService = {
@@ -91,9 +91,9 @@ describe('WorkbookService', () => {
     const configService = {} as jest.Mocked<ScratchConfigService>;
     const workbookEventService = {} as jest.Mocked<WorkbookEventService>;
     const bullEnqueuerService = {} as jest.Mocked<BullEnqueuerService>;
-    const workbookConfigService = {
-      deleteConfigRepo: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<WorkbookConfigService>;
+    const workbookRepoService = {
+      deleteWorkbookRepo: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<WorkbookRepoService>;
 
     service = new WorkbookService(
       dbService,
@@ -105,7 +105,7 @@ describe('WorkbookService', () => {
       scratchGitService,
       fileIndexService,
       fileReferenceService,
-      workbookConfigService,
+      workbookRepoService,
     );
   });
 
@@ -113,14 +113,14 @@ describe('WorkbookService', () => {
     it('deletes a V2 workbook with per-connection repos', async () => {
       (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(createMockWorkbook(2));
       (dbService.client.connectorAccount.findMany as jest.Mock).mockResolvedValue([{ id: 'ca_1' }, { id: 'ca_2' }]);
-      (scratchGitService.resolveRepoId as jest.Mock)
+      (scratchGitService.resolveConnectionRepoPath as jest.Mock)
         .mockResolvedValueOnce('repo-ca-1')
         .mockResolvedValueOnce('repo-ca-2');
 
       await service.delete(WORKBOOK_ID, ACTOR);
 
-      expect(scratchGitService.resolveRepoId).toHaveBeenCalledWith(WORKBOOK_ID, 'ca_1');
-      expect(scratchGitService.resolveRepoId).toHaveBeenCalledWith(WORKBOOK_ID, 'ca_2');
+      expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith('ca_1');
+      expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith('ca_2');
       expect(scratchGitService.deleteRepo).toHaveBeenCalledWith('repo-ca-1');
       expect(scratchGitService.deleteRepo).toHaveBeenCalledWith('repo-ca-2');
       expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });

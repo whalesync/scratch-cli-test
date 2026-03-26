@@ -141,7 +141,7 @@ export class ConnectorAccountService {
     });
 
     // Init the connection's dedicated git repo immediately
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccount.id);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccount.id);
     await this.scratchGitService.initRepo(repoId);
 
     // Re-fetch to include health status set by testConnection()
@@ -415,7 +415,7 @@ export class ConnectorAccountService {
 
     // Delete and re-init the connection's dedicated git repo
     try {
-      const repoId = await this.scratchGitService.resolveRepoId(workbookId, id);
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(id);
       try {
         await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {

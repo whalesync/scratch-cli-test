@@ -106,6 +106,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // ---- Mock: ScratchGitService ----
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
+      resolveConnectionRepoPath: jest.fn().mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idColumnRemoteId: 'id' },
@@ -273,6 +274,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       {} as PostHogService,
       scheduleService,
       scratchGitService,
+      {} as never,
       {} as WorkbookService,
     );
 
@@ -1195,6 +1197,16 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         .mockImplementation((wkbId: WorkbookId, connAcctId?: string) =>
           Promise.resolve(connAcctId ? getDefaultRepoPath(orgId, wkbId, connAcctId) : wkbId),
         ),
+      resolveConnectionRepoPath: jest
+        .fn()
+        .mockImplementation((...args: [WorkbookId, string] | [string]) => {
+          if (args.length === 2) {
+            const [wkbId, connAcctId] = args;
+            return Promise.resolve(getDefaultRepoPath(orgId, wkbId, connAcctId));
+          }
+          const [connAcctId] = args;
+          return Promise.resolve(connAcctId);
+        }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idColumnRemoteId: 'id' },
@@ -1362,6 +1374,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       {} as PostHogService,
       scheduleService,
       scratchGitService,
+      {} as never,
       {} as WorkbookService,
     );
 
@@ -1592,9 +1605,9 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     const buildResult = await publishPlanService.buildPipeline(workbookId, userId, connectorAccountId);
     expect(buildResult.status).toBe('planned');
 
-    // Verify resolveRepoId was called with the connectorAccountId
+    // Verify the per-connection repo path resolver was used for the V2 connector account
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(scratchGitService.resolveRepoId).toHaveBeenCalledWith(workbookId, connectorAccountId);
+    expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(connectorAccountId);
 
     // Verify the composite repo ID was computed correctly
     const expectedRepoId = getDefaultRepoPath(orgId, workbookId, connectorAccountId);

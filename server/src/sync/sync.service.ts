@@ -57,6 +57,7 @@ import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
+import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 
 export interface RemoteIdMappingPair {
@@ -95,8 +96,25 @@ export class SyncService {
     private readonly posthogService: PostHogService,
     private readonly scheduleService: ScheduleService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly workbookRepoService: WorkbookRepoService,
     private readonly workbookService: WorkbookService,
   ) {}
+
+  /** Fire-and-forget: persist all syncs for the workbook to the workbook git repo. */
+  private pushSyncsToGitInBackground(workbookId: WorkbookId, actor: Actor): void {
+    const orgId = actor.organizationId;
+    this.workbookRepoService
+      .initWorkbookRepo(orgId, workbookId)
+      .then(() => this.workbookRepoService.pushSyncs(orgId, workbookId, actor))
+      .catch((err: unknown) => {
+        WSLogger.warn({
+          source: 'SyncService.pushSyncsToGitInBackground',
+          message: 'Failed to push syncs to workbook repo',
+          error: err,
+          workbookId,
+        });
+      });
+  }
 
   /**
    * Reads schema from git.
@@ -108,10 +126,7 @@ export class SyncService {
   ): Promise<BaseJsonTableSpec | null> {
     if (folderPath) {
       try {
-        const repoId = await this.scratchGitService.resolveRepoId(
-          workbookId as WorkbookId,
-          connectorAccountId ?? undefined,
-        );
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
         const gitSchema = await this.scratchGitService.readSchemaFromGit(repoId, folderPath);
         if (gitSchema) return gitSchema;
       } catch (error) {
@@ -200,6 +215,7 @@ export class SyncService {
     }
 
     this.posthogService.trackCreateSync(actor, sync);
+    this.pushSyncsToGitInBackground(workbookId, actor);
     return sync;
   }
 
@@ -321,6 +337,7 @@ export class SyncService {
     }
 
     this.posthogService.trackUpdateSync(actor, updated);
+    this.pushSyncsToGitInBackground(workbookId, actor);
     return updated;
   }
 
@@ -734,6 +751,7 @@ export class SyncService {
     });
 
     this.posthogService.trackRemoveSync(actor, sync);
+    this.pushSyncsToGitInBackground(workbookId, actor);
   }
 
   /**
@@ -792,9 +810,8 @@ export class SyncService {
       destinationFolder.connectorAccountId,
       destinationFolder.path,
     );
-    const destinationRepoId = await this.scratchGitService.resolveRepoId(
-      workbookId,
-      destinationFolder.connectorAccountId ?? undefined,
+    const destinationRepoId = await this.scratchGitService.resolveConnectionRepoPath(
+      destinationFolder.connectorAccountId,
     );
 
     // Get idColumnRemoteId from schemas
@@ -1693,7 +1710,7 @@ export class SyncService {
     const sourceSchema = await this.readSchemaFromGit(workbookId, sourceFolder.connectorAccountId, sourceFolder.path);
     const sourceIdColumn = this.getIdColumnFromSchema(sourceSchema);
 
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, sourceFolder.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(sourceFolder.connectorAccountId);
 
     // Fetch the single source file
     const file = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, body.filePath);

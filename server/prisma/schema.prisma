@@ -156,7 +156,7 @@ model Workbook {
   name      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  version   Int      @default(1)
+  version   Int      @default(2)
 
   user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId         String?

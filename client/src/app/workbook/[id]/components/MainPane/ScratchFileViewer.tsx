@@ -18,16 +18,27 @@ interface ScratchFileViewerProps {
   filePath: string;
   /** The connectorAccountId to scope the git repo */
   connectorAccountId?: string;
+  /** When true, reads from the workbook repo instead of a connection repo */
+  useConfigRepo?: boolean;
 }
 
-export function ScratchFileViewer({ workbookId, filePath, connectorAccountId }: ScratchFileViewerProps) {
+export function ScratchFileViewer({
+  workbookId,
+  filePath,
+  connectorAccountId,
+  useConfigRepo,
+}: ScratchFileViewerProps) {
   const { colorScheme } = useMantineColorScheme();
   const {
     data: content,
     isLoading,
     error,
-  } = useSWR<string, Error>(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId), () =>
-    workbookApi.getRepoFile(workbookId, filePath, 'dirty', connectorAccountId).then((r) => r?.content ?? ''),
+  } = useSWR<string, Error>(
+    SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId, useConfigRepo),
+    () =>
+      workbookApi
+        .getRepoFile(workbookId, filePath, useConfigRepo ? 'main' : 'dirty', connectorAccountId, useConfigRepo)
+        .then((r) => r?.content ?? ''),
   );
 
   const fileName = useMemo(() => {

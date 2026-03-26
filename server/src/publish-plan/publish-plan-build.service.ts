@@ -38,7 +38,7 @@ export class PublishPlanBuildService {
   /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
   private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
     if (connectorAccountId) {
-      const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       return [repoId];
     }
     const connAccounts = await this.db.client.connectorAccount.findMany({
@@ -160,7 +160,7 @@ export class PublishPlanBuildService {
     }
 
     const wkbId = workbookId as WorkbookId;
-    const repoId = await this.scratchGitService.resolveRepoId(wkbId, connectorAccountId);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
 
     // Ensure merge_base === main before diffing. This is a no-op in steady state (dirty==merge_base)
     // and brings merge_base up to date if a pull job just finished without rebasing.

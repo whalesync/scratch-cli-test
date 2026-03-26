@@ -80,7 +80,7 @@ export class PublishFromGitService {
     connectorAccountId: string,
     planPath: string,
   ): Promise<PublishFromGitResult> {
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, connectorAccountId);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
 
     // Read plan.json from dirty branch
     const planFile = await this.scratchGitService.getRepoFile(repoId, 'dirty', `${planPath}/plan.json`);

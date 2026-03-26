@@ -1201,12 +1201,12 @@ function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNode
 
       <Collapse in={isExpanded}>
         <Stack gap={0}>
-          {isLoading && (
+          {(isLoading || !entries) && (
             <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
               <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
             </Box>
           )}
-          {!isLoading && entries?.length === 0 && (
+          {!isLoading && entries && entries.length === 0 && (
             <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * 2 }}>
               <Text12Regular c="var(--fg-muted)">No schema files</Text12Regular>
             </Box>
@@ -1338,7 +1338,7 @@ function ScratchSubdirNode({
 
       <Collapse in={isExpanded}>
         <Stack gap={0}>
-          {isLoading && (
+          {(isLoading || !entries) && (
             <Box py={4} px="sm" style={{ marginLeft: INDENT_PX * (depth + 1) }}>
               <Text12Regular c="var(--fg-muted)">Loading…</Text12Regular>
             </Box>

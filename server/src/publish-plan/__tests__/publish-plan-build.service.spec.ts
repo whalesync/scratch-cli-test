@@ -55,7 +55,7 @@ describe('PublishPlanService', () => {
     db = makeDbMock();
 
     scratchGitService = {
-      resolveRepoId: jest.fn().mockImplementation((wkbId: string) => Promise.resolve(wkbId)),
+      resolveConnectionRepoPath: jest.fn().mockImplementation((wkbId: string) => Promise.resolve(wkbId)),
       getRepoStatus: jest.fn().mockResolvedValue([]),
       readRepoFilesByFolder: jest.fn().mockResolvedValue([]),
       rebaseDirty: jest.fn().mockResolvedValue(undefined),

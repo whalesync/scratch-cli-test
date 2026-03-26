@@ -113,7 +113,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       throw new Error(`All folders in pull job must belong to a connection`);
     }
 
-    const repoId = await this.scratchGitService.resolveRepoId(data.workbookId, connectorAccountId);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
 
     // Ensure the repo exists (e.g. new connection added after migration)
     await this.scratchGitService.initRepo(repoId);

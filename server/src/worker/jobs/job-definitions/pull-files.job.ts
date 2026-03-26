@@ -101,8 +101,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
     let tableSpec: BaseJsonTableSpec | null = null;
     if (dataFolder.path) {
       try {
-        const repoId = await this.scratchGitService.resolveRepoId(
-          dataFolder.workbookId as WorkbookId,
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(
           dataFolder.connectorAccountId ?? undefined,
         );
         tableSpec = await this.scratchGitService.readSchemaFromGit(repoId, dataFolder.path);
@@ -246,7 +245,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         }));
 
         const commitResult = await this.scratchGitService.commitFilesToBranch(
-          dataFolder.workbookId as WorkbookId,
+          dataFolder.connectorAccountId!,
           'main',
           batchGitFiles,
           `Pull ${builtFiles.length} file(s)`,
@@ -366,7 +365,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       await connector.pullRecordFilesByIds(tableSpec, recordIds, callback);
 
       // Rebase dirty once at the end of the job (not after every batch)
-      await this.scratchGitService.rebaseDirty(dataFolder.workbookId as WorkbookId);
+      await this.scratchGitService.rebaseDirty(dataFolder.connectorAccountId);
 
       publicProgress.status = 'completed';
 

@@ -38,7 +38,7 @@ export interface ConnectionMenuTarget {
   id: string;
   displayName: string;
   service: string;
-  repoPath: string | null;
+  repoPath: string;
   /** When provided, the menu shows Reauthorize/Edit Connection items. */
   authType?: string;
 }
@@ -52,8 +52,6 @@ export interface UseConnectionMenuOptions {
   onReauthorizeStart?: () => void;
   /** Called when OAuth reauthorization ends. */
   onReauthorizeEnd?: () => void;
-  /** Whether this is a V2 workbook. Defaults to false. */
-  isV2?: boolean;
   /**
    * Full ConnectorAccount for modals that require it (ChooseTablesModal, RemoveConnectionModal, etc.).
    * When omitted those modals are not rendered and their menu items are hidden.
@@ -71,7 +69,6 @@ export function useConnectionMenu(
     extraItemsAfter,
     onReauthorizeStart,
     onReauthorizeEnd,
-    isV2 = false,
     fullConnectorAccount,
   } = options;
 
@@ -203,10 +200,9 @@ export function useConnectionMenu(
     },
   ];
 
-  const gitSubmenu: ContextMenuItem[] =
-    isDevToolsEnabled && isV2
-      ? [{ type: 'submenu' as const, label: 'Git', icon: GitGraphIcon, devtool: true, children: gitChildren }]
-      : [];
+  const gitSubmenu: ContextMenuItem[] = isDevToolsEnabled
+    ? [{ type: 'submenu' as const, label: 'Git', icon: GitGraphIcon, devtool: true, children: gitChildren }]
+    : [];
 
   // --- Build items ---
 
@@ -229,7 +225,7 @@ export function useConnectionMenu(
     ...(fullConnectorAccount
       ? [{ label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true }]
       : []),
-    ...(isDevToolsEnabled && isV2
+    ...(isDevToolsEnabled
       ? [{ label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection }]
       : []),
   ];

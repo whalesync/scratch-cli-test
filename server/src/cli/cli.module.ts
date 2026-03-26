@@ -10,7 +10,7 @@ import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SyncModule } from 'src/sync/sync.module';
-import { WorkbookConfigService } from 'src/workbook/workbook-config.service';
+import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
 import { CliAuthController } from './cli-auth.controller';
@@ -43,7 +43,7 @@ import { CliWorkbookController } from './cli-workbook.controller';
     CliLinkedController,
     CliSyncController,
   ],
-  providers: [CliAuthService, WorkbookConfigService],
+  providers: [CliAuthService, WorkbookRepoService],
   exports: [CliAuthService],
 })
 export class CliModule {}

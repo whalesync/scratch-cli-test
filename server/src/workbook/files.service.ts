@@ -70,8 +70,8 @@ export class FilesService {
     const repoId = parentFolderId
       ? await this.db.client.dataFolder
           .findUnique({ where: { id: parentFolderId as string }, select: { connectorAccountId: true } })
-          .then((df) => this.scratchGitService.resolveRepoId(workbookId, df?.connectorAccountId ?? undefined))
-      : await this.scratchGitService.resolveRepoId(workbookId, null);
+          .then((df) => this.scratchGitService.resolveConnectionRepoPath(df?.connectorAccountId ?? ''))
+      : await this.scratchGitService.resolveConnectionRepoPath(null as unknown as string); // Will throw, which is correct for V2 root
 
     await this.scratchGitService.commitFile(repoId, fullPath, content, `Create file ${createFileDto.name}`);
 
@@ -105,7 +105,7 @@ export class FilesService {
       throw new InternalServerErrorException(`Path missing from DataFolder ${folderId}`);
     }
 
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, folder.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
     const folderPath = folder.path.replace(/^\//, ''); // remove preceding / for git paths
 
     // Paginate at the git level — sorting, cursor, and limit are handled by scratch-git
@@ -150,7 +150,7 @@ export class FilesService {
       where: { workbookId, path: `/${gitFolderPath}` },
       select: { connectorAccountId: true },
     });
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
 
     const mainResponse = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, path);
     const dirtyResponse = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, path);
@@ -198,7 +198,7 @@ export class FilesService {
       where: { workbookId, path: folderPathRaw || '/' },
       select: { connectorAccountId: true },
     });
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
     await this.scratchGitService.deleteFile(repoId, [path], `Delete ${path}`);
 
     // this.workbookEventService.sendWorkbookEvent(workbookId, {
@@ -226,7 +226,7 @@ export class FilesService {
       where: { workbookId, path: folderPath },
       select: { connectorAccountId: true },
     });
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
 
     if (updateFileDto.name) {
       const newPath = path.substring(0, path.lastIndexOf('/')) + '/' + updateFileDto.name;
@@ -258,7 +258,7 @@ export class FilesService {
       select: { connectorAccountId: true, path: true },
     });
 
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId ?? undefined);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
 
     const fileResponse = await this.scratchGitService.getRepoFile(repoId, branch, path);
     if (!fileResponse) {
@@ -326,10 +326,7 @@ export class FilesService {
 
       // Resolve via SQLite index in the Rust git service (no PostgreSQL FileIndex needed)
       const targetFolderForIndex = targetFolder.path.replace(/^\//, '');
-      const targetRepoId = await this.scratchGitService.resolveRepoId(
-        workbookId,
-        targetFolder.connectorAccountId ?? undefined,
-      );
+      const targetRepoId = await this.scratchGitService.resolveConnectionRepoPath(targetFolder.connectorAccountId);
       const filenameMap = await this.scratchGitService.lookupByRemoteIds(targetRepoId, targetFolderForIndex, remoteIds);
 
       // Build the field key from the FK path (e.g., ["fieldData", "sectors"] -> "sectors")
@@ -401,7 +398,7 @@ export class FilesService {
       where: { workbookId, path: folderPath },
       select: { connectorAccountId: true },
     });
-    const repoId = await this.scratchGitService.resolveRepoId(workbookId, dataFolder?.connectorAccountId);
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
 
     try {
       await this.scratchGitService.renameFiles(

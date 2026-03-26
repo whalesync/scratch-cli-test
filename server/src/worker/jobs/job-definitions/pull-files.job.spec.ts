@@ -78,7 +78,7 @@ describe('PullFilesJobHandler', () => {
     } as unknown as jest.Mocked<WorkbookEventService>;
 
     mockScratchGitService = {
-      resolveRepoId: jest.fn().mockResolvedValue(WORKBOOK_ID),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue(WORKBOOK_ID),
       readSchemaFromGit: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<ScratchGitService>;
 

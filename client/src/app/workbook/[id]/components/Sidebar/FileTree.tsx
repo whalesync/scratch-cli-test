@@ -5,6 +5,7 @@ import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import type { ConnectorAccount, Workbook } from '@spinner/shared-types';
@@ -12,6 +13,7 @@ import { RefreshCwIcon } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { ReviewConnectionNode } from './ReviewTreeNode';
 import { ConnectionNode, EmptyConnectionNode } from './TreeNode';
+import { WorkbookRepoNode } from './WorkbookRepoNode';
 
 export type FileTreeMode = 'files' | 'review';
 
@@ -27,6 +29,7 @@ const SCRATCH_GROUP_NAME = 'Scratch';
 export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   const { dataFolderGroups, isLoading, refresh: refreshDataFolders } = useDataFolders(workbook.id);
   const { connectorAccounts } = useConnectorAccounts(workbook.id);
+  const { isAdmin } = useScratchPadUser();
   const expandAll = useWorkbookUIStore((state) => state.expandAll);
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
 
@@ -152,6 +155,9 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
             </UnstyledButton>
           </Group>
         </Box>
+
+        {/* Workbook repo browser (admin only) */}
+        {mode === 'files' && isAdmin && <WorkbookRepoNode workbookId={workbook.id} />}
 
         {/* Data folder groups (connections with tables) */}
         {sortedGroups.map((group) => {

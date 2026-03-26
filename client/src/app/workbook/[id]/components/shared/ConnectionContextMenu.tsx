@@ -1,6 +1,5 @@
 'use client';
 
-import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectionMenu, type ConnectionMenuTarget } from '@/hooks/use-connection-menu';
 import type { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
 import { ChooseTablesModal } from './ChooseTablesModal';
@@ -34,9 +33,6 @@ export function ConnectionContextMenu({
   onReauthorizeStart,
   onReauthorizeEnd,
 }: ConnectionContextMenuProps) {
-  const { workbook } = useActiveWorkbook();
-  const isV2 = (workbook?.version ?? 1) >= 2;
-
   const {
     items,
     modals,
@@ -51,7 +47,6 @@ export function ConnectionContextMenu({
     extraItemsAfter,
     onReauthorizeStart,
     onReauthorizeEnd,
-    isV2,
     fullConnectorAccount: connectorAccount,
   });
 

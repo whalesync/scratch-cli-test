@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
+import { isScratchPendingPublishId } from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
 import { ParsedContent } from 'src/utils/objects';
@@ -67,10 +67,7 @@ export class PublishPlanRunService {
     }
 
     // Resolve the correct git repo ID for this plan (V2 uses per-connection repos)
-    const repoId = await this.scratchGitService.resolveRepoId(
-      plan.workbookId as WorkbookId,
-      plan.connectorAccountId ?? undefined,
-    );
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(plan.connectorAccountId);
 
     // Resolve connector
     const connector = await this.resolveConnector(plan.connectorAccountId);

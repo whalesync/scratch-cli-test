@@ -68,7 +68,8 @@ export function NavTabs() {
     },
   ];
 
-  const isOnRunsPage = pathname.includes('/runs');
+  const topSegment = pathname.split('/').at(3);
+  const isOnRunsPage = topSegment === 'runs';
 
   const runsSubTabs: NavTab[] = [
     {
@@ -86,19 +87,13 @@ export function NavTabs() {
   ];
 
   const isActive = (tab: NavTab) => {
-    if (tab.id === 'files') {
-      return pathname.includes('/files');
-    }
-    if (tab.id === 'runs-recent') {
-      return pathname.includes('/runs') && !pathname.includes('/runs/scheduled');
-    }
-    if (tab.id === 'runs-scheduled') {
-      return pathname.includes('/runs/scheduled');
-    }
-    return pathname.includes(`/${tab.id}`);
+    if (tab.id === 'files') return topSegment === 'files';
+    if (tab.id === 'runs-recent') return topSegment === 'runs' && pathname.split('/').at(4) !== 'scheduled';
+    if (tab.id === 'runs-scheduled') return topSegment === 'runs' && pathname.split('/').at(4) === 'scheduled';
+    return topSegment === tab.id;
   };
 
-  const reviewActive = isActive(reviewTab);
+  const reviewActive = topSegment === 'review';
 
   return (
     <Box

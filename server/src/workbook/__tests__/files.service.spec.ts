@@ -46,7 +46,7 @@ describe('FilesService', () => {
     } as unknown as jest.Mocked<DbService>;
 
     scratchGitService = {
-      resolveRepoId: jest.fn().mockResolvedValue('repo-123'),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue('repo-123'),
       listRepoFilesPaginated: jest.fn().mockResolvedValue({ files: [], nextCursor: undefined }),
       getFolderDiff: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<ScratchGitService>;
