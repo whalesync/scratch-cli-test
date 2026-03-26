@@ -60,6 +60,7 @@ cat > "$DEPLOY_DIR/nginx.conf" << 'NGINX_CONF'
 worker_processes 1;
 events { worker_connections 1024; }
 http {
+    client_max_body_size 50m;
     include /etc/nginx/upstream.conf;
 
     server {
