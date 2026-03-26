@@ -131,6 +131,13 @@ export class ScratchConfigService {
     return this.getOptionalFlagVariable('USE_JOBS', false);
   }
 
+  /**
+   * When true, API token requests bypass rate limiting as if every token had the `rate-limit:unlimited` scope.
+   */
+  isApiRateLimitDisabled(): boolean {
+    return this.getOptionalFlagVariable('API_RATE_LIMIT_DISABLED', false);
+  }
+
   getLinearApiKey(): string | undefined {
     return this.getOptionalEnvVariable('LINEAR_API_KEY');
   }

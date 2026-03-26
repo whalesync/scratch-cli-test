@@ -60,6 +60,7 @@ describe('ApiRateLimitGuard', () => {
     getRedisHost: () => 'localhost',
     getRedisPort: () => 6379,
     getRedisPassword: () => '',
+    isApiRateLimitDisabled: () => false,
   };
 
   const mockMetricsService = {
@@ -149,6 +150,21 @@ describe('ApiRateLimitGuard', () => {
     });
     expect(await guard.canActivate(context)).toBe(true);
     expect(mockConsume).not.toHaveBeenCalled();
+  });
+
+  it('should skip rate limiting when API_RATE_LIMIT_DISABLED is enabled in config', async () => {
+    const disabledConfig = { ...mockConfigService, isApiRateLimitDisabled: () => true };
+    const disabledGuard = new ApiRateLimitGuard(reflector, disabledConfig as never, mockMetricsService);
+    disabledGuard.onModuleInit();
+    try {
+      const { context } = createMockExecutionContext({
+        user: { id: 'user-1', authType: 'api-token', authSource: 'cli', apiToken: { scopes: [] } },
+      });
+      expect(await disabledGuard.canActivate(context)).toBe(true);
+      expect(mockConsume).not.toHaveBeenCalled();
+    } finally {
+      await disabledGuard.onModuleDestroy();
+    }
   });
 
   it('should use high rate limit spec for tokens with rate-limit:high scope', async () => {

@@ -73,8 +73,8 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit, OnModuleDes
 
     const scopes = user.apiToken?.scopes ?? [];
 
-    // Tokens with unlimited scope bypass rate limiting entirely
-    if (scopes.includes('rate-limit:unlimited')) {
+    // Env kill-switch or tokens with unlimited scope bypass rate limiting entirely
+    if (this.configService.isApiRateLimitDisabled() || scopes.includes('rate-limit:unlimited')) {
       return true;
     }
 
