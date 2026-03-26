@@ -336,12 +336,15 @@ function PreviewValueBox({
 
 export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const router = useRouter();
-  const { folders: allFolders } = useDataFolders();
+  const { folders: allFolders, isLoading: foldersLoading, error: foldersError } = useDataFolders();
   const syncs = useSyncStore((state) => state.syncs);
   const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
 
   const isNew = syncId === 'new';
   const existingSync = useMemo(() => syncs.find((s) => s.id === syncId), [syncs, syncId]);
+
+  /** Folder list from SWR can be empty on first paint; avoid "missing folder" until load finishes (or errors). */
+  const folderIdsResolved = !foldersLoading && foldersError === undefined;
 
   const [folderPairs, setFolderPairs] = useState<FolderPair[]>([]);
   const [selectedPairIndex, setSelectedPairIndex] = useState(0);
@@ -950,8 +953,10 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                     id: p.id,
                     sourceId: p.sourceId,
                     destId: p.destId,
-                    sourceFolderExists: p.sourceFolderExists,
-                    destFolderExists: p.destFolderExists,
+                    sourceFolderExists:
+                      !folderIdsResolved || (p.sourceId ? allFolders.some((f) => f.id === p.sourceId) : true),
+                    destFolderExists:
+                      !folderIdsResolved || (p.destId ? allFolders.some((f) => f.id === p.destId) : true),
                     fieldMappingCount: p.fieldMappings.filter((m) => m.sourceField && m.destField).length,
                     sourceConnectorService: getFolderConnectorService(p.sourceId),
                     destConnectorService: getFolderConnectorService(p.destId),
