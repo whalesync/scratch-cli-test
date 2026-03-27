@@ -18,7 +18,12 @@ import { ApiRequestMetricsInterceptor } from './interceptors/api-request-metrics
 import { JobModule } from './job/job.module';
 import { McpModule } from './mcp/mcp.module';
 import { MetricsModule } from './metrics/metrics.module';
-import { JsonBodyMiddleware, RawBodyMiddleware, UrlencodedBodyMiddleware } from './middleware';
+import {
+  JsonBodyMiddleware,
+  RawBodyMiddleware,
+  UrlencodedBodyMiddleware,
+  WorkspaceAliasMiddleware,
+} from './middleware';
 import { OAuthModule } from './oauth/oauth.module';
 import { PaymentModule } from './payment/payment.module';
 import { PosthogModule } from './posthog/posthog.module';
@@ -80,6 +85,9 @@ export class AppModule implements NestModule {
     // Ported from Whalesync's app.module.ts
     // Needed to have control over how we parse requests. Technique borrowed from
     // https://stackoverflow.com/questions/54346465/access-raw-body-of-stripe-webhook-in-nest-js
+    // Rewrite /workspace(s) → /workbook(s) so all workbook endpoints also respond to workspace paths
+    consumer.apply(WorkspaceAliasMiddleware).forRoutes('*');
+
     consumer
       // NOTE! Stripe webhooks require access to the unparsed body to check the signatures. Connector webhooks need the
       // raw body because we have no idea ahead of time what format the body will be in.

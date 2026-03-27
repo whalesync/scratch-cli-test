@@ -1,6 +1,6 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { json as bodyParserJson, urlencoded as bodyParserUrlencoded } from 'body-parser';
-import { Request, Response, raw } from 'express';
+import { NextFunction, Request, Response, raw } from 'express';
 
 @Injectable()
 export class RawBodyMiddleware implements NestMiddleware {
@@ -30,5 +30,18 @@ export class JsonBodyMiddleware implements NestMiddleware {
 export class UrlencodedBodyMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: () => unknown): void {
     bodyParserUrlencoded({ extended: true })(req, res, next);
+  }
+}
+
+/**
+ * Middleware that rewrites '/workspace' to '/workbook' in request URLs,
+ * allowing all workbook endpoints to also respond to workspace paths.
+ */
+@Injectable()
+export class WorkspaceAliasMiddleware implements NestMiddleware {
+  use(req: Request, _res: Response, next: NextFunction): void {
+    req.url = req.url.replace(/\/workspace(s?)\b/g, '/workbook$1');
+    req.originalUrl = req.originalUrl.replace(/\/workspace(s?)\b/g, '/workbook$1');
+    next();
   }
 }
