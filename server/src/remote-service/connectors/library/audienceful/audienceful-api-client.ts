@@ -70,28 +70,18 @@ export class AudiencefulApiClient {
    * Uses cursor-based pagination following the 'next' URL.
    */
   async *listPeople(): AsyncGenerator<AudiencefulPerson[], void> {
-    // Start with the base endpoint
-    let nextUrl: string | null = '/people/';
+    let nextPageUrl: string | null = null;
 
-    while (nextUrl) {
-      // If it's a full URL, extract just the path
-      let url: string;
-      if (nextUrl.startsWith('http')) {
-        const parsedUrl = new URL(nextUrl);
-        url = parsedUrl.pathname + parsedUrl.search;
-      } else {
-        url = nextUrl;
-      }
+    do {
+      const url: string = nextPageUrl ?? '/people/'; // NextPageUrl is the full URI for pagination, but the base page is relative to the API base URL.
 
       const response = await this.client.get<AudiencefulPaginatedResponse<AudiencefulPerson>>(url);
+      nextPageUrl = response.data.next;
 
       if (response.data.results && response.data.results.length > 0) {
         yield response.data.results;
       }
-
-      // Follow the next URL for pagination
-      nextUrl = response.data.next;
-    }
+    } while (nextPageUrl);
   }
 
   /**
