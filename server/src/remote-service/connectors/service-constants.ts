@@ -23,4 +23,5 @@ export const Service = {
   PIPEDRIVE: 'PIPEDRIVE',
   MEMBERSTACK: 'MEMBERSTACK',
   HUBSPOT: 'HUBSPOT',
+  LINEAR: 'LINEAR',
 } as const;

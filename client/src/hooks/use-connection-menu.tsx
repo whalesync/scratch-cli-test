@@ -1,6 +1,13 @@
 'use client';
 
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
+import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
+import { GitGcModal } from '@/app/workbook/[id]/components/modals/GitGcModal';
+import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
+import { GitIndexModal } from '@/app/workbook/[id]/components/modals/GitIndexModal';
+import { GitObjectCountsModal } from '@/app/workbook/[id]/components/modals/GitObjectCountsModal';
+import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
+import type { ContextMenuItem } from '@/app/workbook/[id]/components/shared/ContextMenu';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useGitActions } from '@/hooks/use-git-actions';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
@@ -9,7 +16,6 @@ import { initiateOAuth } from '@/utils/oauth';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AuthType, type WorkbookId } from '@spinner/shared-types';
-import type { ContextMenuItem } from '@/app/workbook/[id]/components/shared/ContextMenu';
 import {
   CloudCogIcon,
   FileCodeIcon,
@@ -23,12 +29,6 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
-import { GitGcModal } from '@/app/workbook/[id]/components/modals/GitGcModal';
-import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
-import { GitIndexModal } from '@/app/workbook/[id]/components/modals/GitIndexModal';
-import { GitObjectCountsModal } from '@/app/workbook/[id]/components/modals/GitObjectCountsModal';
-import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
 
 /**
  * Minimal connection info needed to build the connection menu.
@@ -64,13 +64,7 @@ export function useConnectionMenu(
   connection: ConnectionMenuTarget,
   options: UseConnectionMenuOptions = {},
 ) {
-  const {
-    extraItemsBefore,
-    extraItemsAfter,
-    onReauthorizeStart,
-    onReauthorizeEnd,
-    fullConnectorAccount,
-  } = options;
+  const { extraItemsBefore, extraItemsAfter, onReauthorizeStart, onReauthorizeEnd, fullConnectorAccount } = options;
 
   const { isDevToolsEnabled } = useDevTools();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
@@ -222,9 +216,7 @@ export function useConnectionMenu(
     ...(extraItemsAfter ?? []),
     { type: 'divider' as const },
     ...gitSubmenu,
-    ...(fullConnectorAccount
-      ? [{ label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true }]
-      : []),
+    ...(fullConnectorAccount ? [{ label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true }] : []),
     ...(isDevToolsEnabled
       ? [{ label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection }]
       : []),

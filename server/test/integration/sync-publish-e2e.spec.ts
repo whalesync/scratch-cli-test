@@ -106,7 +106,9 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // ---- Mock: ScratchGitService ----
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
-      resolveConnectionRepoPath: jest.fn().mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      resolveConnectionRepoPath: jest
+        .fn()
+        .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idColumnRemoteId: 'id' },
@@ -1197,16 +1199,14 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         .mockImplementation((wkbId: WorkbookId, connAcctId?: string) =>
           Promise.resolve(connAcctId ? getDefaultRepoPath(orgId, wkbId, connAcctId) : wkbId),
         ),
-      resolveConnectionRepoPath: jest
-        .fn()
-        .mockImplementation((...args: [WorkbookId, string] | [string]) => {
-          if (args.length === 2) {
-            const [wkbId, connAcctId] = args;
-            return Promise.resolve(getDefaultRepoPath(orgId, wkbId, connAcctId));
-          }
-          const [connAcctId] = args;
-          return Promise.resolve(connAcctId);
-        }),
+      resolveConnectionRepoPath: jest.fn().mockImplementation((...args: [WorkbookId, string] | [string]) => {
+        if (args.length === 2) {
+          const [wkbId, connAcctId] = args;
+          return Promise.resolve(getDefaultRepoPath(orgId, wkbId, connAcctId));
+        }
+        const [connAcctId] = args;
+        return Promise.resolve(connAcctId);
+      }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-tags': { idColumnRemoteId: 'id' },

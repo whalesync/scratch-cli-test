@@ -79,6 +79,8 @@ export interface EntityConfig {
  * Plugin configuration passed to all plugins
  */
 export interface PluginConfig {
+  /** Service name (e.g., 'shopify', 'linear') — used for schema $id prefixes and codegen command references */
+  serviceName: string;
   /** Entity configurations */
   entities: EntityConfig[];
   /** Scalar type mappings */

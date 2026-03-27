@@ -497,6 +497,7 @@ export function getFieldFiltersForCodegen(): FieldFilterConfig {
  */
 export function createShopifyPluginConfig(): PluginConfig {
   return {
+    serviceName: 'shopify',
     entities: SHOPIFY_ENTITIES,
     scalarMappings: SHOPIFY_SCALAR_MAPPINGS,
     fieldFilters: getFieldFiltersForCodegen(),

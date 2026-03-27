@@ -5,7 +5,8 @@
   "description": "GraphQL schema introspection and TypeBox code generation",
   "scripts": {
     "codegen:shopify": "ts-node src/shopify/run.ts",
-    "codegen:quickbooks": "ts-node src/quickbooks/run.ts"
+    "codegen:quickbooks": "ts-node src/quickbooks/run.ts",
+    "codegen:linear": "ts-node src/linear/run.ts"
   },
   "dependencies": {
     "@graphql-codegen/core": "^4.0.0",

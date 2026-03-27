@@ -42,10 +42,14 @@ export const useFolderFileListPaginated = (
     [workbookId, folderId, pageSize],
   );
 
-  const { data, error, isLoading, size, setSize, mutate } = useSWRInfinite<ListFilesResponseDto, Error>(getKey, fetcher, {
-    revalidateOnFocus: false,
-    revalidateFirstPage: false,
-  });
+  const { data, error, isLoading, size, setSize, mutate } = useSWRInfinite<ListFilesResponseDto, Error>(
+    getKey,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateFirstPage: false,
+    },
+  );
 
   const files = useMemo(() => {
     if (!data) return [];

@@ -37,6 +37,7 @@ import { DecryptedCredentials } from '../remote-service/connector-account/types/
 import { EncryptedData } from '../utils/encryption';
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
+import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
 import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
@@ -73,6 +74,7 @@ export class OAuthService {
     private readonly wixProvider: WixOAuthProvider,
     private readonly youTubeProvider: YouTubeOAuthProvider,
     private readonly quickbooksProvider: QuickBooksOAuthProvider,
+    private readonly linearProvider: LinearOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
@@ -86,6 +88,7 @@ export class OAuthService {
     this.providers.set('WIX_BLOG', this.wixProvider);
     this.providers.set('YOUTUBE', this.youTubeProvider);
     this.providers.set('QUICKBOOKS', this.quickbooksProvider);
+    this.providers.set('LINEAR', this.linearProvider);
   }
 
   /**

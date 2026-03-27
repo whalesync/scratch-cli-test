@@ -4,6 +4,7 @@
 import './airtable/airtable-connector';
 import './audienceful/audienceful-connector';
 import './hubspot/hubspot-connector';
+import './linear/linear-connector';
 import './memberstack/memberstack-connector';
 import './moco/moco-connector';
 import './notion/notion-connector';

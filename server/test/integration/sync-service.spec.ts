@@ -49,7 +49,9 @@ describe('SyncService - fillSyncCaches', () => {
     // Shouldn't be called
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
-      resolveConnectionRepoPath: jest.fn().mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      resolveConnectionRepoPath: jest
+        .fn()
+        .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
     } as unknown as ScratchGitService;
 
     // Create SyncService instance (workbookService not needed for these tests)
@@ -377,7 +379,9 @@ describe('SyncService - syncTableMapping', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
-      resolveConnectionRepoPath: jest.fn().mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      resolveConnectionRepoPath: jest
+        .fn()
+        .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         return Promise.resolve(gitSchemasByPath[folderPath] ?? null);
       }),
@@ -1644,7 +1648,9 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
-      resolveConnectionRepoPath: jest.fn().mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      resolveConnectionRepoPath: jest
+        .fn()
+        .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-authors': { idColumnRemoteId: 'id' },
@@ -2393,7 +2399,9 @@ describe('SyncService - lookup_field transformer', () => {
 
     scratchGitService = {
       resolveRepoId: jest.fn().mockImplementation((wkbId: WorkbookId) => Promise.resolve(wkbId)),
-      resolveConnectionRepoPath: jest.fn().mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
+      resolveConnectionRepoPath: jest
+        .fn()
+        .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
           '/src-categories': { idColumnRemoteId: 'id' },

@@ -8,6 +8,7 @@ import { DbModule } from '../db/db.module';
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
+import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
 import { ShopifyOAuthProvider } from './providers/shopify-oauth.provider';
@@ -29,6 +30,7 @@ import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
     WixOAuthProvider,
     YouTubeOAuthProvider,
     QuickBooksOAuthProvider,
+    LinearOAuthProvider,
   ],
   exports: [OAuthService],
 })

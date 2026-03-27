@@ -22,23 +22,16 @@ interface ScratchFileViewerProps {
   useConfigRepo?: boolean;
 }
 
-export function ScratchFileViewer({
-  workbookId,
-  filePath,
-  connectorAccountId,
-  useConfigRepo,
-}: ScratchFileViewerProps) {
+export function ScratchFileViewer({ workbookId, filePath, connectorAccountId, useConfigRepo }: ScratchFileViewerProps) {
   const { colorScheme } = useMantineColorScheme();
   const {
     data: content,
     isLoading,
     error,
-  } = useSWR<string, Error>(
-    SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId, useConfigRepo),
-    () =>
-      workbookApi
-        .getRepoFile(workbookId, filePath, useConfigRepo ? 'main' : 'dirty', connectorAccountId, useConfigRepo)
-        .then((r) => r?.content ?? ''),
+  } = useSWR<string, Error>(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId, useConfigRepo), () =>
+    workbookApi
+      .getRepoFile(workbookId, filePath, useConfigRepo ? 'main' : 'dirty', connectorAccountId, useConfigRepo)
+      .then((r) => r?.content ?? ''),
   );
 
   const fileName = useMemo(() => {
