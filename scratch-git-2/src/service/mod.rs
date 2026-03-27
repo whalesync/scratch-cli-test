@@ -226,6 +226,7 @@ pub async fn run() {
             axum::routing::any(routes::smart_http::git_backend),
         )
         .layer(CorsLayer::permissive())
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB
         .layer(middleware::from_fn(timing_middleware))
         .with_state(state);
 
