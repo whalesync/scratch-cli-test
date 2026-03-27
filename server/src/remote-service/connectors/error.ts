@@ -81,6 +81,8 @@ export function extractCommonDetailsFromAxiosError(
       description: error.message,
       additionalContext: {
         status: error.response?.status,
+        statusText: error.response?.statusText,
+        url: error.config?.url,
       },
     };
   }
@@ -95,6 +97,8 @@ export function extractCommonDetailsFromAxiosError(
       description: error.message,
       additionalContext: {
         status: error.response?.status,
+        statusText: error.response?.statusText,
+        url: error.config?.url,
       },
     };
   }

@@ -256,6 +256,18 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
     return {
       userFriendlyMessage: `${serviceName} error: ${errorMessage}`,
       description: errorMessage,
+      ...(error instanceof Error && {
+        additionalContext: {
+          errorName: error.name,
+          stack: error.stack,
+          ...(error.cause !== undefined && {
+            cause:
+              error.cause instanceof Error
+                ? { name: error.cause.name, message: error.cause.message }
+                : JSON.stringify(error.cause),
+          }),
+        },
+      }),
     };
   }
 }

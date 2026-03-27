@@ -434,7 +434,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         message: 'Failed to pull files for data folder',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        errorDetails: connector.extractConnectorErrorDetails(error),
       });
 
       this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {

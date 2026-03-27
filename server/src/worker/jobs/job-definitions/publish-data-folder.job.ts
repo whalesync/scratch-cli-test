@@ -395,7 +395,7 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
           message: 'Failed to publish files for folder',
           workbookId: data.workbookId,
           dataFolderId: dataFolder.id,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          errorDetails: connector.extractConnectorErrorDetails(error),
         });
 
         // Re-throw if this is the only folder, otherwise continue
