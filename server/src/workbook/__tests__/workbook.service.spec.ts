@@ -64,6 +64,9 @@ describe('WorkbookService', () => {
         dbJob: {
           deleteMany: jest.fn().mockResolvedValue({}),
         },
+        schedule: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -107,6 +110,81 @@ describe('WorkbookService', () => {
       fileReferenceService,
       workbookRepoService,
     );
+  });
+
+  describe('fetchSchedulesByEntityId', () => {
+    it('groups schedules by entityId for a single workbook', async () => {
+      const schedules = [
+        { id: 'sch_1', workbookId: WORKBOOK_ID, entityId: 'df_1', action: 'PULL' },
+        { id: 'sch_2', workbookId: WORKBOOK_ID, entityId: 'df_1', action: 'PUBLISH' },
+        { id: 'sch_3', workbookId: WORKBOOK_ID, entityId: 'df_2', action: 'PULL' },
+      ];
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue(schedules);
+
+      const result = await service.fetchSchedulesByEntityId(WORKBOOK_ID);
+
+      expect(dbService.client.schedule.findMany).toHaveBeenCalledWith({ where: { workbookId: WORKBOOK_ID } });
+      expect(result.get('df_1')).toEqual([schedules[0], schedules[1]]);
+      expect(result.get('df_2')).toEqual([schedules[2]]);
+    });
+
+    it('returns an empty map when no schedules exist', async () => {
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.fetchSchedulesByEntityId(WORKBOOK_ID);
+
+      expect(result.size).toBe(0);
+    });
+  });
+
+  describe('fetchSchedulesByWorkbookIds', () => {
+    const WORKBOOK_ID_2 = 'wkb_test_2' as WorkbookId;
+
+    it('fetches schedules for multiple workbooks in a single query', async () => {
+      const schedules = [
+        { id: 'sch_1', workbookId: WORKBOOK_ID, entityId: 'df_1', action: 'PULL' },
+        { id: 'sch_2', workbookId: WORKBOOK_ID, entityId: 'df_2', action: 'PULL' },
+        { id: 'sch_3', workbookId: WORKBOOK_ID_2, entityId: 'df_3', action: 'PUBLISH' },
+      ];
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue(schedules);
+
+      const result = await service.fetchSchedulesByWorkbookIds([WORKBOOK_ID, WORKBOOK_ID_2]);
+
+      expect(dbService.client.schedule.findMany).toHaveBeenCalledWith({
+        where: { workbookId: { in: [WORKBOOK_ID, WORKBOOK_ID_2] } },
+      });
+      expect(result.get(WORKBOOK_ID)?.get('df_1')).toEqual([schedules[0]]);
+      expect(result.get(WORKBOOK_ID)?.get('df_2')).toEqual([schedules[1]]);
+      expect(result.get(WORKBOOK_ID_2)?.get('df_3')).toEqual([schedules[2]]);
+    });
+
+    it('groups multiple schedules per entity within each workbook', async () => {
+      const schedules = [
+        { id: 'sch_1', workbookId: WORKBOOK_ID, entityId: 'df_1', action: 'PULL' },
+        { id: 'sch_2', workbookId: WORKBOOK_ID, entityId: 'df_1', action: 'PUBLISH' },
+      ];
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue(schedules);
+
+      const result = await service.fetchSchedulesByWorkbookIds([WORKBOOK_ID]);
+
+      expect(result.get(WORKBOOK_ID)?.get('df_1')).toEqual([schedules[0], schedules[1]]);
+    });
+
+    it('returns an empty map for workbooks with no schedules', async () => {
+      (dbService.client.schedule.findMany as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.fetchSchedulesByWorkbookIds([WORKBOOK_ID, WORKBOOK_ID_2]);
+
+      expect(result.size).toBe(0);
+      expect(result.get(WORKBOOK_ID)).toBeUndefined();
+    });
+
+    it('returns an empty map when given no workbook IDs', async () => {
+      const result = await service.fetchSchedulesByWorkbookIds([]);
+
+      expect(result.size).toBe(0);
+      expect(dbService.client.schedule.findMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('delete', () => {

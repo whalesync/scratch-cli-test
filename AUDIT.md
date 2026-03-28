@@ -16,7 +16,7 @@
 
 ### Performance
 
-5. **N+1 query in workbook controller** — `server/src/workbook/workbook.controller.ts:88-93` fetches schedules per-workbook in a `Promise.all(map(...))`. Should batch into a single query.
+5. ~~**N+1 query in workbook controller**~~ — Fixed in cfonger-7. Added `fetchSchedulesByWorkbookIds` to batch schedule fetches into a single query.
 6. **sync.service.ts is 2,137 lines** — `server/src/sync/sync.service.ts` handles validation, mapping, git interaction, and DB transactions. Should be split into focused services.
 
 ### Client Architecture

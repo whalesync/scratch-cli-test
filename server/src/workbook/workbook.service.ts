@@ -475,6 +475,40 @@ export class WorkbookService {
     const schedules = await this.db.client.schedule.findMany({
       where: { workbookId },
     });
+    return WorkbookService.groupSchedulesByEntityId(schedules);
+  }
+
+  /**
+   * Fetches all schedules for multiple workbooks in a single query, grouped by workbookId then entityId.
+   */
+  public async fetchSchedulesByWorkbookIds(
+    workbookIds: WorkbookId[],
+  ): Promise<Map<WorkbookId, Map<string, Schedule[]>>> {
+    if (workbookIds.length === 0) {
+      return new Map();
+    }
+    const schedules = await this.db.client.schedule.findMany({
+      where: { workbookId: { in: workbookIds } },
+    });
+    const result = new Map<WorkbookId, Map<string, Schedule[]>>();
+    for (const schedule of schedules) {
+      const wbId = schedule.workbookId as WorkbookId;
+      let entityMap = result.get(wbId);
+      if (!entityMap) {
+        entityMap = new Map<string, Schedule[]>();
+        result.set(wbId, entityMap);
+      }
+      const existing = entityMap.get(schedule.entityId);
+      if (existing) {
+        existing.push(schedule);
+      } else {
+        entityMap.set(schedule.entityId, [schedule]);
+      }
+    }
+    return result;
+  }
+
+  private static groupSchedulesByEntityId(schedules: Schedule[]): Map<string, Schedule[]> {
     const map = new Map<string, Schedule[]>();
     for (const schedule of schedules) {
       const existing = map.get(schedule.entityId);

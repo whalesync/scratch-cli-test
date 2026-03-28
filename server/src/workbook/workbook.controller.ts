@@ -85,12 +85,9 @@ export class WorkbookController {
       workbooks = await this.service.findAllForUser(userToActor(req.user), sortBy, sortOrder);
     }
 
-    return await Promise.all(
-      workbooks.map(async (s) => {
-        const schedulesByEntityId = await this.service.fetchSchedulesByEntityId(s.id as WorkbookId);
-        return new Workbook(s, schedulesByEntityId);
-      }),
-    );
+    const workbookIds = workbooks.map((s) => s.id as WorkbookId);
+    const allSchedules = await this.service.fetchSchedulesByWorkbookIds(workbookIds);
+    return workbooks.map((s) => new Workbook(s, allSchedules.get(s.id as WorkbookId)));
   }
 
   @Get(':id')
