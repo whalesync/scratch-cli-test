@@ -24,7 +24,7 @@ import { WorkbookService } from './workbook.service';
 @UseGuards(WebSocketAuthGuard)
 @WebSocketGateway({
   cors: {
-    origin: '*', // In production, restrict this to your frontend origin
+    origin: ScratchConfigService.getClientBaseUrl(),
   },
   path: '/workbook-events',
   transports: ['websocket'],

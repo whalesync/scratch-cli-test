@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { ScratchConfigService } from './config/scratch-config.service';
 import {
   ConnectorAuthErrorExceptionFilter,
   ConnectorInstantiationErrorExceptionFilter,
@@ -39,9 +40,11 @@ async function bootstrap(): Promise<void> {
   // Turn on class validation for body and URL params (DTOs).
   app.useGlobalPipes(new ValidationPipe());
 
-  // Enable CORS
+  // Enable CORS — restrict to the client origin for the current environment.
+  const corsOrigin = ScratchConfigService.getClientBaseUrl();
+  WSLogger.info({ source: 'main', message: `CORS allowed origin: ${corsOrigin}` });
   app.enableCors({
-    origin: '*', // Allow any origin for development
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With'],
     exposedHeaders: ['Content-Type', 'Cache-Control', 'Content-Disposition'],
