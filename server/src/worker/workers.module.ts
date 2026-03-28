@@ -30,7 +30,6 @@ import { WorkersController } from './test/workers.controller';
     ConnectorAccountModule,
     UserModule,
     ScratchGitModule,
-    ScratchGitModule,
     SyncModule,
     PublishPlanModule,
     AssetModule,

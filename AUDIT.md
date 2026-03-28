@@ -9,7 +9,7 @@
 
 ### Security
 
-1. **CORS wildcard + credentials** — `server/src/main.ts` and `workbook.gateway.ts` both set `origin: '*'` with `credentials: true`. This should be an environment-specific allowlist in production.
+1. ~~**CORS wildcard + credentials**~~ — Fixed in cfonger-5. CORS now uses `ScratchConfigService.getClientBaseUrl()` per environment.
 2. **Rate limiter fails open** — `server/src/rate-limiter/api-rate-limit.guard.ts` returns `true` when Redis is unavailable, silently disabling all rate limiting.
 3. **No SAST or dependency scanning in CI** — Only secret detection is enabled in `.gitlab-ci.yml`. Missing `yarn audit`, `cargo audit`, and SAST templates.
 4. **scratch-git GCE deletion_protection = false** — `terraform/modules/scratch_git_gce/main.tf` — this is a persistent data node that could be accidentally deleted.
@@ -31,7 +31,7 @@
 
 ### Code Quality
 
-10. **Duplicate module import** — `server/src/worker/workers.module.ts` imports `ScratchGitModule` twice.
+10. ~~**Duplicate module import**~~ — Fixed in cfonger-6. Removed duplicate `ScratchGitModule` import in `workers.module.ts`.
 11. **Missing composite index** — `Schedule.enabled` + `Schedule.nextRunAt` are queried together by the cron service but have no composite index in the Prisma schema.
 12. **Missing `useMemo`** — `client/src/app/workbook/[id]/review/page.tsx:61-86` runs `groupFilesBySource` on every render.
 13. **`dompurify` installed but never imported** — Dead dependency in `client/package.json`.
