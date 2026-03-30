@@ -1,0 +1,44 @@
+.rootBox {
+  border-radius: var(--mantine-radius-md);
+  box-shadow: var(--mantine-shadow-sm);
+  --mantine-color-body: var(--mantine-color-gray-0);
+}
+
+.cardBox {
+  border: 0px;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  border-radius: var(--mantine-radius-md);
+}
+
+.card {
+  border: 0.5px solid var(--mantine-color-gray-5);
+  box-shadow: none;
+  border-radius: var(--mantine-radius-md);
+  background: white;
+}
+
+.footer {
+  border: 0.5px solid var(--mantine-color-gray-5);
+  box-shadow: none;
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-gray-0);
+  color: var(--mantine-color-gray-10);
+}
+
+.footerActionLink {
+  color: var(--mantine-color-gray-11);
+  font-weight: 500;
+
+  &:hover {
+    color: var(--mantine-color-gray-11);
+  }
+}
+
+.formButtonPrimary {
+  box-shadow: var(--mantine-shadow-md-inner);
+  &:hover {
+    background: var(--mantine-color-blue-filled-hover);
+  }
+}

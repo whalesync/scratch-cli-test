@@ -1,0 +1,217 @@
+/** CUSTOM ACTION ICON STYLES */
+
+.actionIconRoot {
+  border-width: 0.5px;
+
+  /* A variant of transparent that changes color on hover */
+  &[data-variant='transparent-hover'] {
+    background: transparent;
+    &:hover:not(:disabled) {
+      color: var(--mantine-color-primary-filled);
+      background: transparent;
+    }
+    &:disabled {
+      background: transparent;
+      opacity: light-dark(0.5, 0.8);
+    }
+  }
+}
+
+/** CUSTOM BUTTON STYLES */
+.buttonLabel {
+  font-weight: 425;
+}
+
+/** CUSTOM CHECKBOX STYLES */
+.checkboxInput {
+  border-color: var(--mantine-color-gray-5);
+
+  &:checked {
+    background-color: var(--mantine-color-green-6);
+    border-color: var(--mantine-color-green-8);
+  }
+}
+
+/** CUSTOM Keyboard STYLES */
+.kbdRoot {
+  color: var(--fg-primary);
+  background-color: var(--bg-base);
+  border: 0.5px solid var(--fg-divider);
+  border-radius: 0;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  letter-spacing: 0.25px;
+  text-transform: uppercase;
+}
+
+/** CUSTOM TABLE STYLES */
+.tableThead {
+  color: var(--fg-secondary);
+  font-family: var(--mantine-font-family-monospace);
+  text-transform: uppercase;
+  font-weight: 405;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.25px;
+}
+
+.tableTbody {
+  color: var(--mantine-color-gray-9);
+
+  font-size: 13px;
+  font-weight: 425;
+  line-height: 19px;
+  letter-spacing: 0%;
+}
+
+/** CUSTOM TOOLTIP STYLES */
+.tooltip {
+  /* Colors are reversed here for contrast with the normal page */
+  background-color: var(--fg-primary);
+  color: var(--bg-base);
+
+  /* Ensure solid background in dark mode - Mantine's default may have transparency */
+  :global([data-mantine-color-scheme='dark']) & {
+    background-color: var(--fg-primary);
+  }
+
+  border: none;
+  border-radius: var(--mantine-radius-sm);
+
+  /** text/13-regular */
+  font-size: 13px;
+  font-weight: 425;
+  line-height: 19px;
+  letter-spacing: 0%;
+}
+
+/* Make onboarding tooltips selectable and inspectable */
+.tooltip[data-onboarding-tooltip] {
+  user-select: text;
+  pointer-events: auto;
+  cursor: text;
+  padding: 0px;
+}
+
+/** CUSTOM MENU STYLES */
+.menuDropdown {
+  background-color: var(--bg-base);
+  border: 0.5px solid var(--mantine-color-gray-5);
+
+  /* Ensure solid background in dark mode - Mantine's default may have transparency */
+  :global([data-mantine-color-scheme='dark']) & {
+    background-color: var(--bg-base);
+  }
+}
+
+.menuDivider {
+  background-color: var(--mantine-color-gray-5);
+  margin-left: -4px;
+  margin-right: -4px;
+}
+
+.menuItem {
+  &[data-disabled] {
+    color: var(--fg-secondary); /** Additional opacity applied by the widget? */
+  }
+
+  &[data-delete] {
+    color: var(--mantine-color-red-8);
+
+    .menuItemSection {
+      color: var(--mantine-color-red-8);
+    }
+  }
+
+  &[data-accept] {
+    color: var(--mantine-color-green-8);
+
+    .menuItemSection {
+      color: var(--mantine-color-green-8);
+    }
+  }
+
+  &[data-devtool] {
+    color: var(--mantine-color-devTool-8);
+
+    .menuItemSection {
+      color: var(--mantine-color-devTool-8);
+    }
+  }
+}
+
+.menuLabel {
+  color: var(--fg-secondary);
+}
+
+.menuItemSection {
+  color: var(--fg-muted);
+}
+
+/** 
+  DARK OVERLAY MENU OVERRIDES!
+  Menus on the grid are always styled dark. This is like a variant, but Menu doesn't support variants, so we
+  fake it using a data attribute.
+  These colors need to be hard-coded since we are officially in light mode and CSS vars will resolve to light values.
+*/
+.menuDropdown[data-always-dark] {
+  background-color: #1a1c1f;
+  color: #f5f6f9f5;
+
+  .menuItem {
+    color: #f5f6f9f5;
+
+    &[data-disabled] {
+      color: #dce0e9b8;
+    }
+
+    &:hover {
+      background-color: #383a3f;
+    }
+
+    &[data-delete] {
+      color: var(--mantine-color-red-7);
+
+      .menuItemSection {
+        color: var(--mantine-color-red-7);
+      }
+    }
+
+    &[data-accept] {
+      color: var(--mantine-color-green-7);
+
+      .menuItemSection {
+        color: var(--mantine-color-green-7);
+      }
+    }
+  }
+
+  .menuDivider {
+    background-color: #e2e8f333;
+  }
+
+  .menuItemSection {
+    color: #dce0e999;
+  }
+
+  .menuLabel {
+    color: #dce0e999;
+  }
+}
+
+/** CUSTOM POPOVER STYLES */
+.popoverDropdown {
+  padding: var(--mantine-spacing-xs);
+}
+
+/** CUSTOM NOTIFICATION STYLES */
+.notificationRoot {
+  background-color: var(--bg-base);
+
+  /* Ensure solid background in dark mode */
+  :global([data-mantine-color-scheme='dark']) & {
+    background-color: var(--bg-base);
+  }
+}

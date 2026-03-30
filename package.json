@@ -7,6 +7,8 @@
     "client",
     "server",
     "scratch-git-2",
+    "scratch-desktop",
+    "scratch-desktop-htmx",
     "scratch-cli-tests",
     "packages/*",
     "test-api-fakes/*",

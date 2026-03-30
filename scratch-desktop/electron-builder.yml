@@ -1,0 +1,37 @@
+appId: com.scratch.desktop
+productName: Scratch Desktop
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.*"
+  - "!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+
+asarUnpack:
+  - resources/**
+
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSDocumentsFolderUsageDescription: Scratch Desktop needs access to manage your workspace files.
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+linux:
+  target:
+    - AppImage
+    - deb
+  maintainer: Whalesync
+  category: Office

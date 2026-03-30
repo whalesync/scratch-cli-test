@@ -1,0 +1,111 @@
+:root {
+  /* Semantic names for some custom colors */
+  /* Note: These reference Mantine color variables which automatically
+     switch between light/dark palettes via virtualColor */
+
+  /* Backgrounds */
+  --bg-base: var(--mantine-color-body);
+  --bg-panel: var(--mantine-color-gray-0);
+  --bg-selected: var(--mantine-color-gray-1);
+  --bg-hover: var(--mantine-color-gray-0);
+
+  /* Foreground/Text */
+  --fg-primary: var(--mantine-color-gray-9);
+  --fg-secondary: var(--mantine-color-gray-8);
+  --fg-muted: var(--mantine-color-gray-7);
+  --fg-divider: var(--mantine-color-gray-4);
+
+  font-feature-settings:
+    'liga' 1,
+    'calt' 1; /* fix for Chrome */
+}
+
+/* Suggestions and changes - set in theme-specific sections below */
+[data-mantine-color-scheme='light'] {
+  --fg-accept: var(--mantine-color-teal-9);
+  --bg-accept: var(--mantine-color-green-4);
+
+  --fg-reject: var(--mantine-color-red-6);
+  --bg-reject: var(--mantine-color-red-3);
+
+  --fg-added: var(--fg-accept);
+  --bg-added: var(--bg-accept);
+
+  --fg-removed: var(--fg-reject);
+  --bg-removed: var(--bg-reject);
+}
+
+/**
+  ALWAYS DARK OVERRIDE
+  Elements with data-always-dark are always styled with dark theme colors.
+  This only applies when the theme is light, overriding to use dark theme values.
+*/
+[data-mantine-color-scheme='light'] [data-always-dark] {
+  /* Use grayDark palette directly since virtualColor resolves to grayLight in light mode */
+  --fg-primary: rgba(236, 238, 240, 1);
+  --fg-secondary: var(--mantine-color-grayDark-8);
+  --fg-muted: rgba(166, 169, 176, 1);
+  --fg-divider: var(--mantine-color-grayDark-6);
+  --corner-color: red;
+
+  --bg-base: black;
+  --bg-panel: var(--mantine-color-dark-7);
+  --bg-selected: var(--mantine-color-dark-6);
+  --bg-hover: var(--mantine-color-dark-5);
+  --tooltip-bg: black;
+
+  /* Override actual text color for Mantine components */
+  color: var(--mantine-color-grayDark-9);
+}
+
+/* Dark theme suggestion/change colors */
+[data-mantine-color-scheme='dark'] {
+  --bg-added-marker: #243b3b;
+  --fg-added-marker: #62d5c5;
+
+  --bg-removed-marker: #553431;
+  --fg-removed-marker: #e84f31;
+
+  --bg-added: #253c3c;
+  --fg-added: #62d5c5;
+
+  --bg-removed: #472320;
+  --fg-removed: #f09781;
+
+  --fg-accept: var(--fg-added);
+  --bg-accept: var(--bg-added);
+
+  --fg-reject: #f09781;
+  --bg-reject: var(--bg-reject);
+}
+
+@supports (font-variation-settings: normal) {
+  :root {
+    font-family: InterVariable, sans-serif;
+  }
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  background-color: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

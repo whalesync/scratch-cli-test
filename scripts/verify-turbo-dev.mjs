@@ -9,6 +9,7 @@ import { readFileSync } from "fs";
 const EXPECTED = [
   "@spinner/shared-types#dev",
   "client#dev",
+  "scratch-desktop#dev",
   "scratch-git-2#dev",
   "server#dev",
 ];

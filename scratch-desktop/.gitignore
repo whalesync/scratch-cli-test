@@ -1,0 +1,5 @@
+out/
+dist/
+resources/bin/
+*.env
+node_modules/
