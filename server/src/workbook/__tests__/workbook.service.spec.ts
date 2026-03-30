@@ -44,6 +44,7 @@ describe('WorkbookService', () => {
   let fileReferenceService: jest.Mocked<FileReferenceService>;
   let posthogService: jest.Mocked<PostHogService>;
   let auditLogService: jest.Mocked<AuditLogService>;
+  let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
 
   beforeEach(() => {
     dbService = {
@@ -53,6 +54,9 @@ describe('WorkbookService', () => {
           delete: jest.fn().mockResolvedValue({}),
         },
         connectorAccount: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        dataFolder: {
           findMany: jest.fn().mockResolvedValue([]),
         },
         sync: {
@@ -93,7 +97,11 @@ describe('WorkbookService', () => {
 
     const configService = {} as jest.Mocked<ScratchConfigService>;
     const workbookEventService = {} as jest.Mocked<WorkbookEventService>;
-    const bullEnqueuerService = {} as jest.Mocked<BullEnqueuerService>;
+    bullEnqueuerService = {
+      enqueueRehostAssetsJob: jest
+        .fn()
+        .mockImplementation((_wkbId, _actor, folderId) => Promise.resolve({ id: `job_${folderId}` })),
+    } as unknown as jest.Mocked<BullEnqueuerService>;
     const workbookRepoService = {
       deleteWorkbookRepo: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<WorkbookRepoService>;
@@ -252,6 +260,44 @@ describe('WorkbookService', () => {
       (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.delete(WORKBOOK_ID, ACTOR)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('pullAssets', () => {
+    beforeEach(() => {
+      (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(createMockWorkbook(2));
+    });
+
+    it('enqueues a rehost job for each matching data folder', async () => {
+      const folders = [
+        { id: 'dfd_1', name: 'Brands', workbookId: WORKBOOK_ID },
+        { id: 'dfd_2', name: 'Products', workbookId: WORKBOOK_ID },
+      ];
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue(folders);
+
+      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_1', 'dfd_2'], { source: 'web' });
+
+      expect(bullEnqueuerService.enqueueRehostAssetsJob).toHaveBeenCalledTimes(2);
+      expect(result.jobIds).toEqual(['job_dfd_1', 'job_dfd_2']);
+    });
+
+    it('returns a warning when no matching folders are found', async () => {
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_nonexistent'], { source: 'web' });
+
+      expect(bullEnqueuerService.enqueueRehostAssetsJob).not.toHaveBeenCalled();
+      expect(result.warning).toBeDefined();
+    });
+
+    it('only enqueues jobs for folders that exist in the workbook', async () => {
+      const folders = [{ id: 'dfd_1', name: 'Brands', workbookId: WORKBOOK_ID }];
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue(folders);
+
+      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_1', 'dfd_missing'], { source: 'web' });
+
+      expect(bullEnqueuerService.enqueueRehostAssetsJob).toHaveBeenCalledTimes(1);
+      expect(result.jobIds).toHaveLength(1);
     });
   });
 });

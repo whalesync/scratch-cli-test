@@ -436,36 +436,40 @@ export class WorkbookService {
   async pullAssets(
     id: WorkbookId,
     actor: Actor,
-    dataFolderId: string,
+    dataFolderIds: string[],
     runContext: RunContext,
   ): Promise<PullAssetsResponseDto> {
     await this.findOneOrThrow(id, actor);
 
-    const dataFolder = await this.db.client.dataFolder.findFirst({
-      where: { id: dataFolderId, workbookId: id },
+    const dataFolders = await this.db.client.dataFolder.findMany({
+      where: { id: { in: dataFolderIds }, workbookId: id },
     });
 
-    if (!dataFolder) {
-      return { warning: 'Data folder not found in this workspace.' };
+    if (dataFolders.length === 0) {
+      return { warning: 'No matching data folders found in this workspace.' };
     }
 
-    const job = await this.bullEnqueuerService.enqueueRehostAssetsJob(
-      id,
-      actor,
-      dataFolderId as DataFolderId,
-      {
-        status: 'pending',
-        dataFolderId,
-        dataFolderName: dataFolder.name,
-        totalAssets: 0,
-        succeeded: 0,
-        failed: 0,
-        failures: [],
-      },
-      runContext,
-    );
+    const jobIds: string[] = [];
+    for (const dataFolder of dataFolders) {
+      const job = await this.bullEnqueuerService.enqueueRehostAssetsJob(
+        id,
+        actor,
+        dataFolder.id as DataFolderId,
+        {
+          status: 'pending',
+          dataFolderId: dataFolder.id,
+          dataFolderName: dataFolder.name,
+          totalAssets: 0,
+          succeeded: 0,
+          failed: 0,
+          failures: [],
+        },
+        runContext,
+      );
+      jobIds.push(job.id as string);
+    }
 
-    return { jobId: job.id as string };
+    return { jobIds };
   }
 
   /**

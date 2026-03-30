@@ -135,7 +135,7 @@ export class WorkbookController {
   ): Promise<PullAssetsResponseDto> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, id);
-    return this.service.pullAssets(id, actor, pullDto.dataFolderId, createRunContext('web'));
+    return this.service.pullAssets(id, actor, pullDto.dataFolderIds, createRunContext('web'));
   }
 
   @Delete(':id')

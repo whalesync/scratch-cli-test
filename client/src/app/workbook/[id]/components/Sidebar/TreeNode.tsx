@@ -226,7 +226,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
-  const { workbook, pullFolders } = useActiveWorkbook();
+  const { workbook, pullFolders, pullAssets } = useActiveWorkbook();
   const [isReauthorizing, setIsReauthorizing] = useState(false);
 
   // Targeted Zustand selector — only re-renders when THIS connector's jobs change
@@ -262,6 +262,10 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const handlePullAll = useCallback(async () => {
     await pullFolders(connectionFolderIds);
   }, [pullFolders, connectionFolderIds]);
+
+  const handlePullAllAssets = useCallback(async () => {
+    await pullAssets(connectionFolderIds);
+  }, [pullAssets, connectionFolderIds]);
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
@@ -411,7 +415,10 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
           workbookId={workbookId}
           position={contextMenu}
           onClose={() => setContextMenu(null)}
-          extraItemsBefore={[{ label: 'Pull All Tables', icon: DownloadIcon, onClick: handlePullAll }]}
+          extraItemsBefore={[
+            { label: 'Pull All Tables', icon: DownloadIcon, onClick: handlePullAll },
+            { label: 'Pull All Assets', icon: ImageIcon, onClick: handlePullAllAssets },
+          ]}
           extraItemsAfter={[
             {
               label: showHidden ? 'Hide hidden files' : 'Show hidden files',
@@ -518,7 +525,7 @@ function TableNode({ folder, workbookId }: TableNodeProps) {
   // Pull assets for this table
   const handlePullAssets = async () => {
     try {
-      await pullAssets(folder.id);
+      await pullAssets([folder.id]);
     } catch (error) {
       console.error('Failed to pull assets:', error);
     }

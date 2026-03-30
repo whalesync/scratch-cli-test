@@ -1,13 +1,14 @@
-import { IsString } from 'class-validator';
+import { IsArray, IsString } from 'class-validator';
 
 export class PullAssetsDto {
-  @IsString()
-  dataFolderId!: string;
+  @IsArray()
+  @IsString({ each: true })
+  dataFolderIds!: string[];
 }
 
 export type ValidatedPullAssetsDto = PullAssetsDto;
 
 export interface PullAssetsResponseDto {
-  jobId?: string;
+  jobIds?: string[];
   warning?: string;
 }
