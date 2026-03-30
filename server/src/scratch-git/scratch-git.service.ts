@@ -114,6 +114,10 @@ export class ScratchGitService {
     return this.commitFilesBatch(repoId, branch, files, message);
   }
 
+  /**
+   * Commits files to a branch, automatically chunking into smaller batches
+   * to stay under scratch-git's 50MB request body limit.
+   */
   private async commitFilesBatch(
     repoId: string,
     branch: string,
@@ -121,7 +125,52 @@ export class ScratchGitService {
     message: string,
   ) {
     if (files.length === 0) return { created: [], updated: [], unchanged: [] };
-    return this.scratchGitClient.commitFiles(repoId, branch, files, message);
+
+    const chunks = this.chunkFilesBySize(files);
+    const result = { created: [] as string[], updated: [] as string[], unchanged: [] as string[] };
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkMessage = chunks.length > 1 ? `${message} (${i + 1}/${chunks.length})` : message;
+      const chunkResult = await this.scratchGitClient.commitFiles(repoId, branch, chunks[i], chunkMessage);
+      result.created.push(...chunkResult.created);
+      result.updated.push(...chunkResult.updated);
+      result.unchanged.push(...chunkResult.unchanged);
+    }
+
+    return result;
+  }
+
+  /**
+   * Splits files into chunks where each chunk's estimated JSON payload
+   * stays under the target size (default 40MB, well under scratch-git's 50MB limit).
+   */
+  private chunkFilesBySize(
+    files: { path: string; content: string }[],
+    maxBytesPerChunk = 40 * 1024 * 1024,
+  ): { path: string; content: string }[][] {
+    const chunks: { path: string; content: string }[][] = [];
+    let currentChunk: { path: string; content: string }[] = [];
+    let currentSize = 0;
+
+    for (const file of files) {
+      // Estimate the JSON size of this file entry: {"path":"...","content":"..."} + overhead
+      const entrySize = file.path.length + file.content.length + 40;
+
+      if (currentChunk.length > 0 && currentSize + entrySize > maxBytesPerChunk) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentSize = 0;
+      }
+
+      currentChunk.push(file);
+      currentSize += entrySize;
+    }
+
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
   }
 
   async listRepoFiles(repoId: string, branch: string, folder: string): Promise<RepoFileRef[]> {
