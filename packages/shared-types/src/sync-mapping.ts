@@ -67,6 +67,8 @@ export const TransformerTypes = {
   SourceAssetToDestAsset: 'source_asset_to_dest_asset',
   EnsureType: 'ensure_type',
   NotionFileUrl: 'notion_file_url',
+  EscapeHtml: 'escape_html',
+  Trim: 'trim',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -94,6 +96,8 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.SourceAssetToDestAsset, label: 'Asset Lookup' },
   { type: TransformerTypes.EnsureType, label: 'Ensure Type' },
   { type: TransformerTypes.NotionFileUrl, label: 'Notion File URL' },
+  { type: TransformerTypes.EscapeHtml, label: 'Escape HTML' },
+  { type: TransformerTypes.Trim, label: 'Trim' },
 ];
 
 /** Get the display label for a transformer type */
@@ -206,4 +210,6 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.JSONPath; options: JSONPathOptions }
   | { type: typeof TransformerTypes.SourceAssetToDestAsset; options: SourceAssetToDestAssetOptions }
   | { type: typeof TransformerTypes.EnsureType; options: EnsureTypeOptions }
-  | { type: typeof TransformerTypes.NotionFileUrl; options?: NotionFileUrlOptions };
+  | { type: typeof TransformerTypes.NotionFileUrl; options?: NotionFileUrlOptions }
+  | { type: typeof TransformerTypes.EscapeHtml; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.Trim; options?: Record<string, never> };

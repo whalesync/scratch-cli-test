@@ -91,6 +91,8 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal(TransformerTypes.EnsureType), options: ensureTypeOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.NotionFileUrl), options: notionFileUrlOptionsSchema }),
+  z.object({ type: z.literal(TransformerTypes.EscapeHtml), options: z.record(z.string(), z.never()).optional() }),
+  z.object({ type: z.literal(TransformerTypes.Trim), options: z.record(z.string(), z.never()).optional() }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --
