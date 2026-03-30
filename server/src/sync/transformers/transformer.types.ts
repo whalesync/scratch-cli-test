@@ -83,6 +83,16 @@ export interface LookupTools {
     sourceDataFolderId: DataFolderId,
     destinationDataFolderId: DataFolderId,
   ): Promise<AssetMappingResult>;
+
+  /**
+   * Finds a destination asset whose contentHash matches the source asset's contentHash.
+   * Returns the destination asset's remoteAssetId if found, null otherwise.
+   */
+  matchDestinationAssetByHash(
+    sourceAssetRemoteId: string,
+    sourceDataFolderId: DataFolderId,
+    destinationDataFolderId: DataFolderId,
+  ): Promise<string | null>;
 }
 
 /**

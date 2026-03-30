@@ -93,6 +93,17 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.NotionFileUrl), options: notionFileUrlOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.EscapeHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.Trim), options: z.record(z.string(), z.never()).optional() }),
+  z.object({
+    type: z.literal(TransformerTypes.MatchAssetByHash),
+    options: z
+      .object({
+        sourceDataFolderId: z.string().min(1),
+        destinationDataFolderId: z.string().min(1),
+        onUnresolved: z.enum(['fail', 'ignore']).optional(),
+        outputType: z.enum(['array', 'single']).optional(),
+      })
+      .strict(),
+  }),
 ]);
 
 // -- Column / Table / Sync mapping schemas --

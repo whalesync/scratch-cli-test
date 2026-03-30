@@ -127,6 +127,7 @@ describe('AssetDownloadService', () => {
         data: {
           rehostedUrl: 'https://storage.googleapis.com/bucket/v1/wb_1/AIRTABLE/hash/photo.jpg',
           rehostedAt: expect.any(Date),
+          contentHash: expect.any(String),
           urlExpiresAt: null,
         },
       });
@@ -202,6 +203,43 @@ describe('AssetDownloadService', () => {
 
       const saveCall = mockStorage.saveObject.mock.calls[0][0];
       expect(saveCall.contentType).toBe('image/webp');
+    });
+  });
+
+  describe('hash-only mode (rehost=false)', () => {
+    it('saves contentHash without uploading to GCS', async () => {
+      const asset = makeAsset();
+      mockedAxios.get.mockResolvedValue({
+        data: Buffer.from('fake image data'),
+        headers: { 'content-type': 'image/jpeg' },
+      });
+
+      const result = await service.downloadAndRehost(asset, { rehost: false });
+
+      expect(result.success).toBe(true);
+      expect(result.rehostedUrl).toBeUndefined();
+      expect(mockStorage.saveObject).not.toHaveBeenCalled();
+      expect(mockDb.client.asset.update).toHaveBeenCalledWith({
+        where: { id: 'asset_1' },
+        data: { contentHash: expect.any(String) },
+      });
+    });
+
+    it('computes correct SHA-256 hash', async () => {
+      const asset = makeAsset();
+      const fileContent = Buffer.from('test content');
+      mockedAxios.get.mockResolvedValue({
+        data: fileContent,
+        headers: { 'content-type': 'image/jpeg' },
+      });
+
+      await service.downloadAndRehost(asset, { rehost: false });
+
+      const expectedHash = createHash('sha256').update(fileContent).digest('hex');
+      expect(mockDb.client.asset.update).toHaveBeenCalledWith({
+        where: { id: 'asset_1' },
+        data: { contentHash: expectedHash },
+      });
     });
   });
 

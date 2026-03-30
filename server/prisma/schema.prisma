@@ -716,6 +716,7 @@ model Asset {
   lastSeenAt   DateTime? // Updated each pull; stale = deleted upstream
   rehostedUrl  String? // Permanent GCS URL
   rehostedAt   DateTime? // When rehosted
+  contentHash  String? // SHA-256 hash of file content
   uploadedAt   DateTime? // When uploaded to destination connector
 
   /// Points to the source Asset this was created from during sync (null for pulled assets)

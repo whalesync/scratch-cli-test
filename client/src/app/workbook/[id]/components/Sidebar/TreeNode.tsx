@@ -62,6 +62,7 @@ import { ContextMenu } from '../shared/ContextMenu';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
+import { PullAssetsModal } from '../shared/PullAssetsModal';
 import { PullScheduleModal } from '../shared/PullScheduleModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
@@ -263,9 +264,13 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
     await pullFolders(connectionFolderIds);
   }, [pullFolders, connectionFolderIds]);
 
-  const handlePullAllAssets = useCallback(async () => {
-    await pullAssets(connectionFolderIds);
-  }, [pullAssets, connectionFolderIds]);
+  const [pullAssetsModalOpen, { open: openPullAssetsModal, close: closePullAssetsModal }] = useDisclosure(false);
+  const handlePullAllAssetsConfirm = useCallback(
+    async (options: { rehost: boolean }) => {
+      await pullAssets(connectionFolderIds, options);
+    },
+    [pullAssets, connectionFolderIds],
+  );
 
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault();
@@ -417,7 +422,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
           onClose={() => setContextMenu(null)}
           extraItemsBefore={[
             { label: 'Pull All Tables', icon: DownloadIcon, onClick: handlePullAll },
-            { label: 'Pull All Assets', icon: ImageIcon, onClick: handlePullAllAssets },
+            { label: 'Pull All Assets', icon: ImageIcon, onClick: openPullAssetsModal },
           ]}
           extraItemsAfter={[
             {
@@ -448,6 +453,14 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
       {connectorAccount && (
         <PublishPlansModal opened={publishV2ModalOpened} onClose={closePublishV2Modal} workbookId={workbookId} />
       )}
+
+      {/* Pull Assets Modal */}
+      <PullAssetsModal
+        opened={pullAssetsModalOpen}
+        onClose={closePullAssetsModal}
+        onConfirm={handlePullAllAssetsConfirm}
+        title={`Pull All Assets — ${group.name}`}
+      />
     </>
   );
 }
@@ -523,9 +536,10 @@ function TableNode({ folder, workbookId }: TableNodeProps) {
   };
 
   // Pull assets for this table
-  const handlePullAssets = async () => {
+  const [pullAssetsOpened, { open: openPullAssets, close: closePullAssets }] = useDisclosure(false);
+  const handlePullAssetsConfirm = async (options: { rehost: boolean }) => {
     try {
-      await pullAssets([folder.id]);
+      await pullAssets([folder.id], options);
     } catch (error) {
       console.error('Failed to pull assets:', error);
     }
@@ -749,7 +763,7 @@ function TableNode({ folder, workbookId }: TableNodeProps) {
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
             { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
-            { label: 'Pull Assets', icon: ImageIcon, onClick: handlePullAssets },
+            { label: 'Pull Assets', icon: ImageIcon, onClick: openPullAssets },
             ...(isDevToolsEnabled
               ? [{ label: 'Asset Index', icon: ImageIcon, onClick: openAssetIndex, devtool: true }]
               : []),
@@ -798,6 +812,12 @@ function TableNode({ folder, workbookId }: TableNodeProps) {
         onClose={closeAssetIndex}
         workbookId={workbookId}
         dataFolderId={folder.id}
+      />
+      <PullAssetsModal
+        opened={pullAssetsOpened}
+        onClose={closePullAssets}
+        onConfirm={handlePullAssetsConfirm}
+        title={`Pull Assets — ${folder.name}`}
       />
     </>
   );

@@ -124,10 +124,17 @@ export const workbookApi = {
     }
   },
 
-  async pullAssets(id: WorkbookId, dataFolderIds: string[]): Promise<{ jobIds?: string[] }> {
+  async pullAssets(
+    id: WorkbookId,
+    dataFolderIds: string[],
+    options?: { rehost?: boolean },
+  ): Promise<{ jobIds?: string[] }> {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<{ jobIds?: string[] }>(`/workbook/${id}/pull-assets`, { dataFolderIds });
+      const res = await axios.post<{ jobIds?: string[] }>(`/workbook/${id}/pull-assets`, {
+        dataFolderIds,
+        rehost: options?.rehost,
+      });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to start asset pull');

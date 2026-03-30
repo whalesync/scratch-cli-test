@@ -25,6 +25,8 @@ export interface RehostBatchOptions {
   byteBudget?: number;
   /** Maximum number of concurrent downloads regardless of byte budget. Default: 25. */
   maxConcurrency?: number;
+  /** When false, only computes content hash without uploading to GCS. Default: true. */
+  rehost?: boolean;
 }
 
 @Injectable()
@@ -35,10 +37,12 @@ export class AssetDownloadService {
   ) {}
 
   /**
-   * Download an asset from its source URL and re-upload to GCS for permanent hosting.
+   * Download an asset from its source URL. When rehost=true (default), re-uploads to GCS.
+   * When rehost=false, only computes and saves the content hash (no GCS upload).
    * Never throws — returns a result object with success/error info.
    */
-  async downloadAndRehost(asset: Asset): Promise<RehostResult> {
+  async downloadAndRehost(asset: Asset, options?: { rehost?: boolean }): Promise<RehostResult> {
+    const shouldRehost = options?.rehost !== false;
     try {
       if (!asset.url) {
         return { assetId: asset.id, success: false, error: 'Asset has no URL' };
@@ -51,10 +55,6 @@ export class AssetDownloadService {
         return { assetId: asset.id, success: false, error: `Invalid URL: ${asset.url}` };
       }
 
-      const filename = this.resolveFilename(asset, parsedUrl);
-      const hashedRemoteId = createHash('sha256').update(asset.remoteAssetId).digest('hex');
-      const key = `v1/${asset.workbookId}/${asset.service}/${hashedRemoteId}/${filename}`;
-
       const response = await axios.get<ArrayBuffer>(asset.url, {
         responseType: 'arraybuffer',
         maxContentLength: MAX_CONTENT_LENGTH,
@@ -63,27 +63,42 @@ export class AssetDownloadService {
 
       const buffer = Buffer.from(response.data);
       const contentHash = createHash('sha256').update(buffer).digest('hex');
-      const responseContentType =
-        typeof response.headers['content-type'] === 'string' ? response.headers['content-type'] : undefined;
-      const contentType = asset.mimeType ?? responseContentType ?? 'application/octet-stream';
 
-      const { publicUrl } = await this.objectStorage.saveObject({
-        key,
-        buffer,
-        contentType,
-        contentHash,
-      });
+      if (shouldRehost) {
+        const filename = this.resolveFilename(asset, parsedUrl);
+        const hashedRemoteId = createHash('sha256').update(asset.remoteAssetId).digest('hex');
+        const key = `v1/${asset.workbookId}/${asset.service}/${hashedRemoteId}/${filename}`;
+        const responseContentType =
+          typeof response.headers['content-type'] === 'string' ? response.headers['content-type'] : undefined;
+        const contentType = asset.mimeType ?? responseContentType ?? 'application/octet-stream';
 
-      await this.db.client.asset.update({
-        where: { id: asset.id },
-        data: {
-          rehostedUrl: publicUrl,
-          rehostedAt: new Date(),
-          urlExpiresAt: null,
-        },
-      });
+        const { publicUrl } = await this.objectStorage.saveObject({
+          key,
+          buffer,
+          contentType,
+          contentHash,
+        });
 
-      return { assetId: asset.id, success: true, rehostedUrl: publicUrl };
+        await this.db.client.asset.update({
+          where: { id: asset.id },
+          data: {
+            rehostedUrl: publicUrl,
+            rehostedAt: new Date(),
+            contentHash,
+            urlExpiresAt: null,
+          },
+        });
+
+        return { assetId: asset.id, success: true, rehostedUrl: publicUrl };
+      } else {
+        // Hash-only mode: save the hash without uploading to GCS
+        await this.db.client.asset.update({
+          where: { id: asset.id },
+          data: { contentHash },
+        });
+
+        return { assetId: asset.id, success: true };
+      }
     } catch (error: unknown) {
       const message =
         error instanceof Error
@@ -128,7 +143,7 @@ export class AssetDownloadService {
           inFlightCount++;
           nextIndex++;
 
-          void this.downloadAndRehost(asset).then((result) => {
+          void this.downloadAndRehost(asset, { rehost: options?.rehost }).then((result) => {
             results.push(result);
             inFlightBytes -= estimatedSize;
             inFlightCount--;

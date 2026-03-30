@@ -26,6 +26,8 @@ export type RehostAssetsJobDefinition = JobDefinitionBuilder<
     dataFolderId: DataFolderId;
     userId: string;
     organizationId: string;
+    /** When false, only downloads files to compute contentHash — does not upload to GCS. */
+    rehost?: boolean;
     initialPublicProgress?: RehostAssetsPublicProgress;
   },
   RehostAssetsPublicProgress,
@@ -71,11 +73,14 @@ export class RehostAssetsJobHandler implements JobHandlerBuilder<RehostAssetsJob
       return;
     }
 
+    const shouldRehost = data.rehost !== false;
     const assets = await this.prisma.asset.findMany({
       where: {
         dataFolderId: data.dataFolderId,
         workbookId: data.workbookId,
-        rehostedUrl: null, // Only assets not yet rehosted
+        // In rehost mode: only assets not yet rehosted
+        // In hash-only mode: only assets without a content hash
+        ...(shouldRehost ? { rehostedUrl: null } : { contentHash: null }),
         url: { not: null }, // Only assets with a source URL
       },
     });
@@ -108,7 +113,7 @@ export class RehostAssetsJobHandler implements JobHandlerBuilder<RehostAssetsJob
       }
 
       const batch = assets.slice(i, i + CHECKPOINT_BATCH_SIZE);
-      const results = await this.assetDownloadService.downloadAndRehostBatch(batch);
+      const results = await this.assetDownloadService.downloadAndRehostBatch(batch, { rehost: shouldRehost });
 
       for (const result of results) {
         if (result.success) {

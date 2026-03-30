@@ -34,7 +34,7 @@ export interface UseWorkbookReturn {
     triggerPull?: boolean,
   ) => Promise<DataFolder>;
   pullFolders: (dataFolderIds?: DataFolderId[]) => Promise<void>;
-  pullAssets: (dataFolderIds: DataFolderId[]) => Promise<void>;
+  pullAssets: (dataFolderIds: DataFolderId[], options?: { rehost?: boolean }) => Promise<void>;
   discardAllChanges: () => Promise<void>;
 }
 
@@ -132,12 +132,12 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
   }, [globalMutate, id, mutate, data, setWorkbookError]);
 
   const pullAssets = useCallback(
-    async (dataFolderIds: DataFolderId[]): Promise<void> => {
+    async (dataFolderIds: DataFolderId[], options?: { rehost?: boolean }): Promise<void> => {
       if (!id) {
         return;
       }
       try {
-        const result = await workbookApi.pullAssets(id, dataFolderIds);
+        const result = await workbookApi.pullAssets(id, dataFolderIds, options);
         if (result.jobIds?.length) {
           useActiveJobsStore.getState().trackJobIds(result.jobIds);
         }

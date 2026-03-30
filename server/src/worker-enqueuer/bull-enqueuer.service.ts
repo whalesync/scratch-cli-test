@@ -241,6 +241,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     dataFolderId: DataFolderId,
     initialPublicProgress: RehostAssetsJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
+    options?: { rehost?: boolean },
   ): Promise<Job> {
     const id = `rehost-assets-${workbookId}-${createPlainId()}`;
     const data: RehostAssetsJobDefinition['data'] = {
@@ -248,6 +249,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       userId: actor.userId,
       organizationId: actor.organizationId,
       dataFolderId,
+      rehost: options?.rehost,
       type: JobType.RehostAssets,
       initialPublicProgress,
     };

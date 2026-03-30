@@ -69,6 +69,7 @@ export const TransformerTypes = {
   NotionFileUrl: 'notion_file_url',
   EscapeHtml: 'escape_html',
   Trim: 'trim',
+  MatchAssetByHash: 'match_asset_by_hash',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -98,6 +99,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.NotionFileUrl, label: 'Notion File URL' },
   { type: TransformerTypes.EscapeHtml, label: 'Escape HTML' },
   { type: TransformerTypes.Trim, label: 'Trim' },
+  { type: TransformerTypes.MatchAssetByHash, label: 'Match Asset by Hash' },
 ];
 
 /** Get the display label for a transformer type */
@@ -154,6 +156,18 @@ export interface JSONPathOptions {
   arrayHandling?: JSONPathArrayHandling;
 }
 
+/** Options for the match_asset_by_hash transformer */
+export interface MatchAssetByHashOptions {
+  /** The DataFolder ID for the source assets (where the source asset remote IDs live) */
+  sourceDataFolderId: DataFolderId;
+  /** The DataFolder ID for the destination assets (to search for matching hashes) */
+  destinationDataFolderId: DataFolderId;
+  /** What to do when no hash match is found. Default: 'fail' */
+  onUnresolved?: 'fail' | 'ignore';
+  /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to first element */
+  outputType?: 'array' | 'single';
+}
+
 /** Options for the source_asset_to_dest_asset transformer */
 export interface SourceAssetToDestAssetOptions {
   /** The DataFolder ID for the source assets table — primary scope for source asset lookup */
@@ -185,6 +199,7 @@ export type TransformerOptions =
   | LookupFieldOptions
   | JSONPathOptions
   | SourceAssetToDestAssetOptions
+  | MatchAssetByHashOptions
   | EnsureTypeOptions
   | NotionFileUrlOptions;
 
@@ -212,4 +227,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.EnsureType; options: EnsureTypeOptions }
   | { type: typeof TransformerTypes.NotionFileUrl; options?: NotionFileUrlOptions }
   | { type: typeof TransformerTypes.EscapeHtml; options?: Record<string, never> }
-  | { type: typeof TransformerTypes.Trim; options?: Record<string, never> };
+  | { type: typeof TransformerTypes.Trim; options?: Record<string, never> }
+  | { type: typeof TransformerTypes.MatchAssetByHash; options: MatchAssetByHashOptions };

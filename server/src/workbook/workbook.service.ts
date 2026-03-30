@@ -438,6 +438,7 @@ export class WorkbookService {
     actor: Actor,
     dataFolderIds: string[],
     runContext: RunContext,
+    options?: { rehost?: boolean },
   ): Promise<PullAssetsResponseDto> {
     await this.findOneOrThrow(id, actor);
 
@@ -465,6 +466,7 @@ export class WorkbookService {
           failures: [],
         },
         runContext,
+        { rehost: options?.rehost },
       );
       jobIds.push(job.id as string);
     }

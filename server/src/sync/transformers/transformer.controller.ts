@@ -71,6 +71,7 @@ export class TransformerController {
           getDestinationMappingForSourceFk: () => Promise.resolve(null),
           lookupFieldFromFkRecord: () => Promise.resolve(undefined),
           getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available in preview')),
+          matchDestinationAssetByHash: () => Promise.resolve(null),
         },
         options: dto.transformerConfig.options ?? {},
         phase: 'DATA',

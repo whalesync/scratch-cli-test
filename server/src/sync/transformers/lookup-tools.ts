@@ -19,6 +19,7 @@ export function createNullLookupTools(): LookupTools {
     getDestinationMappingForSourceFk: () => Promise.resolve(null),
     lookupFieldFromFkRecord: () => Promise.resolve(undefined),
     getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
+    matchDestinationAssetByHash: () => Promise.resolve(null),
   };
 }
 
@@ -155,6 +156,40 @@ export function createLookupTools(
       // otherwise the existing record was returned (update no-op path).
       const isNew = destAsset.remoteAssetId === tempId;
       return { destinationAssetId: destAsset.id, destinationAssetRemoteId: destAsset.remoteAssetId, isNew };
+    },
+
+    async matchDestinationAssetByHash(
+      sourceAssetRemoteId: string,
+      sourceDataFolderId: DataFolderId,
+      destinationDataFolderId: DataFolderId,
+    ): Promise<string | null> {
+      // 1. Find source asset and its contentHash
+      const sourceAsset = await db.client.asset.findFirst({
+        where: {
+          workbookId,
+          dataFolderId: sourceDataFolderId,
+          service: sourceService,
+          remoteAssetId: sourceAssetRemoteId,
+        },
+        select: { contentHash: true },
+      });
+
+      if (!sourceAsset?.contentHash) {
+        return null;
+      }
+
+      // 2. Find a destination asset with the same hash
+      const destAsset = await db.client.asset.findFirst({
+        where: {
+          workbookId,
+          dataFolderId: destinationDataFolderId,
+          service: destinationService,
+          contentHash: sourceAsset.contentHash,
+        },
+        select: { remoteAssetId: true },
+      });
+
+      return destAsset?.remoteAssetId ?? null;
     },
   };
 }

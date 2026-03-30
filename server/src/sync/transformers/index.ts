@@ -29,6 +29,7 @@ import './implementations/escape-html.transformer';
 import './implementations/html-to-airmark.transformer';
 import './implementations/jsonpath.transformer';
 import './implementations/lookup-field.transformer';
+import './implementations/match-asset-by-hash.transformer';
 import './implementations/notion-file-url.transformer';
 import './implementations/notion-to-html.transformer';
 import './implementations/slugify.transformer';
