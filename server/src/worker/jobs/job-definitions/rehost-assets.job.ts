@@ -33,7 +33,9 @@ export type RehostAssetsJobDefinition = JobDefinitionBuilder<
   void
 >;
 
-const BATCH_SIZE = 5;
+/** Number of assets per checkpoint batch. The download service manages its own concurrency
+ *  via byte-budget limiting, so this just controls how often we checkpoint progress. */
+const CHECKPOINT_BATCH_SIZE = 100;
 
 export class RehostAssetsJobHandler implements JobHandlerBuilder<RehostAssetsJobDefinition> {
   constructor(
@@ -98,15 +100,15 @@ export class RehostAssetsJobHandler implements JobHandlerBuilder<RehostAssetsJob
       workbookId: data.workbookId,
     });
 
-    // Process in batches
-    for (let i = 0; i < assets.length; i += BATCH_SIZE) {
+    // Process in checkpoint batches — the download service manages concurrency internally
+    for (let i = 0; i < assets.length; i += CHECKPOINT_BATCH_SIZE) {
       if (abortSignal.aborted) {
         WSLogger.info({ source: 'RehostAssetsJob', message: 'Job aborted', jobId });
         break;
       }
 
-      const batch = assets.slice(i, i + BATCH_SIZE);
-      const results = await this.assetDownloadService.downloadAndRehostBatch(batch, { concurrency: BATCH_SIZE });
+      const batch = assets.slice(i, i + CHECKPOINT_BATCH_SIZE);
+      const results = await this.assetDownloadService.downloadAndRehostBatch(batch);
 
       for (const result of results) {
         if (result.success) {

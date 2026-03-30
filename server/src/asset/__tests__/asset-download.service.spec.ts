@@ -268,9 +268,9 @@ describe('AssetDownloadService', () => {
       expect(results.find((r) => r.assetId === 'a3')?.success).toBe(true);
     });
 
-    it('respects concurrency option', async () => {
+    it('respects maxConcurrency option', async () => {
       const assets = Array.from({ length: 7 }, (_, i) =>
-        makeAsset({ id: `a${i}`, url: `https://example.com/${i}.jpg` }),
+        makeAsset({ id: `a${i}`, url: `https://example.com/${i}.jpg`, size: BigInt(1024) }),
       );
 
       let maxConcurrent = 0;
@@ -284,9 +284,31 @@ describe('AssetDownloadService', () => {
         return { data: Buffer.from('data'), headers: { 'content-type': 'image/jpeg' } };
       });
 
-      await service.downloadAndRehostBatch(assets, { concurrency: 3 });
+      await service.downloadAndRehostBatch(assets, { maxConcurrency: 3 });
 
       expect(maxConcurrent).toBeLessThanOrEqual(3);
+    });
+
+    it('respects byte budget', async () => {
+      // Each asset is 10MB — with a 25MB budget, at most 2 should be in-flight at once
+      const assets = Array.from({ length: 5 }, (_, i) =>
+        makeAsset({ id: `a${i}`, url: `https://example.com/${i}.jpg`, size: BigInt(10 * 1024 * 1024) }),
+      );
+
+      let maxConcurrent = 0;
+      let currentConcurrent = 0;
+
+      mockedAxios.get.mockImplementation(async () => {
+        currentConcurrent++;
+        maxConcurrent = Math.max(maxConcurrent, currentConcurrent);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        currentConcurrent--;
+        return { data: Buffer.from('data'), headers: { 'content-type': 'image/jpeg' } };
+      });
+
+      await service.downloadAndRehostBatch(assets, { byteBudget: 25 * 1024 * 1024 });
+
+      expect(maxConcurrent).toBeLessThanOrEqual(2);
     });
   });
 });

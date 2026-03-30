@@ -9,7 +9,9 @@ import { ObjectStorageService } from './object-storage.service';
 
 const MAX_CONTENT_LENGTH = 100 * 1024 * 1024; // 100 MB
 const DOWNLOAD_TIMEOUT = 120_000; // 120 seconds
-const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_BYTE_BUDGET = 200 * 1024 * 1024; // 200 MB max in-flight
+const DEFAULT_MAX_CONCURRENCY = 25; // Upper bound on concurrent downloads
+const DEFAULT_ESTIMATED_SIZE = 5 * 1024 * 1024; // 5 MB assumed for assets with unknown size
 
 export interface RehostResult {
   assetId: string;
@@ -19,7 +21,10 @@ export interface RehostResult {
 }
 
 export interface RehostBatchOptions {
-  concurrency?: number;
+  /** Maximum bytes of in-flight downloads at any time. Default: 200MB. */
+  byteBudget?: number;
+  /** Maximum number of concurrent downloads regardless of byte budget. Default: 25. */
+  maxConcurrency?: number;
 }
 
 @Injectable()
@@ -96,35 +101,58 @@ export class AssetDownloadService {
   }
 
   /**
-   * Download and rehost a batch of assets with controlled concurrency.
+   * Download and rehost a batch of assets with byte-budget concurrency control.
+   * Launches concurrent downloads as long as estimated in-flight bytes stay under the budget.
    */
   async downloadAndRehostBatch(assets: Asset[], options?: RehostBatchOptions): Promise<RehostResult[]> {
-    const concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
+    const byteBudget = options?.byteBudget ?? DEFAULT_BYTE_BUDGET;
+    const maxConcurrency = options?.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
+
     const results: RehostResult[] = [];
+    let inFlightBytes = 0;
+    let inFlightCount = 0;
+    let nextIndex = 0;
 
-    for (let i = 0; i < assets.length; i += concurrency) {
-      const chunk = assets.slice(i, i + concurrency);
-      const settled = await Promise.allSettled(chunk.map((asset) => this.downloadAndRehost(asset)));
+    return new Promise((resolve) => {
+      const tryLaunchNext = () => {
+        while (nextIndex < assets.length && inFlightCount < maxConcurrency) {
+          const asset = assets[nextIndex];
+          const estimatedSize = Number(asset.size) || DEFAULT_ESTIMATED_SIZE;
 
-      for (const result of settled) {
-        if (result.status === 'fulfilled') {
-          results.push(result.value);
-        } else {
-          // downloadAndRehost never throws, but handle just in case
-          results.push({ assetId: 'unknown', success: false, error: String(result.reason) });
+          // Allow at least one concurrent download even if it exceeds the budget
+          if (inFlightCount > 0 && inFlightBytes + estimatedSize > byteBudget) {
+            break;
+          }
+
+          inFlightBytes += estimatedSize;
+          inFlightCount++;
+          nextIndex++;
+
+          void this.downloadAndRehost(asset).then((result) => {
+            results.push(result);
+            inFlightBytes -= estimatedSize;
+            inFlightCount--;
+
+            if (results.length === assets.length) {
+              const succeeded = results.filter((r) => r.success).length;
+              WSLogger.info({
+                source: 'AssetDownloadService',
+                message: `Batch rehost complete: ${succeeded} succeeded, ${results.length - succeeded} failed out of ${results.length}`,
+              });
+              resolve(results);
+            } else {
+              tryLaunchNext();
+            }
+          });
         }
+      };
+
+      if (assets.length === 0) {
+        resolve(results);
+      } else {
+        tryLaunchNext();
       }
-    }
-
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.length - succeeded;
-
-    WSLogger.info({
-      source: 'AssetDownloadService',
-      message: `Batch rehost complete: ${succeeded} succeeded, ${failed} failed out of ${results.length}`,
     });
-
-    return results;
   }
 
   /**
