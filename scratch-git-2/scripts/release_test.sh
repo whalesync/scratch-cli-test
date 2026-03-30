@@ -64,15 +64,17 @@ mkdir -p "$DIST_DIR"
 # 4. Build all targets pointing at test server
 declare -A TARGETS=(
   ["aarch64-apple-darwin"]="${BINARY}_darwin_arm64"
-  ["x86_64-apple-darwin"]="${BINARY}_darwin_amd64"
   ["x86_64-unknown-linux-gnu"]="${BINARY}_linux_amd64"
-  ["aarch64-unknown-linux-gnu"]="${BINARY}_linux_arm64"
   ["x86_64-pc-windows-gnu"]="${BINARY}_windows_amd64"
 )
 
 for TARGET in "${!TARGETS[@]}"; do
-  echo "Building $TARGET..."
+  # Output markers for sections in Gitlab job view
+  echo -e "\e[0Ksection_start:$(date +%s):${TARGET}\r\e[0KBuilding ${TARGET}"
+
   SCRATCH_DEFAULT_URL="$TEST_SERVER_URL" cargo zigbuild --release --bin "$BINARY" --target "$TARGET"
+
+  echo -e "\e[0Ksection_end:$(date +%s):${TARGET}\r\e[0K"
 done
 
 # 5. Package archives (same naming as prod for compatibility)
@@ -89,15 +91,16 @@ for TARGET in "${!TARGETS[@]}"; do
   fi
 done
 
-# 6. Compute checksums
-(cd "$DIST_DIR" && shasum -a 256 *.tar.gz *.zip 2>/dev/null > checksums.txt)
+# 6. Create tag and push to GitHub
+if [ -z "$GITHUB_TOKEN" ]; then
+  echo "WARNING: GITHUB_TOKEN is not set — skipping GitHub release. Binaries were built successfully."
+  exit 0
+fi
 
-# 7. Create tag and push to GitHub
-HEAD_SHA=$(git rev-parse HEAD)
 git tag -f "$NEW_VERSION"
 git push -f "$GITHUB_AUTH_URL" "$NEW_VERSION"
 
-# 8. Create GitHub release (prerelease = true, no Homebrew/Scoop update)
+# 7. Create GitHub release (prerelease = true, no Homebrew/Scoop update)
 RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases" \

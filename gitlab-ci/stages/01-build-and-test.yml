@@ -290,6 +290,19 @@ build and test scratch-cli:
   stage: build and test
   image: rust:slim-bookworm
   interruptible: true
+  cache:
+    - key:
+        files:
+          - scratch-git-2/Cargo.lock
+      fallback_keys:
+        - scratch-git-2-cargo
+      unprotect: true
+      when: always
+      paths:
+        - .cargo/registry/cache
+        - .cargo/registry/index
+        - scratch-git-2/target
+      policy: pull-push
   script:
     - apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
     - cd scratch-git-2

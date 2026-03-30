@@ -4,25 +4,63 @@
   image: rust:latest
   variables:
     GIT_DEPTH: 0
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+    ZIG_VERSION: "0.13.0"
   dependencies: []
+  cache:
+    - key:
+        files:
+          - scratch-git-2/Cargo.lock
+      fallback_keys:
+        - scratch-git-2-cargo
+      unprotect: true
+      when: always
+      paths:
+        - .cargo/registry/cache
+        - .cargo/registry/index
+        - scratch-git-2/target
+      policy: pull-push
+    - key: cargo-zigbuild-${ZIG_VERSION}
+      unprotect: true
+      when: always
+      paths:
+        - .cargo/bin/cargo-zigbuild
+        - .zig
+      policy: pull-push
   before_script:
     - apt-get update -qq && apt-get install -y zip
-    # Install zig from official release (Debian package is too old for cargo-zigbuild)
-    - export ZIG_VERSION="0.13.0"
-    - curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
-    - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
-    - cargo install cargo-zigbuild --quiet
+    # Install zig from official release (skip if cached)
+    - |
+      if [ -d ".zig/zig-linux-x86_64-${ZIG_VERSION}" ]; then
+        echo "Using cached zig ${ZIG_VERSION}"
+      else
+        mkdir -p .zig
+        curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ -C .zig
+      fi
+    - export PATH="${CI_PROJECT_DIR}/.zig/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
+    # Install cargo-zigbuild (skip if cached)
+    - |
+      if [ -f "${CARGO_HOME}/bin/cargo-zigbuild" ]; then
+        echo "Using cached cargo-zigbuild"
+      else
+        cargo install cargo-zigbuild --quiet
+      fi
+    - export PATH="${CARGO_HOME}/bin:$PATH"
+    # If you update this list of target archs, also update the list in release_public.sh
     - rustup target add
-        aarch64-apple-darwin
-        x86_64-apple-darwin
-        x86_64-unknown-linux-gnu
-        aarch64-unknown-linux-gnu
-        x86_64-pc-windows-gnu
+      aarch64-apple-darwin
+      x86_64-unknown-linux-gnu
+      x86_64-pc-windows-gnu
   script:
     - chmod +x scratch-git-2/scripts/release_public.sh
     - scratch-git-2/scripts/release_public.sh $RELEASE_TYPE
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - scratch-git-2/.gitlab-ci-release.yml
       when: manual
       allow_failure: true
 
@@ -51,20 +89,53 @@ release-rust-cli-major:
   image: rust:latest
   variables:
     GIT_DEPTH: 0
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+    ZIG_VERSION: "0.13.0"
   dependencies: []
+  cache:
+    - key:
+        files:
+          - scratch-git-2/Cargo.lock
+      fallback_keys:
+        - scratch-git-2-cargo
+      unprotect: true
+      when: always
+      paths:
+        - .cargo/registry/cache
+        - .cargo/registry/index
+        - scratch-git-2/target
+      policy: pull-push
+    - key: cargo-zigbuild-${ZIG_VERSION}
+      unprotect: true
+      when: always
+      paths:
+        - .cargo/bin/cargo-zigbuild
+        - .zig
+      policy: pull-push
   before_script:
     - apt-get update -qq && apt-get install -y zip
-    # Install zig from official release (Debian package is too old for cargo-zigbuild)
-    - export ZIG_VERSION="0.13.0"
-    - curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
-    - export PATH="$PWD/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
-    - cargo install cargo-zigbuild --quiet
+    # Install zig from official release (skip if cached)
+    - |
+      if [ -d ".zig/zig-linux-x86_64-${ZIG_VERSION}" ]; then
+        echo "Using cached zig ${ZIG_VERSION}"
+      else
+        mkdir -p .zig
+        curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ -C .zig
+      fi
+    - export PATH="${CI_PROJECT_DIR}/.zig/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
+    # Install cargo-zigbuild (skip if cached)
+    - |
+      if [ -f "${CARGO_HOME}/bin/cargo-zigbuild" ]; then
+        echo "Using cached cargo-zigbuild"
+      else
+        cargo install cargo-zigbuild --quiet
+      fi
+    - export PATH="${CARGO_HOME}/bin:$PATH"
+    # If you update this list of target archs, also update the list in release_test.sh
     - rustup target add
-        aarch64-apple-darwin
-        x86_64-apple-darwin
-        x86_64-unknown-linux-gnu
-        aarch64-unknown-linux-gnu
-        x86_64-pc-windows-gnu
+      aarch64-apple-darwin
+      x86_64-unknown-linux-gnu
+      x86_64-pc-windows-gnu
   script:
     - chmod +x scratch-git-2/scripts/release_test.sh
     - scratch-git-2/scripts/release_test.sh $RELEASE_TYPE
@@ -81,6 +152,10 @@ release-rust-cli-test-patch:
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: on_success
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - scratch-git-2/.gitlab-ci-release.yml
+      allow_failure: true
 
 release-rust-cli-test-minor:
   extends: .release_rust_test_job

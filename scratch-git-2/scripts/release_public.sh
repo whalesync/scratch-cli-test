@@ -48,9 +48,7 @@ mkdir -p "$DIST_DIR"
 # 3. Build all targets
 declare -A TARGETS=(
   ["aarch64-apple-darwin"]="${BINARY}_darwin_arm64"
-  ["x86_64-apple-darwin"]="${BINARY}_darwin_amd64"
   ["x86_64-unknown-linux-gnu"]="${BINARY}_linux_amd64"
-  ["aarch64-unknown-linux-gnu"]="${BINARY}_linux_arm64"
   ["x86_64-pc-windows-gnu"]="${BINARY}_windows_amd64"
 )
 
