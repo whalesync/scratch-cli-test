@@ -150,9 +150,16 @@ pub fn build(master_dir: &Path, db_path: &Path) -> anyhow::Result<usize> {
     )
     .map_err(|e| anyhow::anyhow!("failed to initialise tables: {e}"))?;
 
+    conn.execute_batch("BEGIN")
+        .map_err(|e| anyhow::anyhow!("failed to begin transaction: {e}"))?;
+
     let fk_map = load_fk_map(master_dir)?;
     let mut count = 0usize;
     index_dir(master_dir, master_dir, &conn, &fk_map, &mut count)?;
+
+    conn.execute_batch("COMMIT")
+        .map_err(|e| anyhow::anyhow!("failed to commit transaction: {e}"))?;
+
     Ok(count)
 }
 
@@ -194,8 +201,12 @@ pub fn build_from_entries(
     )
     .map_err(|e| anyhow::anyhow!("failed to initialise tables: {e}"))?;
 
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| anyhow::anyhow!("failed to begin transaction: {e}"))?;
+
     for (folder, filename, remote_id) in file_entries {
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
             params![folder, filename, remote_id],
         )
@@ -203,7 +214,7 @@ pub fn build_from_entries(
     }
 
     for (src_folder, src_filename, target_table_id, target_remote_id) in ref_entries {
-        conn.execute(
+        tx.execute(
             "INSERT INTO file_references \
              (source_folder, source_filename, target_table_id, target_remote_id) \
              VALUES (?1, ?2, ?3, ?4)",
@@ -213,6 +224,9 @@ pub fn build_from_entries(
             anyhow::anyhow!("failed to insert reference for {}/{}: {e}", src_folder, src_filename)
         })?;
     }
+
+    tx.commit()
+        .map_err(|e| anyhow::anyhow!("failed to commit index transaction: {e}"))?;
 
     Ok(())
 }

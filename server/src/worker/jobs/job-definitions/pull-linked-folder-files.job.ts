@@ -135,6 +135,16 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       });
     }
 
+    // Rebuild the index once after all folders are done (not per-folder)
+    await this.scratchGitService.buildIndex(repoId).catch((err) => {
+      WSLogger.warn({
+        source: 'PullLinkedFolderFilesJob',
+        message: 'Failed to rebuild index after pull',
+        workbookId: data.workbookId,
+        error: err,
+      });
+    });
+
     try {
       this.postHogService.trackPullCompleted(data.userId, {
         workbookId: data.workbookId,
@@ -519,16 +529,6 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       // Rebase dirty once at the end of the job (not after every batch)
       await this.scratchGitService.rebaseDirty(repoId);
-
-      // Rebuild the full index after all writes are committed to main (best-effort)
-      await this.scratchGitService.buildIndex(repoId).catch((err) => {
-        WSLogger.warn({
-          source: 'PullLinkedFolderFilesJob',
-          message: 'Failed to rebuild index after pull',
-          workbookId: dataFolder.workbookId,
-          error: err,
-        });
-      });
 
       // Mark as completed
       publicProgress.status = 'completed';
