@@ -14,7 +14,6 @@
       fallback_keys:
         - scratch-git-2-cargo
       unprotect: true
-      when: always
       paths:
         - .cargo/registry/cache
         - .cargo/registry/index
@@ -22,7 +21,6 @@
       policy: pull-push
     - key: cargo-zigbuild-${ZIG_VERSION}
       unprotect: true
-      when: always
       paths:
         - .cargo/bin/cargo-zigbuild
         - .zig
@@ -99,7 +97,6 @@ release-rust-cli-major:
       fallback_keys:
         - scratch-git-2-cargo
       unprotect: true
-      when: always
       paths:
         - .cargo/registry/cache
         - .cargo/registry/index
@@ -107,7 +104,6 @@ release-rust-cli-major:
       policy: pull-push
     - key: cargo-zigbuild-${ZIG_VERSION}
       unprotect: true
-      when: always
       paths:
         - .cargo/bin/cargo-zigbuild
         - .zig
