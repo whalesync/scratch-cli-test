@@ -104,6 +104,10 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
       .optional(),
   }),
   z.object({
+    type: z.literal(TransformerTypes.ReplaceNewlines),
+    options: z.object({ replacement: z.string().optional() }).strict().optional(),
+  }),
+  z.object({
     type: z.literal(TransformerTypes.MatchAssetByHash),
     options: z
       .object({

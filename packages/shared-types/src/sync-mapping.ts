@@ -71,6 +71,7 @@ export const TransformerTypes = {
   Trim: 'trim',
   MatchAssetByHash: 'match_asset_by_hash',
   SkipIfDestMatches: 'skip_if_dest_matches',
+  ReplaceNewlines: 'replace_newlines',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -102,6 +103,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.Trim, label: 'Trim' },
   { type: TransformerTypes.MatchAssetByHash, label: 'Match Asset by Hash' },
   { type: TransformerTypes.SkipIfDestMatches, label: 'Skip If Dest Matches' },
+  { type: TransformerTypes.ReplaceNewlines, label: 'Replace Newlines' },
 ];
 
 /** Get the display label for a transformer type */
@@ -204,6 +206,12 @@ export interface SkipIfDestMatchesOptions {
   destinationExpression?: string;
 }
 
+/** Options for the replace_newlines transformer */
+export interface ReplaceNewlinesOptions {
+  /** The string to substitute for each newline character (default: "") */
+  replacement?: string;
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
@@ -216,7 +224,8 @@ export type TransformerOptions =
   | MatchAssetByHashOptions
   | EnsureTypeOptions
   | NotionFileUrlOptions
-  | SkipIfDestMatchesOptions;
+  | SkipIfDestMatchesOptions
+  | ReplaceNewlinesOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -244,4 +253,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.EscapeHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.Trim; options?: Record<string, never> }
   | { type: typeof TransformerTypes.MatchAssetByHash; options: MatchAssetByHashOptions }
-  | { type: typeof TransformerTypes.SkipIfDestMatches; options?: SkipIfDestMatchesOptions };
+  | { type: typeof TransformerTypes.SkipIfDestMatches; options?: SkipIfDestMatchesOptions }
+  | { type: typeof TransformerTypes.ReplaceNewlines; options?: ReplaceNewlinesOptions };
