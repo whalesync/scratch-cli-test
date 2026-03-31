@@ -3,19 +3,16 @@ import { isScratchPendingPublishId, MatchAssetByHashOptions, TransformerTypes } 
 import get from 'lodash/get';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
-import { AssetMappingResult, FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
+import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
 /**
  * Resolves source assets to destination assets, preferring content hash matching
  * and falling back to creating new destination assets for upload.
  *
  * For each source asset remote ID:
- * 1. Try to find a destination asset with the same contentHash (zero-upload match)
- * 2. If no hash match, fall back to getOrCreateDestinationAssetMapping (creates a
- *    destination asset with @asset/ pseudo-ref for upload during publish)
- *
- * This handles both migration scenarios (assets already exist on both sides) and
- * fresh syncs (assets need to be uploaded to the destination).
+ * 1. Try to find destination assets with the same contentHash (zero-upload match)
+ * 2. Compare against existing destination values — if all match, skip
+ * 3. If any element doesn't match, fall back to @asset/ refs for the ENTIRE array
  *
  * Runs in FOREIGN_KEY_MAPPING phase.
  */
@@ -46,17 +43,15 @@ export const matchAssetByHashTransformer: FieldTransformer = {
           : [destinationValue]
         : undefined;
 
-    const resolved: string[] = [];
+    // Phase 1: Try hash matching on all elements
+    const hashResults: { assetId: string; matches: string[] }[] = [];
     const warnings: string[] = [];
-    let allMatch = destElements !== undefined;
 
-    for (let i = 0; i < elements.length; i++) {
-      const element = elements[i];
+    for (const element of elements) {
       if (element === null || element === undefined) {
         continue;
       }
 
-      // Extract the asset ID from the source element
       const assetId: unknown = typedOptions.sourceIdPath ? get(element, typedOptions.sourceIdPath) : element;
       if (typeof assetId !== 'string') {
         return {
@@ -65,33 +60,57 @@ export const matchAssetByHashTransformer: FieldTransformer = {
         };
       }
 
-      // Strategy 1: Try hash match (no upload needed)
-      const hashMatch = await lookupTools.matchDestinationAssetByHash(
+      const matches = await lookupTools.matchDestinationAssetByHash(
         assetId,
         typedOptions.sourceDataFolderId,
         typedOptions.destinationDataFolderId,
       );
 
-      if (hashMatch) {
-        resolved.push(hashMatch);
-        if (allMatch) {
-          // Compare against the destination element, extracting ID if destinationIdPath is set
-          const destEl = destElements?.[i];
-          const destId: unknown =
-            typedOptions.destinationIdPath && destEl ? get(destEl, typedOptions.destinationIdPath) : destEl;
-          allMatch = i < (destElements?.length ?? 0) && String(destId) === hashMatch;
-        }
-        continue;
-      }
+      hashResults.push({ assetId, matches });
+    }
 
-      // Strategy 2: Fall back to create destination asset for upload during publish
-      let mapping: AssetMappingResult;
+    // Phase 2: Check if all elements match the existing destination
+    let allMatch = destElements !== undefined && hashResults.length === destElements.length;
+
+    if (allMatch) {
+      for (let i = 0; i < hashResults.length; i++) {
+        const { matches } = hashResults[i];
+        if (matches.length === 0) {
+          allMatch = false;
+          break;
+        }
+        // Extract the destination's current ID for comparison
+        const destEl = destElements![i];
+        const destId: unknown =
+          typedOptions.destinationIdPath && destEl ? get(destEl, typedOptions.destinationIdPath) : destEl;
+        // Check if the destination's current ID is among the hash matches
+        if (!matches.includes(String(destId))) {
+          allMatch = false;
+          break;
+        }
+      }
+    }
+
+    if (allMatch) {
+      return { success: true, skip: true };
+    }
+
+    // Phase 3: Not all matched — fall back to @asset/ refs for ALL elements
+    const resolved: string[] = [];
+
+    for (const { assetId } of hashResults) {
       try {
-        mapping = await lookupTools.getOrCreateDestinationAssetMapping(
+        const mapping = await lookupTools.getOrCreateDestinationAssetMapping(
           assetId,
           typedOptions.sourceDataFolderId,
           typedOptions.destinationDataFolderId,
         );
+
+        const ref =
+          mapping.isNew || isScratchPendingPublishId(mapping.destinationAssetRemoteId)
+            ? `@asset/${mapping.destinationAssetId}`
+            : mapping.destinationAssetRemoteId;
+        resolved.push(ref);
       } catch (err) {
         if (err instanceof Error && err.message === 'ASSET_NOT_FOUND') {
           const msg = `Source asset "${assetId}" not found. Pull the source table again so all assets are indexed.`;
@@ -123,26 +142,6 @@ export const matchAssetByHashTransformer: FieldTransformer = {
         }
         throw err;
       }
-
-      const ref =
-        mapping.isNew || isScratchPendingPublishId(mapping.destinationAssetRemoteId)
-          ? `@asset/${mapping.destinationAssetId}`
-          : mapping.destinationAssetRemoteId;
-      resolved.push(ref);
-
-      if (allMatch) {
-        const destEl = destElements?.[i];
-        const destId: unknown =
-          typedOptions.destinationIdPath && destEl ? get(destEl, typedOptions.destinationIdPath) : destEl;
-        allMatch =
-          i < (destElements?.length ?? 0) &&
-          (String(destId) === ref || String(destId) === mapping.destinationAssetRemoteId);
-      }
-    }
-
-    // If all resolved elements match the existing destination value, skip
-    if (allMatch && destElements !== undefined && resolved.length === destElements.length) {
-      return warnings.length > 0 ? { success: true, skip: true, warnings } : { success: true, skip: true };
     }
 
     const isDestScalar = isSourceScalar || typedOptions.outputType === 'single';

@@ -1573,7 +1573,7 @@ export class SyncService {
       getDestinationMappingForSourceFk: () => Promise.resolve(null),
       lookupFieldFromFkRecord: () => Promise.resolve(undefined),
       getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available during match key insertion')),
-      matchDestinationAssetByHash: () => Promise.resolve(null),
+      matchDestinationAssetByHash: () => Promise.resolve([]),
     };
 
     const matchKeys: Array<{
@@ -2074,7 +2074,7 @@ export async function transformRecordAsync(
           getDestinationMappingForSourceFk: () => Promise.resolve(null),
           lookupFieldFromFkRecord: () => Promise.resolve(null),
           getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
-          matchDestinationAssetByHash: () => Promise.resolve(null),
+          matchDestinationAssetByHash: () => Promise.resolve([]),
         },
         destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
         phase,

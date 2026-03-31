@@ -19,7 +19,7 @@ export function createNullLookupTools(): LookupTools {
     getDestinationMappingForSourceFk: () => Promise.resolve(null),
     lookupFieldFromFkRecord: () => Promise.resolve(undefined),
     getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
-    matchDestinationAssetByHash: () => Promise.resolve(null),
+    matchDestinationAssetByHash: () => Promise.resolve([]),
   };
 }
 
@@ -42,7 +42,7 @@ export function createLookupTools(
   // Cache for hash matching: loaded once per (sourceFolder, destFolder) pair, then in-memory lookups
   const hashMatchCache = new Map<
     string,
-    { sourceHashByRemoteId: Map<string, string>; destRemoteIdByHash: Map<string, string> }
+    { sourceHashByRemoteId: Map<string, string>; destRemoteIdsByHash: Map<string, string[]> }
   >();
 
   return {
@@ -168,7 +168,7 @@ export function createLookupTools(
       sourceAssetRemoteId: string,
       sourceDataFolderId: DataFolderId,
       destinationDataFolderId: DataFolderId,
-    ): Promise<string | null> {
+    ): Promise<string[]> {
       const cacheKey = `${sourceDataFolderId}:${destinationDataFolderId}`;
 
       // Lazy-load the cache for this folder pair
@@ -193,18 +193,22 @@ export function createLookupTools(
           },
           select: { remoteAssetId: true, contentHash: true },
         });
-        const destRemoteIdByHash = new Map<string, string>();
+        const destRemoteIdsByHash = new Map<string, string[]>();
         for (const a of destAssets) {
-          if (a.contentHash) destRemoteIdByHash.set(a.contentHash, a.remoteAssetId);
+          if (a.contentHash) {
+            const existing = destRemoteIdsByHash.get(a.contentHash) ?? [];
+            existing.push(a.remoteAssetId);
+            destRemoteIdsByHash.set(a.contentHash, existing);
+          }
         }
 
-        hashMatchCache.set(cacheKey, { sourceHashByRemoteId, destRemoteIdByHash });
+        hashMatchCache.set(cacheKey, { sourceHashByRemoteId, destRemoteIdsByHash });
       }
 
       const cache = hashMatchCache.get(cacheKey)!;
       const sourceHash = cache.sourceHashByRemoteId.get(sourceAssetRemoteId);
-      if (!sourceHash) return null;
-      return cache.destRemoteIdByHash.get(sourceHash) ?? null;
+      if (!sourceHash) return [];
+      return cache.destRemoteIdsByHash.get(sourceHash) ?? [];
     },
   };
 }
