@@ -94,6 +94,16 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.EscapeHtml), options: z.record(z.string(), z.never()).optional() }),
   z.object({ type: z.literal(TransformerTypes.Trim), options: z.record(z.string(), z.never()).optional() }),
   z.object({
+    type: z.literal(TransformerTypes.SkipIfDestMatches),
+    options: z
+      .object({
+        sourceExpression: z.string().optional(),
+        destinationExpression: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+  }),
+  z.object({
     type: z.literal(TransformerTypes.MatchAssetByHash),
     options: z
       .object({

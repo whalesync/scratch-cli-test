@@ -70,6 +70,7 @@ export const TransformerTypes = {
   EscapeHtml: 'escape_html',
   Trim: 'trim',
   MatchAssetByHash: 'match_asset_by_hash',
+  SkipIfDestMatches: 'skip_if_dest_matches',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -100,6 +101,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.EscapeHtml, label: 'Escape HTML' },
   { type: TransformerTypes.Trim, label: 'Trim' },
   { type: TransformerTypes.MatchAssetByHash, label: 'Match Asset by Hash' },
+  { type: TransformerTypes.SkipIfDestMatches, label: 'Skip If Dest Matches' },
 ];
 
 /** Get the display label for a transformer type */
@@ -194,6 +196,14 @@ export interface EnsureTypeOptions {
   fallbackValue?: string;
 }
 
+/** Options for the skip_if_dest_matches transformer */
+export interface SkipIfDestMatchesOptions {
+  /** JSONPath expression to extract a value from the source (default: "$") */
+  sourceExpression?: string;
+  /** JSONPath expression to extract a value from the destination (default: "$") */
+  destinationExpression?: string;
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
@@ -205,7 +215,8 @@ export type TransformerOptions =
   | SourceAssetToDestAssetOptions
   | MatchAssetByHashOptions
   | EnsureTypeOptions
-  | NotionFileUrlOptions;
+  | NotionFileUrlOptions
+  | SkipIfDestMatchesOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -232,4 +243,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.NotionFileUrl; options?: NotionFileUrlOptions }
   | { type: typeof TransformerTypes.EscapeHtml; options?: Record<string, never> }
   | { type: typeof TransformerTypes.Trim; options?: Record<string, never> }
-  | { type: typeof TransformerTypes.MatchAssetByHash; options: MatchAssetByHashOptions };
+  | { type: typeof TransformerTypes.MatchAssetByHash; options: MatchAssetByHashOptions }
+  | { type: typeof TransformerTypes.SkipIfDestMatches; options?: SkipIfDestMatchesOptions };
