@@ -10,29 +10,23 @@ include:
   client:
     - client/**/*
     - packages/**/*
-    - gitlab-ci/stages/01-build-and-test.yml
   client-docker:
     - client/Dockerfile.monorepo
-    - gitlab-ci/stages/01-build-and-test.yml
-    - gitlab-ci/stages/03-push-images.yml
   server:
     - server/**/*
     - packages/**/*
     - test-api-fakes/**/*
-    - gitlab-ci/stages/01-build-and-test.yml
   server-docker:
     - server/Dockerfile.monorepo
-    - gitlab-ci/stages/01-build-and-test.yml
-    - gitlab-ci/stages/03-push-images.yml
   scratch-cli:
     - scratch-cli/**/*
-    - gitlab-ci/stages/01-build-and-test.yml
   scratch-git:
     - scratch-git-2/**/*
-    - gitlab-ci/stages/01-build-and-test.yml
   scratch-git-docker:
     - scratch-git-2/Dockerfile
+  build-and-test:
     - gitlab-ci/stages/01-build-and-test.yml
+  push-images:
     - gitlab-ci/stages/03-push-images.yml
   dummy:
     - terraform/**/*
