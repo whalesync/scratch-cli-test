@@ -2,7 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 
 class ApiConfig {
   private apiUrl: string;
-  private tokenProvider: (() => Promise<string | null>) | null = null;
+  private staticToken: string | null = null;
   private axiosInstance: AxiosInstance | null = null;
 
   constructor() {
@@ -13,8 +13,8 @@ class ApiConfig {
     return this.apiUrl;
   }
 
-  public setTokenProvider(provider: (() => Promise<string | null>) | null) {
-    this.tokenProvider = provider;
+  public setStaticToken(token: string | null) {
+    this.staticToken = token;
   }
 
   public getAxiosInstance(): AxiosInstance {
@@ -23,19 +23,26 @@ class ApiConfig {
         baseURL: this.apiUrl,
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': `ScratchDesktop/1.0.0`,
         },
       });
 
-      this.axiosInstance.interceptors.request.use(async (config) => {
-        const token = await this.tokenProvider?.();
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
+      this.axiosInstance.interceptors.request.use((config) => {
+        if (this.staticToken) {
+          config.headers.Authorization = `API-Token ${this.staticToken}`;
         }
         return config;
       });
     }
     return this.axiosInstance;
+  }
+
+  public getUnauthenticatedAxiosInstance(): AxiosInstance {
+    return axios.create({
+      baseURL: this.apiUrl,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
   }
 }
 

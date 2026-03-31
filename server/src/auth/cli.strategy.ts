@@ -29,7 +29,8 @@ export class CliStrategy extends PassportStrategy(Strategy, 'CLI_STRATEGY') {
   async validate(req: Request): Promise<AuthenticatedUser | boolean> {
     const userAgent = req.headers['user-agent'];
 
-    if (!userAgent || !userAgent.toLowerCase().startsWith('scratch-cli/')) {
+    const ua = userAgent?.toLowerCase() ?? '';
+    if (!ua.startsWith('scratch-cli/') && !ua.startsWith('scratchdesktop/') && !ua.includes('electron/')) {
       throw new UnauthorizedException('Invalid User-Agent');
     }
 

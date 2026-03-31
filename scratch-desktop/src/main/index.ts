@@ -1,6 +1,7 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { join } from 'path';
+import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 
 function windowIconPath(): string {
   const relative =
@@ -47,6 +48,17 @@ function createWindow(): void {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 }
+
+// Auth IPC handlers
+ipcMain.handle('auth:get-credentials', () => getCredentials());
+ipcMain.handle(
+  'auth:save-credentials',
+  (_, creds: { apiToken: string; email?: string; tokenExpiresAt?: string; serverUrl: string }) =>
+    saveCredentials(creds),
+);
+ipcMain.handle('auth:clear-credentials', () => clearCredentials());
+ipcMain.handle('auth:is-token-expired', () => isTokenExpired());
+ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url));
 
 void app.whenReady().then(() => {
   electronApp.setAppUserModelId('md.scratch.desktop');

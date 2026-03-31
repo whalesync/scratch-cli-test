@@ -1,12 +1,11 @@
-import { useAuth, useUser } from '@clerk/clerk-react';
 import { ActionIcon, Avatar, Box, Group, Menu, Text } from '@mantine/core';
 import { LogOut } from 'lucide-react';
 import { Outlet } from 'react-router-dom';
 import { useCurrentUser } from '../hooks/use-current-user';
+import { useAuth } from '../providers/AuthProvider';
 
 export function Layout() {
-  const { user: clerkUser } = useUser();
-  const { signOut } = useAuth();
+  const { logout } = useAuth();
   const { user } = useCurrentUser();
 
   return (
@@ -24,15 +23,15 @@ export function Layout() {
         <Menu shadow="md" width={200} position="bottom-end">
           <Menu.Target>
             <ActionIcon variant="transparent" size="lg">
-              <Avatar src={clerkUser?.imageUrl} size={28} radius="xl">
-                {(user?.name ?? clerkUser?.firstName)?.charAt(0)}
+              <Avatar size={28} radius="xl">
+                {user?.name?.charAt(0)}
               </Avatar>
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
-            <Menu.Label>{user?.email ?? clerkUser?.primaryEmailAddress?.emailAddress}</Menu.Label>
+            <Menu.Label>{user?.email}</Menu.Label>
             <Menu.Divider />
-            <Menu.Item leftSection={<LogOut size={14} />} onClick={() => void signOut()}>
+            <Menu.Item leftSection={<LogOut size={14} />} onClick={() => void logout()}>
               Sign out
             </Menu.Item>
           </Menu.Dropdown>

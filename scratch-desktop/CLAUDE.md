@@ -2,16 +2,16 @@
 
 ## Overview
 
-Scratch Desktop is an Electron-based desktop client for the Scratch system. It combines a React/Mantine renderer with Clerk authentication and will integrate the Rust CLI (`experimental/scratch-cli-2`) for local file operations. The app communicates with the Scratch server for auth, workspace management, and connections. It depends on the CLI for most operation logic, especially when download and uploading files, triggering pulls and publishing operations.
+Scratch Desktop is an Electron-based desktop client for the Scratch system. It combines a React/Mantine renderer with device-code OAuth authentication and will integrate the Rust CLI (`experimental/scratch-cli-2`) for local file operations. The app communicates with the Scratch server for auth, workspace management, and connections. It depends on the CLI for most operation logic, especially when download and uploading files, triggering pulls and publishing operations.
 
 > **Terminology**: The server API uses "workbook" internally, but the desktop app UI uses "workspace" as the user-facing term.
 
 ## Architecture
 
 - **Electron** with `electron-vite` (Vite builds for main, preload, and renderer processes)
-- **Renderer**: React 19 + Mantine 8 (theme copied from `/client`) + `@clerk/clerk-react`
-- **Main process**: Electron lifecycle, window management, CLI invocation (future)
-- **Preload**: contextBridge for main↔renderer IPC
+- **Renderer**: React 19 + Mantine 8 (theme copied from `/client`)
+- **Main process**: Electron lifecycle, window management, secure token storage via `electron-store`, IPC handlers
+- **Preload**: contextBridge for main↔renderer IPC (includes `scratchAuth` API for credentials)
 
 ## Commands
 
@@ -43,7 +43,6 @@ This writes `build/icons/mac/icon.icns`, `build/icons/win/icon.ico`, and `build/
 Copy `.env.example` to `.env` and configure:
 
 ```
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...   # Clerk publishable key
 VITE_SCRATCH_API_URL=http://localhost:3010  # Scratch server URL
 ```
 
@@ -59,40 +58,42 @@ These are embedded at build time via Vite's `import.meta.env`.
 
 ## Key Differences from the Web Client (`/client`)
 
-- Uses `@clerk/clerk-react` (not `@clerk/nextjs`) — no server-side middleware
+- Uses device-code OAuth flow (not Clerk) — auth happens in the system browser
 - Uses `react-router-dom` with hash routing (not Next.js App Router)
 - Fonts loaded via `@fontsource` packages (not `next/font/google`)
-- No SWR or Zustand yet — will be added as features require them
-- API client in `src/renderer/src/lib/api.ts` mirrors the client's `ApiConfig` pattern
+- API client in `src/renderer/src/lib/api.ts` uses `API-Token` header (not Clerk JWT)
 
 ## Project Structure
 
 ```
 src/
 ├── main/                        # Electron main process
-│   └── index.ts                 # App lifecycle, window creation
+│   ├── index.ts                 # App lifecycle, window creation, IPC handlers
+│   └── auth-store.ts            # Secure token storage (electron-store)
 ├── preload/                     # Preload scripts (bridge main ↔ renderer)
-│   ├── index.ts                 # Expose APIs via contextBridge
-│   └── index.d.ts               # Type declarations
+│   ├── index.ts                 # Expose electron + scratchAuth APIs via contextBridge
+│   └── index.d.ts               # Type declarations (Window.scratchAuth)
 └── renderer/                    # React application
     ├── index.html               # HTML entry point
     └── src/
         ├── main.tsx             # React root mount + CSS/font imports
-        ├── App.tsx              # Root component (Clerk → Mantine → auth gate)
-        ├── providers/           # ClerkProvider, MantineProvider, AuthProvider
-        ├── pages/               # SignInPage, HomePage
-        ├── hooks/               # Clerk appearance hook (copied from client)
-        ├── lib/                 # API client with Clerk JWT injection
+        ├── App.tsx              # Root component (Mantine → AuthProvider → AuthGate)
+        ├── providers/           # AuthProvider (device-code flow), MantineProvider, PostHogProvider
+        ├── pages/               # LoginPage, HomePage, WorkspacePage
+        ├── lib/                 # API client with API-Token auth
         └── theme/               # Mantine theme (adapted from client)
 ```
 
 ## Auth Flow
 
-1. `AppClerkProvider` loads Clerk session
-2. `<SignedOut>` renders `SignInPage` with embedded `<SignIn routing="hash" />`
-3. `<SignedIn>` renders `AuthProvider` which registers Clerk's `getToken()` on `API_CONFIG`
-4. `AuthProvider` checks session validity every 10s + on window focus
-5. All API requests automatically include a fresh Clerk JWT via axios interceptor
+1. On startup, main process loads stored credentials from `electron-store`
+2. If no valid token → renderer shows `LoginPage` with "Log in with Scratch" button
+3. User clicks login → app calls `POST /cli/v1/auth/initiate` to get a user code
+4. System browser opens to the verification URL (user logs in via Clerk on the web)
+5. App polls `POST /cli/v1/auth/poll` until the user approves
+6. API token is stored securely via IPC to main process
+7. All subsequent API requests include `Authorization: API-Token <token>` header
+8. Token expiry is checked on startup and window focus; expired tokens trigger re-auth
 
 ## Enabling Devtools
 
