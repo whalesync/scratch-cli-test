@@ -72,6 +72,7 @@ export const TransformerTypes = {
   MatchAssetByHash: 'match_asset_by_hash',
   SkipIfDestMatches: 'skip_if_dest_matches',
   ReplaceNewlines: 'replace_newlines',
+  ReplaceRegex: 'replace_regex',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -104,6 +105,7 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.MatchAssetByHash, label: 'Match Asset by Hash' },
   { type: TransformerTypes.SkipIfDestMatches, label: 'Skip If Dest Matches' },
   { type: TransformerTypes.ReplaceNewlines, label: 'Replace Newlines' },
+  { type: TransformerTypes.ReplaceRegex, label: 'Replace Regex' },
 ];
 
 /** Get the display label for a transformer type */
@@ -212,6 +214,14 @@ export interface ReplaceNewlinesOptions {
   replacement?: string;
 }
 
+/** Options for the replace_regex transformer */
+export interface ReplaceRegexOptions {
+  /** Regex pattern string (compiled with global flag) */
+  pattern: string;
+  /** Replacement string, supports capture groups ($1, $2, etc.) (default: "") */
+  replacement?: string;
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
@@ -225,7 +235,8 @@ export type TransformerOptions =
   | EnsureTypeOptions
   | NotionFileUrlOptions
   | SkipIfDestMatchesOptions
-  | ReplaceNewlinesOptions;
+  | ReplaceNewlinesOptions
+  | ReplaceRegexOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -254,4 +265,5 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.Trim; options?: Record<string, never> }
   | { type: typeof TransformerTypes.MatchAssetByHash; options: MatchAssetByHashOptions }
   | { type: typeof TransformerTypes.SkipIfDestMatches; options?: SkipIfDestMatchesOptions }
-  | { type: typeof TransformerTypes.ReplaceNewlines; options?: ReplaceNewlinesOptions };
+  | { type: typeof TransformerTypes.ReplaceNewlines; options?: ReplaceNewlinesOptions }
+  | { type: typeof TransformerTypes.ReplaceRegex; options: ReplaceRegexOptions };

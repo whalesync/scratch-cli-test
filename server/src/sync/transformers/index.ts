@@ -33,6 +33,7 @@ import './implementations/match-asset-by-hash.transformer';
 import './implementations/notion-file-url.transformer';
 import './implementations/notion-to-html.transformer';
 import './implementations/replace-newlines.transformer';
+import './implementations/replace-regex.transformer';
 import './implementations/skip-if-dest-matches.transformer';
 import './implementations/slugify.transformer';
 import './implementations/source-asset-to-dest-asset.transformer';
