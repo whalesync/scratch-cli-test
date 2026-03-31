@@ -59,6 +59,9 @@ junit.xml
 # Cargo workspace build directory
 /target
 
+# Experimental scratch CLI (Rust) - removed but may have local build artifacts
+experimental/scratch-cli-2/target/
+
 # Napi-RS native addons
 *.node
 
