@@ -39,6 +39,12 @@ export function createLookupTools(
   sourceService: Service,
   destinationService: Service,
 ): LookupTools {
+  // Cache for hash matching: loaded once per (sourceFolder, destFolder) pair, then in-memory lookups
+  const hashMatchCache = new Map<
+    string,
+    { sourceHashByRemoteId: Map<string, string>; destRemoteIdByHash: Map<string, string> }
+  >();
+
   return {
     async getDestinationMappingForSourceFk(
       sourceFkValue: string,
@@ -163,33 +169,42 @@ export function createLookupTools(
       sourceDataFolderId: DataFolderId,
       destinationDataFolderId: DataFolderId,
     ): Promise<string | null> {
-      // 1. Find source asset and its contentHash
-      const sourceAsset = await db.client.asset.findFirst({
-        where: {
-          workbookId,
-          dataFolderId: sourceDataFolderId,
-          service: sourceService,
-          remoteAssetId: sourceAssetRemoteId,
-        },
-        select: { contentHash: true },
-      });
+      const cacheKey = `${sourceDataFolderId}:${destinationDataFolderId}`;
 
-      if (!sourceAsset?.contentHash) {
-        return null;
+      // Lazy-load the cache for this folder pair
+      if (!hashMatchCache.has(cacheKey)) {
+        // Load all source assets with hashes in one query
+        const sourceAssets = await db.client.asset.findMany({
+          where: { workbookId, dataFolderId: sourceDataFolderId, service: sourceService, contentHash: { not: null } },
+          select: { remoteAssetId: true, contentHash: true },
+        });
+        const sourceHashByRemoteId = new Map<string, string>();
+        for (const a of sourceAssets) {
+          if (a.contentHash) sourceHashByRemoteId.set(a.remoteAssetId, a.contentHash);
+        }
+
+        // Load all destination assets with hashes in one query
+        const destAssets = await db.client.asset.findMany({
+          where: {
+            workbookId,
+            dataFolderId: destinationDataFolderId,
+            service: destinationService,
+            contentHash: { not: null },
+          },
+          select: { remoteAssetId: true, contentHash: true },
+        });
+        const destRemoteIdByHash = new Map<string, string>();
+        for (const a of destAssets) {
+          if (a.contentHash) destRemoteIdByHash.set(a.contentHash, a.remoteAssetId);
+        }
+
+        hashMatchCache.set(cacheKey, { sourceHashByRemoteId, destRemoteIdByHash });
       }
 
-      // 2. Find a destination asset with the same hash
-      const destAsset = await db.client.asset.findFirst({
-        where: {
-          workbookId,
-          dataFolderId: destinationDataFolderId,
-          service: destinationService,
-          contentHash: sourceAsset.contentHash,
-        },
-        select: { remoteAssetId: true },
-      });
-
-      return destAsset?.remoteAssetId ?? null;
+      const cache = hashMatchCache.get(cacheKey)!;
+      const sourceHash = cache.sourceHashByRemoteId.get(sourceAssetRemoteId);
+      if (!sourceHash) return null;
+      return cache.destRemoteIdByHash.get(sourceHash) ?? null;
     },
   };
 }

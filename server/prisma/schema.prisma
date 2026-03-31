@@ -733,6 +733,7 @@ model Asset {
   @@index([urlExpiresAt])
   @@index([workbookId, lastSeenAt])
   @@index([sourceAssetId])
+  @@index([contentHash])
 }
 
 //#endregion
