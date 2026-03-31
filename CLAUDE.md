@@ -163,3 +163,5 @@ Redis pub/sub → WebSocket gateway → connected clients. Multiple server insta
 - [Connector Development Guide](/server/src/remote-service/connectors/CONNECTOR_GUIDE.md)
 - Module-specific docs: `/server/src/*/README.md`
 - [GitLab Pipeline Schedules](https://gitlab.com/whalesync/spinner/-/pipeline_schedules)
+
+@.claude/.local/CLAUDE.md
