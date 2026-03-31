@@ -44,3 +44,8 @@ linux:
     - deb
   maintainer: Whalesync
   category: Office
+
+publish:
+  provider: github
+  owner: whalesync
+  repo: scratch-cli

@@ -74,3 +74,11 @@ client/.clerk/.tmp/
 client/playwright-report/
 client/test-results/
 client/next-env.d.ts
+
+# Gitlab shell runner
+/builds
+
+# scratch-desktop release script
+/scratch-desktop/dist-release
+/scratch-desktop/dist-release-test
+

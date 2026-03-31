@@ -93,7 +93,7 @@ fi
 # Ad-hoc codesign macOS .app bundles so they can launch without Apple Developer certs.
 # Only runs on macOS (codesign isn't available on Linux).
 if command -v codesign &>/dev/null; then
-  for APP in dist/mac-*/Scratch\ Desktop.app; do
+  for APP in dist/mac-*/*.app; do
     [ -d "$APP" ] || continue
     echo "Ad-hoc signing $APP..."
     codesign --force --deep --sign - "$APP"
@@ -125,7 +125,7 @@ RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases" \
   -d "{
     \"tag_name\": \"$NEW_VERSION\",
-    \"name\": \"Scratch Desktop $NEW_VERSION\",
+    \"name\": \"Scratch $NEW_VERSION\",
     \"draft\": false,
     \"prerelease\": true,
     \"body\": \"Test release pointing at test-api.scratch.md. Not for end users.\"
