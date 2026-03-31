@@ -8,3 +8,4 @@ stages:
   - deploy
   - post-deploy environment tests
   - deployment notifications
+  - cleanup

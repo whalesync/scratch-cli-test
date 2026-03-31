@@ -312,7 +312,7 @@ build and test scratch-git:
 # Warm the scratch-git-2-cargo fallback cache on every merge to master.
 # Release jobs (on prod) use this key when Cargo.lock-hash misses.
 warm-scratch-git-cargo-cache:
-  stage: build and test
+  stage: cleanup
   image: rust:latest
   interruptible: true
   allow_failure: true
