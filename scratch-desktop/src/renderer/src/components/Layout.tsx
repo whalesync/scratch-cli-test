@@ -18,7 +18,7 @@ export function Layout() {
         style={{ borderBottom: '0.5px solid var(--fg-divider)', flexShrink: 0 }}
       >
         <Text fw={600} size="sm">
-          Scratch Desktop
+          Scratch
         </Text>
 
         <Menu shadow="md" width={200} position="bottom-end">

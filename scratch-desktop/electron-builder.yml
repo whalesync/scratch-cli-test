@@ -1,5 +1,5 @@
-appId: com.scratch.desktop
-productName: Scratch Desktop
+appId: md.scratch.desktop
+productName: Scratch
 directories:
   buildResources: build
   output: dist
@@ -17,7 +17,7 @@ asarUnpack:
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    - NSDocumentsFolderUsageDescription: Scratch Desktop needs access to manage your workspace files.
+    - NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
   artifactName: "${productName}-${version}-${arch}.${ext}"
   target:
     - target: dmg
