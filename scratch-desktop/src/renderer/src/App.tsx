@@ -7,6 +7,7 @@ import { WorkspacePage } from './pages/WorkspacePage';
 import { AuthProvider } from './providers/AuthProvider';
 import { AppClerkProvider } from './providers/ClerkProvider';
 import { AppMantineProvider } from './providers/MantineProvider';
+import { PostHogProvider } from './providers/PostHogProvider';
 
 function App(): JSX.Element {
   return (
@@ -18,12 +19,14 @@ function App(): JSX.Element {
         <SignedIn>
           <AuthProvider>
             <HashRouter>
-              <Routes>
-                <Route element={<Layout />}>
-                  <Route path="/" element={<HomePage />} />
-                  <Route path="/workspace/:id" element={<WorkspacePage />} />
-                </Route>
-              </Routes>
+              <PostHogProvider>
+                <Routes>
+                  <Route element={<Layout />}>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/workspace/:id" element={<WorkspacePage />} />
+                  </Route>
+                </Routes>
+              </PostHogProvider>
             </HashRouter>
           </AuthProvider>
         </SignedIn>

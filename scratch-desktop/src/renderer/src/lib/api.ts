@@ -23,6 +23,7 @@ class ApiConfig {
         baseURL: this.apiUrl,
         headers: {
           'Content-Type': 'application/json',
+          'User-Agent': `ScratchDesktop/1.0.0`,
         },
       });
 

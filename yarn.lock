@@ -3307,6 +3307,13 @@
   dependencies:
     cross-spawn "^7.0.6"
 
+"@posthog/core@1.24.4":
+  version "1.24.4"
+  resolved "https://registry.yarnpkg.com/@posthog/core/-/core-1.24.4.tgz#73c3e8c773d7a5b919b045259286859059337788"
+  integrity sha512-S+TolwBHSSJz7WWtgaELQWQqXviSm3uf1e+qorWUts0bZcgPwWzhnmhCUZAhvn0NVpTQHDJ3epv+hHbPLl5dHg==
+  dependencies:
+    cross-spawn "^7.0.6"
+
 "@posthog/nextjs-config@^1.8.0":
   version "1.8.20"
   resolved "https://registry.yarnpkg.com/@posthog/nextjs-config/-/nextjs-config-1.8.20.tgz#113a8b78206ddb625dea81d9d4a5b7fa8d12cd52"
@@ -3326,6 +3333,11 @@
   version "1.360.1"
   resolved "https://registry.yarnpkg.com/@posthog/types/-/types-1.360.1.tgz#dfa00e2ae7d2a93523210a205ab4e09e4e028f16"
   integrity sha512-zzvgckmzmjYB7YGnA2cIMtF9thj8O1TMp2YCXcBb+qnGcI5cKTo8j+lO7Kq1Lbwgp7ZPxBWUXfKHg03K5vVdjg==
+
+"@posthog/types@1.364.4":
+  version "1.364.4"
+  resolved "https://registry.yarnpkg.com/@posthog/types/-/types-1.364.4.tgz#319a6286830a84778e24e01ca8939d80a282b9d0"
+  integrity sha512-U7NpIy9XWrzz1q/66xyDu8Wm12a7avNRKRn5ISPT5kuCJQRaeAaHuf+dpgrFnuqjCCgxg+oIY/ReJdlZ+8/z4Q==
 
 "@posthog/webpack-plugin@1.2.26":
   version "1.2.26"
@@ -13938,6 +13950,25 @@ posthog-js@^1.360.0:
     "@opentelemetry/sdk-logs" "^0.208.0"
     "@posthog/core" "1.23.3"
     "@posthog/types" "1.360.1"
+    core-js "^3.38.1"
+    dompurify "^3.3.2"
+    fflate "^0.4.8"
+    preact "^10.28.2"
+    query-selector-shadow-dom "^1.0.1"
+    web-vitals "^5.1.0"
+
+posthog-js@^1.364.4:
+  version "1.364.4"
+  resolved "https://registry.yarnpkg.com/posthog-js/-/posthog-js-1.364.4.tgz#6ff32d2c3099b54537daa3f466766f0959ed024e"
+  integrity sha512-T71zr06gH5YcrjS7c+sdzqfZKMxqqXC/a0w++zMQIPbL1ejvF9PdfUi0Kyd6Sy78Ocbb2smobdzBh8vXLwC+lQ==
+  dependencies:
+    "@opentelemetry/api" "^1.9.0"
+    "@opentelemetry/api-logs" "^0.208.0"
+    "@opentelemetry/exporter-logs-otlp-http" "^0.208.0"
+    "@opentelemetry/resources" "^2.2.0"
+    "@opentelemetry/sdk-logs" "^0.208.0"
+    "@posthog/core" "1.24.4"
+    "@posthog/types" "1.364.4"
     core-js "^3.38.1"
     dompurify "^3.3.2"
     fflate "^0.4.8"

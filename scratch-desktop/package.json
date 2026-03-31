@@ -26,6 +26,7 @@
     "@mantine/notifications": "^8.3.5",
     "axios": "^1.7.0",
     "lucide-react": "^0.400.0",
+    "posthog-js": "^1.364.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0",
