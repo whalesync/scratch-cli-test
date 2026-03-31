@@ -36,6 +36,10 @@ export const autoConvertTransformer: FieldTransformer = {
     const { targetType } = options as AutoConvertOptions;
 
     if (sourceValue === null || sourceValue === undefined) {
+      // For boolean, null/undefined → false (falsy conversion)
+      if (targetType === 'boolean') {
+        return { success: true, value: false };
+      }
       return { success: true, value: null };
     }
 

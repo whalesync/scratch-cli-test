@@ -1,14 +1,17 @@
 import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
+import he from 'he';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
 /**
- * Escapes HTML entities in a string value.
+ * Encodes a string value as HTML using named entity references.
  *
- * Converts `<`, `>`, `&`, `"`, and `'` to their HTML entity equivalents.
+ * Converts special characters and Unicode symbols to their HTML entity equivalents
+ * (e.g. `<` → `&lt;`, `–` → `&ndash;`, `©` → `&copy;`).
+ *
  * Used when syncing plain or rich text from a source (e.g. Airtable) that stores
- * raw HTML into a destination (e.g. Webflow) that expects escaped HTML.
+ * raw text into a destination (e.g. Webflow) that expects HTML-encoded content.
  */
 export const escapeHtmlTransformer: FieldTransformer = {
   type: TransformerTypes.EscapeHtml,
@@ -32,13 +35,7 @@ export const escapeHtmlTransformer: FieldTransformer = {
       };
     }
 
-    const escaped = sourceValue
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-
+    const escaped = he.encode(sourceValue, { useNamedReferences: true });
     return { success: true, value: escaped };
   },
 };
