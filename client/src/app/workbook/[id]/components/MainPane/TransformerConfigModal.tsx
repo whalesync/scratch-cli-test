@@ -3,6 +3,7 @@
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { syncApi } from '@/lib/api/sync';
+import { assertUnreachable } from '@/utils/helpers';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -197,9 +198,20 @@ function defaultConfigForType(type: TransformerType): TransformerConfig {
     case TransformerTypes.WebflowOptionIdToValue:
     case TransformerTypes.Slugify:
     case TransformerTypes.NotionFileUrl:
+    case TransformerTypes.EscapeHtml:
+    case TransformerTypes.Trim:
+    case TransformerTypes.ReplaceNewlines:
+    case TransformerTypes.SkipIfDestMatches:
       return { type, options: {} };
+    case TransformerTypes.ReplaceRegex:
+      return { type: TransformerTypes.ReplaceRegex, options: { pattern: '' } };
+    case TransformerTypes.MatchAssetByHash:
+      return {
+        type: TransformerTypes.MatchAssetByHash,
+        options: { sourceDataFolderId: '' as DataFolderId, destinationDataFolderId: '' as DataFolderId },
+      };
     default:
-      return { type: TransformerTypes.AutoConvert, options: { targetType: 'string' } };
+      return assertUnreachable(type);
   }
 }
 
@@ -491,6 +503,60 @@ function TransformerStepForm({
           value={config.options?.arrayHandling ?? 'array'}
           onChange={(v) => v && updateOptions({ ...config.options, arrayHandling: v })}
         />
+      )}
+      {config.type === TransformerTypes.ReplaceNewlines && (
+        <TextInput
+          size="xs"
+          label="Replacement"
+          description="String to substitute for each newline (e.g. <br>). Leave empty to strip newlines."
+          placeholder="<br>"
+          value={config.options?.replacement ?? ''}
+          onChange={(e) => updateOptions({ ...config.options, replacement: e.currentTarget.value })}
+        />
+      )}
+      {config.type === TransformerTypes.ReplaceRegex && config.options && (
+        <>
+          <TextInput
+            size="xs"
+            label="Pattern"
+            description="Regular expression pattern (applied globally)"
+            placeholder="https?://youtu\\.be/"
+            value={config.options.pattern ?? ''}
+            onChange={(e) => updateOptions({ ...config.options, pattern: e.currentTarget.value })}
+          />
+          <TextInput
+            size="xs"
+            label="Replacement"
+            description="Replacement string (supports $1, $2 capture groups). Leave empty to delete matches."
+            placeholder="https://youtube.com/watch?v="
+            value={config.options.replacement ?? ''}
+            onChange={(e) => updateOptions({ ...config.options, replacement: e.currentTarget.value })}
+          />
+        </>
+      )}
+      {config.type === TransformerTypes.SkipIfDestMatches && (
+        <>
+          <TextInput
+            size="xs"
+            label="Source Expression"
+            description="JSONPath to extract from source value (default: $ = whole value)"
+            placeholder="$"
+            value={config.options?.sourceExpression ?? ''}
+            onChange={(e) =>
+              updateOptions({ ...config.options, sourceExpression: e.currentTarget.value || undefined })
+            }
+          />
+          <TextInput
+            size="xs"
+            label="Destination Expression"
+            description="JSONPath to extract from destination value (default: $ = whole value)"
+            placeholder="$.url"
+            value={config.options?.destinationExpression ?? ''}
+            onChange={(e) =>
+              updateOptions({ ...config.options, destinationExpression: e.currentTarget.value || undefined })
+            }
+          />
+        </>
       )}
     </Stack>
   );

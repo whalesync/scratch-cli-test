@@ -84,6 +84,7 @@ yarn test:integration # Run integration tests across all packages
 - `kebab-case` for filenames: `user-service.ts`
 - `PascalCase` for classes: `UserService`
 - Files end with a newline
+- Use `assertUnreachable` in `default` cases of `switch` statements over union/enum types to ensure exhaustive handling at compile time (`client/src/utils/helpers.ts`, `server/src/utils/helpers.ts`)
 
 ### Client Conventions
 
