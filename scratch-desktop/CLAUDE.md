@@ -25,6 +25,19 @@ yarn build:mac    # Build + package macOS .dmg/.zip
 yarn build:linux  # Build + package Linux AppImage/.deb
 ```
 
+## App icons
+
+Packaged app icons (Dock, `.app`, installers, window/taskbar where supported) live under `build/icons/`. The canonical brand SVG in the repo is `client/public/logo-color.svg`.
+
+**Generate platform assets** with [electron-icon-builder](https://www.npmjs.com/package/electron-icon-builder) (PNG in, `.icns` / `.ico` / PNG set out):
+
+```bash
+cd scratch-desktop
+npx electron-icon-builder --input=./icon-1024.png --output=./build/icons
+```
+
+This writes `build/icons/mac/icon.icns`, `build/icons/win/icon.ico`, and `build/icons/png/` (multiple sizes).
+
 ## Environment Variables
 
 Copy `.env.example` to `.env` and configure:
@@ -80,3 +93,13 @@ src/
 3. `<SignedIn>` renders `AuthProvider` which registers Clerk's `getToken()` on `API_CONFIG`
 4. `AuthProvider` checks session validity every 10s + on window focus
 5. All API requests automatically include a fresh Clerk JWT via axios interceptor
+
+## Enabling Devtools
+
+Tools are always running when you start the app with `yarn dev`
+
+For built executables you can provide an environment variable and launch the app via the command line to enable dev tools:
+
+```bash
+OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch
+```

@@ -2,12 +2,26 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'path';
 
+function windowIconPath(): string {
+  const relative =
+    process.platform === 'win32'
+      ? join('win', 'icon.ico')
+      : process.platform === 'linux'
+        ? join('png', '512x512.png')
+        : join('mac', 'icon.icns');
+
+  const root = app.isPackaged ? join(process.resourcesPath, 'icons') : join(__dirname, '../../build/icons');
+
+  return join(root, relative);
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
     autoHideMenuBar: true,
+    icon: windowIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -16,7 +30,8 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
-    if (is.dev) {
+    const openDevTools = process.env['OPEN_DEVTOOLS'] === '1' || is.dev;
+    if (openDevTools) {
       mainWindow.webContents.openDevTools({ mode: 'bottom' });
     }
   });

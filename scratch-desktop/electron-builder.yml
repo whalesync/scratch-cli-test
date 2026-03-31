@@ -14,7 +14,12 @@ files:
 asarUnpack:
   - resources/**
 
+extraResources:
+  - from: build/icons
+    to: icons
+
 mac:
+  icon: build/icons/mac/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
@@ -29,7 +34,11 @@ mac:
         - arm64
         - x64
 
+win:
+  icon: build/icons/win/icon.ico
+
 linux:
+  icon: build/icons/png
   target:
     - AppImage
     - deb
