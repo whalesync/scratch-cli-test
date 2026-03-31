@@ -1,0 +1,97 @@
+# PROD RELEASE JOBS (prod branch)
+.release_desktop_prod_job:
+  stage: deploy
+  image: node:22
+  variables:
+    GIT_DEPTH: 0
+  dependencies: []
+  artifacts:
+    when: always
+    paths:
+      - scratch-desktop/dist/*.dmg
+      - scratch-desktop/dist/*.zip
+      - scratch-desktop/dist/*.AppImage
+      - scratch-desktop/dist/*.deb
+    expire_in: 1 week
+  before_script:
+    - apt-get update -qq && apt-get install -y zip
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  script:
+    - chmod +x scripts/release_public.sh
+    - ./scripts/release_public.sh $RELEASE_TYPE
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: manual
+      allow_failure: true
+
+# Auto-deploy patch release on every merge to prod
+release-desktop-patch:
+  extends: .release_desktop_prod_job
+  variables:
+    RELEASE_TYPE: "patch"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: on_success
+
+release-desktop-minor:
+  extends: .release_desktop_prod_job
+  variables:
+    RELEASE_TYPE: "minor"
+
+release-desktop-major:
+  extends: .release_desktop_prod_job
+  variables:
+    RELEASE_TYPE: "major"
+
+# TEST RELEASE JOBS (master branch + MR pipelines, excludes scheduled pipelines)
+.release_desktop_test_job:
+  stage: deploy
+  image: node:22
+  variables:
+    GIT_DEPTH: 0
+  dependencies: []
+  artifacts:
+    when: always
+    paths:
+      - scratch-desktop/dist/*.dmg
+      - scratch-desktop/dist/*.zip
+      - scratch-desktop/dist/*.AppImage
+      - scratch-desktop/dist/*.deb
+    expire_in: 1 week
+  before_script:
+    - apt-get update -qq && apt-get install -y zip
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  script:
+    - chmod +x scripts/release_test.sh
+    - ./scripts/release_test.sh $RELEASE_TYPE
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_MERGE_REQUEST_IID'
+      when: manual
+      allow_failure: true
+
+# Auto-deploy test patch release on every merge to master
+release-desktop-test-patch:
+  extends: .release_desktop_test_job
+  variables:
+    RELEASE_TYPE: "patch"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: on_success
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_MERGE_REQUEST_IID'
+      when: manual
+      allow_failure: true
+
+release-desktop-test-minor:
+  extends: .release_desktop_test_job
+  variables:
+    RELEASE_TYPE: "minor"
+
+release-desktop-test-major:
+  extends: .release_desktop_test_job
+  variables:
+    RELEASE_TYPE: "major"

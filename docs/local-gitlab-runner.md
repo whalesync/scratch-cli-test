@@ -85,6 +85,48 @@ Add your GitLab username to the regex in **both** of these files:
 
 You **must** update both. If you only update one, you'll get duplicate jobs or no jobs at all. Both files have a `✏️` comment marking the exact line to edit.
 
+## macOS Shell Runner (for native .dmg builds)
+
+The default Docker-executor runner builds everything inside Linux containers, so it can't produce macOS `.dmg` files. A second runner using the **shell executor** runs jobs directly on macOS, enabling native `.dmg` + `.zip` builds for the desktop app.
+
+### 1. Create the runner in GitLab
+
+1. Go to [New project runner](https://gitlab.com/whalesync/spinner/-/runners/new)
+2. In the **Tags** field, enter `local-macos-YOUR_GITLAB_USERNAME` (e.g., `local-macos-jdoe`)
+3. Click **Create runner** and copy the token
+
+### 2. Register the runner locally
+
+```bash
+gitlab-runner register \
+  --url https://gitlab.com \
+  --executor shell \
+  --token YOUR_TOKEN_FROM_STEP_1
+```
+
+### 3. Prerequisites
+
+The shell executor runs jobs directly on your Mac, so these tools must be available in the runner's shell:
+
+- **Node.js 22** — via `nvm` or `brew install node@22`
+- **Yarn** — `brew install yarn` or `npm install -g yarn`
+- **Git** — pre-installed on macOS
+
+If you use `nvm`, ensure it's loaded in your shell profile (`~/.zshrc` or `~/.bash_profile`) so the runner can find `node` and `yarn`:
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+```
+
+### 4. Usage
+
+No additional opt-in is needed — the macOS jobs use the same username list as the Docker local runner. Once your runner is registered and running, the `macos release-desktop-test-*` manual jobs in MR pipelines will be picked up by it.
+
+These jobs build `.dmg` + `.zip` for macOS (no Linux targets) and create a GitHub test release, just like the Docker-based release jobs but with native macOS packaging.
+
+> **Note:** This runner is only used for desktop release jobs. All other local jobs (client, server, scratch-cli, etc.) continue to use the Docker-executor runner.
+
 ## Integration tests
 
 The `local integration test server` job runs identically to the shared-runner version — it spins up a postgres:16 service container and uses it for migrations and tests. No local PostgreSQL is needed.

@@ -11,3 +11,4 @@ include:
   - "/gitlab-ci/stages/05-deploy.yml"
   - "/gitlab-ci/stages/06-environment-tests.yml"
   - "scratch-git-2/.gitlab-ci-release.yml"
+  - "scratch-desktop/.gitlab-ci-release.yml"

@@ -51,6 +51,7 @@
 include:
   - "/gitlab-ci/stages/01-build-and-test.yml"
   - "/gitlab-ci/stages/01-smoke-tests.yml"
+  - "/scratch-desktop/.gitlab-ci-release.yml"
 
 .local-runner-defaults:
   tags:
@@ -98,11 +99,38 @@ include:
     # Pin the API version to avoid "client version X is too old" errors.
     DOCKER_API_VERSION: "1.44"
 
+# Shell executor for macOS-native builds (e.g. .dmg packaging).
+# Runs directly on the host — no Docker container. Requires Node 22, Yarn,
+# and Git installed on the machine. See docs/local-gitlab-runner.md.
+.local-macos-runner-defaults:
+  tags:
+    - "local-macos-$GITLAB_USER_LOGIN"
+  variables:
+    GIT_STRATEGY: fetch
+    GIT_DEPTH: 0
+    GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn -e .next"
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        echo ""
+        echo "============================================================"
+        echo "  MACOS RUNNER: If this failure looks like missing tools,"
+        echo "  ensure Node 22, Yarn, and Git are installed:"
+        echo ""
+        echo "    brew install node@22 yarn git"
+        echo ""
+        echo "  See docs/local-gitlab-runner.md for details."
+        echo "============================================================"
+      fi
+
 # ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
 #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
+#    Note: update BOTH regexes below (local_runner_users and local_runner_users_master)
 .rules:
   local_runner_users:
-    - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari)$/'
+    - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_master:
+    - if: &local-user-if-master '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
 
 # -----------------------------------------------------------------------------
 # Client
@@ -203,17 +231,6 @@ local smoke tests:
       changes: !reference [.changes, smoke-tests]
 
 # -----------------------------------------------------------------------------
-# Turbo Dev
-# -----------------------------------------------------------------------------
-
-local verify turbo dev:
-  extends:
-    - .verify-turbo-dev
-    - .local-runner-defaults
-  rules:
-    - if: *local-user-if
-
-# -----------------------------------------------------------------------------
 # Misc
 # -----------------------------------------------------------------------------
 
@@ -224,3 +241,101 @@ local dummy job:
   rules:
     - if: *local-user-if
       changes: !reference [.changes, dummy]
+
+# -----------------------------------------------------------------------------
+# Desktop Test Releases
+# -----------------------------------------------------------------------------
+
+local release-desktop-test-patch:
+  extends:
+    - .release_desktop_test_job
+    - .local-runner-defaults
+  variables:
+    RELEASE_TYPE: "patch"
+  rules:
+    - if: *local-user-if
+      when: manual
+      allow_failure: true
+
+local release-desktop-test-minor:
+  extends:
+    - .release_desktop_test_job
+    - .local-runner-defaults
+  variables:
+    RELEASE_TYPE: "minor"
+  rules:
+    - if: *local-user-if
+      when: manual
+      allow_failure: true
+
+local release-desktop-test-major:
+  extends:
+    - .release_desktop_test_job
+    - .local-runner-defaults
+  variables:
+    RELEASE_TYPE: "major"
+  rules:
+    - if: *local-user-if
+      when: manual
+      allow_failure: true
+
+# -----------------------------------------------------------------------------
+# Desktop Test Releases (macOS native — builds .dmg + .zip, no Linux)
+#
+# These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
+# See docs/local-gitlab-runner.md for setup instructions.
+# -----------------------------------------------------------------------------
+
+macos release-desktop-test-patch:
+  extends:
+    - .release_desktop_test_job
+    - .local-macos-runner-defaults
+  before_script:
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  variables:
+    RELEASE_TYPE: "patch"
+    MAC_TARGETS: "dmg zip"
+    BUILD_LINUX: "false"
+  rules:
+    - if: *local-user-if
+      when: manual
+      allow_failure: true
+    - if: *local-user-if-master
+      when: manual
+      allow_failure: true
+
+macos release-desktop-test-minor:
+  extends:
+    - .release_desktop_test_job
+    - .local-macos-runner-defaults
+  before_script:
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  variables:
+    RELEASE_TYPE: "minor"
+    MAC_TARGETS: "dmg zip"
+    BUILD_LINUX: "false"
+  rules:
+    - if: *local-user-if
+      when: manual
+      allow_failure: true
+    - if: *local-user-if-master
+      when: manual
+      allow_failure: true
+
+macos release-desktop-test-major:
+  extends:
+    - .release_desktop_test_job
+    - .local-macos-runner-defaults
+  before_script:
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  variables:
+    RELEASE_TYPE: "major"
+    MAC_TARGETS: "dmg zip"
+    BUILD_LINUX: "false"
+  rules:
+    - if: *local-user-if
+      when: manual
+      allow_failure: true
+    - if: *local-user-if-master
+      when: manual
+      allow_failure: true

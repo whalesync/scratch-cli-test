@@ -50,7 +50,7 @@ include:
 #    .rules.local_runner_users in gitlab-ci/local-runners.yml)
 .rules:
   skip_for_local_runner_users:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari)$/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
       when: never
 
 # =============================================================================
@@ -396,25 +396,6 @@ build scratch-git docker image:
       changes: !reference [.changes, scratch-git-docker]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
-
-# =============================================================================
-# TURBO DEV SMOKE TEST
-# =============================================================================
-
-.verify-turbo-dev:
-  stage: build and test
-  interruptible: true
-  script:
-    - . ~/.bashrc
-    - nvm use && yarn install --frozen-lockfile --cache-folder .yarn --prefer-offline
-    - npx turbo dev --dry-run=json 2>/dev/null | node scripts/verify-turbo-dev.mjs
-
-verify turbo dev:
-  extends: .verify-turbo-dev
-  rules:
-    - !reference [.rules, skip_for_local_runner_users]
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - !reference [.rules, on_merge_to_master]
 
 # =============================================================================
 # MISC

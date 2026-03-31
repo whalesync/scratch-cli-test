@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Scratch Desktop — Electron application",
   "main": "./out/main/index.js",
+  "author": "Whalesync <support@whalesync.com>",
+  "homepage": "https://scratch.md",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "electron-vite dev",
