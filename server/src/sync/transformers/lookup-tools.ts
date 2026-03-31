@@ -39,6 +39,27 @@ export function createLookupTools(
   sourceService: Service,
   destinationService: Service,
 ): LookupTools {
+  // ── FK mapping cache ──────────────────────────────────────────────────────
+  //
+  // During the FOREIGN_KEY_MAPPING phase, the source_fk_to_dest_fk transformer
+  // calls getDestinationMappingForSourceFk() once per FK array element. For
+  // example, a table with 12K records and ~117 FK references per record, that
+  // would be ~1.4 million individual DB queries if done one-by-one.
+  //
+  // Instead, we lazy-load ALL mappings for a given (syncId, referencedDataFolderId)
+  // pair into an in-memory Map on first access. The SyncRemoteIdMapping table
+  // typically has at most tens of thousands of rows per folder (bounded by the
+  // number of records in the referenced table), so memory usage is modest — the
+  // largest folder in a profiled 35K-record sync was ~2.5MB of string data.
+  //
+  // This turns ~1.6M sequential DB queries into ~13 bulk queries (one per
+  // referenced folder), reducing FK resolution from potentially 30+ minutes
+  // to under a second.
+  //
+  // Keyed by referencedDataFolderId → Map of sourceRemoteId → FkMappingResult.
+  // ───────────────────────────────────────────────────────────────────────────
+  const fkMappingCache = new Map<DataFolderId, Map<string, FkMappingResult>>();
+
   // Cache for hash matching: loaded once per (sourceFolder, destFolder) pair, then in-memory lookups
   const hashMatchCache = new Map<
     string,
@@ -50,26 +71,31 @@ export function createLookupTools(
       sourceFkValue: string,
       referencedDataFolderId: DataFolderId,
     ): Promise<FkMappingResult | null> {
-      // Look up the destination file path and remote ID for the source FK value.
-      // The FK value is a remote ID from the source system, and we need to find
-      // the corresponding destination mapping using SyncRemoteIdMapping.
-      const mapping = await db.client.syncRemoteIdMapping.findFirst({
-        where: {
-          syncId,
-          dataFolderId: referencedDataFolderId,
-          sourceRemoteId: sourceFkValue,
-        },
-        select: { destinationFilePath: true, destinationRemoteId: true },
-      });
+      // Lazy-load all mappings for this referenced folder on first access.
+      // Subsequent calls for the same folder hit the in-memory Map (O(1) lookup)
+      // instead of making a DB round-trip per FK element.
+      if (!fkMappingCache.has(referencedDataFolderId)) {
+        const rows = await db.client.syncRemoteIdMapping.findMany({
+          where: {
+            syncId,
+            dataFolderId: referencedDataFolderId,
+          },
+          select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
+        });
 
-      if (!mapping?.destinationFilePath) {
-        return null;
+        const map = new Map<string, FkMappingResult>();
+        for (const row of rows) {
+          if (row.destinationFilePath) {
+            map.set(row.sourceRemoteId, {
+              destinationFilePath: row.destinationFilePath,
+              destinationRemoteId: row.destinationRemoteId ?? null,
+            });
+          }
+        }
+        fkMappingCache.set(referencedDataFolderId, map);
       }
 
-      return {
-        destinationFilePath: mapping.destinationFilePath,
-        destinationRemoteId: mapping.destinationRemoteId ?? null,
-      };
+      return fkMappingCache.get(referencedDataFolderId)!.get(sourceFkValue) ?? null;
     },
 
     async lookupFieldFromFkRecord(

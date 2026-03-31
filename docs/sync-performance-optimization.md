@@ -177,17 +177,32 @@ for (const [path, record] of sourceRecordCache) {
 
 ---
 
-## Hang Bug (Separate Issue)
+## Hang Bug (RESOLVED)
 
-The sync hung during FK resolution on the Products table (11,920 records). Symptoms:
+### Root Cause
 
-- Server process alive but 0% CPU
-- Job `updatedAt` not advancing (stale for 11+ minutes)
-- Log file stopped growing
-- scratch-git-2 was responsive to health checks
-- Last log: "Pass 2: source batch 15" — mid-way through FK pass source re-read
+The sync appeared to "hang" during FK resolution because the `source_fk_to_dest_fk` transformer was making **one Prisma `findFirst` query per FK array element**. For the Products table (11,920 records × 7 FK columns × ~117 avg FK references per record), this produced an estimated **1.4 million sequential DB queries**. At ~2ms per query, that's ~47 minutes of wall-clock time with no log output between batch boundaries — making it look frozen.
 
-Likely cause: A hanging HTTP request to scratch-git-2 or a promise that never resolves. Needs separate investigation with request-level timeouts and deadlock detection.
+The `Dealers That Carry Them` field was the worst offender: each product referenced ~103 dealers, meaning 1.2M lookups for just that one field.
+
+### Fix Applied
+
+Replaced the per-element DB query in `lookup-tools.ts` with a lazy-loaded in-memory Map. On first access for a given `(syncId, referencedDataFolderId)` pair, all mappings are bulk-loaded from `SyncRemoteIdMapping` into a Map. Subsequent lookups are O(1) in-memory.
+
+- **Before**: ~1.6M individual Prisma queries across all FK tables
+- **After**: 13 bulk queries (one per referenced folder), max 21K rows per query (~2.5MB)
+
+### Before/After Comparison
+
+| Metric              | Before (hung)     | After (completed)        |
+| ------------------- | ----------------- | ------------------------ |
+| Outcome             | Hung indefinitely | Completed successfully   |
+| Total time          | >10min (killed)   | **522s (~8.7 min)**      |
+| Slow API calls      | 283               | 189                      |
+| Total git read time | 200s              | 126s                     |
+| FK resolution       | Never finished    | All 8 FK tables resolved |
+
+The remaining ~8.7 minutes is dominated by scratch-git-2 file reads (see Primary Bottleneck section above).
 
 ---
 
