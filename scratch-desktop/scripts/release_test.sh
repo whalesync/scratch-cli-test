@@ -66,12 +66,10 @@ node -e "
 echo "Updated package.json version to $SEMVER"
 
 TEST_API_URL="https://test-api.scratch.md"
-DIST_DIR="$(pwd)/dist-release-test"
-rm -rf "$DIST_DIR"
-mkdir -p "$DIST_DIR"
 
 # 5. Build the Electron app for all targets
 echo "Building Electron app..."
+rm -rf "./dist"
 VITE_SCRATCH_API_URL="$TEST_API_URL" yarn build
 
 # Configurable via CI variables (defaults match current behavior)
@@ -92,7 +90,20 @@ if [ "$BUILD_LINUX" = "true" ]; then
   yarn electron-builder --linux --publish never
 fi
 
+# Ad-hoc codesign macOS .app bundles so they can launch without Apple Developer certs.
+# Only runs on macOS (codesign isn't available on Linux).
+if command -v codesign &>/dev/null; then
+  for APP in dist/mac-*/Scratch\ Desktop.app; do
+    [ -d "$APP" ] || continue
+    echo "Ad-hoc signing $APP..."
+    codesign --force --deep --sign - "$APP"
+  done
+fi
+
 # 6. Collect artifacts into dist-release-test
+DIST_DIR="./dist-release-test"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
 echo "Collecting artifacts..."
 for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
   [ -f "$FILE" ] || continue

@@ -50,9 +50,6 @@ node -e "
 echo "Updated package.json version to $SEMVER"
 
 PROD_API_URL="https://api.scratch.md"
-DIST_DIR="$(pwd)/dist-release"
-rm -rf "$DIST_DIR"
-mkdir -p "$DIST_DIR"
 
 # 4. Build the Electron app for all targets
 #
@@ -63,6 +60,7 @@ mkdir -p "$DIST_DIR"
 #   - Set APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID for notarization
 #   - electron-builder will automatically sign and notarize when these are present
 echo "Building Electron app..."
+rm -rf "./dist"
 VITE_SCRATCH_API_URL="$PROD_API_URL" yarn build
 
 # Build macOS targets (unsigned for now)
@@ -79,6 +77,9 @@ echo "Packaging Linux targets..."
 yarn electron-builder --linux --publish never
 
 # 5. Collect and rename artifacts into dist-release
+DIST_DIR="./dist-release"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
 echo "Collecting artifacts..."
 for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
   [ -f "$FILE" ] || continue
