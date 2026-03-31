@@ -18,9 +18,9 @@
     "@clerk/clerk-react": "^5.0.0",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
-    "@fontsource/inter": "^5.0.0",
     "@fontsource-variable/funnel-display": "^5.0.0",
     "@fontsource/geist-mono": "^5.0.0",
+    "@fontsource/inter": "^5.0.0",
     "@mantine/core": "^8.3.5",
     "@mantine/hooks": "^8.3.5",
     "@mantine/notifications": "^8.3.5",
@@ -28,7 +28,8 @@
     "lucide-react": "^0.400.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.0.0",
+    "swr": "^2.4.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
