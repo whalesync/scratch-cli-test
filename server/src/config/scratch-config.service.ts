@@ -266,6 +266,32 @@ export class ScratchConfigService {
     return `https://${env}.scratch.md`;
   }
 
+  /**
+   * Returns a CORS origin callback that allows:
+   * - The web client origin (e.g. http://localhost:3000 in dev, https://app.scratch.md in prod)
+   * - The Electron desktop app dev server (http://localhost:5173) in development
+   * - Requests with no Origin header (null) — this covers packaged Electron apps that load from file://
+   */
+  public static getCorsAllowedOrigins(): (
+    origin: string | undefined,
+    callback: (err: Error | null, allow?: boolean) => void,
+  ) => void {
+    const env = ScratchConfigService.getScratchEnvironment();
+    const allowedOrigins = new Set<string>([ScratchConfigService.getClientBaseUrl()]);
+    if (env === 'development') {
+      allowedOrigins.add('http://localhost:5173');
+    }
+
+    return (origin, callback) => {
+      // Allow requests with no Origin (e.g. packaged Electron apps loading from file://, server-to-server, curl)
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+      }
+    };
+  }
+
   public static getApiBaseUrl(): string {
     const env = ScratchConfigService.getScratchEnvironment();
     if (env === 'development') {

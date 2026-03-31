@@ -16,6 +16,9 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
+    if (is.dev) {
+      mainWindow.webContents.openDevTools({ mode: 'bottom' });
+    }
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -45,7 +48,5 @@ void app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });

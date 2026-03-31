@@ -8,14 +8,13 @@
     "server",
     "scratch-git-2",
     "scratch-desktop",
-    "scratch-desktop-htmx",
     "scratch-cli-tests",
     "packages/*",
     "test-api-fakes/*",
     "smoke-tests"
   ],
   "scripts": {
-    "dev": "turbo dev",
+    "dev": "turbo dev --filter=!scratch-desktop",
     "build": "yarn install && turbo build",
     "migrate": "turbo migrate",
     "lint": "turbo lint",

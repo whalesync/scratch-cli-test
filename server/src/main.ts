@@ -40,11 +40,11 @@ async function bootstrap(): Promise<void> {
   // Turn on class validation for body and URL params (DTOs).
   app.useGlobalPipes(new ValidationPipe());
 
-  // Enable CORS — restrict to the client origin for the current environment.
-  const corsOrigin = ScratchConfigService.getClientBaseUrl();
-  WSLogger.info({ source: 'main', message: `CORS allowed origin: ${corsOrigin}` });
+  // Enable CORS — restrict to known client origins for the current environment.
+  const clientOrigin = ScratchConfigService.getClientBaseUrl();
+  WSLogger.info({ source: 'main', message: `CORS primary client origin: ${clientOrigin}` });
   app.enableCors({
-    origin: corsOrigin,
+    origin: ScratchConfigService.getCorsAllowedOrigins(),
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'X-Requested-With'],
     exposedHeaders: ['Content-Type', 'Cache-Control', 'Content-Disposition'],
