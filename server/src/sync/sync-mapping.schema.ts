@@ -99,6 +99,8 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
       .object({
         sourceDataFolderId: z.string().min(1),
         destinationDataFolderId: z.string().min(1),
+        sourceIdPath: z.string().optional(),
+        destinationIdPath: z.string().optional(),
         onUnresolved: z.enum(['fail', 'ignore']).optional(),
         outputType: z.enum(['array', 'single']).optional(),
       })

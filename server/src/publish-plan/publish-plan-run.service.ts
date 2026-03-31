@@ -616,7 +616,9 @@ export class PublishPlanRunService {
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
     const rawContents = entries.map((e) => e.content).filter(Boolean);
-    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
+    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents, (asset) =>
+      connector.resolveAssetReference(asset),
+    );
 
     const contents: ParsedContent[] = [];
     const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];

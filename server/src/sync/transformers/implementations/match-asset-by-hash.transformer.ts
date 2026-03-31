@@ -1,5 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { isScratchPendingPublishId, MatchAssetByHashOptions, TransformerTypes } from '@spinner/shared-types';
+import get from 'lodash/get';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
 import { AssetMappingResult, FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -35,13 +36,7 @@ export const matchAssetByHashTransformer: FieldTransformer = {
 
     // Normalize to array
     const isSourceScalar = !Array.isArray(sourceValue);
-    if (isSourceScalar && typeof sourceValue !== 'string') {
-      return {
-        success: false,
-        error: `Expected string or array for asset ID value, got ${typeof sourceValue}`,
-      };
-    }
-    const elements: unknown[] = isSourceScalar ? [sourceValue] : sourceValue;
+    const elements: unknown[] = isSourceScalar ? [sourceValue] : (sourceValue as unknown[]);
 
     // Normalize destination value for comparison
     const destElements: unknown[] | undefined =
@@ -60,16 +55,19 @@ export const matchAssetByHashTransformer: FieldTransformer = {
       if (element === null || element === undefined) {
         continue;
       }
-      if (typeof element !== 'string') {
+
+      // Extract the asset ID from the source element
+      const assetId: unknown = typedOptions.sourceIdPath ? get(element, typedOptions.sourceIdPath) : element;
+      if (typeof assetId !== 'string') {
         return {
           success: false,
-          error: `Expected string for asset ID array element, got ${typeof element}`,
+          error: `Expected string asset ID${typedOptions.sourceIdPath ? ` at path "${typedOptions.sourceIdPath}"` : ''}, got ${typeof assetId}`,
         };
       }
 
       // Strategy 1: Try hash match (no upload needed)
       const hashMatch = await lookupTools.matchDestinationAssetByHash(
-        element,
+        assetId,
         typedOptions.sourceDataFolderId,
         typedOptions.destinationDataFolderId,
       );
@@ -77,7 +75,11 @@ export const matchAssetByHashTransformer: FieldTransformer = {
       if (hashMatch) {
         resolved.push(hashMatch);
         if (allMatch) {
-          allMatch = i < (destElements?.length ?? 0) && String(destElements![i]) === hashMatch;
+          // Compare against the destination element, extracting ID if destinationIdPath is set
+          const destEl = destElements?.[i];
+          const destId: unknown =
+            typedOptions.destinationIdPath && destEl ? get(destEl, typedOptions.destinationIdPath) : destEl;
+          allMatch = i < (destElements?.length ?? 0) && String(destId) === hashMatch;
         }
         continue;
       }
@@ -86,13 +88,13 @@ export const matchAssetByHashTransformer: FieldTransformer = {
       let mapping: AssetMappingResult;
       try {
         mapping = await lookupTools.getOrCreateDestinationAssetMapping(
-          element,
+          assetId,
           typedOptions.sourceDataFolderId,
           typedOptions.destinationDataFolderId,
         );
       } catch (err) {
         if (err instanceof Error && err.message === 'ASSET_NOT_FOUND') {
-          const msg = `Source asset "${element}" not found. Pull the source table again so all assets are indexed.`;
+          const msg = `Source asset "${assetId}" not found. Pull the source table again so all assets are indexed.`;
           if (ignoreUnresolved) {
             warnings.push(msg);
             WSLogger.warn({
@@ -106,7 +108,7 @@ export const matchAssetByHashTransformer: FieldTransformer = {
           return { success: false, error: msg };
         }
         if (err instanceof Error && err.message === 'ASSET_NOT_REHOSTED') {
-          const msg = `Source asset "${element}" is not rehosted. Run "Pull Assets" with "Store copies" enabled first.`;
+          const msg = `Source asset "${assetId}" is not rehosted. Run "Pull Assets" with "Store copies" enabled first.`;
           if (ignoreUnresolved) {
             warnings.push(msg);
             WSLogger.warn({
@@ -129,9 +131,12 @@ export const matchAssetByHashTransformer: FieldTransformer = {
       resolved.push(ref);
 
       if (allMatch) {
+        const destEl = destElements?.[i];
+        const destId: unknown =
+          typedOptions.destinationIdPath && destEl ? get(destEl, typedOptions.destinationIdPath) : destEl;
         allMatch =
           i < (destElements?.length ?? 0) &&
-          (String(destElements![i]) === ref || String(destElements![i]) === mapping.destinationAssetRemoteId);
+          (String(destId) === ref || String(destId) === mapping.destinationAssetRemoteId);
       }
     }
 

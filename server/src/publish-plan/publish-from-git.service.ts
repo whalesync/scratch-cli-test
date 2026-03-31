@@ -332,7 +332,9 @@ export class PublishFromGitService {
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
     const rawContents = entries.map((e) => e.content).filter(Boolean) as ParsedContent[];
-    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents);
+    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents, (asset) =>
+      connector.resolveAssetReference(asset),
+    );
 
     const contents: ParsedContent[] = [];
     const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
@@ -425,7 +427,9 @@ export class PublishFromGitService {
       })
       .filter(Boolean) as ParsedContent[];
 
-    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
+    const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps, (asset) =>
+      connector.resolveAssetReference(asset),
+    );
 
     const operations: ParsedContent[] = [];
     const entriesWithOps: { entry: PhaseOperation; resolvedOp: ParsedContent }[] = [];

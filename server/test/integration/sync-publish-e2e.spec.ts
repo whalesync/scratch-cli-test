@@ -242,6 +242,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       deleteRecords: jest.fn().mockResolvedValue(undefined),
       supportsFileUpload: true,
       uploadFile: jest.fn(),
+      resolveAssetReference: (asset: { remoteAssetId: string }) => asset.remoteAssetId,
     };
 
     connectorsService = {
@@ -1340,6 +1341,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       deleteRecords: jest.fn().mockResolvedValue(undefined),
       supportsFileUpload: true,
       uploadFile: jest.fn(),
+      resolveAssetReference: (asset: { remoteAssetId: string }) => asset.remoteAssetId,
     };
 
     connectorsService = {

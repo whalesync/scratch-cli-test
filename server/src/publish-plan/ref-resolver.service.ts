@@ -77,16 +77,18 @@ export class RefResolverService {
   }
 
   /**
-   * Replace `@asset/<assetDbId>` references with the resolved `remoteAssetId`.
+   * Replace `@asset/<assetDbId>` references with the resolved value from the asset ref map.
+   * The map values are produced by `connector.resolveAssetReference()` and may be strings,
+   * objects, or numbers depending on the destination connector.
    */
-  private applyAssetRefs(content: unknown, assetRefMap: Map<string, string>): unknown {
+  private applyAssetRefs(content: unknown, assetRefMap: Map<string, unknown>): unknown {
     if (typeof content === 'string' && content.startsWith('@asset/')) {
       const assetId = content.substring(7);
-      const remoteAssetId = assetRefMap.get(assetId);
-      if (!remoteAssetId) {
+      const resolved = assetRefMap.get(assetId);
+      if (resolved === undefined) {
         throw new Error(`Cannot resolve asset pseudo-ref "${content}": no Asset found with id="${assetId}"`);
       }
-      return remoteAssetId;
+      return resolved;
     } else if (Array.isArray(content)) {
       return content.map((item) => this.applyAssetRefs(item, assetRefMap));
     } else if (typeof content === 'object' && content !== null) {
@@ -102,10 +104,15 @@ export class RefResolverService {
   /**
    * Bulk resolve pseudo-references for an entire batch of operations to avoid N+1 queries.
    * Resolves both `@/` (file index) and `@asset/` (asset) pseudo-references.
+   *
+   * @param assetResolver - Connector-specific function that converts an Asset row into the
+   *   value to write into the record (e.g. URL string for Webflow, integer ID for WordPress).
+   *   Defaults to using `remoteAssetId` if not provided (backward compatible).
    */
   async resolveBatchPseudoRefs(
     workbookId: string,
     unresolvedContents: ParsedContent[],
+    assetResolver?: (asset: { remoteAssetId: string; rehostedUrl: string | null; url: string | null }) => unknown,
   ): Promise<Record<string, unknown>[]> {
     // 1. Resolve @/ pseudo-refs (file index lookups)
     const refs: { folderPath: string; filename: string }[] = [];
@@ -118,7 +125,7 @@ export class RefResolverService {
 
     let resolved = unresolvedContents.map((content) => this.applyPseudoRefsSync(content, refMap) as ParsedContent);
 
-    // 2. Resolve @asset/ pseudo-refs (asset DB id → remoteAssetId)
+    // 2. Resolve @asset/ pseudo-refs using the connector's resolver
     const assetIds = new Set<string>();
     for (const content of resolved) {
       this.extractAssetRefs(content, assetIds);
@@ -127,9 +134,13 @@ export class RefResolverService {
     if (assetIds.size > 0) {
       const assets = await this.db.client.asset.findMany({
         where: { id: { in: [...assetIds] } },
-        select: { id: true, remoteAssetId: true },
+        select: { id: true, remoteAssetId: true, rehostedUrl: true, url: true },
       });
-      const assetRefMap = new Map(assets.map((a) => [a.id, a.remoteAssetId]));
+
+      const assetRefMap = new Map<string, unknown>();
+      for (const asset of assets) {
+        assetRefMap.set(asset.id, assetResolver ? assetResolver(asset) : asset.remoteAssetId);
+      }
 
       resolved = resolved.map((content) => this.applyAssetRefs(content, assetRefMap) as ParsedContent);
     }

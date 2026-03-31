@@ -213,6 +213,24 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   }
 
   /**
+   * Resolves an asset reference for use in a record field during publish.
+   *
+   * Different connectors need different formats:
+   * - Most connectors accept a URL string (Webflow, Airtable, Wix, HubSpot, etc.)
+   * - WordPress needs an integer media ID (uploaded separately)
+   * - Notion needs a nested object `{ type: 'external', external: { url } }`
+   *
+   * The default implementation returns the best available URL.
+   * Connectors with non-URL asset references should override this method.
+   *
+   * @param asset - The asset metadata from the Asset table.
+   * @returns The value to write into the record field.
+   */
+  resolveAssetReference(asset: { remoteAssetId: string; rehostedUrl: string | null; url: string | null }): unknown {
+    return asset.rehostedUrl ?? asset.url;
+  }
+
+  /**
    * Upload a file to the remote service and return asset metadata.
    * Not all connectors support file uploads — the default implementation throws.
    *

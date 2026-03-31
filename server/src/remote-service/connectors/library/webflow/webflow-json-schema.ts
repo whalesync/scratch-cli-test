@@ -105,12 +105,13 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
     case Webflow.FieldType.File:
       schema = Type.Object(
         {
+          fileId: Type.Optional(Type.String()),
           url: Type.String({ format: 'uri' }),
           alt: Type.Optional(Type.String()),
         },
         {
           description,
-          [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+          [ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } satisfies AssetFieldOptions,
         },
       );
       break;
@@ -118,12 +119,13 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
     case Webflow.FieldType.MultiImage:
       schema = Type.Array(
         Type.Object({
+          fileId: Type.Optional(Type.String()),
           url: Type.String({ format: 'uri' }),
           alt: Type.Optional(Type.String()),
         }),
         {
           description,
-          [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+          [ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } satisfies AssetFieldOptions,
         },
       );
       break;

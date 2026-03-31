@@ -143,9 +143,15 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
       schema = Type.Array(Type.String(), { description });
       break;
 
-    case AirtableDataType.MULTIPLE_LOOKUP_VALUES:
-      schema = Type.Array(Type.String(), { description });
+    case AirtableDataType.MULTIPLE_LOOKUP_VALUES: {
+      const lookupResultType = field.options?.result?.type as AirtableDataType | undefined;
+      if (lookupResultType === AirtableDataType.MULTIPLE_ATTACHMENTS) {
+        schema = multipleAttachmentsSchema(description);
+      } else {
+        schema = Type.Array(Type.String(), { description });
+      }
       break;
+    }
 
     case AirtableDataType.MULTIPLE_RECORD_LINKS:
       schema = Type.Array(Type.String(), {
@@ -181,19 +187,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
       break;
 
     case AirtableDataType.MULTIPLE_ATTACHMENTS:
-      schema = Type.Array(
-        Type.Object({
-          id: Type.String(),
-          url: Type.String({ format: 'uri' }),
-          filename: Type.Optional(Type.String()),
-          size: Type.Optional(Type.Number()),
-          type: Type.Optional(Type.String()),
-        }),
-        {
-          description,
-          [ASSET_FIELD]: { idPath: 'id', urlExpires: true } satisfies AssetFieldOptions,
-        },
-      );
+      schema = multipleAttachmentsSchema(description);
       break;
 
     case AirtableDataType.CREATED_BY:
@@ -227,6 +221,22 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
   schema[REMOTE_FIELD_ID] = field.id;
   schema[SUGGESTED_TRANSFORMER] = formulaSuggestedTransformer(connectorDataType) ?? undefined;
   return schema;
+}
+
+function multipleAttachmentsSchema(description: string): TSchema {
+  return Type.Array(
+    Type.Object({
+      id: Type.String(),
+      url: Type.String({ format: 'uri' }),
+      filename: Type.Optional(Type.String()),
+      size: Type.Optional(Type.Number()),
+      type: Type.Optional(Type.String()),
+    }),
+    {
+      description,
+      [ASSET_FIELD]: { idPath: 'id', urlExpires: true } satisfies AssetFieldOptions,
+    },
+  );
 }
 
 /**

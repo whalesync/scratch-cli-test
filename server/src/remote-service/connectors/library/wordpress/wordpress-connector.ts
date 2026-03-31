@@ -246,6 +246,18 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
   }
 
   /**
+   * WordPress references uploaded media by integer ID (e.g. featured_media: 42).
+   */
+  override resolveAssetReference(asset: {
+    remoteAssetId: string;
+    rehostedUrl: string | null;
+    url: string | null;
+  }): unknown {
+    const id = parseInt(asset.remoteAssetId, 10);
+    return isNaN(id) ? asset.remoteAssetId : id;
+  }
+
+  /**
    * Upload a media file to WordPress.
    * Sends the raw file buffer to the /wp/v2/media endpoint.
    */

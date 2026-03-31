@@ -603,6 +603,18 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     await executor.executeOperations(pageId, diff.operations, idMappings);
   }
 
+  /**
+   * Notion needs assets as external URL objects: { type: 'external', external: { url } }
+   */
+  override resolveAssetReference(asset: {
+    remoteAssetId: string;
+    rehostedUrl: string | null;
+    url: string | null;
+  }): unknown {
+    const url = asset.rehostedUrl ?? asset.url;
+    return url ? { type: 'external', external: { url } } : null;
+  }
+
   extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
     const results: ConnectorAssetResult[] = [];
 

@@ -162,6 +162,10 @@ export interface MatchAssetByHashOptions {
   sourceDataFolderId: DataFolderId;
   /** The DataFolder ID for the destination assets (to search for matching hashes) */
   destinationDataFolderId: DataFolderId;
+  /** Dot-path to extract the asset ID from each source element (e.g. 'id' for Airtable's {id, url, ...}) */
+  sourceIdPath?: string;
+  /** Dot-path to extract the asset ID from each destination element for comparison (e.g. 'fileId' for Webflow's {fileId, url, alt}) */
+  destinationIdPath?: string;
   /** What to do when no hash match is found. Default: 'fail' */
   onUnresolved?: 'fail' | 'ignore';
   /** Output shape: 'array' (default) preserves arrays, 'single' unwraps to first element */
