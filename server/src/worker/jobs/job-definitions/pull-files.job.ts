@@ -97,13 +97,13 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       throw new Error(`DataFolder ${data.dataFolderId} does not have a connector service`);
     }
 
+    // Resolve the repo path for this connection (used for both reading schema and writing files)
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder.connectorAccountId);
+
     // Read schema from git
     let tableSpec: BaseJsonTableSpec | null = null;
     if (dataFolder.path) {
       try {
-        const repoId = await this.scratchGitService.resolveConnectionRepoPath(
-          dataFolder.connectorAccountId ?? undefined,
-        );
         tableSpec = await this.scratchGitService.readSchemaFromGit(repoId, dataFolder.path);
       } catch {
         // schema will remain null
@@ -245,7 +245,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         }));
 
         const commitResult = await this.scratchGitService.commitFilesToBranch(
-          dataFolder.connectorAccountId!,
+          repoId,
           'main',
           batchGitFiles,
           `Pull ${builtFiles.length} file(s)`,
@@ -365,7 +365,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
       await connector.pullRecordFilesByIds(tableSpec, recordIds, callback);
 
       // Rebase dirty once at the end of the job (not after every batch)
-      await this.scratchGitService.rebaseDirty(dataFolder.connectorAccountId);
+      await this.scratchGitService.rebaseDirty(repoId);
 
       publicProgress.status = 'completed';
 
