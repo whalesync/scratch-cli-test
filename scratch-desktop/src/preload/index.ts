@@ -53,6 +53,7 @@ const scratchDesktop = {
     ipcRenderer.invoke('scratch:start-run-local-sync', workspacePath, syncName),
   startPlanPublish: (workspacePath: string): Promise<{ sessionId: string }> =>
     ipcRenderer.invoke('scratch:start-plan-publish', workspacePath),
+  toggleDevTools: (): Promise<void> => ipcRenderer.invoke('scratch:toggle-devtools'),
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: ScratchCommandEvent): void => {
       callback(payload);

@@ -40,6 +40,8 @@ export default function CliAuthorizePage() {
   // URL code comes with dash (e.g., "ABCD-1234"), store without dash for PinInput display
   const urlCode = searchParams.get('code') || '';
   const initialCodeForInput = urlCode.replace(/-/g, '');
+  const clientType = searchParams.get('client');
+  const appName = clientType === 'desktop' ? 'Desktop' : 'CLI';
 
   const [state, setState] = useState<AuthState>('input');
   const [code, setCode] = useState(initialCodeForInput);
@@ -76,13 +78,13 @@ export default function CliAuthorizePage() {
     <Container size="sm" py="xl">
       <Stack align="center" gap="lg">
         <StyledLucideIcon Icon={TerminalIcon} size={48} c="var(--mantine-color-green-6)" />
-        <TextTitle2>Authorize Scratch CLI</TextTitle2>
+        <TextTitle2>Authorize Scratch {appName}</TextTitle2>
 
         {state === 'input' && (
           <>
             <Text13Regular c="dimmed" ta="center" maw={400}>
-              Enter the authorization code displayed in your terminal to connect the Scratch CLI to your {user?.email}
-              account.
+              Enter the authorization code displayed in your {clientType === 'desktop' ? 'desktop app' : 'terminal'} to
+              connect the Scratch {appName} to your {user?.email} account.
             </Text13Regular>
 
             <Stack gap="md" align="center" mt="md">
@@ -124,7 +126,7 @@ export default function CliAuthorizePage() {
             )}
 
             <ButtonPrimaryLight onClick={handleSubmit} mt="lg" disabled={code.length < 8}>
-              Authorize CLI
+              Authorize {appName}
             </ButtonPrimaryLight>
           </>
         )}
@@ -134,9 +136,10 @@ export default function CliAuthorizePage() {
         {state === 'success' && (
           <>
             <StyledLucideIcon Icon={CheckCircleIcon} size={64} c="var(--mantine-color-green-6)" />
-            <TextTitle2 c="green">CLI Authorized</TextTitle2>
+            <TextTitle2 c="green">{appName} Authorized</TextTitle2>
             <Alert color="green" title="Success" maw={400}>
-              Your Scratch CLI has been authorized. You can now close this window and return to your terminal.
+              Your Scratch {appName} has been authorized. You can now close this window and return to your{' '}
+              {clientType === 'desktop' ? 'desktop app' : 'terminal'}.
             </Alert>
             <Text13Regular c="dimmed" ta="center" maw={400} mt="md">
               The CLI is now connected to your account and can now used advanced Scratch.md features.
@@ -152,7 +155,7 @@ export default function CliAuthorizePage() {
               {errorMessage}
             </Alert>
             <Text13Regular c="dimmed" ta="center" mt="md">
-              Make sure you entered the correct code from your terminal.
+              Make sure you entered the correct code from your {clientType === 'desktop' ? 'desktop app' : 'terminal'}.
             </Text13Regular>
             <ButtonSecondaryOutline
               onClick={() => {

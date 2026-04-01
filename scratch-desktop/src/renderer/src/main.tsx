@@ -17,9 +17,12 @@ import '@fontsource/inter/700.css';
 import './theme/globals.css';
 
 import App from './App';
+import { logPerf } from './lib/perf';
 
+const renderStart = performance.now();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
 );
+logPerf('renderer reactRoot render', performance.now() - renderStart);

@@ -45,6 +45,7 @@ interface ScratchDesktopAPI {
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
   startPlanPublish: (workspacePath: string) => Promise<{ sessionId: string }>;
+  toggleDevTools: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
 }
 

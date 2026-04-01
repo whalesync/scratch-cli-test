@@ -4,7 +4,14 @@ import { randomUUID } from 'crypto';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
+import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
+
+const appStartTime = performance.now();
+
+function logPerf(message: string, elapsedMs: number): void {
+  console.debug(`[perf] ${message}: ${elapsedMs.toFixed(1)}ms`);
+}
 
 interface LocalWorkspaceEntry {
   id: string;
@@ -250,6 +257,7 @@ function windowIconPath(): string {
 }
 
 function createWindow(): void {
+  const windowStart = performance.now();
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -261,8 +269,10 @@ function createWindow(): void {
       sandbox: false,
     },
   });
+  logPerf('main createBrowserWindow', performance.now() - windowStart);
 
   mainWindow.on('ready-to-show', () => {
+    logPerf('main windowReadyToShow (from app start)', performance.now() - appStartTime);
     mainWindow.show();
     const openDevTools = process.env['OPEN_DEVTOOLS'] === '1' || is.dev;
     if (openDevTools) {
@@ -283,16 +293,31 @@ function createWindow(): void {
 }
 
 // Auth IPC handlers
-ipcMain.handle('auth:get-credentials', () => getCredentials());
+ipcMain.handle('auth:get-credentials', () => {
+  const start = performance.now();
+  const result = getCredentials();
+  logPerf('main ipc getCredentials', performance.now() - start);
+  return result;
+});
 ipcMain.handle(
   'auth:save-credentials',
   (_, creds: { apiToken: string; email?: string; tokenExpiresAt?: string; serverUrl: string }) =>
     saveCredentials(creds),
 );
 ipcMain.handle('auth:clear-credentials', () => clearCredentials());
-ipcMain.handle('auth:is-token-expired', () => isTokenExpired());
+ipcMain.handle('auth:is-token-expired', () => {
+  const start = performance.now();
+  const result = isTokenExpired();
+  logPerf('main ipc isTokenExpired', performance.now() - start);
+  return result;
+});
 ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url));
-ipcMain.handle('scratch:get-workspaces-registry', async () => readWorkspaceRegistry());
+ipcMain.handle('scratch:get-workspaces-registry', async () => {
+  const start = performance.now();
+  const result = await readWorkspaceRegistry();
+  logPerf('main ipc getWorkspacesRegistry', performance.now() - start);
+  return result;
+});
 ipcMain.handle('scratch:pick-parent-folder', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
@@ -323,8 +348,12 @@ ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: stri
 ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string) =>
   startScratchmdLiveCommand(event.sender, ['plan-publish'], workspacePath),
 );
+ipcMain.handle('scratch:toggle-devtools', (event) => {
+  event.sender.toggleDevTools();
+});
 
 void app.whenReady().then(() => {
+  logPerf('main appReady (from app start)', performance.now() - appStartTime);
   electronApp.setAppUserModelId('md.scratch.desktop');
 
   app.on('browser-window-created', (_, window) => {

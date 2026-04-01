@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { UserMenu } from '../components/user-menu';
 import { WorkspaceCard } from '../components/WorkspaceCard';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
+import { logPerf } from '../lib/perf';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 
@@ -13,6 +14,7 @@ export function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
+    const start = performance.now();
     try {
       setLoading(true);
       setError(null);
@@ -22,6 +24,7 @@ export function HomePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {
+      logPerf('homePage fetchWorkspaces', performance.now() - start);
       setLoading(false);
     }
   }, []);

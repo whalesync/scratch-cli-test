@@ -1,5 +1,5 @@
 import { Group, Menu, Text, UnstyledButton } from '@mantine/core';
-import { LogOut, UserRound } from 'lucide-react';
+import { LogOut, TerminalSquare, UserRound } from 'lucide-react';
 import { useCurrentUser } from '../hooks/use-current-user';
 import { useAuth } from '../providers/AuthProvider';
 
@@ -22,6 +22,12 @@ export function UserMenu() {
       <Menu.Dropdown>
         <Menu.Label>{user?.email}</Menu.Label>
         <Menu.Divider />
+        <Menu.Item
+          leftSection={<TerminalSquare size={14} />}
+          onClick={() => void window.scratchDesktop.toggleDevTools()}
+        >
+          Toggle Dev Tools
+        </Menu.Item>
         <Menu.Item leftSection={<LogOut size={14} />} onClick={() => void logout()}>
           Sign out
         </Menu.Item>

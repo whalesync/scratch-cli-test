@@ -1,5 +1,6 @@
 import { createContext, startTransition, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { API_CONFIG } from '../lib/api';
+import { logPerf } from '../lib/perf';
 
 const TOKEN_EXPIRY_WARNING_DAYS = 7;
 
@@ -62,10 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Check for existing credentials on mount
   useEffect(() => {
     void (async () => {
+      const authStart = performance.now();
       try {
+        const credsStart = performance.now();
         const creds = await window.scratchAuth.getCredentials();
+        logPerf('auth getCredentials IPC round-trip', performance.now() - credsStart);
+
         if (creds.apiToken) {
+          const expiryStart = performance.now();
           const expired = await window.scratchAuth.isTokenExpired();
+          logPerf('auth isTokenExpired IPC round-trip', performance.now() - expiryStart);
+
           if (expired) {
             await window.scratchAuth.clearCredentials();
           } else {
@@ -85,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.debug('Failed to load stored credentials', e);
       } finally {
+        logPerf('auth init total', performance.now() - authStart);
         setIsLoading(false);
       }
     })();
@@ -129,7 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const verificationUrlWithCode = `${initResp.verificationUrl}?code=${initResp.userCode}`;
+      const verificationUrlWithCode = `${initResp.verificationUrl}?code=${initResp.userCode}&client=desktop`;
       setAuthFlow((prev) => ({
         ...prev,
         userCode: initResp.userCode!,
