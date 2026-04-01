@@ -73,6 +73,9 @@ export const TransformerTypes = {
   SkipIfDestMatches: 'skip_if_dest_matches',
   ReplaceNewlines: 'replace_newlines',
   ReplaceRegex: 'replace_regex',
+  WrapObject: 'wrap_object',
+  MapArray: 'map_array',
+  SkipIfDestArrayMatches: 'skip_if_dest_array_matches',
 } as const;
 
 export type TransformerType = (typeof TransformerTypes)[keyof typeof TransformerTypes];
@@ -106,6 +109,9 @@ export const TRANSFORMER_TYPES: TransformerTypeInfo[] = [
   { type: TransformerTypes.SkipIfDestMatches, label: 'Skip If Dest Matches' },
   { type: TransformerTypes.ReplaceNewlines, label: 'Replace Newlines' },
   { type: TransformerTypes.ReplaceRegex, label: 'Replace Regex' },
+  { type: TransformerTypes.WrapObject, label: 'Wrap Object' },
+  { type: TransformerTypes.MapArray, label: 'Map Array' },
+  { type: TransformerTypes.SkipIfDestArrayMatches, label: 'Skip If Dest Array Matches' },
 ];
 
 /** Get the display label for a transformer type */
@@ -222,6 +228,28 @@ export interface ReplaceRegexOptions {
   replacement?: string;
 }
 
+/** Options for the wrap_object transformer */
+export interface WrapObjectOptions {
+  /** Template object where "$value" strings are replaced with the source value */
+  template: Record<string, unknown>;
+}
+
+/** Options for the map_array transformer */
+export interface MapArrayOptions {
+  /** Transformer to apply to each array element */
+  elementTransformer: TransformerConfig;
+}
+
+/** Options for the skip_if_dest_array_matches transformer */
+export interface SkipIfDestArrayMatchesOptions {
+  /** JSONPath expression to extract a comparable value from each source element (default: "$") */
+  sourceElementExpression?: string;
+  /** JSONPath expression to extract a comparable value from each destination element (default: "$") */
+  destinationElementExpression?: string;
+  /** Whether element order must match (default: false) */
+  matchOrdering?: boolean;
+}
+
 /** Union of all transformer options types */
 export type TransformerOptions =
   | AutoConvertOptions
@@ -236,7 +264,10 @@ export type TransformerOptions =
   | NotionFileUrlOptions
   | SkipIfDestMatchesOptions
   | ReplaceNewlinesOptions
-  | ReplaceRegexOptions;
+  | ReplaceRegexOptions
+  | WrapObjectOptions
+  | MapArrayOptions
+  | SkipIfDestArrayMatchesOptions;
 
 /** Options for the notion_file_url transformer */
 export interface NotionFileUrlOptions {
@@ -266,4 +297,7 @@ export type TransformerConfig =
   | { type: typeof TransformerTypes.MatchAssetByHash; options: MatchAssetByHashOptions }
   | { type: typeof TransformerTypes.SkipIfDestMatches; options?: SkipIfDestMatchesOptions }
   | { type: typeof TransformerTypes.ReplaceNewlines; options?: ReplaceNewlinesOptions }
-  | { type: typeof TransformerTypes.ReplaceRegex; options: ReplaceRegexOptions };
+  | { type: typeof TransformerTypes.ReplaceRegex; options: ReplaceRegexOptions }
+  | { type: typeof TransformerTypes.WrapObject; options: WrapObjectOptions }
+  | { type: typeof TransformerTypes.MapArray; options: MapArrayOptions }
+  | { type: typeof TransformerTypes.SkipIfDestArrayMatches; options?: SkipIfDestArrayMatchesOptions };

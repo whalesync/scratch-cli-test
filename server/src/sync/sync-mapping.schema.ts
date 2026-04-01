@@ -69,7 +69,7 @@ const notionFileUrlOptionsSchema = z
   .strict()
   .optional();
 
-const transformerConfigSchema = z.discriminatedUnion('type', [
+const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
   z.object({ type: z.literal(TransformerTypes.AutoConvert), options: autoConvertOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.StringToNumber), options: stringToNumberOptionsSchema }),
   z.object({ type: z.literal(TransformerTypes.SourceFkToDestFk), options: sourceFkToDestFkOptionsSchema }),
@@ -123,6 +123,29 @@ const transformerConfigSchema = z.discriminatedUnion('type', [
         outputType: z.enum(['array', 'single']).optional(),
       })
       .strict(),
+  }),
+  z.object({
+    type: z.literal(TransformerTypes.WrapObject),
+    options: z.object({ template: z.record(z.string(), z.unknown()) }).strict(),
+  }),
+  z.object({
+    type: z.literal(TransformerTypes.MapArray),
+    options: z
+      .object({
+        elementTransformer: z.lazy(() => transformerConfigSchema),
+      })
+      .strict(),
+  }),
+  z.object({
+    type: z.literal(TransformerTypes.SkipIfDestArrayMatches),
+    options: z
+      .object({
+        sourceElementExpression: z.string().optional(),
+        destinationElementExpression: z.string().optional(),
+        matchOrdering: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   }),
 ]);
 

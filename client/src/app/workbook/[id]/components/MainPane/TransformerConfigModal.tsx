@@ -202,7 +202,15 @@ function defaultConfigForType(type: TransformerType): TransformerConfig {
     case TransformerTypes.Trim:
     case TransformerTypes.ReplaceNewlines:
     case TransformerTypes.SkipIfDestMatches:
+    case TransformerTypes.SkipIfDestArrayMatches:
       return { type, options: {} };
+    case TransformerTypes.WrapObject:
+      return { type: TransformerTypes.WrapObject, options: { template: {} } };
+    case TransformerTypes.MapArray:
+      return {
+        type: TransformerTypes.MapArray,
+        options: { elementTransformer: { type: TransformerTypes.WrapObject, options: { template: {} } } },
+      };
     case TransformerTypes.ReplaceRegex:
       return { type: TransformerTypes.ReplaceRegex, options: { pattern: '' } };
     case TransformerTypes.MatchAssetByHash:
@@ -260,6 +268,8 @@ function TransformerStepForm({
       label: f.name ?? f.id,
       connectorService: f.connectorService,
     }));
+
+  const { colorScheme } = useMantineColorScheme();
 
   const updateOptions = useCallback(
     (opts: Record<string, unknown>) => {
@@ -557,6 +567,110 @@ function TransformerStepForm({
             }
           />
         </>
+      )}
+      {config.type === TransformerTypes.SkipIfDestArrayMatches && (
+        <>
+          <TextInput
+            size="xs"
+            label="Source Element Expression"
+            description="JSONPath to extract a comparable value from each source element (default: $ = whole element)"
+            placeholder="$"
+            value={config.options?.sourceElementExpression ?? ''}
+            onChange={(e) =>
+              updateOptions({ ...config.options, sourceElementExpression: e.currentTarget.value || undefined })
+            }
+          />
+          <TextInput
+            size="xs"
+            label="Destination Element Expression"
+            description="JSONPath to extract a comparable value from each destination element (default: $ = whole element)"
+            placeholder="$.name"
+            value={config.options?.destinationElementExpression ?? ''}
+            onChange={(e) =>
+              updateOptions({ ...config.options, destinationElementExpression: e.currentTarget.value || undefined })
+            }
+          />
+          <Checkbox
+            size="xs"
+            label="Match ordering (elements must appear in the same order)"
+            checked={config.options?.matchOrdering ?? false}
+            onChange={(e) => updateOptions({ ...config.options, matchOrdering: e.currentTarget.checked })}
+          />
+        </>
+      )}
+      {config.type === TransformerTypes.WrapObject && config.options && (
+        <Box
+          style={{
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 'var(--mantine-radius-md)',
+            overflow: 'hidden',
+          }}
+        >
+          <Text size="xs" fw={500} mb={4}>
+            Template
+          </Text>
+          <Text size="xs" c="dimmed" mb={4}>
+            JSON object where {'"$value"'} is replaced with the source value
+          </Text>
+          <CodeMirror
+            value={JSON.stringify(config.options.template ?? {}, null, 2)}
+            extensions={[json(), EditorView.lineWrapping]}
+            theme={colorScheme === 'dark' ? 'dark' : 'light'}
+            basicSetup={{
+              lineNumbers: true,
+              foldGutter: false,
+              highlightActiveLine: false,
+            }}
+            style={{ fontSize: '12px' }}
+            onChange={(value) => {
+              try {
+                const parsed: unknown = JSON.parse(value);
+                if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                  updateOptions({ ...config.options, template: parsed as Record<string, unknown> });
+                }
+              } catch {
+                // Don't update on invalid JSON
+              }
+            }}
+          />
+        </Box>
+      )}
+      {config.type === TransformerTypes.MapArray && config.options && (
+        <Box
+          style={{
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 'var(--mantine-radius-md)',
+            overflow: 'hidden',
+          }}
+        >
+          <Text size="xs" fw={500} mb={4}>
+            Element Transformer
+          </Text>
+          <Text size="xs" c="dimmed" mb={4}>
+            Transformer config applied to each array element (as JSON)
+          </Text>
+          <CodeMirror
+            value={JSON.stringify(config.options.elementTransformer ?? {}, null, 2)}
+            extensions={[json(), EditorView.lineWrapping]}
+            theme={colorScheme === 'dark' ? 'dark' : 'light'}
+            basicSetup={{
+              lineNumbers: true,
+              foldGutter: false,
+              highlightActiveLine: false,
+            }}
+            style={{ fontSize: '12px' }}
+            onChange={(value) => {
+              try {
+                const parsed: unknown = JSON.parse(value);
+                if (typeof parsed === 'object' && parsed !== null && 'type' in parsed) {
+                  updateOptions({ ...config.options, elementTransformer: parsed as TransformerConfig });
+                }
+              } catch {
+                // Don't update on invalid JSON
+              }
+            }}
+          />
+        </Box>
       )}
     </Stack>
   );
