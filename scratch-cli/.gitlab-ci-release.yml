@@ -1,4 +1,0 @@
-# Go CLI release jobs removed — the Rust CLI now owns the scratchmd binary and
-# Homebrew formula. See scratch-git-2/.gitlab-ci-release.yml for the active jobs.
-#
-# The Go CLI source and release scripts are kept for reference but nothing triggers them.

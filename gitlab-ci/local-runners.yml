@@ -185,18 +185,6 @@ local build server docker image:
       changes: !reference [.changes, server-docker]
 
 # -----------------------------------------------------------------------------
-# Scratch CLI
-# -----------------------------------------------------------------------------
-
-local build and test scratch-cli:
-  extends:
-    - .build-and-test-scratch-cli
-    - .local-runner-defaults
-  rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-cli]
-
-# -----------------------------------------------------------------------------
 # Scratch Git
 # -----------------------------------------------------------------------------
 

@@ -18,8 +18,6 @@ include:
     - test-api-fakes/**/*
   server-docker:
     - server/Dockerfile.monorepo
-  scratch-cli:
-    - scratch-cli/**/*
   scratch-git:
     - scratch-git-2/**/*
   scratch-git-docker:
@@ -247,34 +245,6 @@ build server docker image:
       changes: !reference [.changes, server-docker]
     - !reference [.rules, on_merge_to_master]
     - !reference [.rules, on_merge_to_prod]
-
-# =============================================================================
-# SCRATCH-CLI SUBPROJECT
-# =============================================================================
-
-.build-and-test-scratch-cli:
-  stage: build and test
-  image: golang:1.25
-  interruptible: true
-  variables:
-    GOFLAGS: "-buildvcs=false"
-  script:
-    - cd scratch-cli
-    - go clean -cache -modcache 2>/dev/null || true
-    - echo "Checking code formatting"
-    - test -z "$(gofmt -l .)" || (echo "Code is not formatted. Run 'gofmt -w .'" && gofmt -l . && exit 1)
-    - echo "Building scratch-cli"
-    - go build -o scratchmd ./cmd/scratchmd
-    - echo "Testing executable"
-    - ./scratchmd --help
-
-build and test scratch-cli:
-  extends: .build-and-test-scratch-cli
-  rules:
-    - !reference [.rules, skip_for_local_runner_users]
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes: !reference [.changes, scratch-cli]
-    - !reference [.rules, on_merge_to_master]
 
 # =============================================================================
 # SCRATCH-GIT SUBPROJECT
