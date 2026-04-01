@@ -1,0 +1,31 @@
+import { Group, Menu, Text, UnstyledButton } from '@mantine/core';
+import { LogOut, UserRound } from 'lucide-react';
+import { useCurrentUser } from '../hooks/use-current-user';
+import { useAuth } from '../providers/AuthProvider';
+
+export function UserMenu() {
+  const { logout } = useAuth();
+  const { user } = useCurrentUser();
+
+  return (
+    <Menu shadow="md" width={200} position="top-start">
+      <Menu.Target>
+        <UnstyledButton px="sm" py={8} style={{ width: '100%' }}>
+          <Group gap={8} wrap="nowrap">
+            <UserRound size={14} color="var(--fg-secondary)" />
+            <Text size="sm" c="var(--fg-secondary)" truncate>
+              {user?.email}
+            </Text>
+          </Group>
+        </UnstyledButton>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>{user?.email}</Menu.Label>
+        <Menu.Divider />
+        <Menu.Item leftSection={<LogOut size={14} />} onClick={() => void logout()}>
+          Sign out
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}

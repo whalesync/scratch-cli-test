@@ -1,5 +1,6 @@
-import { Alert, Center, Loader, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Alert, Box, Center, Group, Loader, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useEffect, useState } from 'react';
+import { UserMenu } from '../components/user-menu';
 import { WorkspaceCard } from '../components/WorkspaceCard';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
@@ -48,18 +49,24 @@ export function HomePage() {
   }
 
   return (
-    <Stack p="xl" gap="lg">
-      <Title order={2}>Your Workspaces</Title>
+    <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+      <Stack p="xl" gap="lg" style={{ flex: 1 }}>
+        <Title order={2}>Your Workspaces</Title>
 
-      {workspaces.length === 0 ? (
-        <Text c="dimmed">No workspaces found.</Text>
-      ) : (
-        <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, md: 4 }} spacing="md">
-          {workspaces.map((ws) => (
-            <WorkspaceCard key={ws.id} workspace={ws} isDownloaded={downloadedWorkspaceIds.has(ws.id)} />
-          ))}
-        </SimpleGrid>
-      )}
-    </Stack>
+        {workspaces.length === 0 ? (
+          <Text c="dimmed">No workspaces found.</Text>
+        ) : (
+          <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, md: 4 }} spacing="md">
+            {workspaces.map((ws) => (
+              <WorkspaceCard key={ws.id} workspace={ws} isDownloaded={downloadedWorkspaceIds.has(ws.id)} />
+            ))}
+          </SimpleGrid>
+        )}
+      </Stack>
+
+      <Group h={40} px="md" justify="flex-start" style={{ flexShrink: 0 }}>
+        <UserMenu />
+      </Group>
+    </Box>
   );
 }

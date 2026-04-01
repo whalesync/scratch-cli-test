@@ -9,25 +9,25 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
   const { user } = useCurrentUser();
   const location = useLocation();
 
-  // Initialize PostHog once
+  // Initialize PostHog once, deferred to idle time
   useEffect(() => {
     if (!initRef.current) {
-      initPostHog();
       initRef.current = true;
+      void initPostHog();
     }
   }, []);
 
   // Identify user when server user data becomes available
   useEffect(() => {
     if (user && !identifiedRef.current) {
-      identifyUser(user, user.email);
       identifiedRef.current = true;
+      void identifyUser(user, user.email);
     }
   }, [user]);
 
   // Track page views on route changes
   useEffect(() => {
-    trackPageView(location.pathname);
+    void trackPageView(location.pathname);
   }, [location.pathname]);
 
   return <>{children}</>;

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, startTransition, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { API_CONFIG } from '../lib/api';
 
 const TOKEN_EXPIRY_WARNING_DAYS = 7;
@@ -70,14 +70,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await window.scratchAuth.clearCredentials();
           } else {
             API_CONFIG.setStaticToken(creds.apiToken);
-            setEmail(creds.email);
-            setIsAuthenticated(true);
+            startTransition(() => {
+              setEmail(creds.email);
+              setIsAuthenticated(true);
 
-            // Check if expiring soon
-            if (creds.tokenExpiresAt) {
-              const daysLeft = (new Date(creds.tokenExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-              setExpiringSoon(daysLeft <= TOKEN_EXPIRY_WARNING_DAYS);
-            }
+              // Check if expiring soon
+              if (creds.tokenExpiresAt) {
+                const daysLeft = (new Date(creds.tokenExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+                setExpiringSoon(daysLeft <= TOKEN_EXPIRY_WARNING_DAYS);
+              }
+            });
           }
         }
       } catch (e) {
