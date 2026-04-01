@@ -170,5 +170,8 @@
     "transformIgnorePatterns": [
       "node_modules/(?!(nanoid)/)"
     ]
+  },
+  "resolutions": {
+    "axios": "1.14.0"
   }
 }
