@@ -38,9 +38,9 @@ scratchmd2 workspaces list
 # Note the ID of the workspace you want to test with
 
 scratchmd2 workspaces init <workbook-id>
-# Clones all connector git repos to .scratch/connections/<ConnName>/{master,dirty}/
+# Clones all connector git repos into .repos/ and materializes files under the workspace root
 # Also sets up the SQLite index
-cd <workbook-id>/                # directory named after the workbook
+cd <workbook-name>/              # directory named after the workbook
 ```
 
 ### 3. Download latest files from the CRM
@@ -77,8 +77,8 @@ The workbook config repo is now at `org/<orgId>/<workbookId>/<workbookId>.git` o
 Clone it locally to inspect:
 ```bash
 # From inside the workspace directory:
-git clone http://localhost:3010/cli/v1/workbooks/<workbook-id>/config/git .scratch/workbook
-ls .scratch/workbook/syncs/
+git clone http://localhost:3010/cli/v1/workbooks/<workbook-id>/config/git .scratch/workspace
+ls .scratch/workspace/syncs/
 # → *.json files, one per sync table pair
 ```
 
@@ -86,7 +86,7 @@ ls .scratch/workbook/syncs/
 
 ```bash
 scratchmd2 syncs validate-local
-# Reads .scratch/workbook/syncs/*.json
+# Reads .scratch/workspace/syncs/*.json
 # Checks field names against schema.json for each connection/folder
 ```
 
@@ -95,7 +95,7 @@ scratchmd2 syncs validate-local
 ```bash
 scratchmd2 syncs run-local
 # Applies sync: maps fields from source records → dest dirty worktree
-# Writes modified records into .scratch/connections/<DestConn>/dirty/
+# Writes modified records into the destination connection folder at the workspace root
 ```
 
 ### 8. Build a publish plan

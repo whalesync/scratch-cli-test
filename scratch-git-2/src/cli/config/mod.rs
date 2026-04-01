@@ -1,6 +1,7 @@
 pub mod credentials;
 pub mod markers;
 pub mod project_config;
+pub mod workspaces;
 
 /// Resolve workspace ID from an explicit flag value or the nearest .scratchmd marker.
 pub fn resolve_workspace_id(explicit: Option<&str>) -> anyhow::Result<String> {
@@ -43,7 +44,8 @@ pub fn resolve_data_folder_id(explicit: Option<&str>) -> anyhow::Result<String> 
 }
 
 /// Find the local directory for a workspace by walking up from cwd looking for a .scratchmd
-/// workspace marker, or by scanning current dir children for a matching workbook ID.
+/// workspace marker, then consulting the global registry, then scanning current
+/// dir children for a matching workbook ID.
 pub fn find_workspace_dir(workbook_id: &str) -> Option<std::path::PathBuf> {
     let cwd = std::env::current_dir().ok()?;
 
@@ -54,13 +56,18 @@ pub fn find_workspace_dir(workbook_id: &str) -> Option<std::path::PathBuf> {
         }
     }
 
+    // Check the global registry at ~/.scratchmd/workspaces.yaml
+    if let Some(dir) = workspaces::get(workbook_id) {
+        return Some(dir);
+    }
+
     // Scan children of cwd
     let entries = std::fs::read_dir(&cwd).ok()?;
     for entry in entries.flatten() {
         if !entry.file_type().ok()?.is_dir() {
             continue;
         }
-        let marker_path = entry.path().join(".scratchmd");
+        let marker_path = markers::marker_path(&entry.path());
         let content = std::fs::read_to_string(&marker_path).ok()?;
         let value: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
         if let Some(wb) = value.get("workbook") {

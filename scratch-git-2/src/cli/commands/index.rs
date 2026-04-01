@@ -2,15 +2,18 @@
 
 use std::path::PathBuf;
 
+use crate::config::markers;
+use crate::shared::layout::WorkspaceLayout;
 use crate::shared::index;
 
 pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let conn_dirs = find_connector_dirs(&workspace_dir);
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
-    if conn_dirs.is_empty() {
+    if workspace_marker.connections.is_empty() {
         anyhow::bail!(
-            "No connector directories found in {}. Run 'scratchmd workspaces init' first.",
+            "No connections found in {}. Run 'scratchmd workspaces init' first.",
             workspace_dir.display()
         );
     }
@@ -18,10 +21,10 @@ pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
     let mut total_indexed = 0usize;
     let mut total_connections = 0usize;
 
-    for conn_dir in &conn_dirs {
-        let conn_dir_name = conn_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let master = index::master_dir(&workspace_dir, &conn_dir_name);
-        let db = index::db_path(&workspace_dir, &conn_dir_name);
+    for connection in &workspace_marker.connections {
+        let conn_dir_name = &connection.dir_name;
+        let master = layout.master_worktree_path(conn_dir_name);
+        let db = layout.index_db_path(&connection.repo_path);
 
         if !master.exists() {
             eprintln!("  {} — master worktree not found at {}, skipping", conn_dir_name, master.display());
@@ -53,17 +56,18 @@ pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
 
 pub fn dump_command(workspace_start: &std::path::Path, filter: Option<&str>) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let conn_dirs = find_connector_dirs(&workspace_dir);
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
-    if conn_dirs.is_empty() {
+    if workspace_marker.connections.is_empty() {
         anyhow::bail!(
-            "No connector directories found in {}",
+            "No connections found in {}",
             workspace_dir.display()
         );
     }
 
-    for conn_dir in &conn_dirs {
-        let conn_dir_name = conn_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+    for connection in &workspace_marker.connections {
+        let conn_dir_name = connection.dir_name.clone();
 
         if let Some(f) = filter {
             if conn_dir_name != f {
@@ -71,7 +75,7 @@ pub fn dump_command(workspace_start: &std::path::Path, filter: Option<&str>) -> 
             }
         }
 
-        let db = index::db_path(&workspace_dir, &conn_dir_name);
+        let db = layout.index_db_path(&connection.repo_path);
 
         if !db.exists() {
             println!("[{conn_dir_name}] no index.db — run `scratchmd build-index` first");
@@ -119,46 +123,13 @@ pub fn dump_command(workspace_start: &std::path::Path, filter: Option<&str>) -> 
 fn resolve_workspace(start: &std::path::Path) -> anyhow::Result<PathBuf> {
     let abs = start.canonicalize()
         .unwrap_or_else(|_| start.to_path_buf());
-    // Walk up looking for workspace marker
-    let mut dir = abs.as_path();
-    loop {
-        let marker = dir.join(".scratchmd");
-        if marker.exists() {
-            if let Ok(content) = std::fs::read_to_string(&marker) {
-                if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-                    if value.get("workbook").is_some() && value.get("connector").is_none() {
-                        return Ok(dir.to_path_buf());
-                    }
-                }
-            }
-        }
-        match dir.parent() {
-            Some(p) => dir = p,
-            None => break,
-        }
-    }
-    // Fallback: use the provided path directly
-    Ok(abs)
+    Ok(markers::find_nearest_workspace(&abs).unwrap_or(abs))
 }
 
-/// Find connector subdirectories (V2 workbooks): dirs with a connector .scratchmd marker + .git.
-fn find_connector_dirs(wb_dir: &std::path::Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(wb_dir) else { return Vec::new() };
-    let mut dirs = Vec::new();
-    for entry in entries.flatten() {
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let subdir = entry.path();
-        let marker_path = subdir.join(".scratchmd");
-        let Ok(content) = std::fs::read_to_string(&marker_path) else { continue };
-        let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&content) else { continue };
-        if value.get("connector").is_none() {
-            continue;
-        }
-        if subdir.join(".git").exists() {
-            dirs.push(subdir);
-        }
+fn read_workspace_marker(workspace_dir: &std::path::Path) -> anyhow::Result<markers::WorkspaceMarker> {
+    let marker_path = markers::marker_path(workspace_dir);
+    match markers::read(&marker_path) {
+        Ok(markers::Marker::Workspace(marker)) => Ok(marker),
+        _ => anyhow::bail!("Could not read workspace marker at {}", marker_path.display()),
     }
-    dirs
 }

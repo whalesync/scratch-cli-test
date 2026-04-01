@@ -18,22 +18,10 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
 }
 
 /// Resolves the workspace directory for the `generate-docs` command.
-/// Walks up from `path` looking for a `.scratchmd` marker; falls back to `path` itself.
+/// Walks up from `path` looking for a workspace marker; falls back to `path` itself.
 pub fn resolve_workspace_for_docs(path: &Path) -> anyhow::Result<std::path::PathBuf> {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    // Walk up looking for a .scratchmd marker file
-    let mut cur = abs.as_path();
-    loop {
-        if cur.join(".scratchmd").exists() {
-            return Ok(cur.to_path_buf());
-        }
-        match cur.parent() {
-            Some(p) => cur = p,
-            None => break,
-        }
-    }
-    // Fall back to the given path (user may be pointing directly at a workspace dir)
-    Ok(abs)
+    Ok(crate::config::markers::find_nearest_workspace(&abs).unwrap_or(abs))
 }
 
 // ---------------------------------------------------------------------------
@@ -77,37 +65,45 @@ My-Project/
     MyBase/
       Posts/
         recAbc.json           <- one file per record
-      .scratch/
-        schema.json           <- field definitions (read-only)
   WEBFLOW - Webflow/          <- working copy of Webflow data
     MySite/
       Posts/
         recXyz.json
-      .scratch/
-        schema.json
-  .scratch/                   <- git plumbing + config (see below)
+  .repos/                     <- bare git repos + SQLite indexes
+  .scratch/
+    .scratchmd                <- workspace marker
+    connections/              <- shared connection metadata (see below)
+    docs/                     <- generated docs + helper files
+    workspace/                <- workbook config repo materialized locally
+      syncs/
+      transformers/
   CLAUDE.md
 ```
 
-## The .scratch folder
+## The connection internals
 
-Everything that is not a data record lives here. You will not normally need to
-edit these files directly, but the CLI and agent tools use them heavily.
+Connector metadata and read-only snapshots now live outside the user-editable
+connection folders.
 
 ```
-.scratch/
-  docs/                       <- this documentation
-  workbook/
-    syncs/                    <- sync config files (agent edits these)
-  connections/
+.scratch/connections/
+  scratch/
     {SERVICE - Connection}/
-      master/                 <- read-only published (main branch) snapshot
-        {Base}/
-          {Table}/
-            recAbc.json       <- same files as top-level, but published state
-          .scratch/
-            schema.json
-      index.db                <- SQLite index of master records
+      {Base}/
+        {Table}/
+          schema.json         <- field definitions and publish-plan files
+  master/
+    {SERVICE - Connection}/
+      {Base}/
+        {Table}/
+          recAbc.json         <- published (main branch) snapshot
+        .scratch/
+          schema.json
+
+.repos/
+  {connectorId}.git           <- bare connector repo
+  {connectorId}.db            <- SQLite index of master records
+  {workbookId}.git            <- bare workbook config repo
 ```
 
 ## Dirty vs master
@@ -115,7 +111,8 @@ edit these files directly, but the CLI and agent tools use them heavily.
 | Location | Branch | Purpose |
 |----------|--------|---------|
 | `{SERVICE - Connection}/` | dirty | Your working copy — edit these |
-| `.scratch/connections/{SERVICE - Connection}/master/` | main | Last published state — read-only reference |
+| `.scratch/connections/master/{SERVICE - Connection}/` | main | Last published state — read-only reference |
+| `.scratch/connections/scratch/{SERVICE - Connection}/` | dirty metadata | Schema + publish-plan files |
 
 To see what you have changed relative to the published state, compare the dirty
 folder contents against the master folder for the same connection.
@@ -128,7 +125,7 @@ folder contents against the master folder for the same connection.
 const SYNCS_DOC: &str = r#"# Syncs
 
 A sync moves data from one connection to another, applying field mappings along the way.
-Sync configs live in `.scratch/workbook/syncs/*.json`.
+Sync configs live in `.scratch/workspace/syncs/*.json`.
 
 ## Sync config format
 
@@ -178,14 +175,14 @@ config file.
 ## Creating a sync
 
 In this version (V2), **creating a sync means writing a config file to
-`.scratch/workbook/syncs/`** — nothing else happens automatically.
+`.scratch/workspace/syncs/`** — nothing else happens automatically.
 
 ```bash
 # Create the syncs directory if it doesn't exist
-mkdir -p .scratch/workbook/syncs
+mkdir -p .scratch/workspace/syncs
 
 # Write your config (see format above) to a new file, e.g.:
-# .scratch/workbook/syncs/posts-airtable-to-webflow.json
+# .scratch/workspace/syncs/posts-airtable-to-webflow.json
 ```
 
 > **Note:** `scratchmd syncs create` (the server-backed command) is kept for
@@ -268,7 +265,7 @@ Rhai syntax is close to JavaScript/Rust. Scripts are sandboxed — no file I/O, 
   "transformer": { "type": "rhai", "options": { "script": "square.rhai" } } }
 ```
 
-The `script` path is relative to the `.scratch/workbook/transformers/` directory in your workspace root.
+The `script` path is relative to the `.scratch/workspace/transformers/` directory in your workspace root.
 Create that directory and add your script there — it will be git-tracked alongside your data.
 
 **Example — square a number (`transformers/square.rhai`):**
@@ -302,7 +299,7 @@ the entire sync before any records are written.
 ```bash
 scratchmd syncs run-local
 # or a specific sync file:
-scratchmd syncs run-local --sync .scratch/workbook/syncs/posts.json
+scratchmd syncs run-local --sync .scratch/workspace/syncs/posts.json
 ```
 
 After running, check the destination connection folder for new/updated files.
@@ -331,8 +328,8 @@ and will be overwritten on the next pull.
 ## Location
 
 ```
-{SERVICE - Connection}/{Base}/{Table}/.scratch/schema.json
-.scratch/connections/{SERVICE - Connection}/master/{Base}/{Table}/.scratch/schema.json
+.scratch/connections/scratch/{SERVICE - Connection}/{Base}/{Table}/schema.json
+.scratch/connections/master/{SERVICE - Connection}/{Base}/{Table}/.scratch/schema.json
 ```
 
 ## What a schema looks like

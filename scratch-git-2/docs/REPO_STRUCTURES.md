@@ -114,21 +114,20 @@ Problems with this layout:
 
 ```
 {workspace}/
-  .scratchmd                           # Single file — all metadata (workbook + all connections)
+  .scratch/
+    .scratchmd                         # Single file — all metadata (workbook + all connections)
+    connections/
+      scratch/
+      master/
+    docs/
   .repos/                              # Bare repos, mirroring service disk layout exactly
-    {orgId}/{workbookId}/
-      {connectorAccountId}.git
-      {connectorAccountId}.db
-      {workbookId}.git                 # Workbook config repo
-  .workbook/                           # Materialization of workbook config repo
+    {connectorAccountId}.git
+    {connectorAccountId}.db
+    {workbookId}.git                   # Workbook config repo
+  .scratch/workspace/                  # Materialization of workbook config repo
     syncs/*.json
     transformers/*.rhai
     docs.md
-  .connections/
-    .scratch/
-      {CONNECTOR-NAME}/                # .scratch folder of dirty branch (plan files, schemas)
-    master/
-      {CONNECTOR-NAME}/                # main branch checkout (read-only)
   {CONNECTOR-NAME}/                    # Dirty branch checkout — the area the user lives in
     {folder}/
       *.json                           # Record files only — no .scratchmd, no .git, no .scratch
@@ -136,19 +135,40 @@ Problems with this layout:
 
 Key properties:
 - **No `.git` file or directory in `{CONNECTOR-NAME}/`** — see note below
-- **No `.scratchmd` in connector directories** — all metadata in the single root `.scratchmd`
-- **`.scratch/` content is at `.connections/.scratch/{CONNECTOR-NAME}/`** — outside the user's editing area
-- **`.repos/` mirrors the service layout** — same bare repo path formula, same `.db` co-location
+- **No `.scratchmd` in connector directories** — all metadata in the single workspace `.scratch/.scratchmd`
+- **`.scratch/` content is at `.scratch/connections/scratch/{CONNECTOR-NAME}/`** — outside the user's editing area
+- **`.repos/` is flat per workbook** — the composite `repoPath` remains the logical repo ID, but local bare repos and DBs use only the final repo basename inside the workbook root
 
-### `.scratchmd` format (version 3)
+### Global local-workspace registry
 
-The single workspace `.scratchmd` now includes all connection metadata that previously required per-connector marker files:
+The CLI also maintains a lightweight global registry at:
+
+```yaml
+~/.scratchmd/workspaces.yaml
+```
+
+It stores initialized workspaces by workbook ID and absolute path:
+
+```yaml
+version: "1"
+workspaces:
+  - id: wkb_xxx
+    path: /absolute/path/to/My Workspace
+```
+
+This is used to find a previously initialized workspace even when the current
+working directory is outside that workspace tree.
+
+### `.scratch/.scratchmd` format (version 3)
+
+The single workspace `.scratch/.scratchmd` now includes all connection metadata that previously required per-connector marker files:
 
 ```yaml
 version: "3"
 workbook:
   id: wkb_xxx
   name: My Workspace
+  orgId: org123
   serverUrl: https://...
   initializedAt: "2026-01-01T00:00:00Z"
 connections:
@@ -165,22 +185,22 @@ Git normally places a `.git` file (a pointer back to the bare repo) in every lin
 
 ```bash
 # Checkout dirty branch into a plain directory
-git --git-dir=.repos/{repo_id}.git --work-tree={CONNECTOR-NAME} checkout dirty -- .
+git --git-dir=.repos/{repo_basename}.git --work-tree={CONNECTOR-NAME} checkout dirty -- .
 
 # Stage and status
-git --git-dir=.repos/{repo_id}.git --work-tree={CONNECTOR-NAME} add -A
-git --git-dir=.repos/{repo_id}.git --work-tree={CONNECTOR-NAME} status --porcelain
+git --git-dir=.repos/{repo_basename}.git --work-tree={CONNECTOR-NAME} add -A
+git --git-dir=.repos/{repo_basename}.git --work-tree={CONNECTOR-NAME} status --porcelain
 
 # Commit (low-level, no HEAD required)
-tree=$(git --git-dir=.repos/{repo_id}.git write-tree)
-parent=$(git --git-dir=.repos/{repo_id}.git rev-parse refs/heads/dirty)
-commit=$(git --git-dir=.repos/{repo_id}.git commit-tree $tree -p $parent -m "message")
-git --git-dir=.repos/{repo_id}.git update-ref refs/heads/dirty $commit
+tree=$(git --git-dir=.repos/{repo_basename}.git write-tree)
+parent=$(git --git-dir=.repos/{repo_basename}.git rev-parse refs/heads/dirty)
+commit=$(git --git-dir=.repos/{repo_basename}.git commit-tree $tree -p $parent -m "message")
+git --git-dir=.repos/{repo_basename}.git update-ref refs/heads/dirty $commit
 ```
 
 The result is that `{CONNECTOR-NAME}/` is a completely plain directory — no git footprint, no marker files. Any tool (`ls`, `find`, VS Code) sees only the JSON record files. Cleanup is a simple `rm -rf`.
 
-The same approach applies to the master checkout at `.connections/master/{CONNECTOR-NAME}/` and to the service's temporary materializations under `.temp/`.
+The same approach applies to the master checkout at `.scratch/connections/master/{CONNECTOR-NAME}/` and to the service's temporary materializations under `.temp/`.
 
 ---
 
@@ -197,12 +217,12 @@ Derived paths (same formula on both sides):
 
 | Path | Formula |
 |------|---------|
-| Bare repo | `{reposdir}/{repo_id}.git` |
-| Index DB | `{reposdir}/{repo_id}.db` |
+| Bare repo | `{reposdir}/{repo_basename}.git` |
+| Index DB | `{reposdir}/{repo_basename}.db` |
 | Dirty checkout | `{loculdir}/{connector_name}/` |
-| Connection scratch | `{loculdir}/.connections/.scratch/{connector_name}/` |
-| Master worktree | `{loculdir}/.connections/master/{connector_name}/` |
-| Workbook materialization | `{loculdir}/.workbook/` |
+| Connection scratch | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
+| Master worktree | `{loculdir}/.scratch/connections/master/{connector_name}/` |
+| Workbook materialization | `{loculdir}/.scratch/workspace/` |
 
 This is implemented as `WorkspaceLayout` in `src/shared/layout.rs`.
 
@@ -216,9 +236,10 @@ When the service needs to run shared business logic (build a publish plan, build
 {REPOS_DIR}/{orgId}/{workbookId}/
   {connectorAccountId}.git         # Bare repo
   .temp/                           # Created on demand, removed after operation
-    .connections/
-      .scratch/{connectorAccountId}/
-      master/{connectorAccountId}/
+    .scratch/
+      connections/
+        scratch/{connectorAccountId}/
+        master/{connectorAccountId}/
     {connectorAccountId}/          # Dirty checkout (no .git file — see above)
 ```
 
@@ -261,3 +282,16 @@ The worktree path differs between CLI (persistent) and service (temporary under 
 ```
 
 `tablePaths` tells the consumer which `.scratch/{folder}/publish-plan-{ts}/` directories to scan for phase files.
+
+---
+
+## Manual Verification Checklist
+
+Use this as the refactor acceptance test:
+
+1. Download a workbook locally
+2. Make changes
+3. Create a publish plan
+4. Upload
+5. Ask the Nest server to execute the publish plan
+6. Verify the git backend service still works with all old functionality, including UI/DB-based syncs, publish plans, and other existing service flows

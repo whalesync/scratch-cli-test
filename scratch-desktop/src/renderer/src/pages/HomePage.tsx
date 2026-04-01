@@ -1,11 +1,13 @@
 import { Alert, Center, Loader, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useEffect, useState } from 'react';
 import { WorkspaceCard } from '../components/WorkspaceCard';
+import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 
 export function HomePage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [downloadedWorkspaceIds, setDownloadedWorkspaceIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,8 +15,9 @@ export function HomePage() {
     try {
       setLoading(true);
       setError(null);
-      const data = await workspacesApi.list();
+      const [data, localWorkspaces] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
       setWorkspaces(data);
+      setDownloadedWorkspaceIds(new Set(localWorkspaces.map((workspace) => workspace.id)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {
@@ -53,7 +56,7 @@ export function HomePage() {
       ) : (
         <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, md: 4 }} spacing="md">
           {workspaces.map((ws) => (
-            <WorkspaceCard key={ws.id} workspace={ws} />
+            <WorkspaceCard key={ws.id} workspace={ws} isDownloaded={downloadedWorkspaceIds.has(ws.id)} />
           ))}
         </SimpleGrid>
       )}

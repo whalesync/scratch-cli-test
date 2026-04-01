@@ -19,6 +19,7 @@ import type { Request, Response } from 'express';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -361,8 +362,8 @@ export class CliWorkbookController {
   @Post(':id/config/init')
   async initWorkbookRepo(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id as WorkbookId);
-    await this.workbookRepoService.initWorkbookRepo(actor.organizationId, id as WorkbookId);
+    const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    await this.workbookRepoService.initWorkbookRepo(workbook.organizationId, id as WorkbookId);
     return { success: true };
   }
 
@@ -373,8 +374,8 @@ export class CliWorkbookController {
   @Post(':id/config/push-syncs')
   async pushSyncsToGit(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ count: number }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id as WorkbookId);
-    return this.workbookRepoService.pushSyncs(actor.organizationId, id as WorkbookId, actor);
+    const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    return this.workbookRepoService.pushSyncs(workbook.organizationId, id as WorkbookId, actor);
   }
 
   /**
@@ -388,14 +389,8 @@ export class CliWorkbookController {
     @Res() res: Response,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id as WorkbookId);
-
-    const workbook = await this.workbookService.findOne(id as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    const repoId = getWorkbookRepoPath(actor.organizationId, id as WorkbookId);
+    const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    const repoId = getWorkbookRepoPath(workbook.organizationId, id as WorkbookId);
     const gitPath = req.url.replace(`/cli/v1/workbooks/${id}/config/git`, '');
     const targetUrl = `${this.gitBackendUrl}/${repoId}.git${gitPath}`;
 
@@ -408,5 +403,19 @@ export class CliWorkbookController {
     });
 
     await this.proxyToGitBackend(targetUrl, id as WorkbookId, req, res);
+  }
+
+  private async loadWorkbookForConfigAction(
+    actor: ReturnType<typeof userToActor>,
+    workbookId: WorkbookId,
+  ): Promise<WorkbookCluster.Workbook> {
+    checkWorkspacePermissions(actor, workbookId);
+
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    return workbook;
   }
 }

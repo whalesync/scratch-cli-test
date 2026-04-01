@@ -9,16 +9,32 @@ use serde::{Deserialize, Serialize};
 pub struct WorkspaceMarker {
     pub version: String,
     pub workbook: WorkbookRef,
+    #[serde(default)]
+    pub connections: Vec<ConnectionEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkbookRef {
     pub id: String,
     pub name: String,
+    #[serde(rename = "orgId", default)]
+    pub org_id: String,
     #[serde(rename = "serverUrl")]
     pub server_url: String,
     #[serde(rename = "initializedAt")]
     pub initialized_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionEntry {
+    pub id: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    pub service: String,
+    #[serde(rename = "repoPath", default)]
+    pub repo_path: String,
+    #[serde(rename = "dirName", default)]
+    pub dir_name: String,
 }
 
 // ── Connector marker ────────────────────────────────────────────────────────
@@ -107,13 +123,30 @@ pub fn read(path: &Path) -> anyhow::Result<Marker> {
     Ok(Marker::Workspace(m))
 }
 
+pub fn marker_path(workspace_dir: &Path) -> PathBuf {
+    workspace_dir.join(".scratch").join(".scratchmd")
+}
+
+fn find_marker_in(dir: &Path) -> Option<PathBuf> {
+    let direct = dir.join(".scratchmd");
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    let nested = marker_path(dir);
+    if nested.exists() {
+        return Some(nested);
+    }
+
+    None
+}
+
 /// Walk up from `start` to find the nearest .scratchmd file.
 /// Returns (marker, directory containing the marker).
 pub fn find_nearest(start: &Path) -> Option<(Marker, PathBuf)> {
     let mut dir = start.to_path_buf();
     loop {
-        let candidate = dir.join(".scratchmd");
-        if candidate.exists() {
+        if let Some(candidate) = find_marker_in(&dir) {
             if let Ok(m) = read(&candidate) {
                 return Some((m, dir));
             }
@@ -130,8 +163,7 @@ pub fn find_nearest(start: &Path) -> Option<(Marker, PathBuf)> {
 pub fn find_nearest_workspace(start: &Path) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
-        let candidate = dir.join(".scratchmd");
-        if candidate.exists() {
+        if let Some(candidate) = find_marker_in(&dir) {
             if let Ok(Marker::Workspace(_)) = read(&candidate) {
                 return Some(dir);
             }
@@ -149,60 +181,25 @@ pub fn write_workspace(
     dir: &Path,
     workbook_id: &str,
     workbook_name: &str,
+    org_id: &str,
     server_url: &str,
+    connections: &[ConnectionEntry],
 ) -> io::Result<()> {
+    fs::create_dir_all(dir.join(".scratch"))?;
     let marker = WorkspaceMarker {
-        version: "2".to_string(),
+        version: "3".to_string(),
         workbook: WorkbookRef {
             id: workbook_id.to_string(),
             name: workbook_name.to_string(),
+            org_id: org_id.to_string(),
             server_url: server_url.to_string(),
             initialized_at: chrono::Utc::now().to_rfc3339(),
         },
+        connections: connections.to_vec(),
     };
     let content = serde_yaml::to_string(&marker)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    fs::write(dir.join(".scratchmd"), content)
-}
-
-pub fn write_connector(
-    dir: &Path,
-    workbook_id: &str,
-    workbook_name: &str,
-    connector_id: &str,
-    display_name: &str,
-    service: &str,
-    repo_path: &str,
-) -> io::Result<()> {
-    let marker = ConnectorMarker {
-        version: "2".to_string(),
-        workbook: ConnectorWorkbookRef {
-            id: workbook_id.to_string(),
-            name: workbook_name.to_string(),
-        },
-        connector: ConnectorRef {
-            id: connector_id.to_string(),
-            display_name: display_name.to_string(),
-            service: service.to_string(),
-            repo_path: repo_path.to_string(),
-        },
-    };
-    let content = serde_yaml::to_string(&marker)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    fs::write(dir.join(".scratchmd"), content)
-}
-
-pub fn write_data_folder(dir: &Path, id: &str, name: &str) -> io::Result<()> {
-    let marker = DataFolderMarker {
-        version: "1".to_string(),
-        data_folder: DataFolderRef {
-            id: id.to_string(),
-            name: name.to_string(),
-        },
-    };
-    let content = serde_yaml::to_string(&marker)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    fs::write(dir.join(".scratchmd"), content)
+    fs::write(marker_path(dir), content)
 }
 
 /// Sanitize a string for use as a filesystem directory name.

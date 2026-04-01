@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Write as _;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use clap::Subcommand;
 
 use crate::config::markers;
+use crate::shared::layout::WorkspaceLayout;
 
 type FileMap = HashMap<String, Vec<u8>>;
 
@@ -19,233 +21,15 @@ pub enum FilesCommands {
     ForceUpload,
 }
 
-pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
-    // Find the workspace/connector from the current directory
-    let cwd = std::env::current_dir()?;
-
-    match cmd {
-        FilesCommands::Download => run_download(&cwd, server_url, json),
-        FilesCommands::Upload => run_upload(&cwd, server_url, json),
-        FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
-    }
+#[derive(Clone)]
+struct ConnectionContext {
+    conn_dir_name: String,
+    dirty_dir: PathBuf,
+    scratch_dir: PathBuf,
+    master_dir: PathBuf,
+    bare_repo: PathBuf,
+    db_path: PathBuf,
 }
-
-fn get_token(server_url: &str) -> anyhow::Result<String> {
-    let creds = crate::config::credentials::get(server_url)
-        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
-    if creds.api_token.is_empty() {
-        anyhow::bail!("Not authenticated. Run `scratchmd auth login` first.");
-    }
-    Ok(creds.api_token)
-}
-
-fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    let token = get_token(server_url)?;
-
-    // Check if we're inside a connector subdirectory
-    if let Some((markers::Marker::Connector(_), conn_dir)) = markers::find_nearest(cwd) {
-        let result = download_single_repo(&conn_dir, &token)?;
-        return print_download_result(&result, started.elapsed().as_millis(), json);
-    }
-
-    // Find workspace marker
-    let (marker, wb_dir) = markers::find_nearest(cwd)
-        .ok_or_else(|| anyhow::anyhow!(
-            "Not inside a workspace directory. Run from a workspace directory."
-        ))?;
-
-    let workbook_server_url = match &marker {
-        markers::Marker::Workspace(m) if !m.workbook.server_url.is_empty() => {
-            m.workbook.server_url.clone()
-        }
-        _ => server_url.to_string(),
-    };
-    let token = get_token(&workbook_server_url)?;
-
-    // Find connector subdirectories (V2) or treat as V1
-    let conn_dirs = find_connector_dirs(&wb_dir);
-    if conn_dirs.is_empty() {
-        // V1: workspace dir is the repo
-        let result = download_single_repo(&wb_dir, &token)?;
-        print_download_result(&result, started.elapsed().as_millis(), json)
-    } else {
-        // V2: iterate connector dirs
-        let mut results = Vec::new();
-        for dir in &conn_dirs {
-            if !json {
-                println!("Downloading {}...", dir.file_name().unwrap_or_default().to_string_lossy());
-            }
-            results.push(download_single_repo(dir, &token)?);
-            // Update master worktree and rebuild index
-            let conn_dir_name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-            if update_master_worktree(dir, &wb_dir, &conn_dir_name, &token).is_ok() {
-                rebuild_index_for_conn(&wb_dir, &conn_dir_name, json);
-            }
-        }
-        let agg = aggregate_download(&results);
-
-        // Refresh docs after download
-        if let markers::Marker::Workspace(m) = &marker {
-            let wb_name = if m.workbook.name.is_empty() { m.workbook.id.as_str() } else { m.workbook.name.as_str() };
-            let _ = super::generate_docs::write_docs(&wb_dir, wb_name);
-        }
-
-        print_download_result(&agg, started.elapsed().as_millis(), json)
-    }
-}
-
-fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    let token = get_token(server_url)?;
-
-    if let Some((markers::Marker::Connector(_), conn_dir)) = markers::find_nearest(cwd) {
-        let result = upload_single_repo(&conn_dir, &token)?;
-        return print_upload_result(&result, started.elapsed().as_millis(), json);
-    }
-
-    let (marker, wb_dir) = markers::find_nearest(cwd)
-        .ok_or_else(|| anyhow::anyhow!(
-            "Not inside a workspace directory. Run from a workspace directory."
-        ))?;
-
-    let workbook_server_url = match &marker {
-        markers::Marker::Workspace(m) if !m.workbook.server_url.is_empty() => {
-            m.workbook.server_url.clone()
-        }
-        _ => server_url.to_string(),
-    };
-    let token = get_token(&workbook_server_url)?;
-
-    let conn_dirs = find_connector_dirs(&wb_dir);
-    if conn_dirs.is_empty() {
-        let result = upload_single_repo(&wb_dir, &token)?;
-        print_upload_result(&result, started.elapsed().as_millis(), json)
-    } else {
-        let mut results = Vec::new();
-        for dir in &conn_dirs {
-            if !json {
-                println!("Uploading {}...", dir.file_name().unwrap_or_default().to_string_lossy());
-            }
-            results.push(upload_single_repo(dir, &token)?);
-        }
-        let agg = aggregate_upload(&results);
-        print_upload_result(&agg, started.elapsed().as_millis(), json)
-    }
-}
-
-fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    let token = get_token(server_url)?;
-
-    if let Some((markers::Marker::Connector(_), conn_dir)) = markers::find_nearest(cwd) {
-        let pushed = force_upload_single_repo(&conn_dir, &token)?;
-        let elapsed = started.elapsed().as_millis();
-        if json {
-            println!("{}", serde_json::json!({ "pushed": pushed, "elapsedMs": elapsed }));
-        } else if pushed {
-            println!("Force-pushed. ({})", format_elapsed(elapsed));
-        } else {
-            println!("Nothing to push. ({})", format_elapsed(elapsed));
-        }
-        return Ok(());
-    }
-
-    let (marker, wb_dir) = markers::find_nearest(cwd)
-        .ok_or_else(|| anyhow::anyhow!(
-            "Not inside a workspace directory. Run from a workspace directory."
-        ))?;
-
-    let workbook_server_url = match &marker {
-        markers::Marker::Workspace(m) if !m.workbook.server_url.is_empty() => {
-            m.workbook.server_url.clone()
-        }
-        _ => server_url.to_string(),
-    };
-    let token = get_token(&workbook_server_url)?;
-
-    let conn_dirs = find_connector_dirs(&wb_dir);
-    let dirs: Vec<_> = if conn_dirs.is_empty() { vec![wb_dir.clone()] } else { conn_dirs };
-
-    let mut any_pushed = false;
-    for dir in &dirs {
-        if !json {
-            println!("Force-uploading {}...", dir.file_name().unwrap_or_default().to_string_lossy());
-        }
-        if force_upload_single_repo(dir, &token)? {
-            any_pushed = true;
-        }
-    }
-
-    let elapsed = started.elapsed().as_millis();
-    if json {
-        println!("{}", serde_json::json!({ "pushed": any_pushed, "elapsedMs": elapsed }));
-    } else if any_pushed {
-        println!("Force-pushed. ({})", format_elapsed(elapsed));
-    } else {
-        println!("Nothing to push. ({})", format_elapsed(elapsed));
-    }
-    Ok(())
-}
-
-/// Stage all local changes and force-push to the dirty branch.
-/// Returns true if anything was pushed, false if there were no local changes.
-fn force_upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<bool> {
-    ensure_local_excludes(repo_dir);
-    git_add_all(repo_dir)?;
-
-    // Check if there's anything staged
-    let status = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["diff", "--cached", "--quiet"])
-        .status()?;
-    if status.success() {
-        return Ok(false); // nothing staged
-    }
-
-    git_commit(repo_dir, "Force-upload from Scratch CLI")?;
-
-    let auth = git_auth_args(token);
-    let output = Command::new("git")
-        .current_dir(repo_dir)
-        .args(&auth)
-        .args(["push", "--force", "origin", "dirty:dirty"])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git push --force failed: {}", stderr);
-    }
-    Ok(true)
-}
-
-/// Public entry point called by linked/syncs commands after API operations.
-/// Finds and downloads all repos for a workbook.
-pub async fn download_workbook(_base_url: &str, token: &str, workbook_id: &str) -> anyhow::Result<()> {
-    // Try to find the workspace directory
-    let wb_dir = crate::config::find_workspace_dir(workbook_id);
-    let Some(wb_dir) = wb_dir else {
-        // Workspace not initialized locally — skip download silently
-        eprintln!("(Workspace not initialized locally — skipping file download)");
-        return Ok(());
-    };
-
-    let conn_dirs = find_connector_dirs(&wb_dir);
-    if conn_dirs.is_empty() {
-        download_single_repo(&wb_dir, token)?;
-        // V1: no master worktree / index support
-    } else {
-        for dir in &conn_dirs {
-            download_single_repo(dir, token)?;
-            let conn_dir_name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-            if update_master_worktree(dir, &wb_dir, &conn_dir_name, token).is_ok() {
-                rebuild_index_for_conn(&wb_dir, &conn_dir_name, false);
-            }
-        }
-    }
-    Ok(())
-}
-
-// ── Core git + merge operations ─────────────────────────────────────────────
 
 #[derive(Default)]
 struct DownloadResult {
@@ -272,109 +56,326 @@ struct UploadResult {
     deleted_paths: Vec<String>,
 }
 
-fn download_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<DownloadResult> {
-    ensure_local_excludes(repo_dir);
-    // Fetch remote dirty branch
-    git_fetch(repo_dir, token)?;
+pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
 
-    let base_hash = git_rev_parse(repo_dir, "HEAD")?;
-    let remote_hash = git_rev_parse(repo_dir, "refs/remotes/origin/dirty")?;
+    match cmd {
+        FilesCommands::Download => run_download(&cwd, server_url, json),
+        FilesCommands::Upload => run_upload(&cwd, server_url, json),
+        FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
+    }
+}
 
-    if base_hash == remote_hash {
-        return Ok(DownloadResult { status: "up_to_date".to_string(), ..Default::default() });
+fn get_token(server_url: &str) -> anyhow::Result<String> {
+    let creds = crate::config::credentials::get(server_url)
+        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
+    if creds.api_token.is_empty() {
+        anyhow::bail!("Not authenticated. Run `scratchmd auth login` first.");
+    }
+    Ok(creds.api_token)
+}
+
+fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url)?;
+    let token = get_token(&workspace_server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!(
+            "No connections found in {}. Run `scratchmd workspaces init` first.",
+            workspace_dir.display()
+        );
     }
 
-    let base_map = read_git_tree(repo_dir, &base_hash)?;
-    let remote_map = read_git_tree(repo_dir, &remote_hash)?;
-    let local_map = read_disk(repo_dir)?;
+    let mut results = Vec::new();
+    for ctx in &contexts {
+        if contexts.len() > 1 && !json {
+            println!("Downloading {}...", ctx.conn_dir_name);
+        }
+        results.push(download_single_repo(ctx, &token)?);
+        if update_master_worktree(ctx, &token).is_ok() {
+            rebuild_index_for_conn(ctx, json);
+        }
+    }
 
+    let wb_name = if workspace_marker.workbook.name.is_empty() {
+        workspace_marker.workbook.id.as_str()
+    } else {
+        workspace_marker.workbook.name.as_str()
+    };
+    let _ = super::generate_docs::write_docs(&workspace_dir, wb_name);
+
+    let result = if results.len() == 1 {
+        results.into_iter().next().unwrap_or_default()
+    } else {
+        aggregate_download(&results)
+    };
+
+    print_download_result(&result, started.elapsed().as_millis(), json)
+}
+
+fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (_, _, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url)?;
+    let token = get_token(&workspace_server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut results = Vec::new();
+    for ctx in &contexts {
+        if contexts.len() > 1 && !json {
+            println!("Uploading {}...", ctx.conn_dir_name);
+        }
+        results.push(upload_single_repo(ctx, &token)?);
+    }
+
+    let result = if results.len() == 1 {
+        results.into_iter().next().unwrap_or_default()
+    } else {
+        aggregate_upload(&results)
+    };
+
+    print_upload_result(&result, started.elapsed().as_millis(), json)
+}
+
+fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (_, _, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url)?;
+    let token = get_token(&workspace_server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut any_pushed = false;
+    for ctx in &contexts {
+        if contexts.len() > 1 && !json {
+            println!("Force-uploading {}...", ctx.conn_dir_name);
+        }
+        if force_upload_single_repo(ctx, &token)? {
+            any_pushed = true;
+        }
+    }
+
+    let elapsed = started.elapsed().as_millis();
+    if json {
+        println!("{}", serde_json::json!({ "pushed": any_pushed, "elapsedMs": elapsed }));
+    } else if any_pushed {
+        println!("Force-pushed. ({})", format_elapsed(elapsed));
+    } else {
+        println!("Nothing to push. ({})", format_elapsed(elapsed));
+    }
+    Ok(())
+}
+
+pub async fn download_workbook(_base_url: &str, token: &str, workbook_id: &str) -> anyhow::Result<()> {
+    let Some(workspace_dir) = crate::config::find_workspace_dir(workbook_id) else {
+        eprintln!("(Workspace not initialized locally — skipping file download)");
+        return Ok(());
+    };
+
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+    for ctx in &contexts {
+        download_single_repo(ctx, token)?;
+        if update_master_worktree(ctx, token).is_ok() {
+            rebuild_index_for_conn(ctx, true);
+        }
+    }
+    Ok(())
+}
+
+fn resolve_workspace_and_connections(
+    cwd: &Path,
+    server_url: &str,
+) -> anyhow::Result<(markers::WorkspaceMarker, PathBuf, Vec<ConnectionContext>, String)> {
+    let workspace_dir = markers::find_nearest_workspace(cwd)
+        .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let workspace_server_url = if workspace_marker.workbook.server_url.is_empty() {
+        server_url.to_string()
+    } else {
+        workspace_marker.workbook.server_url.clone()
+    };
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, Some(cwd))?;
+    Ok((workspace_marker, workspace_dir, contexts, workspace_server_url))
+}
+
+fn read_workspace_marker(workspace_dir: &Path) -> anyhow::Result<markers::WorkspaceMarker> {
+    let marker_path = markers::marker_path(workspace_dir);
+    match markers::read(&marker_path) {
+        Ok(markers::Marker::Workspace(marker)) => Ok(marker),
+        _ => anyhow::bail!("Could not read workspace marker at {}", marker_path.display()),
+    }
+}
+
+fn build_connection_contexts(
+    workspace_dir: &Path,
+    workspace_marker: &markers::WorkspaceMarker,
+    cwd_filter: Option<&Path>,
+) -> anyhow::Result<Vec<ConnectionContext>> {
+    let layout = WorkspaceLayout::for_cli(workspace_dir);
+    let selected = cwd_filter.and_then(|cwd| detect_selected_connection(workspace_dir, cwd, workspace_marker));
+
+    let contexts = workspace_marker
+        .connections
+        .iter()
+        .filter(|connection| match selected.as_deref() {
+            Some(name) => connection.dir_name == name,
+            None => true,
+        })
+        .filter(|connection| !connection.repo_path.is_empty() && !connection.dir_name.is_empty())
+        .map(|connection| ConnectionContext {
+            conn_dir_name: connection.dir_name.clone(),
+            dirty_dir: layout.dirty_checkout_path(&connection.dir_name),
+            scratch_dir: layout.connection_scratch_path(&connection.dir_name),
+            master_dir: layout.master_worktree_path(&connection.dir_name),
+            bare_repo: layout.bare_repo_path(&connection.repo_path),
+            db_path: layout.index_db_path(&connection.repo_path),
+        })
+        .collect();
+
+    Ok(contexts)
+}
+
+fn detect_selected_connection(
+    workspace_dir: &Path,
+    cwd: &Path,
+    workspace_marker: &markers::WorkspaceMarker,
+) -> Option<String> {
+    let rel = cwd.strip_prefix(workspace_dir).ok()?;
+    let parts: Vec<String> = rel
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let candidate = if parts[0] == ".scratch" && parts.len() >= 4 && parts[1] == "connections" {
+        match parts[2].as_str() {
+            "scratch" | "master" => Some(parts[3].clone()),
+            _ => None,
+        }
+    } else if parts[0].starts_with('.') {
+        None
+    } else {
+        Some(parts[0].clone())
+    }?;
+
+    workspace_marker
+        .connections
+        .iter()
+        .find(|connection| connection.dir_name == candidate)
+        .map(|connection| connection.dir_name.clone())
+}
+
+fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<DownloadResult> {
+    git_fetch(&ctx.bare_repo, token)?;
+
+    let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
+    let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
+
+    if base_hash == remote_hash {
+        return Ok(DownloadResult {
+            status: "up_to_date".to_string(),
+            ..Default::default()
+        });
+    }
+
+    let base_map = read_git_tree(&ctx.bare_repo, &base_hash)?;
+    let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
+    let local_map = read_materialized_repo(ctx)?;
     let actions = compute_merge_actions(&base_map, &local_map, &remote_map);
 
-    let mut stash: FileMap = HashMap::new();
-    let mut deletions: Vec<String> = Vec::new();
-    let mut result = DownloadResult { status: "downloaded".to_string(), ..Default::default() };
+    let mut result = DownloadResult {
+        status: "downloaded".to_string(),
+        ..Default::default()
+    };
+    let mut target_map = remote_map.clone();
 
     for act in &actions {
         match act {
             MergeAction::KeepLocal { path, content, .. } => {
-                if let Some(c) = content {
-                    stash.insert(path.clone(), c.clone());
+                match content {
+                    Some(content) => {
+                        target_map.insert(path.clone(), content.clone());
+                    }
+                    None => {
+                        target_map.remove(path.as_str());
+                    }
                 }
             }
-            MergeAction::WriteRemote { content, .. } => {
-                if content.is_some() {
-                    // will be written after reset
+            MergeAction::WriteRemote { path, content } => {
+                if let Some(content) = content {
+                    if base_map.contains_key(path.as_str()) {
+                        result.files_updated += 1;
+                    } else {
+                        result.files_created += 1;
+                    }
+                    target_map.insert(path.clone(), content.clone());
                 } else {
-                    // remote deletion handled below
-                }
-                if let Some(base) = base_map.get(act.path()) {
-                    let _ = base; // already existed
-                    result.files_updated += 1;
-                } else {
-                    result.files_created += 1;
+                    result.files_deleted += 1;
+                    target_map.remove(path.as_str());
                 }
             }
             MergeAction::Delete { path, warning } => {
                 result.files_deleted += 1;
-                deletions.push(path.clone());
-                if let Some(w) = warning {
-                    result.messages.push(w.clone());
+                target_map.remove(path.as_str());
+                if let Some(warning) = warning {
+                    result.messages.push(warning.clone());
                 }
             }
-            MergeAction::Merge { path, base, local, remote } => {
+            MergeAction::Merge {
+                path,
+                base,
+                local,
+                remote,
+            } => {
                 let merged = merge_content(path, Some(base), Some(local), Some(remote));
-                stash.insert(path.clone(), merged);
+                target_map.insert(path.clone(), merged);
                 result.files_merged += 1;
                 result.conflicts_auto_resolved += 1;
             }
         }
     }
 
-    // Stash .scratchmd markers before reset
-    stash_markers(repo_dir, &mut stash);
-
-    // Reset to remote state
-    git_reset_hard(repo_dir, &remote_hash)?;
-
-    // Restore stashed local files (merged content + markers)
-    for (rel_path, content) in &stash {
-        let full = repo_dir.join(rel_path);
-        if let Some(parent) = full.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&full, content)?;
-    }
-
-    // Delete files that should be deleted (not in stash)
-    for rel_path in &deletions {
-        if !stash.contains_key(rel_path) {
-            let _ = std::fs::remove_file(repo_dir.join(rel_path));
-        }
-    }
+    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
+    materialize_local_repo(ctx, &target_map)?;
 
     Ok(result)
 }
 
-fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResult> {
-    ensure_local_excludes(repo_dir);
-    let base_hash = git_rev_parse(repo_dir, "HEAD")?;
-    let base_map = read_git_tree(repo_dir, &base_hash)?;
-    let local_map = read_disk(repo_dir)?;
+fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<UploadResult> {
+    let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = read_git_tree(&ctx.bare_repo, &base_hash)?;
+    let local_map = read_materialized_repo(ctx)?;
 
     if maps_equal(&base_map, &local_map) {
-        return Ok(UploadResult { status: "no_changes".to_string(), ..Default::default() });
+        return Ok(UploadResult {
+            status: "no_changes".to_string(),
+            ..Default::default()
+        });
     }
 
     const MAX_RETRIES: i32 = 5;
     for attempt in 0..MAX_RETRIES {
-        git_fetch(repo_dir, token)?;
-        let remote_hash = git_rev_parse(repo_dir, "refs/remotes/origin/dirty")?;
-        let remote_map = read_git_tree(repo_dir, &remote_hash)?;
-
+        git_fetch(&ctx.bare_repo, token)?;
+        let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
+        let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
         let actions = compute_merge_actions(&base_map, &local_map, &remote_map);
 
-        let mut merged: FileMap = HashMap::new();
-        let mut messages: Vec<String> = Vec::new();
+        let mut merged = remote_map.clone();
+        let mut messages = Vec::new();
         let mut result = UploadResult {
             status: "uploaded".to_string(),
             retries: attempt,
@@ -384,35 +385,56 @@ fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResu
         for act in &actions {
             match act {
                 MergeAction::KeepLocal { path, content, warning } => {
-                    if let Some(c) = content {
-                        merged.insert(path.clone(), c.clone());
-                        let remote_content = remote_map.get(path.as_str());
-                        if remote_content.map(|r| r != c).unwrap_or(true) {
-                            result.files_uploaded += 1;
-                            result.uploaded_paths.push(path.clone());
+                    match content {
+                        Some(content) => {
+                            merged.insert(path.clone(), content.clone());
+                            if remote_map
+                                .get(path.as_str())
+                                .map(|remote| remote != content)
+                                .unwrap_or(true)
+                            {
+                                result.files_uploaded += 1;
+                                result.uploaded_paths.push(path.clone());
+                            }
+                        }
+                        None => {
+                            merged.remove(path.as_str());
+                            if remote_map.contains_key(path.as_str()) {
+                                result.files_deleted += 1;
+                                result.deleted_paths.push(path.clone());
+                            }
                         }
                     }
-                    if let Some(w) = warning {
-                        messages.push(w.clone());
+                    if let Some(warning) = warning {
+                        messages.push(warning.clone());
                     }
                 }
-                MergeAction::WriteRemote { path, content } => {
-                    if let Some(c) = content {
-                        merged.insert(path.clone(), c.clone());
+                MergeAction::WriteRemote { path, content } => match content {
+                    Some(content) => {
+                        merged.insert(path.clone(), content.clone());
                     }
-                }
+                    None => {
+                        merged.remove(path.as_str());
+                    }
+                },
                 MergeAction::Delete { path, warning } => {
+                    merged.remove(path.as_str());
                     if remote_map.contains_key(path.as_str()) {
                         result.files_deleted += 1;
                         result.deleted_paths.push(path.clone());
                     }
-                    if let Some(w) = warning {
-                        messages.push(w.clone());
+                    if let Some(warning) = warning {
+                        messages.push(warning.clone());
                     }
                 }
-                MergeAction::Merge { path, base, local, remote } => {
-                    let m = merge_content(path, Some(base), Some(local), Some(remote));
-                    merged.insert(path.clone(), m);
+                MergeAction::Merge {
+                    path,
+                    base,
+                    local,
+                    remote,
+                } => {
+                    let content = merge_content(path, Some(base), Some(local), Some(remote));
+                    merged.insert(path.clone(), content);
                     result.files_merged += 1;
                     result.merged_paths.push(path.clone());
                     result.conflicts_auto_resolved += 1;
@@ -420,194 +442,337 @@ fn upload_single_repo(repo_dir: &Path, token: &str) -> anyhow::Result<UploadResu
             }
         }
 
-        // Strip server-managed .scratch/ subdirs; keep the manifest and plan phase dirs.
-        merged.retain(|p, _| {
-            !p.starts_with(".scratch/")
-                || p.starts_with(".scratch/.publish-plans/")
-                || is_plan_phase_file(p)
+        merged.retain(|path, _| {
+            !path.starts_with(".scratch/")
+                || path.starts_with(".scratch/.publish-plans/")
+                || is_plan_phase_file(path)
         });
 
-        // Always take plan files from local disk, bypassing the three-way merge.
-        // The merge can incorrectly drop them when the server rebases dirty (removing
-        // the plan) and plan-publish regenerates an identical plan: local_changed=false
-        // → merge follows the remote delete. We want whatever is on disk to win.
-        for (p, v) in &local_map {
-            if p.starts_with(".scratch/.publish-plans/") || is_plan_phase_file(p) {
-                merged.insert(p.clone(), v.clone());
+        for (path, value) in &local_map {
+            if path.starts_with(".scratch/.publish-plans/") || is_plan_phase_file(path) {
+                merged.insert(path.clone(), value.clone());
             }
         }
 
         if maps_equal(&merged, &remote_map) {
-            return Ok(UploadResult { status: "up_to_date".to_string(), ..Default::default() });
+            git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
+            materialize_local_repo(ctx, &merged)?;
+            return Ok(UploadResult {
+                status: "up_to_date".to_string(),
+                ..Default::default()
+            });
         }
 
-        // Stash markers, reset to remote, write merged, commit, push
-        let mut marker_stash: FileMap = HashMap::new();
-        stash_markers(repo_dir, &mut marker_stash);
+        commit_file_map_to_dirty_ref(
+            &ctx.bare_repo,
+            Some(remote_hash.as_str()),
+            &merged,
+            "Upload from Scratch CLI",
+        )?;
 
-        git_reset_hard(repo_dir, &remote_hash)?;
-
-        // Write merged files (skip files identical to remote)
-        for (rel_path, content) in &merged {
-            if remote_map.get(rel_path.as_str()).map(|r| r == content).unwrap_or(false) {
-                continue;
-            }
-            let full = repo_dir.join(rel_path);
-            if let Some(parent) = full.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&full, content)?;
-        }
-
-        // Remove files present in remote but not in merged
-        for rel_path in remote_map.keys() {
-            if rel_path.starts_with(".scratch/") {
-                continue;
-            }
-            if !merged.contains_key(rel_path.as_str()) {
-                let _ = std::fs::remove_file(repo_dir.join(rel_path));
-            }
-        }
-
-        // Restore markers
-        for (rel_path, content) in &marker_stash {
-            let full = repo_dir.join(rel_path);
-            if let Some(parent) = full.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let _ = std::fs::write(&full, content);
-        }
-
-        git_add_all(repo_dir)?;
-        git_commit(repo_dir, "Upload from Scratch CLI")?;
-
-        match git_push(repo_dir, token) {
+        match git_push(&ctx.bare_repo, token) {
             Ok(()) => {
+                materialize_local_repo(ctx, &merged)?;
                 result.messages = messages;
                 return Ok(result);
             }
-            Err(e) => {
-                // Check if it's a non-fast-forward error
-                if e.to_string().contains("non-fast-forward") || e.to_string().contains("rejected") {
-                    // Restore markers and retry
-                    for (rel_path, content) in &marker_stash {
-                        let _ = std::fs::write(repo_dir.join(rel_path), content);
-                    }
+            Err(err) => {
+                if err.to_string().contains("non-fast-forward") || err.to_string().contains("rejected") {
+                    // Restore the local dirty ref to the pre-upload base so a failed push
+                    // does not leave the workspace in a permanently diverged state.
+                    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &base_hash)?;
                     continue;
                 }
-                return Err(e);
+                return Err(err);
             }
         }
     }
 
-    anyhow::bail!("Upload failed after {} attempts due to concurrent changes on the server", MAX_RETRIES)
+    anyhow::bail!(
+        "Upload failed after {} attempts due to concurrent changes on the server",
+        MAX_RETRIES
+    )
 }
 
-// ── Git subprocess helpers ───────────────────────────────────────────────────
+fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    let local_map = read_materialized_repo(ctx)?;
+
+    if maps_equal(&base_map, &local_map) {
+        return Ok(false);
+    }
+
+    commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        base_hash.as_deref(),
+        &local_map,
+        "Force-upload from Scratch CLI",
+    )?;
+    git_push_force(&ctx.bare_repo, token)?;
+    Ok(true)
+}
 
 fn git_auth_args(token: &str) -> [String; 2] {
-    ["-c".to_string(), format!("http.extraHeader=Authorization: API-Token {}", token)]
+    [
+        "-c".to_string(),
+        format!("http.extraHeader=Authorization: API-Token {}", token),
+    ]
 }
 
-fn git_fetch(repo_dir: &Path, token: &str) -> anyhow::Result<()> {
+fn git_fetch(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
     let auth = git_auth_args(token);
     let output = Command::new("git")
-        .current_dir(repo_dir)
+        .arg(format!("--git-dir={}", bare_repo.display()))
         .args(&auth)
         .args(["fetch", "origin", "refs/heads/dirty:refs/remotes/origin/dirty", "--force"])
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git fetch failed: {}", stderr);
+        anyhow::bail!("git fetch failed: {}", stderr.trim());
     }
     Ok(())
 }
 
-fn git_rev_parse(repo_dir: &Path, rev: &str) -> anyhow::Result<String> {
+fn git_fetch_main(bare_repo: &Path, token: &str) {
+    let auth = git_auth_args(token);
+    let _ = Command::new("git")
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(&auth)
+        .args(["fetch", "origin", "refs/heads/main:refs/remotes/origin/main", "--force"])
+        .output();
+}
+
+fn git_rev_parse(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
     let output = Command::new("git")
-        .current_dir(repo_dir)
+        .arg(format!("--git-dir={}", bare_repo.display()))
         .args(["rev-parse", rev])
         .output()?;
     if !output.status.success() {
-        anyhow::bail!("git rev-parse {} failed", rev);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git rev-parse {} failed: {}", rev, stderr.trim());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn git_reset_hard(repo_dir: &Path, hash: &str) -> anyhow::Result<()> {
+fn git_rev_parse_optional(bare_repo: &Path, rev: &str) -> anyhow::Result<Option<String>> {
     let output = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["reset", "--hard", hash])
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(["rev-parse", rev])
         .output()?;
     if !output.status.success() {
-        anyhow::bail!("git reset --hard failed");
+        return Ok(None);
     }
-    Ok(())
+    Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
 }
 
-/// Ensure .scratchmd is listed in .git/info/exclude so git never tracks it.
-/// This is a per-clone local exclude — never committed or pushed.
-pub fn ensure_local_excludes(repo_dir: &Path) {
-    let exclude_path = repo_dir.join(".git/info/exclude");
-    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
-    if !existing.lines().any(|l| l.trim() == ".scratchmd") {
-        let mut content = existing;
-        if !content.ends_with('\n') && !content.is_empty() {
-            content.push('\n');
-        }
-        content.push_str(".scratchmd\n");
-        let _ = std::fs::write(&exclude_path, content);
-    }
-}
-
-fn git_add_all(repo_dir: &Path) -> anyhow::Result<()> {
+fn git_update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
     let output = Command::new("git")
-        .current_dir(repo_dir)
-        .args(["add", "-A"])
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!("git add -A failed");
-    }
-    Ok(())
-}
-
-fn git_commit(repo_dir: &Path, message: &str) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .current_dir(repo_dir)
-        .args([
-            "-c", "user.name=Scratch CLI",
-            "-c", "user.email=cli@scratch.md",
-            "commit", "-m", message, "--allow-empty",
-        ])
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!("git commit failed");
-    }
-    Ok(())
-}
-
-fn git_push(repo_dir: &Path, token: &str) -> anyhow::Result<()> {
-    let auth = git_auth_args(token);
-    let output = Command::new("git")
-        .current_dir(repo_dir)
-        .args(&auth)
-        .args(["push", "origin", "dirty:dirty"])
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(["update-ref", refname, object])
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git push failed: {}", stderr);
+        anyhow::bail!("git update-ref {} failed: {}", refname, stderr.trim());
     }
     Ok(())
 }
 
-// ── Reading git trees ────────────────────────────────────────────────────────
+fn git_push(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
+    let auth = git_auth_args(token);
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(&auth)
+        .args(["push", "origin", "refs/heads/dirty:dirty"])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git push failed: {}", stderr.trim());
+    }
+    Ok(())
+}
 
-/// Read all files from a commit tree into a FileMap.
-/// Uses `git cat-file --batch` to fetch all blob contents in a single subprocess
-/// instead of one subprocess per file.
-fn read_git_tree(repo_dir: &Path, hash: &str) -> anyhow::Result<FileMap> {
+fn git_push_force(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
+    let auth = git_auth_args(token);
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(&auth)
+        .args(["push", "--force", "origin", "refs/heads/dirty:dirty"])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git push --force failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+fn materialize_treeish_to_worktree(bare_repo: &Path, treeish: &str, work_tree: &Path) -> anyhow::Result<()> {
+    clear_dir_contents(work_tree, true)?;
+    std::fs::create_dir_all(work_tree)?;
+
+    let output = Command::new("git")
+        .current_dir(work_tree)
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .arg(format!("--work-tree={}", work_tree.display()))
+        .args(["checkout", treeish, "--", "."])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("pathspec '.' did not match any file(s) known to git") && treeish_is_empty(bare_repo, treeish)? {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "git checkout {} failed for {}: {}",
+            treeish,
+            bare_repo.display(),
+            stderr.trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn treeish_is_empty(bare_repo: &Path, treeish: &str) -> anyhow::Result<bool> {
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(["ls-tree", "-r", "--name-only", treeish])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "git ls-tree {} failed for {}: {}",
+            treeish,
+            bare_repo.display(),
+            stderr.trim()
+        );
+    }
+
+    Ok(output.stdout.is_empty())
+}
+
+fn commit_file_map_to_dirty_ref(
+    bare_repo: &Path,
+    parent_hash: Option<&str>,
+    files: &FileMap,
+    message: &str,
+) -> anyhow::Result<String> {
+    let staging_root = create_staging_dir()?;
+    let result = (|| {
+        materialize_full_repo_state(&staging_root, files)?;
+        let index_path = staging_root.join(".git-index");
+
+        if let Some(parent_hash) = parent_hash {
+            git_read_tree(bare_repo, &index_path, parent_hash)?;
+        }
+
+        git_add_all_with_index(bare_repo, &staging_root, &index_path)?;
+        let tree_hash = git_write_tree(bare_repo, &index_path)?;
+        let commit_hash = git_commit_tree(bare_repo, &tree_hash, parent_hash, message)?;
+        git_update_ref(&bare_repo, "refs/heads/dirty", &commit_hash)?;
+        Ok(commit_hash)
+    })();
+
+    let _ = std::fs::remove_dir_all(&staging_root);
+    result
+}
+
+fn create_staging_dir() -> anyhow::Result<PathBuf> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("scratchmd-stage-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+fn materialize_full_repo_state(root: &Path, files: &FileMap) -> anyhow::Result<()> {
+    for (rel_path, content) in files {
+        let full_path = root.join(rel_path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(full_path, content)?;
+    }
+    Ok(())
+}
+
+fn git_read_tree(bare_repo: &Path, index_path: &Path, treeish: &str) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .env("GIT_INDEX_FILE", index_path)
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(["read-tree", treeish])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git read-tree {} failed: {}", treeish, stderr.trim());
+    }
+    Ok(())
+}
+
+fn git_add_all_with_index(bare_repo: &Path, work_tree: &Path, index_path: &Path) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .env("GIT_INDEX_FILE", index_path)
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .arg(format!("--work-tree={}", work_tree.display()))
+        .args(["add", "-A"])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git add -A failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+fn git_write_tree(bare_repo: &Path, index_path: &Path) -> anyhow::Result<String> {
+    let output = Command::new("git")
+        .env("GIT_INDEX_FILE", index_path)
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .args(["write-tree"])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git write-tree failed: {}", stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_commit_tree(
+    bare_repo: &Path,
+    tree_hash: &str,
+    parent_hash: Option<&str>,
+    message: &str,
+) -> anyhow::Result<String> {
+    let mut command = Command::new("git");
+    command
+        .env("GIT_AUTHOR_NAME", "Scratch CLI")
+        .env("GIT_AUTHOR_EMAIL", "cli@scratch.md")
+        .env("GIT_COMMITTER_NAME", "Scratch CLI")
+        .env("GIT_COMMITTER_EMAIL", "cli@scratch.md")
+        .arg(format!("--git-dir={}", bare_repo.display()))
+        .arg("commit-tree")
+        .arg(tree_hash);
+
+    if let Some(parent_hash) = parent_hash {
+        command.arg("-p").arg(parent_hash);
+    }
+
+    let output = command.arg("-m").arg(message).output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git commit-tree failed: {}", stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
     let ls_output = Command::new("git")
-        .current_dir(repo_dir)
+        .arg(format!("--git-dir={}", bare_repo.display()))
         .args(["ls-tree", "-r", hash])
         .output()?;
 
@@ -615,11 +780,9 @@ fn read_git_tree(repo_dir: &Path, hash: &str) -> anyhow::Result<FileMap> {
         return Ok(HashMap::new());
     }
 
-    // Collect (path, blob_hash) pairs
     let stdout = String::from_utf8_lossy(&ls_output.stdout);
     let mut entries: Vec<(String, String)> = Vec::new();
     for line in stdout.lines() {
-        // Format: "100644 blob <blob-hash>\t<path>"
         if let Some((info, path)) = line.split_once('\t') {
             let parts: Vec<&str> = info.split_whitespace().collect();
             if parts.len() >= 3 && parts[1] == "blob" {
@@ -632,54 +795,54 @@ fn read_git_tree(repo_dir: &Path, hash: &str) -> anyhow::Result<FileMap> {
         return Ok(HashMap::new());
     }
 
-    // Batch-read all blobs in a single subprocess via stdin/stdout
-    use std::io::Write as _;
-    use std::process::Stdio;
     let mut child = Command::new("git")
-        .current_dir(repo_dir)
+        .arg(format!("--git-dir={}", bare_repo.display()))
         .args(["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
 
-    let hashes: String = entries.iter().map(|(_, h)| format!("{}\n", h)).collect();
+    let hashes: String = entries.iter().map(|(_, hash)| format!("{hash}\n")).collect();
     child.stdin.take().unwrap().write_all(hashes.as_bytes())?;
-
     let batch_output = child.wait_with_output()?;
     let data = batch_output.stdout;
 
-    // Parse batch output: "<hash> blob <size>\n<content>\n" per entry
     let mut map = FileMap::new();
     let mut cursor = 0usize;
     for (path, _) in &entries {
-        let header_end = data[cursor..].iter().position(|&b| b == b'\n')
+        let header_end = data[cursor..]
+            .iter()
+            .position(|&byte| byte == b'\n')
             .ok_or_else(|| anyhow::anyhow!("unexpected git cat-file batch output"))?;
         let header = std::str::from_utf8(&data[cursor..cursor + header_end])?;
         cursor += header_end + 1;
 
-        let size: usize = header.split_whitespace()
+        let size: usize = header
+            .split_whitespace()
             .nth(2)
-            .and_then(|s| s.parse().ok())
+            .and_then(|value| value.parse().ok())
             .ok_or_else(|| anyhow::anyhow!("invalid batch header: {}", header))?;
 
         let content = normalize_crlf(data[cursor..cursor + size].to_vec());
-        cursor += size + 1; // +1 for trailing newline after content
+        cursor += size + 1;
         map.insert(path.clone(), content);
     }
 
     Ok(map)
 }
 
-// ── Reading local disk ───────────────────────────────────────────────────────
-
-/// Read all local files into a FileMap, skipping .git, .scratchmd, and dotfiles.
-fn read_disk(root: &Path) -> anyhow::Result<FileMap> {
+fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
     let mut map = FileMap::new();
-    walk_disk(root, root, &mut map)?;
+    read_dirty_disk(&ctx.dirty_dir, &ctx.dirty_dir, &mut map)?;
+    read_scratch_disk(&ctx.scratch_dir, &ctx.scratch_dir, &mut map)?;
     Ok(map)
 }
 
-fn walk_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
+fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
     for entry in std::fs::read_dir(dir)?.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -687,133 +850,204 @@ fn walk_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
 
         if ft.is_dir() {
             match name_str.as_ref() {
-                ".git" | "syncs" => continue,
-                // Allow .scratch and .publish-plans (which lives inside .scratch)
-                n if n.starts_with('.') && n != ".scratch" && n != ".publish-plans" => continue,
-                _ => walk_disk(root, &entry.path(), map)?,
+                "syncs" => continue,
+                value if value.starts_with('.') => continue,
+                _ => read_dirty_disk(root, &entry.path(), map)?,
             }
         } else if ft.is_file() {
-            // Skip dotfiles (but .scratch/ contents are not dotfiles themselves)
             if name_str.starts_with('.') {
                 continue;
             }
-            let rel = entry.path().strip_prefix(root)?.to_slash_lossy().to_string();
-            let content = std::fs::read(entry.path())?;
-            let content = normalize_crlf(content);
+            let rel = entry.path().strip_prefix(root)?.to_slash_lossy();
+            let content = normalize_crlf(std::fs::read(entry.path())?);
             map.insert(rel, content);
         }
     }
+
     Ok(())
 }
 
-// ── Three-way merge ──────────────────────────────────────────────────────────
+fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
 
-enum MergeAction {
-    KeepLocal { path: String, content: Option<Vec<u8>>, warning: Option<String> },
-    WriteRemote { path: String, content: Option<Vec<u8>> },
-    Delete { path: String, warning: Option<String> },
-    Merge { path: String, base: Vec<u8>, local: Vec<u8>, remote: Vec<u8> },
-}
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let ft = entry.file_type()?;
 
-impl MergeAction {
-    fn path(&self) -> &str {
-        match self {
-            Self::KeepLocal { path, .. } => path,
-            Self::WriteRemote { path, .. } => path,
-            Self::Delete { path, .. } => path,
-            Self::Merge { path, .. } => path,
+        if ft.is_dir() {
+            if name_str.starts_with('.') && name_str != ".publish-plans" {
+                continue;
+            }
+            read_scratch_disk(root, &entry.path(), map)?;
+        } else if ft.is_file() {
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let rel = entry.path().strip_prefix(root)?.to_slash_lossy();
+            let content = normalize_crlf(std::fs::read(entry.path())?);
+            map.insert(format!(".scratch/{rel}"), content);
         }
     }
+
+    Ok(())
 }
 
-fn compute_merge_actions(
-    base: &FileMap,
-    local: &FileMap,
-    remote: &FileMap,
-) -> Vec<MergeAction> {
+fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Result<()> {
+    clear_dir_contents(&ctx.dirty_dir, false)?;
+    clear_dir_contents(&ctx.scratch_dir, true)?;
+    std::fs::create_dir_all(&ctx.dirty_dir)?;
+    std::fs::create_dir_all(&ctx.scratch_dir)?;
+
+    for (rel_path, content) in map {
+        if let Some(scratch_rel) = rel_path.strip_prefix(".scratch/") {
+            write_file(&ctx.scratch_dir.join(scratch_rel), content)?;
+        } else if !rel_path.starts_with(".scratch") {
+            write_file(&ctx.dirty_dir.join(rel_path), content)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn clear_dir_contents(dir: &Path, remove_hidden: bool) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !remove_hidden && name.starts_with('.') {
+            continue;
+        }
+
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(path)?;
+        } else {
+            std::fs::remove_file(path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+enum MergeAction {
+    KeepLocal {
+        path: String,
+        content: Option<Vec<u8>>,
+        warning: Option<String>,
+    },
+    WriteRemote {
+        path: String,
+        content: Option<Vec<u8>>,
+    },
+    Delete {
+        path: String,
+        warning: Option<String>,
+    },
+    Merge {
+        path: String,
+        base: Vec<u8>,
+        local: Vec<u8>,
+        remote: Vec<u8>,
+    },
+}
+
+fn compute_merge_actions(base: &FileMap, local: &FileMap, remote: &FileMap) -> Vec<MergeAction> {
     let mut all_paths: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for k in base.keys() { all_paths.insert(k); }
-    for k in local.keys() { all_paths.insert(k); }
-    for k in remote.keys() { all_paths.insert(k); }
+    for key in base.keys() {
+        all_paths.insert(key);
+    }
+    for key in local.keys() {
+        all_paths.insert(key);
+    }
+    for key in remote.keys() {
+        all_paths.insert(key);
+    }
 
     let mut actions = Vec::new();
 
     for path in all_paths {
-        let base_c = base.get(path);
-        let local_c = local.get(path);
-        let remote_c = remote.get(path);
+        let base_content = base.get(path);
+        let local_content = local.get(path);
+        let remote_content = remote.get(path);
 
-        let local_changed = local_c != base_c;
-        let remote_changed = remote_c != base_c;
+        let local_changed = local_content != base_content;
+        let remote_changed = remote_content != base_content;
 
         if !local_changed {
-            // Local unchanged — follow remote
-            match remote_c {
-                Some(rc) => actions.push(MergeAction::WriteRemote {
+            match remote_content {
+                Some(content) => actions.push(MergeAction::WriteRemote {
                     path: path.to_string(),
-                    content: Some(rc.clone()),
+                    content: Some(content.clone()),
                 }),
-                None if base_c.is_some() => {
-                    actions.push(MergeAction::Delete { path: path.to_string(), warning: None });
-                }
-                None => {} // Not in any tree
-            }
-        } else if !remote_changed {
-            // Remote unchanged — keep local
-            match local_c {
-                Some(lc) => actions.push(MergeAction::KeepLocal {
+                None if base_content.is_some() => actions.push(MergeAction::Delete {
                     path: path.to_string(),
-                    content: Some(lc.clone()),
                     warning: None,
                 }),
-                None => {
-                    actions.push(MergeAction::Delete { path: path.to_string(), warning: None });
-                }
+                None => {}
+            }
+        } else if !remote_changed {
+            match local_content {
+                Some(content) => actions.push(MergeAction::KeepLocal {
+                    path: path.to_string(),
+                    content: Some(content.clone()),
+                    warning: None,
+                }),
+                None => actions.push(MergeAction::Delete {
+                    path: path.to_string(),
+                    warning: None,
+                }),
             }
         } else {
-            // Both changed
-            match (local_c, remote_c) {
-                (Some(lc), Some(rc)) => {
-                    if let Some(bc) = base_c {
+            match (local_content, remote_content) {
+                (Some(local_content), Some(remote_content)) => {
+                    if let Some(base_content) = base_content {
                         actions.push(MergeAction::Merge {
                             path: path.to_string(),
-                            base: bc.clone(),
-                            local: lc.clone(),
-                            remote: rc.clone(),
+                            base: base_content.clone(),
+                            local: local_content.clone(),
+                            remote: remote_content.clone(),
                         });
                     } else {
-                        // Both added — local wins
                         actions.push(MergeAction::KeepLocal {
                             path: path.to_string(),
-                            content: Some(lc.clone()),
+                            content: Some(local_content.clone()),
                             warning: None,
                         });
                     }
                 }
-                (Some(lc), None) => {
-                    // Local changed, remote deleted — keep local with warning
-                    actions.push(MergeAction::KeepLocal {
-                        path: path.to_string(),
-                        content: Some(lc.clone()),
-                        warning: Some(format!(
-                            "Remote deleted {} but local has changes; keeping local version",
-                            path
-                        )),
-                    });
-                }
-                (None, Some(rc)) => {
-                    // Local deleted, remote changed — write remote
-                    actions.push(MergeAction::WriteRemote {
-                        path: path.to_string(),
-                        content: Some(rc.clone()),
-                    });
-                }
-                (None, None) => {
-                    actions.push(MergeAction::Delete { path: path.to_string(), warning: None });
-                }
+                (Some(local_content), None) => actions.push(MergeAction::KeepLocal {
+                    path: path.to_string(),
+                    content: Some(local_content.clone()),
+                    warning: Some(format!(
+                        "Remote deleted {} but local has changes; keeping local version",
+                        path
+                    )),
+                }),
+                (None, Some(remote_content)) => actions.push(MergeAction::WriteRemote {
+                    path: path.to_string(),
+                    content: Some(remote_content.clone()),
+                }),
+                (None, None) => actions.push(MergeAction::Delete {
+                    path: path.to_string(),
+                    warning: None,
+                }),
             }
         }
     }
+
     actions
 }
 
@@ -823,14 +1057,21 @@ fn merge_content(
     local: Option<&Vec<u8>>,
     remote: Option<&Vec<u8>>,
 ) -> Vec<u8> {
-    // Binary files — local wins
-    if local.map(is_binary).unwrap_or(false) || remote.map(is_binary).unwrap_or(false) {
+    if local.map(|value| is_binary(value)).unwrap_or(false)
+        || remote.map(|value| is_binary(value)).unwrap_or(false)
+    {
         return local.or(remote).cloned().unwrap_or_default();
     }
 
-    let base_str = base.map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
-    let local_str = local.map(|l| String::from_utf8_lossy(l).into_owned()).unwrap_or_default();
-    let remote_str = remote.map(|r| String::from_utf8_lossy(r).into_owned()).unwrap_or_default();
+    let base_str = base
+        .map(|value| String::from_utf8_lossy(value).into_owned())
+        .unwrap_or_default();
+    let local_str = local
+        .map(|value| String::from_utf8_lossy(value).into_owned())
+        .unwrap_or_default();
+    let remote_str = remote
+        .map(|value| String::from_utf8_lossy(value).into_owned())
+        .unwrap_or_default();
 
     match crate::shared::merge::merge_file_contents(&base_str, &local_str, &remote_str) {
         Ok(merged) => merged.into_bytes(),
@@ -838,138 +1079,88 @@ fn merge_content(
     }
 }
 
-fn is_binary(data: &Vec<u8>) -> bool {
-    data.contains(&0u8)
+fn is_binary(data: &[u8]) -> bool {
+    data.contains(&0)
 }
 
 fn normalize_crlf(data: Vec<u8>) -> Vec<u8> {
-    if !data.contains(&b'\r') {
+    if !data.contains(&b'\r') || is_binary(&data) {
         return data;
     }
-    if is_binary(&data) {
-        return data;
-    }
+
     let mut out = Vec::with_capacity(data.len());
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == b'\r' && i + 1 < data.len() && data[i + 1] == b'\n' {
-            // skip CR
+    let mut index = 0;
+    while index < data.len() {
+        if data[index] == b'\r' && index + 1 < data.len() && data[index + 1] == b'\n' {
+            index += 1;
         } else {
-            out.push(data[i]);
+            out.push(data[index]);
         }
-        i += 1;
+        index += 1;
     }
     out
 }
 
-/// Returns true for phase files at `{folder}/.scratch/publish-plan-{ts}/{phase}/`.
-fn is_plan_phase_file(p: &str) -> bool {
-    p.contains("/.scratch/publish-plan-")
+fn is_plan_phase_file(path: &str) -> bool {
+    path.contains("/.scratch/publish-plan-")
 }
 
-fn maps_equal(a: &FileMap, b: &FileMap) -> bool {
-    if a.len() != b.len() {
+fn maps_equal(left: &FileMap, right: &FileMap) -> bool {
+    if left.len() != right.len() {
         return false;
     }
-    a.iter().all(|(k, v)| b.get(k).map(|bv| bv == v).unwrap_or(false))
+    left.iter()
+        .all(|(key, value)| right.get(key).map(|other| other == value).unwrap_or(false))
 }
-
-// ── Marker stashing ──────────────────────────────────────────────────────────
-
-/// Stash .scratchmd files so they survive a git reset --hard.
-fn stash_markers(repo_dir: &Path, stash: &mut FileMap) {
-    // Root marker
-    let root_marker = repo_dir.join(".scratchmd");
-    if let Ok(data) = std::fs::read(&root_marker) {
-        stash.insert(".scratchmd".to_string(), data);
-    }
-
-    // Data folder markers in subdirectories
-    if let Ok(entries) = std::fs::read_dir(repo_dir) {
-        for entry in entries.flatten() {
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            if entry.file_name().to_string_lossy() == ".git" {
-                continue;
-            }
-            let marker = entry.path().join(".scratchmd");
-            if let Ok(data) = std::fs::read(&marker) {
-                let rel = format!("{}/.scratchmd", entry.file_name().to_string_lossy());
-                stash.insert(rel, data);
-            }
-        }
-    }
-}
-
-// ── Connector directory discovery ────────────────────────────────────────────
-
-/// Find connector subdirectories (V2 workbooks): dirs with a .scratchmd connector marker + .git.
-fn find_connector_dirs(wb_dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(wb_dir) else { return Vec::new() };
-    let mut dirs = Vec::new();
-    for entry in entries.flatten() {
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let subdir = entry.path();
-        // Must have a connector marker
-        let marker_path = subdir.join(".scratchmd");
-        let Ok(content) = std::fs::read_to_string(&marker_path) else { continue };
-        let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&content) else { continue };
-        if value.get("connector").is_none() {
-            continue;
-        }
-        // Must have .git
-        if subdir.join(".git").exists() {
-            dirs.push(subdir);
-        }
-    }
-    dirs
-}
-
-// ── Result aggregation and printing ─────────────────────────────────────────
 
 fn aggregate_download(results: &[DownloadResult]) -> DownloadResult {
-    let mut agg = DownloadResult { status: "up_to_date".to_string(), ..Default::default() };
-    for r in results {
-        if r.status == "downloaded" {
+    let mut agg = DownloadResult {
+        status: "up_to_date".to_string(),
+        ..Default::default()
+    };
+    for result in results {
+        if result.status == "downloaded" {
             agg.status = "downloaded".to_string();
         }
-        agg.files_updated += r.files_updated;
-        agg.files_created += r.files_created;
-        agg.files_deleted += r.files_deleted;
-        agg.files_merged += r.files_merged;
-        agg.conflicts_auto_resolved += r.conflicts_auto_resolved;
-        agg.messages.extend(r.messages.iter().cloned());
+        agg.files_updated += result.files_updated;
+        agg.files_created += result.files_created;
+        agg.files_deleted += result.files_deleted;
+        agg.files_merged += result.files_merged;
+        agg.conflicts_auto_resolved += result.conflicts_auto_resolved;
+        agg.messages.extend(result.messages.iter().cloned());
     }
     agg
 }
 
 fn aggregate_upload(results: &[UploadResult]) -> UploadResult {
-    let mut agg = UploadResult { status: "no_changes".to_string(), ..Default::default() };
-    for r in results {
-        if r.status == "uploaded" {
+    let mut agg = UploadResult {
+        status: "no_changes".to_string(),
+        ..Default::default()
+    };
+    for result in results {
+        if result.status == "uploaded" {
             agg.status = "uploaded".to_string();
         }
-        agg.files_uploaded += r.files_uploaded;
-        agg.files_merged += r.files_merged;
-        agg.files_deleted += r.files_deleted;
-        agg.conflicts_auto_resolved += r.conflicts_auto_resolved;
-        agg.retries += r.retries;
-        agg.messages.extend(r.messages.iter().cloned());
-        agg.uploaded_paths.extend(r.uploaded_paths.iter().cloned());
-        agg.merged_paths.extend(r.merged_paths.iter().cloned());
-        agg.deleted_paths.extend(r.deleted_paths.iter().cloned());
+        if result.status == "up_to_date" && agg.status == "no_changes" {
+            agg.status = "up_to_date".to_string();
+        }
+        agg.files_uploaded += result.files_uploaded;
+        agg.files_merged += result.files_merged;
+        agg.files_deleted += result.files_deleted;
+        agg.conflicts_auto_resolved += result.conflicts_auto_resolved;
+        agg.retries += result.retries;
+        agg.messages.extend(result.messages.iter().cloned());
+        agg.uploaded_paths.extend(result.uploaded_paths.iter().cloned());
+        agg.merged_paths.extend(result.merged_paths.iter().cloned());
+        agg.deleted_paths.extend(result.deleted_paths.iter().cloned());
     }
     agg
 }
 
-fn print_file_list(label: &str, paths: &[String]) {
+fn print_file_list(paths: &[String]) {
     if paths.is_empty() {
         return;
     }
-    let _ = label; // label not shown per-file; category is clear from context
     let limit = paths.len().min(10);
     for path in &paths[..limit] {
         println!("  {}", path);
@@ -997,13 +1188,16 @@ fn print_download_result(result: &DownloadResult, elapsed_ms: u128, json: bool) 
         return Ok(());
     }
 
-    let total =
-        result.files_created + result.files_updated + result.files_merged + result.files_deleted;
+    let total = result.files_created + result.files_updated + result.files_merged + result.files_deleted;
     let elapsed = format_elapsed(elapsed_ms);
     if total == 0 {
         println!(
             "{} ({})",
-            if result.status == "up_to_date" { "Already up to date." } else { "No changes." },
+            if result.status == "up_to_date" {
+                "Already up to date."
+            } else {
+                "No changes."
+            },
             elapsed
         );
         return Ok(());
@@ -1024,18 +1218,10 @@ fn print_download_result(result: &DownloadResult, elapsed_ms: u128, json: bool) 
         parts.push(format!("{} deleted", result.files_deleted));
     }
     println!("{} ({})", parts.join(", "), elapsed);
-    for msg in &result.messages {
-        println!("Warning: {}", msg);
+    for message in &result.messages {
+        println!("Warning: {}", message);
     }
     Ok(())
-}
-
-fn format_elapsed(ms: u128) -> String {
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    }
 }
 
 fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> anyhow::Result<()> {
@@ -1084,78 +1270,54 @@ fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> a
         parts.push(format!("{} deleted", result.files_deleted));
     }
     println!("{} ({})", parts.join(", "), elapsed);
-    print_file_list("uploaded", &result.uploaded_paths);
-    print_file_list("merged", &result.merged_paths);
-    print_file_list("deleted", &result.deleted_paths);
-    for msg in &result.messages {
-        println!("Warning: {}", msg);
+    print_file_list(&result.uploaded_paths);
+    print_file_list(&result.merged_paths);
+    print_file_list(&result.deleted_paths);
+    for message in &result.messages {
+        println!("Warning: {}", message);
     }
     Ok(())
 }
 
-// ── Index rebuild ─────────────────────────────────────────────────────────────
+fn format_elapsed(ms: u128) -> String {
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    }
+}
 
-/// Rebuild the SQLite index for one connector after master is updated.
-/// Silently skips if master worktree or db parent dir doesn't exist.
-pub fn rebuild_index_for_conn(workspace_dir: &Path, conn_dir_name: &str, quiet: bool) {
-    let master = crate::shared::index::master_dir(workspace_dir, conn_dir_name);
-    if !master.exists() {
+fn rebuild_index_for_conn(ctx: &ConnectionContext, quiet: bool) {
+    if !ctx.master_dir.exists() {
         return;
     }
-    let db = crate::shared::index::db_path(workspace_dir, conn_dir_name);
-    if let Some(parent) = db.parent() {
+    if let Some(parent) = ctx.db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if !quiet {
-        eprint!("  Rebuilding index for {}... ", conn_dir_name);
+        eprint!("  Rebuilding index for {}... ", ctx.conn_dir_name);
     }
-    match crate::shared::index::build(&master, &db) {
-        Ok(n) => {
+    match crate::shared::index::build(&ctx.master_dir, &ctx.db_path) {
+        Ok(count) => {
             if !quiet {
-                eprintln!("{n} file(s)");
+                eprintln!("{count} file(s)");
             }
         }
-        Err(e) => {
+        Err(err) => {
             if !quiet {
-                eprintln!("warning: index rebuild failed: {e}");
+                eprintln!("warning: index rebuild failed: {err}");
             }
         }
     }
 }
 
-// ── Master worktree update ────────────────────────────────────────────────────
-
-/// Pull the master worktree to the latest origin/main.
-/// Silently skips if the worktree does not exist yet.
-fn update_master_worktree(conn_dir: &Path, workspace_dir: &Path, conn_dir_name: &str, token: &str) -> anyhow::Result<()> {
-    let master = crate::shared::index::master_dir(workspace_dir, conn_dir_name);
-    if !master.exists() {
+fn update_master_worktree(ctx: &ConnectionContext, token: &str) -> anyhow::Result<()> {
+    git_fetch_main(&ctx.bare_repo, token);
+    let Some(main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")? else {
         return Ok(());
-    }
-
-    // Fetch main from the connector dir (has remote config + auth)
-    let auth_header = format!("Authorization: API-Token {}", token);
-    let _ = Command::new("git")
-        .current_dir(conn_dir)
-        .args([
-            "-c", &format!("http.extraHeader={}", auth_header),
-            "fetch", "--quiet", "origin", "refs/heads/main:refs/remotes/origin/main",
-        ])
-        .status();
-
-    // Reset the master worktree to origin/main
-    let status = Command::new("git")
-        .current_dir(&master)
-        .args(["reset", "--hard", "origin/main"])
-        .status()?;
-
-    if !status.success() {
-        eprintln!("  Warning: could not update master worktree for {}", conn_dir_name);
-    }
-    Ok(())
+    };
+    materialize_treeish_to_worktree(&ctx.bare_repo, &main_hash, &ctx.master_dir)
 }
-
-// ── Path utility ─────────────────────────────────────────────────────────────
 
 trait ToSlashLossy {
     fn to_slash_lossy(&self) -> String;
@@ -1164,5 +1326,91 @@ trait ToSlashLossy {
 impl ToSlashLossy for Path {
     fn to_slash_lossy(&self) -> String {
         self.to_string_lossy().replace('\\', "/")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn workspace_marker(connections: &[(&str, &str)]) -> markers::WorkspaceMarker {
+        markers::WorkspaceMarker {
+            version: "3".to_string(),
+            workbook: markers::WorkbookRef {
+                id: "wkb_test".to_string(),
+                name: "Test".to_string(),
+                org_id: "org123".to_string(),
+                server_url: "http://localhost".to_string(),
+                initialized_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+            connections: connections
+                .iter()
+                .map(|(dir_name, repo_path)| markers::ConnectionEntry {
+                    id: format!("conn_{dir_name}"),
+                    display_name: (*dir_name).to_string(),
+                    service: "AIRTABLE".to_string(),
+                    repo_path: (*repo_path).to_string(),
+                    dir_name: (*dir_name).to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn detect_selected_connection_from_connection_subdir() {
+        let workspace = Path::new("/tmp/workspace");
+        let cwd = Path::new("/tmp/workspace/AIRTABLE - Main/posts");
+        let marker = workspace_marker(&[("AIRTABLE - Main", "org/wkb/conn")]);
+
+        assert_eq!(
+            detect_selected_connection(workspace, cwd, &marker),
+            Some("AIRTABLE - Main".to_string())
+        );
+    }
+
+    #[test]
+    fn read_and_materialize_repo_maps_split_scratch_content() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ConnectionContext {
+            conn_dir_name: "Conn".to_string(),
+            dirty_dir: tmp.path().join("Conn"),
+            scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
+            master_dir: tmp.path().join(".scratch/connections/master/Conn"),
+            bare_repo: tmp.path().join(".repos/conn.git"),
+            db_path: tmp.path().join(".repos/conn.db"),
+        };
+
+        std::fs::create_dir_all(ctx.dirty_dir.join("posts")).unwrap();
+        std::fs::create_dir_all(ctx.scratch_dir.join("posts/publish-plan-1/create")).unwrap();
+        std::fs::create_dir_all(ctx.scratch_dir.join(".publish-plans/1")).unwrap();
+        std::fs::write(ctx.dirty_dir.join("posts/rec1.json"), "{}").unwrap();
+        std::fs::write(ctx.scratch_dir.join("posts/schema.json"), "{}").unwrap();
+        std::fs::write(
+            ctx.scratch_dir.join("posts/publish-plan-1/create/rec2.json"),
+            "{}",
+        )
+        .unwrap();
+        std::fs::write(ctx.scratch_dir.join(".publish-plans/1/plan.json"), "{}").unwrap();
+
+        let map = read_materialized_repo(&ctx).unwrap();
+        assert!(map.contains_key("posts/rec1.json"));
+        assert!(map.contains_key(".scratch/posts/schema.json"));
+        assert!(map.contains_key(".scratch/posts/publish-plan-1/create/rec2.json"));
+        assert!(map.contains_key(".scratch/.publish-plans/1/plan.json"));
+
+        let replacement = HashMap::from([
+            ("posts/next.json".to_string(), b"{\"id\":\"next\"}".to_vec()),
+            (
+                ".scratch/posts/schema.json".to_string(),
+                b"{\"schema\":{}}".to_vec(),
+            ),
+        ]);
+        materialize_local_repo(&ctx, &replacement).unwrap();
+
+        assert!(ctx.dirty_dir.join("posts/next.json").exists());
+        assert!(!ctx.dirty_dir.join("posts/rec1.json").exists());
+        assert!(ctx.scratch_dir.join("posts/schema.json").exists());
+        assert!(!ctx.scratch_dir.join(".publish-plans/1/plan.json").exists());
     }
 }

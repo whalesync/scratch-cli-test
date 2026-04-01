@@ -1,4 +1,4 @@
-import { Card, Group, Text } from '@mantine/core';
+import { Badge, Card, Group, Text } from '@mantine/core';
 import { useNavigate } from 'react-router-dom';
 import { Workspace } from '../types/workspace';
 
@@ -21,7 +21,7 @@ function formatRelativeTime(dateStr: string): string {
   return `${months}mo ago`;
 }
 
-export function WorkspaceCard({ workspace }: { workspace: Workspace }) {
+export function WorkspaceCard({ workspace, isDownloaded }: { workspace: Workspace; isDownloaded: boolean }) {
   const navigate = useNavigate();
   const folderCount = workspace.dataFolders?.length ?? 0;
 
@@ -34,9 +34,14 @@ export function WorkspaceCard({ workspace }: { workspace: Workspace }) {
       style={{ cursor: 'pointer' }}
       onClick={() => void navigate(`/workspace/${workspace.id}`)}
     >
-      <Text fw={500} size="sm" lineClamp={1}>
-        {workspace.name || 'Untitled Workspace'}
-      </Text>
+      <Group justify="space-between" align="flex-start" gap="sm">
+        <Text fw={500} size="sm" lineClamp={1}>
+          {workspace.name || 'Untitled Workspace'}
+        </Text>
+        <Badge color={isDownloaded ? 'green' : 'gray'} variant={isDownloaded ? 'light' : 'outline'}>
+          {isDownloaded ? 'Downloaded' : 'Not downloaded'}
+        </Badge>
+      </Group>
       <Group gap="xs" mt={4}>
         <Text size="xs" c="dimmed">
           {folderCount} {folderCount === 1 ? 'folder' : 'folders'}

@@ -113,6 +113,8 @@ export class AppModule implements NestModule {
         { path: '/cli/v1/workbooks/:id/git/*path', method: RequestMethod.ALL },
         // V2 per-connector git proxy (uses raw body)
         { path: '/cli/v1/workbooks/:id/connectors/:connectorAccountId/git/*path', method: RequestMethod.ALL },
+        // Workbook config git proxy (uses raw body)
+        { path: '/cli/v1/workbooks/:id/config/git/*path', method: RequestMethod.ALL },
         // MCP OAuth token endpoint (uses urlencoded body)
         { path: '/mcp-auth/token', method: RequestMethod.POST },
       )

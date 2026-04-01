@@ -230,6 +230,8 @@ pub struct ConnectorAccount {
 pub struct Workbook {
     pub id: String,
     pub name: String,
+    #[serde(rename = "orgId", default)]
+    pub org_id: String,
     #[serde(rename = "createdAt", default)]
     pub created_at: String,
     #[serde(rename = "updatedAt", default)]
@@ -240,13 +242,39 @@ pub struct Workbook {
     pub version: i32,
     #[serde(rename = "connectorAccounts", default)]
     pub connector_accounts: Vec<ConnectorAccount>,
-    #[serde(rename = "gitUrl", default)]
+    #[serde(rename = "gitUrl", alias = "configGitUrl", default)]
     pub git_url: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct WorkbookListResponse {
     pub workbooks: Vec<Workbook>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Workbook;
+
+    #[test]
+    fn workbook_deserializes_config_git_url_alias() {
+        let workbook: Workbook = serde_json::from_value(serde_json::json!({
+            "id": "wkb_1",
+            "name": "Test",
+            "orgId": "org_1",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+            "tableCount": 0,
+            "version": 2,
+            "connectorAccounts": [],
+            "configGitUrl": "http://localhost:3010/cli/v1/workbooks/wkb_1/config/git"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            workbook.git_url,
+            "http://localhost:3010/cli/v1/workbooks/wkb_1/config/git"
+        );
+    }
 }
 
 // ── Jobs ────────────────────────────────────────────────────────────────────

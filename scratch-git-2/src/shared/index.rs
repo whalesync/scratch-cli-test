@@ -1,32 +1,83 @@
 #![allow(dead_code)]
 //! SQLite file index for a connector (master-branch state).
 //!
-//! Layout on disk:
-//!   {workspace}/.scratch/connections/{connDirName}/master/   ← git worktree of main branch
-//!   {workspace}/.scratch/connections/{connDirName}/index.db  ← SQLite index
+//! Transitional path helpers live here so older CLI call sites can migrate to
+//! [`WorkspaceLayout`] incrementally.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection};
+use serde::Deserialize;
 use serde_json::Value;
+
+use super::layout::WorkspaceLayout;
 
 // ── Path helpers ─────────────────────────────────────────────────────────────
 
+pub fn scratch_dir_for_layout(layout: &WorkspaceLayout) -> PathBuf {
+    layout.scratch_root().join("connections").join("scratch")
+}
+
+pub fn conn_scratch_dir_for_layout(layout: &WorkspaceLayout, conn_dir_name: &str) -> PathBuf {
+    layout.connection_scratch_path(conn_dir_name)
+}
+
+pub fn master_dir_for_layout(layout: &WorkspaceLayout, conn_dir_name: &str) -> PathBuf {
+    layout.master_worktree_path(conn_dir_name)
+}
+
+pub fn db_path_for_layout(layout: &WorkspaceLayout, repo_id: &str) -> PathBuf {
+    layout.index_db_path(repo_id)
+}
+
 pub fn scratch_dir(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join(".scratch")
+    scratch_dir_for_layout(&WorkspaceLayout::for_cli(workspace_dir))
 }
 
 pub fn conn_scratch_dir(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
-    workspace_dir.join(".scratch/connections").join(conn_dir_name)
+    conn_scratch_dir_for_layout(&WorkspaceLayout::for_cli(workspace_dir), conn_dir_name)
 }
 
 pub fn master_dir(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
-    conn_scratch_dir(workspace_dir, conn_dir_name).join("master")
+    master_dir_for_layout(&WorkspaceLayout::for_cli(workspace_dir), conn_dir_name)
 }
 
 pub fn db_path(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
-    conn_scratch_dir(workspace_dir, conn_dir_name).join("index.db")
+    let layout = WorkspaceLayout::for_cli(workspace_dir);
+    match repo_id_for_conn_dir(workspace_dir, conn_dir_name) {
+        Some(repo_id) => db_path_for_layout(&layout, &repo_id),
+        None => workspace_dir
+            .join(".scratch")
+            .join("connections")
+            .join(conn_dir_name)
+            .join("index.db"),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceMarkerConnections {
+    #[serde(default)]
+    connections: Vec<WorkspaceMarkerConnection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceMarkerConnection {
+    #[serde(rename = "dirName", default)]
+    dir_name: String,
+    #[serde(rename = "repoPath", default)]
+    repo_path: String,
+}
+
+fn repo_id_for_conn_dir(workspace_dir: &Path, conn_dir_name: &str) -> Option<String> {
+    let marker_path = workspace_dir.join(".scratch").join(".scratchmd");
+    let content = std::fs::read_to_string(marker_path).ok()?;
+    let marker: WorkspaceMarkerConnections = serde_yaml::from_str(&content).ok()?;
+    marker
+        .connections
+        .into_iter()
+        .find(|conn| conn.dir_name == conn_dir_name && !conn.repo_path.is_empty())
+        .map(|conn| conn.repo_path)
 }
 
 // ── FK schema helpers ─────────────────────────────────────────────────────────
@@ -677,4 +728,74 @@ pub fn read_references(db_path: &Path) -> anyhow::Result<Vec<ReferenceRow>> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conn_scratch_dir, db_path, master_dir, scratch_dir};
+    use tempfile::TempDir;
+
+    #[test]
+    fn wrappers_follow_new_cli_layout_when_v3_connections_are_available() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".scratch")).unwrap();
+        std::fs::write(
+            root.join(".scratch/.scratchmd"),
+            r#"version: "3"
+workbook:
+  id: wkb_test
+  name: Test
+  serverUrl: http://localhost
+  initializedAt: "2026-01-01T00:00:00Z"
+connections:
+  - id: conn_1
+    displayName: My Conn
+    service: AIRTABLE
+    repoPath: org123/wkb_test/conn_1
+    dirName: AIRTABLE - My Conn
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            scratch_dir(root),
+            root.join(".scratch").join("connections").join("scratch")
+        );
+        assert_eq!(
+            conn_scratch_dir(root, "AIRTABLE - My Conn"),
+            root.join(".scratch").join("connections").join("scratch").join("AIRTABLE - My Conn")
+        );
+        assert_eq!(
+            master_dir(root, "AIRTABLE - My Conn"),
+            root.join(".scratch").join("connections").join("master").join("AIRTABLE - My Conn")
+        );
+        assert_eq!(
+            db_path(root, "AIRTABLE - My Conn"),
+            root.join(".repos").join("conn_1.db")
+        );
+    }
+
+    #[test]
+    fn db_path_falls_back_to_legacy_location_without_v3_connection_mapping() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".scratch")).unwrap();
+        std::fs::write(
+            root.join(".scratch/.scratchmd"),
+            r#"version: "2"
+workbook:
+  id: wkb_test
+  name: Test
+  serverUrl: http://localhost
+  initializedAt: "2026-01-01T00:00:00Z"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            db_path(root, "legacy-conn"),
+            root.join(".scratch").join("connections").join("legacy-conn").join("index.db")
+        );
+    }
 }

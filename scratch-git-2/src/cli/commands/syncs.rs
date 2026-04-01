@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::api::{self, ApiClient, Sync};
 use crate::config;
 use crate::config::markers;
+use crate::shared::layout::WorkspaceLayout;
 
 #[derive(Subcommand)]
 pub enum SyncsCommands {
@@ -54,21 +55,21 @@ pub enum SyncsCommands {
         /// Download a specific sync by ID (default: all syncs)
         #[arg(long)]
         id: Option<String>,
-        /// Output directory (default: syncs/ inside the workspace directory)
+        /// Output directory (default: .scratch/workspace/syncs/ inside the workspace directory)
         #[arg(long, short = 'o')]
         output: Option<String>,
     },
     /// Validate local sync configs (checks connections/folders exist)
     #[command(name = "validate-local")]
     ValidateLocal {
-        /// Path to a specific sync config file (default: all in .scratch/workbook/syncs/)
+        /// Path to a specific sync config file (default: all in .scratch/workspace/syncs/)
         #[arg(long)]
         sync: Option<String>,
     },
     /// Run a sync locally against files on disk
     #[command(name = "run-local")]
     RunLocal {
-        /// Path to a specific sync config file (default: all in .scratch/workbook/syncs/)
+        /// Path to a specific sync config file (default: all in .scratch/workspace/syncs/)
         #[arg(long)]
         sync: Option<String>,
     },
@@ -348,9 +349,9 @@ async fn download(
     let output_dir: PathBuf = if let Some(o) = output {
         PathBuf::from(o)
     } else {
-        // Default: syncs/ inside the workspace directory
+        // Default: .scratch/workspace/syncs/ inside the workspace directory
         match config::find_workspace_dir(workbook_id) {
-            Some(wb_dir) => wb_dir.join("syncs"),
+            Some(wb_dir) => workbook_syncs_dir(&wb_dir),
             None => anyhow::bail!(
                 "Workspace {} is not initialized locally. Run 'scratchmd workspaces init {}' first, \
                  or use --output to specify a directory.",
@@ -563,7 +564,7 @@ fn validate_local(sync_path: Option<&str>, _json: bool) -> anyhow::Result<()> {
     let wb_dir = markers::find_nearest_workspace(&cwd)
         .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
 
-    let syncs_dir = wb_dir.join(".scratch/workbook/syncs");
+    let syncs_dir = workbook_syncs_dir(&wb_dir);
     if !syncs_dir.exists() {
         anyhow::bail!(
             "syncs directory not found at {}. Run `scratchmd files download` first.",
@@ -749,18 +750,13 @@ fn split_connection_folder(folder_id: &str) -> (&str, &str) {
     }
 }
 
-/// Schema path in V2: workspace/{connection}/.scratch/{folder}/schema.json
-/// (matches how scratch-git-2 stores schemas in the git repo: .scratch/{folder}/schema.json)
-/// The file wraps the JSON Schema under a "schema" key — we extract that inner object.
 fn load_local_schema(workspace: &Path, connection: &str, folder: &str) -> Option<serde_json::Value> {
-    let path = workspace
-        .join(connection)
-        .join(".scratch")
+    let path = WorkspaceLayout::for_cli(workspace)
+        .connection_scratch_path(connection)
         .join(folder)
         .join("schema.json");
     let raw = std::fs::read_to_string(&path).ok()?;
     let outer: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    // The actual JSON Schema is nested under the "schema" key
     outer.get("schema").cloned()
 }
 
@@ -808,7 +804,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
     let wb_dir = markers::find_nearest_workspace(&cwd)
         .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
 
-    let syncs_dir = wb_dir.join(".scratch/workbook/syncs");
+    let syncs_dir = workbook_syncs_dir(&wb_dir);
     if !syncs_dir.exists() {
         anyhow::bail!(
             "syncs directory not found at {}. Run `scratchmd files download` first.",
@@ -896,7 +892,7 @@ fn build_rhai_context(wb_dir: &Path, cfg: &LocalSyncConfig) -> anyhow::Result<Rh
     engine.on_print(|_| {});
     engine.on_debug(|_, _, _| {});
 
-    let transformers_dir = wb_dir.join(".scratch/workbook/transformers");
+    let transformers_dir = workbook_transformers_dir(wb_dir);
     let mut scripts: HashMap<String, rhai::AST> = HashMap::new();
 
     for tm in &cfg.table_mappings {
@@ -919,6 +915,18 @@ fn build_rhai_context(wb_dir: &Path, cfg: &LocalSyncConfig) -> anyhow::Result<Rh
     }
 
     Ok(RhaiContext { engine, scripts })
+}
+
+fn workbook_syncs_dir(workspace_dir: &Path) -> PathBuf {
+    WorkspaceLayout::for_cli(workspace_dir)
+        .workbook_materialization_path()
+        .join("syncs")
+}
+
+fn workbook_transformers_dir(workspace_dir: &Path) -> PathBuf {
+    WorkspaceLayout::for_cli(workspace_dir)
+        .workbook_materialization_path()
+        .join("transformers")
 }
 
 fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Result<SyncResult> {

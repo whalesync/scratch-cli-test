@@ -8,12 +8,15 @@ import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { CliWorkbookController } from '../cli-workbook.controller';
 
 const WORKBOOK_ID = 'wkb_test123' as WorkbookId;
 const USER_ID = 'usr_abc';
-const ORG_ID = 'org_xyz';
+const ACTOR_ORG_ID = 'org_actor';
+const WORKBOOK_ORG_ID = 'org_workbook';
 const CONNECTOR_ID = 'ca_conn1';
 const GIT_BACKEND_URL = 'http://localhost:3101';
 
@@ -21,7 +24,7 @@ function makeReqWithUser(): RequestWithUser & Request {
   return {
     user: {
       id: USER_ID,
-      organizationId: ORG_ID,
+      organizationId: ACTOR_ORG_ID,
       createdAt: new Date(),
       updatedAt: new Date(),
       clerkId: 'clerk_1',
@@ -46,6 +49,7 @@ function makeReqWithUser(): RequestWithUser & Request {
 function makeWorkbook(overrides?: Partial<{ version: number; dataFolders: { id: string; name: string }[] }>) {
   return {
     id: WORKBOOK_ID,
+    organizationId: WORKBOOK_ORG_ID,
     name: 'Test Workbook',
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-06-01'),
@@ -63,6 +67,8 @@ describe('CliWorkbookController', () => {
   let posthogService: jest.Mocked<PostHogService>;
   let dbService: jest.Mocked<DbService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
+  let workbookRepoService: jest.Mocked<WorkbookRepoService>;
+  let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
 
   beforeEach(() => {
     workbookService = {
@@ -91,12 +97,23 @@ describe('CliWorkbookController', () => {
       resolveConnectionRepoPath: jest.fn(),
     } as unknown as jest.Mocked<ScratchGitService>;
 
+    workbookRepoService = {
+      initWorkbookRepo: jest.fn(),
+      pushSyncs: jest.fn(),
+    } as unknown as jest.Mocked<WorkbookRepoService>;
+
+    bullEnqueuerService = {
+      enqueuePublishFromGitJob: jest.fn(),
+    } as unknown as jest.Mocked<BullEnqueuerService>;
+
     controller = new CliWorkbookController(
       workbookService,
       configService,
       posthogService,
       dbService,
       scratchGitService,
+      workbookRepoService,
+      bullEnqueuerService,
     );
   });
 
@@ -116,7 +133,7 @@ describe('CliWorkbookController', () => {
           id: CONNECTOR_ID,
           displayName: 'My Airtable',
           service: 'airtable',
-          repoPath: `${ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
+          repoPath: `${ACTOR_ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
           dataFolders: [{ id: 'df2', name: 'Table1' }],
         },
       ]);
@@ -129,7 +146,7 @@ describe('CliWorkbookController', () => {
           id: CONNECTOR_ID,
           displayName: 'My Airtable',
           service: 'airtable',
-          repoPath: `${ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
+          repoPath: `${ACTOR_ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
           gitUrl: `https://scratch.test/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git`,
           dataFolders: [{ id: 'df2', name: 'Table1' }],
         },
@@ -184,6 +201,50 @@ describe('CliWorkbookController', () => {
           statusCode: 404,
           message: expect.stringContaining(CONNECTOR_ID),
         }),
+      );
+    });
+  });
+
+  describe('workbook config repo endpoints', () => {
+    it('initWorkbookRepo uses workbook organization id', async () => {
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+
+      await controller.initWorkbookRepo(makeReqWithUser(), WORKBOOK_ID);
+
+      expect(workbookRepoService.initWorkbookRepo.mock.calls).toContainEqual([WORKBOOK_ORG_ID, WORKBOOK_ID]);
+    });
+
+    it('pushSyncsToGit uses workbook organization id', async () => {
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      workbookRepoService.pushSyncs.mockResolvedValue({ count: 2 });
+
+      const result = await controller.pushSyncsToGit(makeReqWithUser(), WORKBOOK_ID);
+
+      expect(result).toEqual({ count: 2 });
+      expect(workbookRepoService.pushSyncs.mock.calls).toContainEqual([
+        WORKBOOK_ORG_ID,
+        WORKBOOK_ID,
+        expect.objectContaining({ organizationId: ACTOR_ORG_ID, userId: USER_ID }),
+      ]);
+    });
+
+    it('configGitProxy uses workbook organization id for the target repo', async () => {
+      const req = {
+        ...makeReqWithUser(),
+        url: `/cli/v1/workbooks/${WORKBOOK_ID}/config/git/info/refs?service=git-upload-pack`,
+      } as RequestWithUser & Request;
+      const res = {} as Response;
+
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      const proxySpy = jest.spyOn(controller as never, 'proxyToGitBackend' as never).mockResolvedValue(undefined);
+
+      await controller.configGitProxy(req, WORKBOOK_ID, res);
+
+      expect(proxySpy).toHaveBeenCalledWith(
+        `${GIT_BACKEND_URL}/${getWorkbookRepoPath(WORKBOOK_ORG_ID, WORKBOOK_ID)}.git/info/refs?service=git-upload-pack`,
+        WORKBOOK_ID,
+        req,
+        res,
       );
     });
   });

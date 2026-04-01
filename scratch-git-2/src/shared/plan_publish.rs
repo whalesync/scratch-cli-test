@@ -98,12 +98,35 @@ struct FkPath {
 /// Writes phase files and the plan manifest under `dirty_dir/.scratch/`.
 /// Returns `Ok(None)` if there are no changes to publish.
 /// Returns `Ok(Some(PlanResult))` with the plan metadata and per-folder reports.
+#[allow(dead_code)]
 pub fn build_publish_plan(
     conn_name: &str,
     connection_id: &str,
     dirty_dir: &Path,
     master_dir: &Path,
     db_path: &Path,
+    timestamp: &str,
+) -> anyhow::Result<Option<PlanResult>> {
+    build_publish_plan_with_scratch_dir(
+        conn_name,
+        connection_id,
+        dirty_dir,
+        master_dir,
+        db_path,
+        &dirty_dir.join(".scratch"),
+        timestamp,
+    )
+}
+
+/// Build a publish plan by diffing `dirty_dir` against `master_dir`, writing
+/// plan files under an explicit `scratch_dir`.
+pub fn build_publish_plan_with_scratch_dir(
+    conn_name: &str,
+    connection_id: &str,
+    dirty_dir: &Path,
+    master_dir: &Path,
+    db_path: &Path,
+    scratch_dir: &Path,
     timestamp: &str,
 ) -> anyhow::Result<Option<PlanResult>> {
     // 1. Collect files (skip .scratch and .git dirs)
@@ -277,8 +300,8 @@ pub fn build_publish_plan(
     let folder_reports = build_folder_reports(&entries, &modified, &added, &deleted, &ref_clear_candidates);
 
     // 10. Write plan files.
-    cleanup_old_plan_dirs(&dirty_dir.join(".scratch"));
-    let manifest_dir = dirty_dir.join(".scratch/.publish-plans");
+    cleanup_old_plan_dirs(scratch_dir);
+    let manifest_dir = scratch_dir.join(".publish-plans");
     if manifest_dir.exists() {
         for old in std::fs::read_dir(&manifest_dir)?.flatten() {
             if old.path().is_dir() {
@@ -299,9 +322,9 @@ pub fn build_publish_plan(
     for entry in &entries {
         let (folder, filename) = split_path(&entry.rel_path);
         let plan_base = if folder.is_empty() {
-            dirty_dir.join(".scratch")
+            scratch_dir.to_path_buf()
         } else {
-            dirty_dir.join(".scratch").join(&folder)
+            scratch_dir.join(&folder)
         };
         let phase_dir = plan_base.join(format!("publish-plan-{}", timestamp)).join(entry.phase.dir_name());
         std::fs::create_dir_all(&phase_dir)?;

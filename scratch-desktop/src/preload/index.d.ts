@@ -18,9 +18,18 @@ interface ScratchAuthAPI {
   openExternal: (url: string) => Promise<void>;
 }
 
+interface ScratchDesktopAPI {
+  getWorkspacesRegistry: () => Promise<Array<{ id: string; path: string }>>;
+  pickParentFolder: () => Promise<string | null>;
+  initWorkspace: (workbookId: string, cwd: string) => Promise<{ stdout: string; stderr: string }>;
+  removeWorkspace: (workbookId: string) => Promise<void>;
+  pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI;
     scratchAuth: ScratchAuthAPI;
+    scratchDesktop: ScratchDesktopAPI;
   }
 }
