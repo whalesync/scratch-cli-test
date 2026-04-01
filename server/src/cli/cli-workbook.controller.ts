@@ -356,25 +356,47 @@ export class CliWorkbookController {
   // ── Workbook repo endpoints ─────────────────────────────────────────────────
 
   /**
-   * Initialize the workbook git repo (idempotent).
-   * Creates the repo at org/{orgId}/{workbookId}/{workbookId}.git
+   * @deprecated Legacy/manual endpoint.
+   *
+   * Normal sync flows already initialize the workbook config repo automatically when syncs
+   * are created, updated, or deleted via SyncService.
+   *
+   * Initializes the workbook git repo (idempotent).
+   * Creates the repo at org/{orgId}/{workbookId}/{workbookId}.git.
    */
   @Post(':id/config/init')
   async initWorkbookRepo(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
     const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    WSLogger.warn({
+      source: 'CliWorkbookController.initWorkbookRepo',
+      message: 'Deprecated workbook config init endpoint called',
+      workbookId: id,
+      userId: actor.userId,
+    });
     await this.workbookRepoService.initWorkbookRepo(workbook.organizationId, id as WorkbookId);
     return { success: true };
   }
 
   /**
-   * Push all Postgres syncs for this workbook to the workbook git repo as JSON files.
+   * @deprecated Legacy/manual endpoint.
+   *
+   * Normal sync flows already push the current sync definitions to the workbook config repo
+   * automatically when syncs are created, updated, or deleted via SyncService.
+   *
+   * Pushes all Postgres syncs for this workbook to the workbook git repo as JSON files.
    * Converts from Postgres SyncMapping format to portable v4 format.
    */
   @Post(':id/config/push-syncs')
   async pushSyncsToGit(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ count: number }> {
     const actor = userToActor(req.user);
     const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    WSLogger.warn({
+      source: 'CliWorkbookController.pushSyncsToGit',
+      message: 'Deprecated workbook config push-syncs endpoint called',
+      workbookId: id,
+      userId: actor.userId,
+    });
     return this.workbookRepoService.pushSyncs(workbook.organizationId, id as WorkbookId, actor);
   }
 

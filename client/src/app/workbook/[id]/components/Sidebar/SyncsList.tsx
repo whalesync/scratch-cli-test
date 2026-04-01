@@ -86,9 +86,12 @@ export function SyncsList({ workbookId }: SyncsListProps) {
           </Group>
         </UnstyledButton>
 
-        {/* Push syncs to git button (admin-only) */}
+        {/* Deprecated legacy/manual push button (admin-only) */}
         {isDevToolsEnabled && (
-          <Tooltip label="Write all syncs as portable JSON to the workbook config git repo" position="right">
+          <Tooltip
+            label="Deprecated manual action. Normal sync saves already keep the workbook config git repo up to date."
+            position="right"
+          >
             <UnstyledButton
               onClick={handlePushSyncsToGit}
               disabled={isPushingToGit}
@@ -99,7 +102,7 @@ export function SyncsList({ workbookId }: SyncsListProps) {
               <Group gap={6} wrap="nowrap">
                 <StyledLucideIcon Icon={GitBranchIcon} size="sm" c="var(--mantine-color-devTool-9)" />
                 <Text12Regular c="var(--mantine-color-devTool-9)">
-                  {isPushingToGit ? 'Pushing...' : 'Push syncs to git'}
+                  {isPushingToGit ? 'Pushing...' : 'Legacy: Push syncs to git'}
                 </Text12Regular>
               </Group>
             </UnstyledButton>

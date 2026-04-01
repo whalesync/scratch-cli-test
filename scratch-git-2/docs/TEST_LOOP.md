@@ -63,9 +63,10 @@ scratchmd2 dump-index --connection "AIRTABLE - Airtable"   # scope to one connec
 In the web UI: open the workspace → Syncs tab → create or verify your syncs are configured.
 
 Then push them to the workbook config git repo (admin-only button in Syncs sidebar):
-**"Push syncs to git"**
+**"Push syncs to git" (deprecated legacy/manual path)**
 
-Or via the server init + push APIs directly:
+Normal sync create/update/delete flows now keep the workbook config repo up to date automatically.
+These server init + push APIs are deprecated and kept only for legacy/manual use:
 ```bash
 curl -X POST http://localhost:3010/cli/v1/workbooks/<workbook-id>/config/init \
      -H "Authorization: Bearer <token>"

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import {
   ConnectorPullOptions,
   createWorkbookId,
@@ -64,6 +64,24 @@ export class WorkbookService {
       },
       include: WorkbookCluster._validator.include,
     });
+
+    try {
+      await this.workbookRepoService.initWorkbookRepo(newWorkbook.organizationId, newWorkbook.id as WorkbookId);
+    } catch (error) {
+      WSLogger.error({
+        source: 'WorkbookService.create',
+        message: 'Failed to initialize workbook config repo',
+        workbookId: newWorkbook.id,
+        organizationId: newWorkbook.organizationId,
+        error,
+      });
+
+      await this.db.client.workbook.delete({
+        where: { id: newWorkbook.id },
+      });
+
+      throw new InternalServerErrorException('Failed to initialize workbook config repo');
+    }
 
     WSLogger.info({
       source: 'WorkbookService.create',

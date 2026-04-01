@@ -735,6 +735,12 @@ export const workbookApi = {
     }
   },
 
+  /**
+   * @deprecated Legacy/manual helper.
+   *
+   * Normal sync create/update/delete flows already initialize the workbook config repo and
+   * push the current sync definitions automatically on the server.
+   */
   pushSyncsToGit: async (workbookId: WorkbookId): Promise<{ count: number }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();

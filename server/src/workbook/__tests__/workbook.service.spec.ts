@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { NotFoundException } from '@nestjs/common';
+import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -45,11 +45,13 @@ describe('WorkbookService', () => {
   let posthogService: jest.Mocked<PostHogService>;
   let auditLogService: jest.Mocked<AuditLogService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
+  let workbookRepoService: jest.Mocked<WorkbookRepoService>;
 
   beforeEach(() => {
     dbService = {
       client: {
         workbook: {
+          create: jest.fn(),
           findFirst: jest.fn(),
           delete: jest.fn().mockResolvedValue({}),
         },
@@ -88,6 +90,7 @@ describe('WorkbookService', () => {
     } as unknown as jest.Mocked<FileReferenceService>;
 
     posthogService = {
+      trackCreateWorkbook: jest.fn(),
       trackRemoveWorkbook: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
@@ -102,7 +105,8 @@ describe('WorkbookService', () => {
         .fn()
         .mockImplementation((_wkbId, _actor, folderId) => Promise.resolve({ id: `job_${folderId}` })),
     } as unknown as jest.Mocked<BullEnqueuerService>;
-    const workbookRepoService = {
+    workbookRepoService = {
+      initWorkbookRepo: jest.fn().mockResolvedValue(undefined),
       deleteWorkbookRepo: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<WorkbookRepoService>;
 
@@ -118,6 +122,28 @@ describe('WorkbookService', () => {
       fileReferenceService,
       workbookRepoService,
     );
+  });
+
+  describe('create', () => {
+    it('initializes the workbook config repo after creating the workbook', async () => {
+      const createdWorkbook = createMockWorkbook(2);
+      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createdWorkbook);
+
+      const result = await service.create({ name: 'Test Workbook' }, ACTOR);
+
+      expect(result).toBe(createdWorkbook);
+      expect(workbookRepoService.initWorkbookRepo).toHaveBeenCalledWith('org_test', WORKBOOK_ID);
+    });
+
+    it('rolls back the workbook record when workbook repo init fails', async () => {
+      const createdWorkbook = createMockWorkbook(2);
+      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createdWorkbook);
+      workbookRepoService.initWorkbookRepo.mockRejectedValue(new Error('git down'));
+
+      await expect(service.create({ name: 'Test Workbook' }, ACTOR)).rejects.toThrow(InternalServerErrorException);
+
+      expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });
+    });
   });
 
   describe('fetchSchedulesByEntityId', () => {
