@@ -1,6 +1,20 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 
+type ScratchCommandEvent =
+  | {
+      sessionId: string;
+      type: 'chunk';
+      stream: 'stdout' | 'stderr';
+      chunk: string;
+    }
+  | {
+      sessionId: string;
+      type: 'exit';
+      exitCode: number;
+      error?: string;
+    };
+
 const scratchAuth = {
   getCredentials: (): Promise<{
     apiToken: string | null;
@@ -28,6 +42,26 @@ const scratchDesktop = {
   removeWorkspace: (workbookId: string): Promise<void> => ipcRenderer.invoke('scratch:remove-workspace', workbookId),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
     ipcRenderer.invoke('scratch:push-workspace-changes', workspacePath),
+  listLocalSyncs: (workspacePath: string): Promise<string[]> =>
+    ipcRenderer.invoke('scratch:list-local-syncs', workspacePath),
+  validateLocalSync: (
+    workspacePath: string,
+    syncName: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    ipcRenderer.invoke('scratch:validate-local-sync', workspacePath, syncName),
+  startRunLocalSync: (workspacePath: string, syncName: string): Promise<{ sessionId: string }> =>
+    ipcRenderer.invoke('scratch:start-run-local-sync', workspacePath, syncName),
+  startPlanPublish: (workspacePath: string): Promise<{ sessionId: string }> =>
+    ipcRenderer.invoke('scratch:start-plan-publish', workspacePath),
+  onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: ScratchCommandEvent): void => {
+      callback(payload);
+    };
+    ipcRenderer.on('scratch:command-event', listener);
+    return () => {
+      ipcRenderer.removeListener('scratch:command-event', listener);
+    };
+  },
 };
 
 if (process.contextIsolated) {

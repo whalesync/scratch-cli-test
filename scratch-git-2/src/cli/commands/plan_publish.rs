@@ -3,6 +3,7 @@
 //! This is a thin CLI wrapper around [`crate::shared::plan_publish::build_publish_plan`].
 //! See that module for the core logic, types, and file layout documentation.
 
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::config::markers;
@@ -56,10 +57,12 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
         ) {
             Ok(Some(result)) => {
                 print_report(&conn_name, &result);
+                let _ = io::stdout().flush();
                 any_changes = true;
             }
             Ok(None) => {
                 println!("  {conn_name}: nothing to publish");
+                let _ = io::stdout().flush();
             }
             Err(e) => {
                 eprintln!("  {conn_name}: planning error: {e}");
@@ -69,6 +72,7 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
 
     if !any_changes {
         println!("\nNothing to publish — all connections are in sync.");
+        let _ = io::stdout().flush();
     }
 
     Ok(())

@@ -822,7 +822,10 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
 
     for sync_file in &sync_files {
         let name = sync_file.file_stem().unwrap_or_default().to_string_lossy().to_string();
-        if !json { println!("Running sync: {}", name); }
+        if !json {
+            println!("Running sync: {}", name);
+            let _ = io::stdout().flush();
+        }
 
         let cfg: LocalSyncConfig = match std::fs::read_to_string(sync_file)
             .map_err(anyhow::Error::from)
@@ -834,6 +837,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
                     all_results.push(serde_json::json!({ "sync": name, "error": e.to_string() }));
                 } else {
                     println!("  Error loading config: {}", e);
+                    let _ = io::stdout().flush();
                 }
                 continue;
             }
@@ -845,6 +849,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
                     all_results.push(serde_json::json!({ "sync": name, "updated": result.updated, "created": result.created }));
                 } else {
                     println!("  {} updated, {} created (pending)", result.updated, result.created);
+                    let _ = io::stdout().flush();
                 }
             }
             Err(e) => {
@@ -852,6 +857,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
                     all_results.push(serde_json::json!({ "sync": name, "error": e.to_string() }));
                 } else {
                     println!("  Error: {}", e);
+                    let _ = io::stdout().flush();
                 }
             }
         }
@@ -866,6 +872,7 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
     } else {
         let elapsed = format!("{:.3}s", elapsed_ms as f64 / 1000.0);
         println!("Done ({})", elapsed);
+        let _ = io::stdout().flush();
     }
     Ok(())
 }
@@ -972,6 +979,7 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
             let ms = pass1_start.elapsed().as_millis();
             let elapsed = format!("{:.3}s", ms as f64 / 1000.0);
             println!("  {} destination records indexed ({})", dst_index.len(), elapsed);
+            let _ = io::stdout().flush();
         }
 
         // Collect source files upfront to know total count for progress reporting
@@ -1040,6 +1048,7 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
                 let prev = processed.fetch_add(1, Ordering::Relaxed);
                 if (prev + 1) % 1000 == 0 {
                     println!("  {} / {} processed...", prev + 1, total);
+                    let _ = io::stdout().flush();
                 }
             }
 

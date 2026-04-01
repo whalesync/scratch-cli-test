@@ -1,5 +1,19 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 
+type ScratchCommandEvent =
+  | {
+      sessionId: string;
+      type: 'chunk';
+      stream: 'stdout' | 'stderr';
+      chunk: string;
+    }
+  | {
+      sessionId: string;
+      type: 'exit';
+      exitCode: number;
+      error?: string;
+    };
+
 interface ScratchAuthAPI {
   getCredentials: () => Promise<{
     apiToken: string | null;
@@ -24,6 +38,14 @@ interface ScratchDesktopAPI {
   initWorkspace: (workbookId: string, cwd: string) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
   pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
+  listLocalSyncs: (workspacePath: string) => Promise<string[]>;
+  validateLocalSync: (
+    workspacePath: string,
+    syncName: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
+  startPlanPublish: (workspacePath: string) => Promise<{ sessionId: string }>;
+  onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
 }
 
 declare global {
