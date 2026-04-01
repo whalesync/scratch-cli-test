@@ -1,6 +1,7 @@
 stages:
   - test
   - build and test
+  - release desktop app
   - push to prod
   - push images
   - pre-deploy environment tests

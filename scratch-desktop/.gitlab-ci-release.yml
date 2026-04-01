@@ -1,6 +1,6 @@
 # PROD RELEASE JOBS (prod branch)
 .release_desktop_prod_job:
-  stage: deploy
+  stage: release desktop app
   image: node:22
   variables:
     GIT_DEPTH: 0
@@ -32,7 +32,11 @@ Release desktop Linux and Windows apps (patch version):
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
     - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
@@ -40,15 +44,37 @@ Release desktop Linux and Windows apps (minor version):
   extends: .release_desktop_prod_job
   variables:
     RELEASE_TYPE: "minor"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true
 
 Release desktop Linux and Windows apps (major version):
   extends: .release_desktop_prod_job
   variables:
     RELEASE_TYPE: "major"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true
 
 # TEST RELEASE JOBS (master branch + MR pipelines, excludes scheduled pipelines)
 .release_desktop_test_job:
-  stage: deploy
+  stage: release desktop app
   image: node:22
   variables:
     GIT_DEPTH: 0
@@ -73,6 +99,7 @@ Release desktop Linux and Windows apps (major version):
       allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
@@ -86,6 +113,7 @@ Release desktop Linux and Windows apps (major version):
       allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
@@ -93,8 +121,26 @@ Release desktop Linux and Windows apps (major version):
   extends: .release_desktop_test_job
   variables:
     RELEASE_TYPE: "minor"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true
 
 "TEST: Release desktop Linux and Windows apps (major version)":
   extends: .release_desktop_test_job
   variables:
     RELEASE_TYPE: "major"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_MERGE_REQUEST_IID'
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true

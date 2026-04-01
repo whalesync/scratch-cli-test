@@ -26,6 +26,8 @@ include:
     - gitlab-ci/stages/01-build-and-test.yml
   push-images:
     - gitlab-ci/stages/03-push-images.yml
+  scratch-desktop:
+    - scratch-desktop/**/*
   dummy:
     - terraform/**/*
     - .cursor/**/*

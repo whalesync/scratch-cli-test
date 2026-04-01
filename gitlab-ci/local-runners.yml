@@ -250,10 +250,16 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
+    - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true
     - if: *local-user-if-master
       when: manual
+      allow_failure: true
     - if: *local-user-if-prod
       when: manual
+      allow_failure: true
 
 "Release desktop macOS app [Local Runner] (minor version)":
   extends:
@@ -266,10 +272,16 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
+    - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true
     - if: *local-user-if-master
       when: manual
+      allow_failure: true
     - if: *local-user-if-prod
       when: manual
+      allow_failure: true
 
 "Release desktop macOS app [Local Runner] (major version)":
   extends:
@@ -282,10 +294,16 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
+    - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
+      when: manual
+      allow_failure: true
     - if: *local-user-if-master
       when: manual
+      allow_failure: true
     - if: *local-user-if-prod
       when: manual
+      allow_failure: true
 
 # -----------------------------------------------------------------------------
 # Desktop Test Releases — macOS (builds .dmg + .zip, no Linux)
@@ -306,6 +324,7 @@ local dummy job:
     BUILD_LINUX: "false"
   rules:
     - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
     - if: *local-user-if-master
@@ -324,6 +343,7 @@ local dummy job:
     BUILD_LINUX: "false"
   rules:
     - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
     - if: *local-user-if-master
@@ -342,6 +362,7 @@ local dummy job:
     BUILD_LINUX: "false"
   rules:
     - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
     - if: *local-user-if-master

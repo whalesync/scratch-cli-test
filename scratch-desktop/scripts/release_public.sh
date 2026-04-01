@@ -200,7 +200,9 @@ for VARIANT in \
   CASK_FILE="${VARIANT%%:*}"
   cp "$TAP_DIR/Casks/scratch-desktop.rb" "$TAP_DIR/Casks/${CASK_FILE}.rb"
   # Update the cask name in the file
-  sed -i "s/cask \"scratch-desktop\"/cask \"${CASK_FILE}\"/" "$TAP_DIR/Casks/${CASK_FILE}.rb"
+  # Use temp file for portability (BSD sed -i requires extension arg, GNU sed -i does not)
+  sed "s/cask \"scratch-desktop\"/cask \"${CASK_FILE}\"/" "$TAP_DIR/Casks/${CASK_FILE}.rb" > "$TAP_DIR/Casks/${CASK_FILE}.rb.tmp" \
+    && mv "$TAP_DIR/Casks/${CASK_FILE}.rb.tmp" "$TAP_DIR/Casks/${CASK_FILE}.rb"
 done
 
 (cd "$TAP_DIR" && \
