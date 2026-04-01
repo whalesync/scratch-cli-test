@@ -121,7 +121,7 @@ export NVM_DIR="$HOME/.nvm"
 
 ### 4. Usage
 
-No additional opt-in is needed — the macOS jobs use the same username list as the Docker local runner. Once your runner is registered and running, the `macos release-desktop-test-*` manual jobs in MR pipelines will be picked up by it.
+No additional opt-in is needed — the macOS jobs use the same username list as the Docker local runner. Once your runner is registered and running, the `TEST: Release desktop macOS app [Local Runner] (… version)` manual jobs in MR pipelines will be picked up by it.
 
 These jobs build `.dmg` + `.zip` for macOS (no Linux targets) and create a GitHub test release, just like the Docker-based release jobs but with native macOS packaging.
 

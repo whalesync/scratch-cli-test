@@ -258,6 +258,7 @@ build server docker image:
     - key:
         files:
           - scratch-git-2/Cargo.lock
+        prefix: $CI_JOB_NAME
       fallback_keys:
         - scratch-git-2-cargo
       unprotect: true

@@ -14,7 +14,7 @@
       - scratch-desktop/dist/*.deb
     expire_in: 1 week
   before_script:
-    - apt-get update -qq && apt-get install -y zip
+    - apt-get update -qq && apt-get install -y zip jq
     - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
   script:
     - chmod +x scripts/release_public.sh
@@ -24,21 +24,24 @@
       when: manual
       allow_failure: true
 
-# Auto-deploy patch release on every merge to prod
-release-desktop-patch:
+Release desktop Linux and Windows apps (patch version):
   extends: .release_desktop_prod_job
   variables:
     RELEASE_TYPE: "patch"
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
-      when: on_success
+      when: manual
+      allow_failure: true
+    - if: '$CI_MERGE_REQUEST_IID'
+      when: manual
+      allow_failure: true
 
-release-desktop-minor:
+Release desktop Linux and Windows apps (minor version):
   extends: .release_desktop_prod_job
   variables:
     RELEASE_TYPE: "minor"
 
-release-desktop-major:
+Release desktop Linux and Windows apps (major version):
   extends: .release_desktop_prod_job
   variables:
     RELEASE_TYPE: "major"
@@ -59,7 +62,7 @@ release-desktop-major:
       - scratch-desktop/dist/*.deb
     expire_in: 1 week
   before_script:
-    - apt-get update -qq && apt-get install -y zip
+    - apt-get update -qq && apt-get install -y zip jq
     - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
   script:
     - chmod +x scripts/release_test.sh
@@ -73,25 +76,25 @@ release-desktop-major:
       when: manual
       allow_failure: true
 
-# Auto-deploy test patch release on every merge to master
-release-desktop-test-patch:
+"TEST: Release desktop Linux and Windows apps (patch version)":
   extends: .release_desktop_test_job
   variables:
     RELEASE_TYPE: "patch"
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: on_success
+      when: manual
+      allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_MERGE_REQUEST_IID'
       when: manual
       allow_failure: true
 
-release-desktop-test-minor:
+"TEST: Release desktop Linux and Windows apps (minor version)":
   extends: .release_desktop_test_job
   variables:
     RELEASE_TYPE: "minor"
 
-release-desktop-test-major:
+"TEST: Release desktop Linux and Windows apps (major version)":
   extends: .release_desktop_test_job
   variables:
     RELEASE_TYPE: "major"

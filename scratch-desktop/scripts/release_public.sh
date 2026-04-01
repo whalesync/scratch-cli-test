@@ -13,21 +13,33 @@ if [[ "$RELEASE_TYPE" != "patch" && "$RELEASE_TYPE" != "minor" && "$RELEASE_TYPE
   exit 1
 fi
 
+if ! command -v jq &>/dev/null; then
+  echo "ERROR: jq is required but not installed."
+  echo "  macOS: brew install jq"
+  exit 1
+fi
+
 echo "Starting desktop release process ($RELEASE_TYPE)..."
 
 # Configure git
 git config --global user.email "ci@whalesync.com"
 git config --global user.name "GitLab CI"
-git fetch --tags
 
-# 1. Find latest desktop-X.Y.Z tag (separate sequence from the CLI)
-LATEST_TAG=$(git tag -l "desktop-*" --sort=-v:refname | head -n1)
+# 1. Find latest desktop release tag from the GitHub release repo
+# (tags live on GitHub, not in this GitLab repo)
+# Production tags use format: v0.1.0-desktop
+LATEST_TAG=$(git ls-remote --tags "$GITHUB_REPO_URL" "*-desktop" \
+  | sed 's|.*/||' \
+  | grep -v '\^{}' \
+  | sort -V -r \
+  | head -n1)
 if [ -z "$LATEST_TAG" ]; then
-  LATEST_TAG="desktop-0.1.0"
+  LATEST_TAG="v0.1.0-desktop"
 fi
 echo "Latest tag: $LATEST_TAG"
 
-VERSION=${LATEST_TAG#desktop-}
+# Extract semver: v0.1.0-desktop -> 0.1.0
+VERSION=$(echo "$LATEST_TAG" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
 IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
 # 2. Bump version
@@ -36,11 +48,17 @@ if [ "$RELEASE_TYPE" == "minor" ]; then MINOR=$((MINOR + 1)); PATCH=0; fi
 if [ "$RELEASE_TYPE" == "patch" ]; then PATCH=$((PATCH + 1)); fi
 
 NEW_VERSION="v$MAJOR.$MINOR.$PATCH-desktop"
-DESKTOP_TAG="desktop-$MAJOR.$MINOR.$PATCH"
 SEMVER="$MAJOR.$MINOR.$PATCH"
-echo "Target version: $NEW_VERSION (gitlab tag: $DESKTOP_TAG)"
+echo "Target version: $NEW_VERSION"
 
-# 3. Update version in package.json
+# 3. Fail if this version already exists on GitHub
+REMOTE_EXISTS=$(git ls-remote --tags "$GITHUB_REPO_URL" "refs/tags/$NEW_VERSION" 2>/dev/null)
+if [ -n "$REMOTE_EXISTS" ]; then
+  echo "ERROR: Tag $NEW_VERSION already exists on GitHub. Delete the release manually or bump the version."
+  exit 1
+fi
+
+# 4. Update version in package.json
 node -e "
   const fs = require('fs');
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -51,7 +69,7 @@ echo "Updated package.json version to $SEMVER"
 
 PROD_API_URL="https://api.scratch.md"
 
-# 4. Build the Electron app for all targets
+# 5. Build the Electron app for all targets
 #
 # NOTE: electron-builder on Linux can cross-build Linux targets natively.
 # macOS targets (.dmg) are built WITHOUT code signing for now.
@@ -76,7 +94,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false yarn electron-builder --mac zip --publish neve
 echo "Packaging Linux targets..."
 yarn electron-builder --linux --publish never
 
-# 5. Collect and rename artifacts into dist-release
+# 6. Collect and rename artifacts into dist-release
 DIST_DIR="./dist-release"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -88,24 +106,25 @@ for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
   echo "  $FNAME"
 done
 
-# 6. Compute SHA256 for each archive
+# 7. Validate at least one artifact was collected
+ARTIFACT_COUNT=$(find "$DIST_DIR" -type f | wc -l | tr -d ' ')
+if [ "$ARTIFACT_COUNT" -eq 0 ]; then
+  echo "ERROR: No build artifacts found in $DIST_DIR. Aborting release."
+  exit 1
+fi
+echo "Found $ARTIFACT_COUNT artifact(s)"
+
+# 8. Compute SHA256 for each archive
 SHA_FILE="$DIST_DIR/checksums.txt"
-(cd "$DIST_DIR" && shasum -a 256 *.dmg *.zip *.AppImage *.deb 2>/dev/null > checksums.txt)
+(cd "$DIST_DIR" && shasum -a 256 -- * | grep -v 'checksums.txt' > checksums.txt)
 echo "SHA256 checksums:"
 cat "$SHA_FILE"
 
 # Helper: extract sha256 for a given archive name
 sha_for() { grep "$1" "$SHA_FILE" | awk '{print $1}'; }
 
-# 7. Create GitHub release tag on remote HEAD
-echo "Creating GitHub tag $NEW_VERSION..."
-REMOTE_SHA=$(git ls-remote "$GITHUB_REPO_URL" HEAD | awk '{ print $1 }')
-curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
-     -H "Accept: application/vnd.github.v3+json" \
-     "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
-     -d "{\"ref\": \"refs/tags/$NEW_VERSION\", \"sha\": \"$REMOTE_SHA\"}"
-
-# 8. Create GitHub release and upload artifacts
+# 9. Create GitHub release and upload artifacts
+# The release API creates the tag on GitHub automatically — no need to push a local tag.
 echo "Creating GitHub release $NEW_VERSION..."
 RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
@@ -117,7 +136,12 @@ RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
     \"prerelease\": false
   }")
 
-RELEASE_ID=$(echo "$RELEASE_JSON" | grep -m1 '"id":' | tr -d ' ",' | cut -d: -f2)
+RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+  echo "ERROR: Failed to create GitHub release. Response:"
+  echo "$RELEASE_JSON"
+  exit 1
+fi
 echo "Release ID: $RELEASE_ID"
 
 for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DIR"/*.deb; do
@@ -130,7 +154,7 @@ for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DI
     --data-binary "@$FILE"
 done
 
-# 9. Update Homebrew cask in whalesync/homebrew-scratch-cli
+# 10. Update Homebrew cask in whalesync/homebrew-scratch-cli
 echo "Updating Homebrew cask..."
 TAP_DIR=$(mktemp -d)
 git clone "https://${GITHUB_TOKEN}@github.com/whalesync/homebrew-scratch-cli.git" "$TAP_DIR"
@@ -185,9 +209,6 @@ done
   git push)
 rm -rf "$TAP_DIR"
 
-# 10. Tag GitLab with desktop-X.Y.Z to save state for next release
-echo "Tagging GitLab with $DESKTOP_TAG..."
-git tag "$DESKTOP_TAG"
-git push "https://oauth2:${CICD_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$DESKTOP_TAG"
+# Version state is tracked by GitHub tags — no GitLab tag needed.
 
 echo "Release $NEW_VERSION complete."

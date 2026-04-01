@@ -131,6 +131,8 @@ include:
     - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
   local_runner_users_master:
     - if: &local-user-if-master '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_prod:
+    - if: &local-user-if-prod '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
 
 # -----------------------------------------------------------------------------
 # Client
@@ -231,50 +233,68 @@ local dummy job:
       changes: !reference [.changes, dummy]
 
 # -----------------------------------------------------------------------------
-# Desktop Test Releases
-# -----------------------------------------------------------------------------
-
-local release-desktop-test-patch:
-  extends:
-    - .release_desktop_test_job
-    - .local-runner-defaults
-  variables:
-    RELEASE_TYPE: "patch"
-  rules:
-    - if: *local-user-if
-      when: manual
-      allow_failure: true
-
-local release-desktop-test-minor:
-  extends:
-    - .release_desktop_test_job
-    - .local-runner-defaults
-  variables:
-    RELEASE_TYPE: "minor"
-  rules:
-    - if: *local-user-if
-      when: manual
-      allow_failure: true
-
-local release-desktop-test-major:
-  extends:
-    - .release_desktop_test_job
-    - .local-runner-defaults
-  variables:
-    RELEASE_TYPE: "major"
-  rules:
-    - if: *local-user-if
-      when: manual
-      allow_failure: true
-
-# -----------------------------------------------------------------------------
-# Desktop Test Releases (macOS native — builds .dmg + .zip, no Linux)
+# Desktop Prod Releases — macOS (builds .dmg + .zip, no Linux)
 #
 # These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
 # See docs/local-gitlab-runner.md for setup instructions.
 # -----------------------------------------------------------------------------
 
-macos release-desktop-test-patch:
+"Release desktop macOS app [Local Runner] (patch version)":
+  extends:
+    - .release_desktop_prod_job
+    - .local-macos-runner-defaults
+  before_script:
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  variables:
+    RELEASE_TYPE: "patch"
+    MAC_TARGETS: "dmg zip"
+    BUILD_LINUX: "false"
+  rules:
+    - if: *local-user-if-master
+      when: manual
+    - if: *local-user-if-prod
+      when: manual
+
+"Release desktop macOS app [Local Runner] (minor version)":
+  extends:
+    - .release_desktop_prod_job
+    - .local-macos-runner-defaults
+  before_script:
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  variables:
+    RELEASE_TYPE: "minor"
+    MAC_TARGETS: "dmg zip"
+    BUILD_LINUX: "false"
+  rules:
+    - if: *local-user-if-master
+      when: manual
+    - if: *local-user-if-prod
+      when: manual
+
+"Release desktop macOS app [Local Runner] (major version)":
+  extends:
+    - .release_desktop_prod_job
+    - .local-macos-runner-defaults
+  before_script:
+    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
+  variables:
+    RELEASE_TYPE: "major"
+    MAC_TARGETS: "dmg zip"
+    BUILD_LINUX: "false"
+  rules:
+    - if: *local-user-if-master
+      when: manual
+    - if: *local-user-if-prod
+      when: manual
+
+# -----------------------------------------------------------------------------
+# Desktop Test Releases — macOS (builds .dmg + .zip, no Linux)
+#
+# These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
+# See docs/local-gitlab-runner.md for setup instructions.
+# -----------------------------------------------------------------------------
+
+"TEST: Release desktop macOS app [Local Runner] (patch version)":
   extends:
     - .release_desktop_test_job
     - .local-macos-runner-defaults
@@ -292,7 +312,7 @@ macos release-desktop-test-patch:
       when: manual
       allow_failure: true
 
-macos release-desktop-test-minor:
+"TEST: Release desktop macOS app [Local Runner] (minor version)":
   extends:
     - .release_desktop_test_job
     - .local-macos-runner-defaults
@@ -310,7 +330,7 @@ macos release-desktop-test-minor:
       when: manual
       allow_failure: true
 
-macos release-desktop-test-major:
+"TEST: Release desktop macOS app [Local Runner] (major version)":
   extends:
     - .release_desktop_test_job
     - .local-macos-runner-defaults
