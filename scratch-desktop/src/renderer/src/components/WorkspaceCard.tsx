@@ -21,7 +21,15 @@ function formatRelativeTime(dateStr: string): string {
   return `${months}mo ago`;
 }
 
-export function WorkspaceCard({ workspace, isDownloaded }: { workspace: Workspace; isDownloaded: boolean }) {
+export function WorkspaceCard({
+  workspace,
+  isDownloaded,
+  onClick,
+}: {
+  workspace: Workspace;
+  isDownloaded: boolean;
+  onClick?: () => void;
+}) {
   const navigate = useNavigate();
   const folderCount = workspace.dataFolders?.length ?? 0;
 
@@ -31,8 +39,20 @@ export function WorkspaceCard({ workspace, isDownloaded }: { workspace: Workspac
       padding="md"
       radius="md"
       withBorder
-      style={{ cursor: 'pointer' }}
-      onClick={() => void navigate(`/workspace/${workspace.id}`)}
+      style={{
+        cursor: 'pointer',
+        transition: 'border-width 0.15s ease, padding 0.15s ease',
+        borderWidth: 1,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderWidth = '2px';
+        e.currentTarget.style.padding = 'calc(var(--mantine-spacing-md) - 1px)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderWidth = '1px';
+        e.currentTarget.style.padding = 'var(--mantine-spacing-md)';
+      }}
+      onClick={onClick ?? (() => void navigate(`/workspace/${workspace.id}`))}
     >
       <Group justify="space-between" align="flex-start" gap="sm">
         <Text fw={500} size="sm" lineClamp={1}>

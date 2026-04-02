@@ -1,5 +1,14 @@
 import { ActionIcon, Box, Button, Group, Text } from '@mantine/core';
-import { ArrowLeft, ChevronDown, Download, FolderOpen, HardDriveDownload as DownloadIcon, Terminal, Trash2, Upload } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronDown,
+  Download,
+  HardDriveDownload as DownloadIcon,
+  FolderOpen,
+  Terminal,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Workspace } from '../../types/workspace';
 

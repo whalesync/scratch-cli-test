@@ -466,6 +466,9 @@ ipcMain.handle('scratch:pick-parent-folder', async () => {
 
   return result.filePaths[0] ?? null;
 });
+ipcMain.handle('scratch:create-workspace', async (_, name: string) =>
+  runScratchmdJson<{ id: string; name: string }>(['--json', 'workspaces', 'create', name]),
+);
 ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: string) =>
   runScratchmd(['workspaces', 'init', workbookId], cwd),
 );

@@ -117,9 +117,9 @@ export function WorkspacePage() {
         workspace={workspace}
         isDownloaded={localPath !== null}
         downloading={downloading}
-        onDownload={handleDownload}
+        onDownload={() => void handleDownload()}
         deleting={deleting}
-        onDelete={handleDelete}
+        onDelete={() => void handleDelete()}
       />
       <WorkspaceContent workspace={workspace} localPath={localPath} />
     </Box>

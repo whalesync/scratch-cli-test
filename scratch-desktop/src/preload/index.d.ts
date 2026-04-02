@@ -34,6 +34,7 @@ interface ScratchAuthAPI {
 
 interface ScratchDesktopAPI {
   getWorkspacesRegistry: () => Promise<Array<{ id: string; path: string }>>;
+  createWorkspace: (name: string) => Promise<{ id: string; name: string }>;
   pickParentFolder: () => Promise<string | null>;
   initWorkspace: (workbookId: string, cwd: string) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
