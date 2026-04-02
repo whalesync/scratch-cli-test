@@ -1,7 +1,7 @@
 import { Alert, Box, Center, Loader, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
@@ -11,6 +11,7 @@ import { WorkspaceHeader } from './workspace/WorkspaceHeader';
 
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,12 +75,12 @@ export function WorkspacePage() {
     try {
       setDeleting(true);
       await window.scratchDesktop.removeWorkspace(workspace.id);
-      setLocalPath(null);
       notifications.show({
         title: 'Local copy deleted',
         message: `${workspace.name || 'Workspace'} was removed from this machine.`,
         color: 'green',
       });
+      void navigate('/');
     } catch (err) {
       notifications.show({
         title: 'Delete failed',
@@ -89,7 +90,7 @@ export function WorkspacePage() {
     } finally {
       setDeleting(false);
     }
-  }, [workspace]);
+  }, [workspace, navigate]);
 
   useEffect(() => {
     void fetchWorkspace();
@@ -123,6 +124,7 @@ export function WorkspacePage() {
       />
       <WorkspaceHeader
         workspace={workspace}
+        localPath={localPath}
         isDownloaded={localPath !== null}
         downloading={downloading}
         onDownload={() => void handleDownload()}

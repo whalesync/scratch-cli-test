@@ -598,6 +598,12 @@ ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string)
     workspacePath,
   ),
 );
+ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
+  shell.showItemInFolder(folderPath);
+});
+ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
+  spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();
+});
 ipcMain.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();
 });

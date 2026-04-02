@@ -14,6 +14,7 @@ import { Workspace } from '../../types/workspace';
 
 interface WorkspaceHeaderProps {
   workspace: Workspace;
+  localPath: string | null;
   isDownloaded: boolean;
   downloading: boolean;
   onDownload: () => void;
@@ -24,6 +25,7 @@ interface WorkspaceHeaderProps {
 
 export function WorkspaceHeader({
   workspace,
+  localPath,
   isDownloaded,
   downloading,
   onDownload,
@@ -69,10 +71,22 @@ export function WorkspaceHeader({
             Download
           </Button>
         )}
-        <Button variant="subtle" size="xs" leftSection={<FolderOpen size={14} />}>
-          Open in Finder
+        <Button
+          variant="subtle"
+          size="xs"
+          leftSection={<FolderOpen size={14} />}
+          disabled={!localPath}
+          onClick={() => void (localPath && window.scratchDesktop.showInFolder(localPath))}
+        >
+          Show in Finder
         </Button>
-        <Button variant="subtle" size="xs" leftSection={<Terminal size={14} />}>
+        <Button
+          variant="subtle"
+          size="xs"
+          leftSection={<Terminal size={14} />}
+          disabled={!localPath}
+          onClick={() => void (localPath && window.scratchDesktop.openInTerminal(localPath))}
+        >
           Open in Terminal
         </Button>
         <Button variant="subtle" size="xs" leftSection={<Download size={14} />}>

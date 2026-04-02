@@ -1,0 +1,91 @@
+.IconButtonInline {
+  width: min-content;
+  color: var(--fg-muted);
+  padding: 0;
+  aspect-ratio: 1;
+  padding-inline: 0px !important; /** Not sure why this is needed, it's non-deterministic with local vs remote builds. */
+
+  &:disabled {
+    background-color: transparent;
+    color: var(--mantine-color-gray-5);
+  }
+
+  &:hover:not(:disabled) {
+    background-color: transparent;
+    color: var(--mantine-color-gray-9);
+  }
+}
+
+.IconButtonOutline {
+  aspect-ratio: 1;
+  color: var(--mantine-color-gray-9);
+
+  &:disabled {
+    color: var(--mantine-color-gray-4);
+    background-color: var(--mantine-color-gray-1);
+
+    /* Replace the custom border with a dull one.  */
+    border: 0.5px solid var(--mantine-color-gray-4) !important;
+    &::after {
+      display: none;
+    }
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--mantine-color-gray-2);
+    color: var(--mantine-color-gray-9);
+  }
+}
+
+.IconButtonToolbar {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: var(--fg-muted);
+  border-color: var(--fg-divider);
+  background-color: var(--bg-base);
+
+  &:hover:not(:disabled) {
+    background-color: var(--bg-selected);
+    color: var(--fg-primary);
+  }
+}
+
+/* Compact buttons for toolbars and sidebars */
+.ButtonCompactPrimary {
+  height: 22px;
+  font-size: 11px;
+  background-color: var(--mantine-color-green-1);
+  color: var(--mantine-color-green-9);
+  border: none;
+
+  &:hover:not(:disabled) {
+    background-color: var(--mantine-color-green-2);
+  }
+}
+
+.ButtonCompactDanger {
+  height: 22px;
+  font-size: 11px;
+  background-color: var(--mantine-color-red-1);
+  color: var(--mantine-color-red-9);
+  border: none;
+
+  &:hover:not(:disabled) {
+    background-color: var(--mantine-color-red-2);
+  }
+}
+
+.ButtonCompactSecondary {
+  height: 22px;
+  font-size: 11px;
+  background-color: var(--bg-selected);
+  color: var(--fg-primary);
+  border: none;
+
+  &:hover:not(:disabled) {
+    background-color: var(--mantine-color-gray-3);
+  }
+}

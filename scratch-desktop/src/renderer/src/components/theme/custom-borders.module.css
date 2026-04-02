@@ -1,0 +1,46 @@
+/** Signature border look for the app:
+    - Four corners get L brackets in currentColor
+    - The rest of the border in a lighter shade of currentColor
+*/
+.cornerBorders {
+  position: relative;
+  border: none !important; /* Definitely nuke the default border, we replace it with our own */
+  --corner-color: currentColor;
+  --other-color: color-mix(in srgb, currentColor 50%, transparent);
+  --border-thickness: 1px;
+
+  @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    --border-thickness: 0.5px;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    right: 0px;
+    bottom: 0px;
+    pointer-events: none;
+    background:
+      /** Four corners get L brackets in currentColor */
+      linear-gradient(var(--corner-color), var(--corner-color)) 0 0 / var(--border-thickness) 3px no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 0 0 / 3px var(--border-thickness) no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 100% 0 / var(--border-thickness) 3px no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 100% 0 / 3px var(--border-thickness) no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 0 100% / var(--border-thickness) 3px no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 0 100% / 3px var(--border-thickness) no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 100% 100% / var(--border-thickness) 3px no-repeat,
+      linear-gradient(var(--corner-color), var(--corner-color)) 100% 100% / 3px var(--border-thickness) no-repeat,
+      /** The rest of the border in a lighter shade of currentColor */
+        linear-gradient(var(--other-color), var(--other-color)) 0 0 / 100% var(--border-thickness) no-repeat,
+      linear-gradient(var(--other-color), var(--other-color)) 0 0 / var(--border-thickness) 100% no-repeat,
+      linear-gradient(var(--other-color), var(--other-color)) 0 100% / 100% var(--border-thickness) no-repeat,
+      linear-gradient(var(--other-color), var(--other-color)) 100% 0 / var(--border-thickness) 100% no-repeat;
+  }
+}
+
+/** Plain border look for when the div's background is closer to the border color.
+*/
+.plainBorder {
+  border: 0.5px solid currentColor !important;
+}
