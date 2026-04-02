@@ -137,6 +137,7 @@ pub async fn run_publish_from_git(
                     .and_then(|v| v.as_str())
                     .unwrap_or("(unknown)");
                 println!("  {conn_name}: publish job queued (jobId: {job_id})");
+                let _ = io::stdout().flush();
                 any_triggered = true;
             }
             Err(e) => {
@@ -147,6 +148,7 @@ pub async fn run_publish_from_git(
 
     if !any_triggered {
         println!("No publish jobs triggered.");
+        let _ = io::stdout().flush();
     }
 
     Ok(())

@@ -43,6 +43,7 @@ export function WorkspacePageDebug() {
   const [validateModalOpen, setValidateModalOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [publishPlanModalOpen, setPublishPlanModalOpen] = useState(false);
+  const [publishFromGitModalOpen, setPublishFromGitModalOpen] = useState(false);
   const [localSyncs, setLocalSyncs] = useState<string[]>([]);
   const [selectedSyncs, setSelectedSyncs] = useState<string[]>([]);
   const [loadingSyncs, setLoadingSyncs] = useState(false);
@@ -61,9 +62,15 @@ export function WorkspacePageDebug() {
   const [publishPlanOutput, setPublishPlanOutput] = useState('');
   const [publishPlanExitCode, setPublishPlanExitCode] = useState<number | null>(null);
   const [publishPlanError, setPublishPlanError] = useState<string | null>(null);
+  const [startingPublishFromGit, setStartingPublishFromGit] = useState(false);
+  const [runningPublishFromGit, setRunningPublishFromGit] = useState(false);
+  const [publishFromGitOutput, setPublishFromGitOutput] = useState('');
+  const [publishFromGitExitCode, setPublishFromGitExitCode] = useState<number | null>(null);
+  const [publishFromGitError, setPublishFromGitError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const runSyncSessionIdRef = useRef<string | null>(null);
   const publishPlanSessionIdRef = useRef<string | null>(null);
+  const publishFromGitSessionIdRef = useRef<string | null>(null);
 
   const fetchWorkspace = useCallback(async () => {
     if (!id) return;
@@ -334,6 +341,40 @@ export function WorkspacePageDebug() {
     }
   }, [localPath]);
 
+  const handleOpenPublishFromGit = useCallback(() => {
+    setPublishFromGitModalOpen(true);
+    setPublishFromGitOutput('');
+    setPublishFromGitExitCode(null);
+    setPublishFromGitError(null);
+    publishFromGitSessionIdRef.current = null;
+  }, []);
+
+  const handlePublishFromGit = useCallback(async () => {
+    if (!localPath) {
+      return;
+    }
+
+    try {
+      setStartingPublishFromGit(true);
+      setRunningPublishFromGit(true);
+      setPublishFromGitOutput('');
+      setPublishFromGitExitCode(null);
+      setPublishFromGitError(null);
+      const { sessionId } = await window.scratchDesktop.startPublishFromGit(localPath);
+      publishFromGitSessionIdRef.current = sessionId;
+    } catch (err) {
+      setRunningPublishFromGit(false);
+      setPublishFromGitError(err instanceof Error ? err.message : 'Failed to trigger publish-from-git');
+      notifications.show({
+        title: 'Publish failed',
+        message: err instanceof Error ? err.message : 'Failed to trigger publish-from-git',
+        color: 'red',
+      });
+    } finally {
+      setStartingPublishFromGit(false);
+    }
+  }, [localPath]);
+
   useEffect(() => {
     void fetchWorkspace();
   }, [fetchWorkspace]);
@@ -341,34 +382,62 @@ export function WorkspacePageDebug() {
   useEffect(() => {
     const unsubscribe = window.scratchDesktop.onCommandEvent((event) => {
       if (runSyncSessionIdRef.current !== event.sessionId) {
-        if (publishPlanSessionIdRef.current !== event.sessionId) {
+        if (publishPlanSessionIdRef.current === event.sessionId) {
+          if (event.type === 'chunk') {
+            setPublishPlanOutput((current) => current + event.chunk);
+            return;
+          }
+
+          setRunningPublishPlan(false);
+          setPublishPlanExitCode(event.exitCode);
+          if (event.error) {
+            setPublishPlanError(event.error);
+          }
+
+          if (event.exitCode === 0) {
+            notifications.show({
+              title: 'Publish plan complete',
+              message: 'The workspace publish plan was created successfully.',
+              color: 'green',
+            });
+          } else {
+            notifications.show({
+              title: 'Publish plan finished with issues',
+              message: event.error || `scratchmd exited with code ${event.exitCode}`,
+              color: 'red',
+            });
+          }
           return;
         }
 
-        if (event.type === 'chunk') {
-          setPublishPlanOutput((current) => current + event.chunk);
+        if (publishFromGitSessionIdRef.current === event.sessionId) {
+          if (event.type === 'chunk') {
+            setPublishFromGitOutput((current) => current + event.chunk);
+            return;
+          }
+
+          setRunningPublishFromGit(false);
+          setPublishFromGitExitCode(event.exitCode);
+          if (event.error) {
+            setPublishFromGitError(event.error);
+          }
+
+          if (event.exitCode === 0) {
+            notifications.show({
+              title: 'Publish job queued',
+              message: 'The git-based publish job was triggered successfully.',
+              color: 'green',
+            });
+          } else {
+            notifications.show({
+              title: 'Publish trigger finished with issues',
+              message: event.error || `scratchmd exited with code ${event.exitCode}`,
+              color: 'red',
+            });
+          }
           return;
         }
 
-        setRunningPublishPlan(false);
-        setPublishPlanExitCode(event.exitCode);
-        if (event.error) {
-          setPublishPlanError(event.error);
-        }
-
-        if (event.exitCode === 0) {
-          notifications.show({
-            title: 'Publish plan complete',
-            message: 'The workspace publish plan was created successfully.',
-            color: 'green',
-          });
-        } else {
-          notifications.show({
-            title: 'Publish plan finished with issues',
-            message: event.error || `scratchmd exited with code ${event.exitCode}`,
-            color: 'red',
-          });
-        }
         return;
       }
 
@@ -623,6 +692,46 @@ export function WorkspacePageDebug() {
         </Stack>
       </Modal>
 
+      <Modal
+        opened={publishFromGitModalOpen}
+        onClose={() => {
+          if (!runningPublishFromGit && !startingPublishFromGit) {
+            setPublishFromGitModalOpen(false);
+          }
+        }}
+        title="Publish from git"
+        size="lg"
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            This will trigger the server-side publish jobs for all connections that have a local publish plan.
+          </Text>
+
+          {publishFromGitError && (
+            <Alert color="red" title="Error">
+              {publishFromGitError}
+            </Alert>
+          )}
+
+          <Group justify="flex-end">
+            <Button
+              onClick={() => void handlePublishFromGit()}
+              loading={startingPublishFromGit}
+              disabled={runningPublishFromGit}
+            >
+              Publish from git
+            </Button>
+          </Group>
+
+          <LiveCommandOutput
+            output={publishFromGitOutput}
+            running={runningPublishFromGit || startingPublishFromGit}
+            exitCode={publishFromGitExitCode}
+            emptyMessage="Trigger publish-from-git to watch the queued job output here."
+          />
+        </Stack>
+      </Modal>
+
       <Group gap="sm">
         <ActionIcon variant="subtle" onClick={() => void navigate('/')}>
           <ArrowLeft size={18} />
@@ -653,6 +762,9 @@ export function WorkspacePageDebug() {
             </Button>
             <Button variant="light" onClick={() => void handleOpenPublishPlan()}>
               Create publish plan
+            </Button>
+            <Button variant="light" onClick={() => void handleOpenPublishFromGit()}>
+              Publish from git
             </Button>
             <Button onClick={() => void handlePushChanges()} loading={pushing}>
               Upload files

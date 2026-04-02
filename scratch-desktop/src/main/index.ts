@@ -357,6 +357,9 @@ ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: stri
 ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string) =>
   startScratchmdLiveCommand(event.sender, ['plan-publish'], workspacePath),
 );
+ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: string) =>
+  startScratchmdLiveCommand(event.sender, ['publish-from-git'], workspacePath),
+);
 ipcMain.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();
 });
