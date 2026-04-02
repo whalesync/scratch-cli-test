@@ -33,6 +33,12 @@ interface ScratchmdResult {
   exitCode: number;
 }
 
+interface UnreviewedChangeEntry {
+  connectionName: string;
+  path: string;
+  status: string;
+}
+
 function registryPath(): string {
   return join(app.getPath('home'), '.scratchmd', 'workspaces.yaml');
 }
@@ -151,6 +157,20 @@ function runScratchmdCapture(args: string[], cwd?: string): Promise<ScratchmdRes
   });
 }
 
+async function runScratchmdJson<T>(args: string[], cwd?: string): Promise<T> {
+  const result = await runScratchmdCapture(args, cwd);
+  if (result.exitCode !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
+    throw new Error(message);
+  }
+
+  try {
+    return JSON.parse(result.stdout) as T;
+  } catch (error) {
+    throw new Error(`Failed to parse scratchmd JSON output: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function runScratchmd(args: string[], cwd?: string): Promise<{ stdout: string; stderr: string }> {
   const result = await runScratchmdCapture(args, cwd);
   if (result.exitCode === 0) {
@@ -234,6 +254,106 @@ function startScratchmdLiveCommand(
   });
 }
 
+function startScratchmdLiveSequence(
+  sender: Electron.WebContents,
+  steps: Array<{ label: string; args: string[] }>,
+  cwd?: string,
+): Promise<{ sessionId: string }> {
+  return new Promise((resolve, reject) => {
+    const binaries = ['scratchmd', '/usr/local/bin/scratchmd'];
+    const sessionId = randomUUID();
+    let started = false;
+    let finished = false;
+    let stepIndex = 0;
+
+    const emit = (payload: Record<string, unknown>): void => {
+      sender.send('scratch:command-event', { sessionId, ...payload });
+    };
+
+    const emitChunk = (chunk: string, stream: 'stdout' | 'stderr' = 'stdout'): void => {
+      emit({ type: 'chunk', stream, chunk });
+    };
+
+    const emitExit = (exitCode: number, error?: string): void => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      emit({ type: 'exit', exitCode, error });
+    };
+
+    const runStep = (attemptIndex: number): void => {
+      const step = steps[stepIndex];
+      const binary = binaries[attemptIndex];
+      const header = `\n$ scratchmd ${step.label}\n`;
+      let abandoned = false;
+
+      const child = spawn(binary, step.args, {
+        cwd,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      child.on('spawn', () => {
+        emitChunk(header);
+        if (!started) {
+          started = true;
+          resolve({ sessionId });
+        }
+      });
+
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        emitChunk(chunk.toString(), 'stdout');
+      });
+
+      child.stderr.on('data', (chunk: Buffer | string) => {
+        emitChunk(chunk.toString(), 'stderr');
+      });
+
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT' && attemptIndex < binaries.length - 1) {
+          abandoned = true;
+          runStep(attemptIndex + 1);
+          return;
+        }
+
+        const message = `Failed to start scratchmd: ${error.message}`;
+        if (!started) {
+          reject(new Error(message));
+          return;
+        }
+        emitExit(-1, message);
+      });
+
+      child.on('close', (code) => {
+        if (abandoned) {
+          return;
+        }
+        if ((code ?? -1) !== 0) {
+          emitExit(code ?? -1);
+          return;
+        }
+
+        stepIndex += 1;
+        if (stepIndex >= steps.length) {
+          emitExit(0);
+          return;
+        }
+
+        runStep(0);
+      });
+    };
+
+    if (steps.length === 0) {
+      resolve({ sessionId });
+      emitExit(0);
+      return;
+    }
+
+    runStep(0);
+  });
+}
+
 async function listLocalSyncFiles(workspacePath: string): Promise<string[]> {
   const syncsDir = join(workspacePath, '.scratch', 'workspace', 'syncs');
 
@@ -250,6 +370,14 @@ async function listLocalSyncFiles(workspacePath: string): Promise<string[]> {
     }
     throw error;
   }
+}
+
+async function listUnreviewedChanges(workspacePath: string): Promise<UnreviewedChangeEntry[]> {
+  const result = await runScratchmdJson<{ count: number; entries: UnreviewedChangeEntry[] }>(
+    ['--json', 'files', 'unreviewed'],
+    workspacePath,
+  );
+  return result.entries ?? [];
 }
 
 function windowIconPath(): string {
@@ -344,6 +472,12 @@ ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: stri
 ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) =>
   runScratchmd(['workspaces', 'unsync', workbookId, '--yes']),
 );
+ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string) =>
+  runScratchmdCapture(['files', 'accept-all'], workspacePath),
+);
+ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
+  listUnreviewedChanges(workspacePath),
+);
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
   runScratchmd(['files', 'upload'], workspacePath),
 );
@@ -359,6 +493,17 @@ ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string
 );
 ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: string) =>
   startScratchmdLiveCommand(event.sender, ['publish-from-git'], workspacePath),
+);
+ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string) =>
+  startScratchmdLiveSequence(
+    event.sender,
+    [
+      { label: 'plan-publish', args: ['plan-publish'] },
+      { label: 'files upload', args: ['files', 'upload'] },
+      { label: 'publish-from-git', args: ['publish-from-git'] },
+    ],
+    workspacePath,
+  ),
 );
 ipcMain.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();

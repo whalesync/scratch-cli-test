@@ -37,6 +37,10 @@ interface ScratchDesktopAPI {
   pickParentFolder: () => Promise<string | null>;
   initWorkspace: (workbookId: string, cwd: string) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
+  acceptAllChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  listUnreviewedChanges: (
+    workspacePath: string,
+  ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
   pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
   listLocalSyncs: (workspacePath: string) => Promise<string[]>;
   validateLocalSync: (
@@ -46,6 +50,7 @@ interface ScratchDesktopAPI {
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
   startPlanPublish: (workspacePath: string) => Promise<{ sessionId: string }>;
   startPublishFromGit: (workspacePath: string) => Promise<{ sessionId: string }>;
+  startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;
   toggleDevTools: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
 }

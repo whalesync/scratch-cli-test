@@ -6,6 +6,7 @@
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use crate::commands::files::{has_unreviewed_record_changes, materialize_treeish_to_worktree};
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
 use crate::shared::plan_publish::{self, PlanResult};
@@ -35,8 +36,9 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
         let master_dir = layout.master_worktree_path(&conn_name);
         let scratch_dir = layout.connection_scratch_path(&conn_name);
         let db_path = layout.index_db_path(&connection.repo_path);
+        let bare_repo = layout.bare_repo_path(&connection.repo_path);
 
-        if !dirty_dir.exists() {
+        if !dirty_dir.exists() && !bare_repo.exists() {
             eprintln!(
                 "  {conn_name}: dirty checkout not found at {}, skipping",
                 dirty_dir.display()
@@ -52,10 +54,25 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
             continue;
         }
 
+        let reviewed_dirty_snapshot = if bare_repo.exists()
+            && (!dirty_dir.exists() || has_unreviewed_record_changes(&bare_repo, &dirty_dir)?)
+        {
+            Some(materialize_branch_from_bare(
+                &bare_repo,
+                &layout.reviewed_dirty_checkout_path(&conn_name),
+            )?)
+        } else {
+            None
+        };
+        let dirty_source = reviewed_dirty_snapshot
+            .as_ref()
+            .map(|temp| temp.path.as_path())
+            .unwrap_or(dirty_dir.as_path());
+
         match plan_publish::build_publish_plan_with_scratch_dir(
             &conn_name,
             &connection.id,
-            &dirty_dir,
+            dirty_source,
             &master_dir,
             &db_path,
             &scratch_dir,
@@ -82,6 +99,25 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+struct TempDirGuard {
+    path: PathBuf,
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn materialize_branch_from_bare(
+    bare_repo: &Path,
+    snapshot_path: &Path,
+) -> anyhow::Result<TempDirGuard> {
+    let path = snapshot_path.to_path_buf();
+    materialize_treeish_to_worktree(bare_repo, "dirty", &path)?;
+    Ok(TempDirGuard { path })
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +277,7 @@ fn read_workspace_marker(workspace: &Path) -> anyhow::Result<markers::WorkspaceM
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    use std::process::Command;
     use tempfile::TempDir;
 
     fn make_workspace(conn: &str) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
@@ -317,6 +354,24 @@ mod tests {
                 .join(phase)
                 .join(filename)
         }
+    }
+
+    fn git_available() -> bool {
+        Command::new("git").arg("--version").output().is_ok()
+    }
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -456,6 +511,129 @@ mod tests {
         assert!(
             content["fields"]["image"].is_null(),
             "asset pseudo-ref should be stripped to null"
+        );
+    }
+
+    #[test]
+    fn uses_local_dirty_branch_not_working_tree_when_bare_repo_exists() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let (_tmp, conn_dir, master_dir, scratch_dir, _db_path) = make_workspace("my-conn");
+        let root = conn_dir.parent().unwrap();
+        let repo_path = root.join(".repos/conn_test_id.git");
+        let source_repo = root.join("source-repo");
+
+        std::fs::create_dir_all(&source_repo).unwrap();
+        run_git(root, &["init", "source-repo"]);
+        run_git(&source_repo, &["checkout", "-b", "dirty"]);
+        std::fs::create_dir_all(source_repo.join("posts")).unwrap();
+        std::fs::write(
+            source_repo.join("posts/rec1.json"),
+            serde_json::to_string_pretty(&json!({"id":"rec1","fields":{"title":"Committed"}}))
+                .unwrap(),
+        )
+        .unwrap();
+        run_git(&source_repo, &["add", "."]);
+        run_git(
+            &source_repo,
+            &[
+                "-c",
+                "user.name=Scratch",
+                "-c",
+                "user.email=scratch@example.com",
+                "commit",
+                "-m",
+                "committed",
+            ],
+        );
+        run_git(root, &["init", "--bare", repo_path.to_str().unwrap()]);
+        run_git(
+            &source_repo,
+            &["remote", "add", "origin", repo_path.to_str().unwrap()],
+        );
+        run_git(&source_repo, &["push", "origin", "dirty:dirty"]);
+
+        write_json(
+            &master_dir,
+            "posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Committed"}}),
+        );
+        write_json(
+            &conn_dir,
+            "posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Unreviewed"}}),
+        );
+
+        run(root).unwrap();
+
+        assert!(
+            find_plan_root(&scratch_dir).is_none(),
+            "plan should ignore unreviewed working-tree changes when the local dirty branch exists"
+        );
+    }
+
+    #[test]
+    fn reviewed_dirty_snapshot_is_cleaned_up_after_planning() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let (_tmp, conn_dir, master_dir, _scratch_dir, _db_path) = make_workspace("my-conn");
+        let root = conn_dir.parent().unwrap();
+        let repo_path = root.join(".repos/conn_test_id.git");
+        let source_repo = root.join("source-repo");
+        let reviewed_dirty_dir = root.join(".scratch/connections/dirty/my-conn");
+
+        std::fs::create_dir_all(&source_repo).unwrap();
+        run_git(root, &["init", "source-repo"]);
+        run_git(&source_repo, &["checkout", "-b", "dirty"]);
+        std::fs::create_dir_all(source_repo.join("posts")).unwrap();
+        std::fs::write(
+            source_repo.join("posts/rec1.json"),
+            serde_json::to_string_pretty(&json!({"id":"rec1","fields":{"title":"Committed"}}))
+                .unwrap(),
+        )
+        .unwrap();
+        run_git(&source_repo, &["add", "."]);
+        run_git(
+            &source_repo,
+            &[
+                "-c",
+                "user.name=Scratch",
+                "-c",
+                "user.email=scratch@example.com",
+                "commit",
+                "-m",
+                "committed",
+            ],
+        );
+        run_git(root, &["init", "--bare", repo_path.to_str().unwrap()]);
+        run_git(
+            &source_repo,
+            &["remote", "add", "origin", repo_path.to_str().unwrap()],
+        );
+        run_git(&source_repo, &["push", "origin", "dirty:dirty"]);
+
+        write_json(
+            &master_dir,
+            "posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Committed"}}),
+        );
+        write_json(
+            &conn_dir,
+            "posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Unreviewed"}}),
+        );
+
+        run(root).unwrap();
+
+        assert!(
+            !reviewed_dirty_dir.exists(),
+            "reviewed dirty snapshot should be removed after planning"
         );
     }
 

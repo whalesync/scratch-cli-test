@@ -40,6 +40,12 @@ const scratchDesktop = {
   initWorkspace: (workbookId: string, cwd: string): Promise<{ stdout: string; stderr: string }> =>
     ipcRenderer.invoke('scratch:init-workspace', workbookId, cwd),
   removeWorkspace: (workbookId: string): Promise<void> => ipcRenderer.invoke('scratch:remove-workspace', workbookId),
+  acceptAllChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    ipcRenderer.invoke('scratch:accept-all-changes', workspacePath),
+  listUnreviewedChanges: (
+    workspacePath: string,
+  ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
+    ipcRenderer.invoke('scratch:list-unreviewed-changes', workspacePath),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
     ipcRenderer.invoke('scratch:push-workspace-changes', workspacePath),
   listLocalSyncs: (workspacePath: string): Promise<string[]> =>
@@ -55,6 +61,8 @@ const scratchDesktop = {
     ipcRenderer.invoke('scratch:start-plan-publish', workspacePath),
   startPublishFromGit: (workspacePath: string): Promise<{ sessionId: string }> =>
     ipcRenderer.invoke('scratch:start-publish-from-git', workspacePath),
+  startPublishAll: (workspacePath: string): Promise<{ sessionId: string }> =>
+    ipcRenderer.invoke('scratch:start-publish-all', workspacePath),
   toggleDevTools: (): Promise<void> => ipcRenderer.invoke('scratch:toggle-devtools'),
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: ScratchCommandEvent): void => {

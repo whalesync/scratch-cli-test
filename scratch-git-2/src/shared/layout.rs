@@ -83,6 +83,13 @@ impl WorkspaceLayout {
             .join(connector_name)
     }
 
+    pub fn reviewed_dirty_checkout_path(&self, connector_name: &str) -> PathBuf {
+        self.scratch_root()
+            .join("connections")
+            .join("dirty")
+            .join(connector_name)
+    }
+
     pub fn workbook_materialization_path(&self) -> PathBuf {
         self.scratch_root().join("workspace")
     }
@@ -135,6 +142,10 @@ mod tests {
             PathBuf::from("/tmp/workspace/.scratch/connections/master/Airtable - My Base")
         );
         assert_eq!(
+            layout.reviewed_dirty_checkout_path("Airtable - My Base"),
+            PathBuf::from("/tmp/workspace/.scratch/connections/dirty/Airtable - My Base")
+        );
+        assert_eq!(
             layout.workbook_materialization_path(),
             PathBuf::from("/tmp/workspace/.scratch/workspace")
         );
@@ -174,6 +185,10 @@ mod tests {
         assert_eq!(
             layout.master_worktree_path("ca789"),
             PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/master/ca789")
+        );
+        assert_eq!(
+            layout.reviewed_dirty_checkout_path("ca789"),
+            PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/dirty/ca789")
         );
         assert_eq!(
             layout.workbook_materialization_path(),

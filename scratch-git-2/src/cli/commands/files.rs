@@ -14,6 +14,11 @@ type FileMap = HashMap<String, Vec<u8>>;
 pub enum FilesCommands {
     /// Download remote changes and three-way merge with local edits
     Download,
+    /// Commit all current working-tree record changes into the local dirty branch
+    #[command(name = "accept-all")]
+    AcceptAll,
+    /// List record changes that exist only in the working tree and have not been accepted locally
+    Unreviewed,
     /// Upload local changes to the server
     Upload,
     /// Force-push local state to the server, skipping merge (fast)
@@ -56,11 +61,27 @@ struct UploadResult {
     deleted_paths: Vec<String>,
 }
 
+#[derive(Default)]
+struct AcceptAllResult {
+    files_accepted: i32,
+    accepted_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct UnreviewedEntry {
+    #[serde(rename = "connectionName")]
+    connection_name: String,
+    path: String,
+    status: String,
+}
+
 pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
 
     match cmd {
         FilesCommands::Download => run_download(&cwd, server_url, json),
+        FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
+        FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Upload => run_upload(&cwd, server_url, json),
         FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
     }
@@ -141,6 +162,102 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     };
 
     print_upload_result(&result, started.elapsed().as_millis(), json)
+}
+
+fn run_accept_all(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut results = Vec::new();
+    for ctx in &contexts {
+        if contexts.len() > 1 && !json {
+            println!("Accepting changes in {}...", ctx.conn_dir_name);
+        }
+        results.push(accept_all_single_repo(ctx)?);
+    }
+
+    let accepted_files: Vec<String> = results
+        .iter()
+        .flat_map(|result| result.accepted_paths.iter().cloned())
+        .collect();
+    let total_accepted: i32 = results.iter().map(|result| result.files_accepted).sum();
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if total_accepted == 0 { "no_changes" } else { "accepted" },
+                "filesAccepted": total_accepted,
+                "paths": accepted_files,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if total_accepted == 0 {
+        println!(
+            "No unreviewed local changes to accept. ({})",
+            format_elapsed(elapsed_ms)
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Accepted {} local record change(s). ({})",
+        total_accepted,
+        format_elapsed(elapsed_ms)
+    );
+    print_file_list(&accepted_files);
+    Ok(())
+}
+
+fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut entries = Vec::new();
+    for ctx in &contexts {
+        entries.extend(unreviewed_entries(ctx)?);
+    }
+    entries.sort_by(|left, right| {
+        left.connection_name
+            .cmp(&right.connection_name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "count": entries.len(),
+                "entries": entries,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No unreviewed local record changes.");
+        return Ok(());
+    }
+
+    println!("{} unreviewed local record change(s):", entries.len());
+    for entry in entries {
+        println!(
+            "  [{}] {} — {}",
+            entry.connection_name, entry.status, entry.path
+        );
+    }
+    Ok(())
 }
 
 fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
@@ -381,13 +498,19 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
     let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = read_git_tree(&ctx.bare_repo, &base_hash)?;
     sync_schema_files_from_master(ctx)?;
-    let local_map = read_materialized_repo(ctx)?;
+    let local_unreviewed = unreviewed_entries(ctx)?;
+    let local_plan_map = read_local_publish_plan_map(ctx)?;
 
-    if maps_equal(&base_map, &local_map) {
-        return Ok(UploadResult {
-            status: "no_changes".to_string(),
-            ..Default::default()
-        });
+    if local_unreviewed.is_empty() && local_plan_map.is_empty() {
+        git_fetch(&ctx.bare_repo, token)?;
+        let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
+        let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
+        if maps_equal(&base_map, &remote_map) {
+            return Ok(UploadResult {
+                status: "no_changes".to_string(),
+                ..Default::default()
+            });
+        }
     }
 
     const MAX_RETRIES: i32 = 5;
@@ -395,15 +518,27 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
         git_fetch(&ctx.bare_repo, token)?;
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
         let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
-        let (merged, mut result, messages) =
-            prepare_upload_merge(&base_map, &local_map, &remote_map, attempt);
+        let (mut merged, mut result, mut messages) =
+            prepare_upload_merge(&base_map, &base_map, &remote_map, attempt);
+
+        strip_publish_plan_files(&mut merged);
+        for (path, value) in &local_plan_map {
+            merged.insert(path.clone(), value.clone());
+        }
+
+        if !local_unreviewed.is_empty() {
+            messages.push(format!(
+                "{} record(s) have unreviewed local changes and will not be uploaded. Run `scratchmd files accept-all` first.",
+                local_unreviewed.len()
+            ));
+        }
 
         if maps_equal(&merged, &remote_map) {
             git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
-            materialize_local_repo(ctx, &merged)?;
             sync_schema_files_from_master(ctx)?;
             return Ok(UploadResult {
                 status: "up_to_date".to_string(),
+                messages,
                 ..Default::default()
             });
         }
@@ -417,7 +552,6 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
 
         match git_push(&ctx.bare_repo, token) {
             Ok(()) => {
-                materialize_local_repo(ctx, &merged)?;
                 sync_schema_files_from_master(ctx)?;
                 result.messages = messages;
                 return Ok(result);
@@ -426,8 +560,6 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
                 if err.to_string().contains("non-fast-forward")
                     || err.to_string().contains("rejected")
                 {
-                    // Restore the local dirty ref to the pre-upload base so a failed push
-                    // does not leave the workspace in a permanently diverged state.
                     git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &base_hash)?;
                     continue;
                 }
@@ -440,6 +572,76 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
         "Upload failed after {} attempts due to concurrent changes on the server",
         MAX_RETRIES
     )
+}
+
+fn accept_all_single_repo(ctx: &ConnectionContext) -> anyhow::Result<AcceptAllResult> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(ctx)?;
+    let local_map = read_materialized_repo(ctx)?;
+    let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+
+    if changes.is_empty() {
+        return Ok(AcceptAllResult {
+            ..Default::default()
+        });
+    }
+
+    let mut accepted_map = scratch_only_map(&base_map);
+    for (path, value) in &local_map {
+        if !is_scratch_path(path) {
+            accepted_map.insert(path.clone(), value.clone());
+        }
+    }
+
+    commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        base_hash.as_deref(),
+        &accepted_map,
+        "Accept all local changes",
+    )?;
+
+    Ok(AcceptAllResult {
+        files_accepted: changes.len() as i32,
+        accepted_paths: changes.into_iter().map(|entry| entry.path).collect(),
+    })
+}
+
+fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(ctx)?;
+    let local_map = read_materialized_repo(ctx)?;
+    Ok(compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &base_map,
+        &local_map,
+    ))
+}
+
+pub(crate) fn has_unreviewed_record_changes(
+    bare_repo: &Path,
+    dirty_dir: &Path,
+) -> anyhow::Result<bool> {
+    let base_hash = git_rev_parse_optional(bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+
+    let mut working_tree_map = FileMap::new();
+    read_dirty_disk(dirty_dir, dirty_dir, &mut working_tree_map)?;
+
+    Ok(!maps_equal(
+        &data_only_map(&base_map),
+        &data_only_map(&working_tree_map),
+    ))
 }
 
 fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
@@ -570,7 +772,7 @@ fn git_push_force(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn materialize_treeish_to_worktree(
+pub(crate) fn materialize_treeish_to_worktree(
     bare_repo: &Path,
     treeish: &str,
     work_tree: &Path,
@@ -898,6 +1100,84 @@ fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Res
     }
 
     Ok(())
+}
+
+fn read_local_publish_plan_map(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
+    let mut scratch_map = FileMap::new();
+    read_scratch_disk(&ctx.scratch_dir, &ctx.scratch_dir, &mut scratch_map)?;
+    Ok(scratch_map
+        .into_iter()
+        .filter(|(path, _)| is_publish_plan_file(path))
+        .collect())
+}
+
+fn is_scratch_path(path: &str) -> bool {
+    path.starts_with(".scratch/")
+}
+
+fn is_publish_plan_file(path: &str) -> bool {
+    path.strip_prefix(".scratch/")
+        .map(|rest| rest.starts_with(".publish-plans/") || rest.contains("/publish-plan-"))
+        .unwrap_or(false)
+}
+
+fn strip_publish_plan_files(map: &mut FileMap) {
+    map.retain(|path, _| !is_publish_plan_file(path));
+}
+
+fn scratch_only_map(map: &FileMap) -> FileMap {
+    map.iter()
+        .filter(|(path, _)| is_scratch_path(path))
+        .map(|(path, value)| (path.clone(), value.clone()))
+        .collect()
+}
+
+fn data_only_map(map: &FileMap) -> FileMap {
+    map.iter()
+        .filter(|(path, _)| !is_scratch_path(path))
+        .map(|(path, value)| (path.clone(), value.clone()))
+        .collect()
+}
+
+fn compute_unreviewed_entries(
+    connection_name: &str,
+    base_map: &FileMap,
+    local_map: &FileMap,
+) -> Vec<UnreviewedEntry> {
+    let base_data = data_only_map(base_map);
+    let local_data = data_only_map(local_map);
+    let mut all_paths: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+
+    for key in base_data.keys() {
+        all_paths.insert(key);
+    }
+    for key in local_data.keys() {
+        all_paths.insert(key);
+    }
+
+    let mut entries = Vec::new();
+    for path in all_paths {
+        match (base_data.get(path), local_data.get(path)) {
+            (None, Some(_)) => entries.push(UnreviewedEntry {
+                connection_name: connection_name.to_string(),
+                path: path.to_string(),
+                status: "added".to_string(),
+            }),
+            (Some(_), None) => entries.push(UnreviewedEntry {
+                connection_name: connection_name.to_string(),
+                path: path.to_string(),
+                status: "deleted".to_string(),
+            }),
+            (Some(base), Some(local)) if base != local => entries.push(UnreviewedEntry {
+                connection_name: connection_name.to_string(),
+                path: path.to_string(),
+                status: "modified".to_string(),
+            }),
+            _ => {}
+        }
+    }
+
+    entries
 }
 
 fn sync_schema_files_from_master(ctx: &ConnectionContext) -> anyhow::Result<()> {
@@ -1348,10 +1628,16 @@ fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> a
     let elapsed = format_elapsed(elapsed_ms);
     if result.status == "no_changes" {
         println!("No local changes to upload. ({})", elapsed);
+        for message in &result.messages {
+            println!("Warning: {}", message);
+        }
         return Ok(());
     }
     if result.status == "up_to_date" {
         println!("Remote already has all local changes. ({})", elapsed);
+        for message in &result.messages {
+            println!("Warning: {}", message);
+        }
         return Ok(());
     }
 

@@ -119,6 +119,7 @@ Problems with this layout:
     connections/
       scratch/
       master/
+      dirty/                          # Ephemeral reviewed snapshots used only when working tree has unreviewed edits
     docs/
   .repos/                              # Bare repos, mirroring service disk layout exactly
     {connectorAccountId}.git
@@ -200,7 +201,9 @@ git --git-dir=.repos/{repo_basename}.git update-ref refs/heads/dirty $commit
 
 The result is that `{CONNECTOR-NAME}/` is a completely plain directory — no git footprint, no marker files. Any tool (`ls`, `find`, VS Code) sees only the JSON record files. Cleanup is a simple `rm -rf`.
 
-The same approach applies to the master checkout at `.scratch/connections/master/{CONNECTOR-NAME}/` and to the service's temporary materializations under `.temp/`.
+This is also why we do **not** want the user-facing data folders to be real Git worktrees. Real linked worktrees come with `.git` pointers, branch checkout ownership, and Git lifecycle rules (`git worktree add/remove`) that are easy to leak or misuse. We already saw the downside of that on the service side: a leaked linked worktree can keep `dirty` checked out and block pushes. The manually managed approach avoids that entire class of problems. We materialize plain directories on demand, operate against them with explicit `--git-dir/--work-tree`, and delete or refresh them whenever needed.
+
+The same approach applies to the master checkout at `.scratch/connections/master/{CONNECTOR-NAME}/`, to the planner-only reviewed snapshots under `.scratch/connections/dirty/{CONNECTOR-NAME}/`, and to the service's temporary materializations under `.temp/`.
 
 ---
 
@@ -222,6 +225,7 @@ Derived paths (same formula on both sides):
 | Dirty checkout | `{loculdir}/{connector_name}/` |
 | Connection scratch | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
 | Master worktree | `{loculdir}/.scratch/connections/master/{connector_name}/` |
+| Reviewed dirty snapshot | `{loculdir}/.scratch/connections/dirty/{connector_name}/` |
 | Workbook materialization | `{loculdir}/.scratch/workspace/` |
 
 This is implemented as `WorkspaceLayout` in `src/shared/layout.rs`.

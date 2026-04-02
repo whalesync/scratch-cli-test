@@ -31,6 +31,12 @@ interface SyncValidationResult {
   stderr: string;
 }
 
+interface UnreviewedChangeEntry {
+  connectionName: string;
+  path: string;
+  status: string;
+}
+
 export function WorkspacePageDebug() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -39,11 +45,17 @@ export function WorkspacePageDebug() {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [acceptingAll, setAcceptingAll] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [unreviewedModalOpen, setUnreviewedModalOpen] = useState(false);
+  const [loadingUnreviewed, setLoadingUnreviewed] = useState(false);
+  const [unreviewedEntries, setUnreviewedEntries] = useState<UnreviewedChangeEntry[]>([]);
+  const [unreviewedError, setUnreviewedError] = useState<string | null>(null);
   const [validateModalOpen, setValidateModalOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [publishPlanModalOpen, setPublishPlanModalOpen] = useState(false);
   const [publishFromGitModalOpen, setPublishFromGitModalOpen] = useState(false);
+  const [publishAllModalOpen, setPublishAllModalOpen] = useState(false);
   const [localSyncs, setLocalSyncs] = useState<string[]>([]);
   const [selectedSyncs, setSelectedSyncs] = useState<string[]>([]);
   const [loadingSyncs, setLoadingSyncs] = useState(false);
@@ -67,10 +79,16 @@ export function WorkspacePageDebug() {
   const [publishFromGitOutput, setPublishFromGitOutput] = useState('');
   const [publishFromGitExitCode, setPublishFromGitExitCode] = useState<number | null>(null);
   const [publishFromGitError, setPublishFromGitError] = useState<string | null>(null);
+  const [startingPublishAll, setStartingPublishAll] = useState(false);
+  const [runningPublishAll, setRunningPublishAll] = useState(false);
+  const [publishAllOutput, setPublishAllOutput] = useState('');
+  const [publishAllExitCode, setPublishAllExitCode] = useState<number | null>(null);
+  const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const runSyncSessionIdRef = useRef<string | null>(null);
   const publishPlanSessionIdRef = useRef<string | null>(null);
   const publishFromGitSessionIdRef = useRef<string | null>(null);
+  const publishAllSessionIdRef = useRef<string | null>(null);
 
   const fetchWorkspace = useCallback(async () => {
     if (!id) return;
@@ -87,6 +105,14 @@ export function WorkspacePageDebug() {
       setLoading(false);
     }
   }, [id]);
+
+  const fetchUnreviewedChanges = useCallback(async (): Promise<UnreviewedChangeEntry[]> => {
+    if (!localPath) {
+      return [];
+    }
+
+    return window.scratchDesktop.listUnreviewedChanges(localPath);
+  }, [localPath]);
 
   const handleDownloadRecords = useCallback(async () => {
     if (!workspace) {
@@ -152,12 +178,85 @@ export function WorkspacePageDebug() {
     }
   }, [workspace]);
 
+  const handleAcceptAllChanges = useCallback(async () => {
+    if (!workspace || !localPath) {
+      return;
+    }
+
+    try {
+      setAcceptingAll(true);
+      const result = await window.scratchDesktop.acceptAllChanges(localPath);
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to accept changes');
+      }
+
+      const summary =
+        result.stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .find(Boolean) || 'All current local record changes were accepted into the reviewed dirty branch.';
+      notifications.show({
+        title: 'Changes accepted',
+        message: summary,
+        color: 'green',
+      });
+
+      if (unreviewedModalOpen) {
+        const entries = await fetchUnreviewedChanges();
+        setUnreviewedEntries(entries);
+        setUnreviewedError(null);
+      }
+    } catch (err) {
+      notifications.show({
+        title: 'Accept all failed',
+        message: err instanceof Error ? err.message : 'Failed to accept local changes',
+        color: 'red',
+      });
+    } finally {
+      setAcceptingAll(false);
+    }
+  }, [fetchUnreviewedChanges, localPath, unreviewedModalOpen, workspace]);
+
+  const handleOpenUnreviewedChanges = useCallback(async () => {
+    if (!localPath) {
+      return;
+    }
+
+    try {
+      setUnreviewedModalOpen(true);
+      setLoadingUnreviewed(true);
+      setUnreviewedError(null);
+      const entries = await fetchUnreviewedChanges();
+      setUnreviewedEntries(entries);
+    } catch (err) {
+      setUnreviewedEntries([]);
+      setUnreviewedError(err instanceof Error ? err.message : 'Failed to load unreviewed changes');
+      notifications.show({
+        title: 'Could not load unreviewed changes',
+        message: err instanceof Error ? err.message : 'Failed to load unreviewed changes',
+        color: 'red',
+      });
+    } finally {
+      setLoadingUnreviewed(false);
+    }
+  }, [fetchUnreviewedChanges, localPath]);
+
   const handlePushChanges = useCallback(async () => {
     if (!workspace || !localPath) {
       return;
     }
 
     try {
+      const unreviewed = await fetchUnreviewedChanges();
+      if (unreviewed.length > 0) {
+        const confirmed = window.confirm(
+          `${unreviewed.length} records with unpublished changes will not be published. Continue?`,
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
       setPushing(true);
       await window.scratchDesktop.pushWorkspaceChanges(localPath);
       notifications.show({
@@ -174,7 +273,7 @@ export function WorkspacePageDebug() {
     } finally {
       setPushing(false);
     }
-  }, [localPath, workspace]);
+  }, [fetchUnreviewedChanges, localPath, workspace]);
 
   const handleOpenValidateSyncs = useCallback(async () => {
     if (!localPath) {
@@ -349,6 +448,14 @@ export function WorkspacePageDebug() {
     publishFromGitSessionIdRef.current = null;
   }, []);
 
+  const handleOpenPublishAll = useCallback(() => {
+    setPublishAllModalOpen(true);
+    setPublishAllOutput('');
+    setPublishAllExitCode(null);
+    setPublishAllError(null);
+    publishAllSessionIdRef.current = null;
+  }, []);
+
   const handlePublishFromGit = useCallback(async () => {
     if (!localPath) {
       return;
@@ -374,6 +481,42 @@ export function WorkspacePageDebug() {
       setStartingPublishFromGit(false);
     }
   }, [localPath]);
+
+  const handlePublishAll = useCallback(async () => {
+    if (!localPath) {
+      return;
+    }
+
+    try {
+      const unreviewed = await fetchUnreviewedChanges();
+      if (unreviewed.length > 0) {
+        const confirmed = window.confirm(
+          `${unreviewed.length} records with unpublished changes will not be published. Continue?`,
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      setStartingPublishAll(true);
+      setRunningPublishAll(true);
+      setPublishAllOutput('');
+      setPublishAllExitCode(null);
+      setPublishAllError(null);
+      const { sessionId } = await window.scratchDesktop.startPublishAll(localPath);
+      publishAllSessionIdRef.current = sessionId;
+    } catch (err) {
+      setRunningPublishAll(false);
+      setPublishAllError(err instanceof Error ? err.message : 'Failed to start publish-all');
+      notifications.show({
+        title: 'Publish all failed',
+        message: err instanceof Error ? err.message : 'Failed to start publish-all',
+        color: 'red',
+      });
+    } finally {
+      setStartingPublishAll(false);
+    }
+  }, [fetchUnreviewedChanges, localPath]);
 
   useEffect(() => {
     void fetchWorkspace();
@@ -403,6 +546,34 @@ export function WorkspacePageDebug() {
           } else {
             notifications.show({
               title: 'Publish plan finished with issues',
+              message: event.error || `scratchmd exited with code ${event.exitCode}`,
+              color: 'red',
+            });
+          }
+          return;
+        }
+
+        if (publishAllSessionIdRef.current === event.sessionId) {
+          if (event.type === 'chunk') {
+            setPublishAllOutput((current) => current + event.chunk);
+            return;
+          }
+
+          setRunningPublishAll(false);
+          setPublishAllExitCode(event.exitCode);
+          if (event.error) {
+            setPublishAllError(event.error);
+          }
+
+          if (event.exitCode === 0) {
+            notifications.show({
+              title: 'Publish all complete',
+              message: 'The reviewed local changes were planned, uploaded, and queued for publish.',
+              color: 'green',
+            });
+          } else {
+            notifications.show({
+              title: 'Publish all finished with issues',
               message: event.error || `scratchmd exited with code ${event.exitCode}`,
               color: 'red',
             });
@@ -492,6 +663,68 @@ export function WorkspacePageDebug() {
 
   return (
     <Stack p="xl" gap="lg">
+      <Modal
+        opened={unreviewedModalOpen}
+        onClose={() => {
+          if (!loadingUnreviewed && !acceptingAll) {
+            setUnreviewedModalOpen(false);
+          }
+        }}
+        title="Unreviewed changes"
+        size="lg"
+      >
+        <Stack gap="md">
+          {unreviewedError && (
+            <Alert color="red" title="Error">
+              {unreviewedError}
+            </Alert>
+          )}
+
+          {loadingUnreviewed ? (
+            <Center py="md">
+              <Loader size="sm" />
+            </Center>
+          ) : unreviewedEntries.length === 0 ? (
+            <Text c="dimmed" size="sm">
+              No unreviewed record changes were found in the local working tree.
+            </Text>
+          ) : (
+            <ScrollArea.Autosize mah={360}>
+              <Stack gap="xs">
+                {unreviewedEntries.map((entry) => (
+                  <Box
+                    key={`${entry.connectionName}:${entry.path}:${entry.status}`}
+                    p="sm"
+                    style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 8 }}
+                  >
+                    <Group justify="space-between" align="flex-start">
+                      <Text fw={500} size="sm">
+                        {entry.connectionName}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {entry.status}
+                      </Text>
+                    </Group>
+                    <Code block mt="xs">
+                      {entry.path}
+                    </Code>
+                  </Box>
+                ))}
+              </Stack>
+            </ScrollArea.Autosize>
+          )}
+
+          <Group justify="space-between">
+            <Text size="sm" c="dimmed">
+              {unreviewedEntries.length} unreviewed record change{unreviewedEntries.length === 1 ? '' : 's'}
+            </Text>
+            <Button onClick={() => void handleAcceptAllChanges()} loading={acceptingAll}>
+              Accept all changes
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Modal
         opened={validateModalOpen}
         onClose={() => {
@@ -732,6 +965,43 @@ export function WorkspacePageDebug() {
         </Stack>
       </Modal>
 
+      <Modal
+        opened={publishAllModalOpen}
+        onClose={() => {
+          if (!runningPublishAll && !startingPublishAll) {
+            setPublishAllModalOpen(false);
+          }
+        }}
+        title="Publish all"
+        size="lg"
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            This will create a publish plan, upload the reviewed local dirty branch, and queue the git-based publish
+            job. Unreviewed working-tree changes stay local.
+          </Text>
+
+          {publishAllError && (
+            <Alert color="red" title="Error">
+              {publishAllError}
+            </Alert>
+          )}
+
+          <Group justify="flex-end">
+            <Button onClick={() => void handlePublishAll()} loading={startingPublishAll} disabled={runningPublishAll}>
+              Publish all
+            </Button>
+          </Group>
+
+          <LiveCommandOutput
+            output={publishAllOutput}
+            running={runningPublishAll || startingPublishAll}
+            exitCode={publishAllExitCode}
+            emptyMessage="Run publish all to watch plan, upload, and publish output here."
+          />
+        </Stack>
+      </Modal>
+
       <Group gap="sm">
         <ActionIcon variant="subtle" onClick={() => void navigate('/')}>
           <ArrowLeft size={18} />
@@ -754,6 +1024,12 @@ export function WorkspacePageDebug() {
 
         {localPath && (
           <Group>
+            <Button variant="light" onClick={() => void handleOpenUnreviewedChanges()}>
+              View unreviewed changes
+            </Button>
+            <Button variant="light" onClick={() => void handleAcceptAllChanges()} loading={acceptingAll}>
+              Accept all changes
+            </Button>
             <Button variant="light" onClick={() => void handleOpenRunSync()}>
               Run sync
             </Button>
@@ -765,6 +1041,9 @@ export function WorkspacePageDebug() {
             </Button>
             <Button variant="light" onClick={() => void handleOpenPublishFromGit()}>
               Publish from git
+            </Button>
+            <Button variant="light" onClick={() => void handleOpenPublishAll()}>
+              Publish all
             </Button>
             <Button onClick={() => void handlePushChanges()} loading={pushing}>
               Upload files
