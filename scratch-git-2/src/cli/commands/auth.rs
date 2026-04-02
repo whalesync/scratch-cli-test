@@ -17,13 +17,30 @@ pub enum AuthCommands {
     Logout,
     /// Show current authentication status
     Status,
+    /// Set credentials directly
+    SetCredentials {
+        /// API token
+        #[arg(long = "apiToken")]
+        api_token: String,
+        /// Account email address
+        #[arg(long)]
+        email: String,
+        /// Token expiration date (ISO 8601)
+        #[arg(long = "expiresAt")]
+        expires_at: String,
+    },
 }
 
-pub async fn run(cmd: AuthCommands, server_url: &str) -> anyhow::Result<()> {
+pub async fn run(cmd: AuthCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
     match cmd {
         AuthCommands::Login { no_browser } => login(server_url, no_browser).await,
         AuthCommands::Logout => logout(server_url),
         AuthCommands::Status => status(server_url),
+        AuthCommands::SetCredentials {
+            api_token,
+            email,
+            expires_at,
+        } => set_credentials(server_url, api_token, email, expires_at, json),
     }
 }
 
@@ -138,5 +155,64 @@ fn status(server_url: &str) -> anyhow::Result<()> {
         }
     }
     println!();
+    Ok(())
+}
+
+fn is_valid_email(email: &str) -> bool {
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    if local.is_empty() || domain.is_empty() {
+        return false;
+    }
+    let Some((name, tld)) = domain.rsplit_once('.') else {
+        return false;
+    };
+    !name.is_empty() && tld.len() >= 2
+}
+
+fn set_credentials(
+    server_url: &str,
+    api_token: String,
+    email: String,
+    expires_at: String,
+    json: bool,
+) -> anyhow::Result<()> {
+    if api_token.is_empty() {
+        anyhow::bail!("apiToken must not be empty");
+    }
+    if email.is_empty() {
+        anyhow::bail!("email must not be empty");
+    }
+    if !is_valid_email(&email) {
+        anyhow::bail!("email is not a valid email address");
+    }
+    if chrono::DateTime::parse_from_rfc3339(&expires_at).is_err() {
+        anyhow::bail!("expiresAt must be a valid ISO 8601 datetime (e.g. 2026-09-29T18:07:42.614Z)");
+    }
+
+    credentials::set(
+        server_url,
+        EnvCredentials {
+            api_token,
+            email: email.clone(),
+            expires_at,
+        },
+    )?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "success",
+                "message": "Credentials saved",
+                "email": email,
+                "server": server_url,
+            }))?
+        );
+    } else {
+        println!("Credentials saved successfully for {}.", email);
+    }
+
     Ok(())
 }

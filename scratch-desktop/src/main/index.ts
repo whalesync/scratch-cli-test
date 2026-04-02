@@ -522,8 +522,33 @@ ipcMain.handle('auth:get-credentials', () => {
 });
 ipcMain.handle(
   'auth:save-credentials',
-  (_, creds: { apiToken: string; email?: string; tokenExpiresAt?: string; serverUrl: string }) =>
-    saveCredentials(creds),
+  async (_, creds: { apiToken: string; email?: string; tokenExpiresAt?: string; serverUrl: string }) => {
+    saveCredentials(creds);
+
+    // Sync credentials to the scratchmd CLI so it can authenticate without a separate login
+    if (creds.apiToken && creds.email && creds.tokenExpiresAt) {
+      try {
+        const args = [
+          'auth',
+          'set-credentials',
+          '--apiToken',
+          creds.apiToken,
+          '--email',
+          creds.email,
+          '--expiresAt',
+          creds.tokenExpiresAt,
+          '--scratch-url',
+          creds.serverUrl,
+        ];
+        const result = await runScratchmdCapture(args);
+        if (result.exitCode !== 0) {
+          console.debug('[auth] scratchmd set-credentials failed:', result.stderr.trim() || result.stdout.trim());
+        }
+      } catch (error) {
+        console.debug('[auth] scratchmd set-credentials error:', error);
+      }
+    }
+  },
 );
 ipcMain.handle('auth:clear-credentials', () => clearCredentials());
 ipcMain.handle('auth:is-token-expired', () => {

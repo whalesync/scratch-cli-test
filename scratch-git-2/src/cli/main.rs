@@ -136,7 +136,7 @@ async fn main() {
     let result = match cli.command {
         Commands::Auth { command, server } => {
             let url = server.as_deref().unwrap_or(&server_url).to_string();
-            auth::run(command, &url).await
+            auth::run(command, &url, cli.json).await
         }
 
         Commands::Workspaces { command } => workspaces::run(command, &server_url, cli.json).await,
