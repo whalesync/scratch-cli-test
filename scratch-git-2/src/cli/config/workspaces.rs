@@ -87,7 +87,11 @@ fn upsert_at(registry: &Path, workbook_id: &str, workspace_path: &Path) -> anyho
     let mut file = read_file_at(registry);
     file.version = "1".to_string();
 
-    if let Some(existing) = file.workspaces.iter_mut().find(|workspace| workspace.id == workbook_id) {
+    if let Some(existing) = file
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == workbook_id)
+    {
         existing.path = canonical.display().to_string();
     } else {
         file.workspaces.push(WorkspaceEntry {
@@ -108,7 +112,8 @@ fn remove_at(registry: &Path, workbook_id: &str) -> anyhow::Result<Option<PathBu
         .find(|workspace| workspace.id == workbook_id)
         .map(|workspace| PathBuf::from(&workspace.path));
 
-    file.workspaces.retain(|workspace| workspace.id != workbook_id);
+    file.workspaces
+        .retain(|workspace| workspace.id != workbook_id);
     file.version = "1".to_string();
     file.workspaces.sort_by(|a, b| a.id.cmp(&b.id));
     write_file_at(registry, &file)?;

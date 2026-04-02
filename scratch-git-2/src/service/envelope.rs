@@ -49,4 +49,3 @@ pub fn envelope_result<T: Serialize>(
         Err(err) => envelope_error(state, Some(repo_id), err),
     }
 }
-

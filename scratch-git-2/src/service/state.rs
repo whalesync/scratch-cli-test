@@ -39,5 +39,4 @@ impl AppState {
     pub fn index_db_path(&self, repo_id: &str) -> PathBuf {
         self.index_dir.join(format!("{}.db", repo_id))
     }
-
 }

@@ -9,7 +9,10 @@ use crate::service::types::DirtyFile;
 impl GitRepo {
     /// Walk a commit's tree and return a map of path → blob OID (hex string).
     /// Skips dotfiles (paths where any component starts with '.').
-    pub fn get_tree_files(&self, commit_oid: ObjectId) -> Result<HashMap<String, String>, AppError> {
+    pub fn get_tree_files(
+        &self,
+        commit_oid: ObjectId,
+    ) -> Result<HashMap<String, String>, AppError> {
         let repo = &self.repo;
         let commit = repo
             .find_commit(commit_oid)
@@ -131,12 +134,20 @@ impl GitRepo {
                 Some((mode_a, oid_a)) => {
                     if oid_a != oid_b {
                         if mode_a.is_tree() && mode_b.is_tree() {
-                            let sub_tree_a = self.repo.find_object(oid_a)
-                                .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                            let sub_tree_a = self
+                                .repo
+                                .find_object(oid_a)
+                                .map_err(|e| {
+                                    AppError::internal(format!("Failed to find tree: {}", e))
+                                })?
                                 .try_into_tree()
                                 .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
-                            let sub_tree_b = self.repo.find_object(oid_b)
-                                .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                            let sub_tree_b = self
+                                .repo
+                                .find_object(oid_b)
+                                .map_err(|e| {
+                                    AppError::internal(format!("Failed to find tree: {}", e))
+                                })?
                                 .try_into_tree()
                                 .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
                             self.compare_trees_recursive(&sub_tree_a, &sub_tree_b, path, dirty)?;
@@ -149,11 +160,22 @@ impl GitRepo {
                         } else {
                             // Type fundamentally changed
                             if mode_a.is_tree() {
-                                let sub_tree_a = self.repo.find_object(oid_a)
-                                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                                let sub_tree_a = self
+                                    .repo
+                                    .find_object(oid_a)
+                                    .map_err(|e| {
+                                        AppError::internal(format!("Failed to find tree: {}", e))
+                                    })?
                                     .try_into_tree()
-                                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
-                                self.add_all_from_tree(&sub_tree_a, path.clone(), "deleted", dirty)?;
+                                    .map_err(|e| {
+                                        AppError::internal(format!("Not a tree: {}", e))
+                                    })?;
+                                self.add_all_from_tree(
+                                    &sub_tree_a,
+                                    path.clone(),
+                                    "deleted",
+                                    dirty,
+                                )?;
                             } else {
                                 dirty.push(DirtyFile {
                                     path: path.clone(),
@@ -163,10 +185,16 @@ impl GitRepo {
                             }
 
                             if mode_b.is_tree() {
-                                let sub_tree_b = self.repo.find_object(oid_b)
-                                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
+                                let sub_tree_b = self
+                                    .repo
+                                    .find_object(oid_b)
+                                    .map_err(|e| {
+                                        AppError::internal(format!("Failed to find tree: {}", e))
+                                    })?
                                     .try_into_tree()
-                                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                                    .map_err(|e| {
+                                        AppError::internal(format!("Not a tree: {}", e))
+                                    })?;
                                 self.add_all_from_tree(&sub_tree_b, path, "added", dirty)?;
                             } else {
                                 dirty.push(DirtyFile {
@@ -181,7 +209,9 @@ impl GitRepo {
                 None => {
                     // Added in B
                     if mode_b.is_tree() {
-                        let sub_tree_b = self.repo.find_object(oid_b)
+                        let sub_tree_b = self
+                            .repo
+                            .find_object(oid_b)
                             .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
                             .try_into_tree()
                             .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
@@ -210,7 +240,9 @@ impl GitRepo {
             };
 
             if mode_a.is_tree() {
-                let sub_tree_a = self.repo.find_object(oid_a)
+                let sub_tree_a = self
+                    .repo
+                    .find_object(oid_a)
                     .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
                     .try_into_tree()
                     .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
@@ -247,7 +279,9 @@ impl GitRepo {
             };
 
             if e.mode().is_tree() {
-                let sub_tree = self.repo.find_object(e.object_id())
+                let sub_tree = self
+                    .repo
+                    .find_object(e.object_id())
                     .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?
                     .try_into_tree()
                     .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
@@ -281,12 +315,10 @@ mod tests {
     }
 
     /// Helper: commit a set of file changes to main and return the commit OID.
-    fn commit_files(
-        repo: &GitRepo,
-        changes: &[FileChange],
-        message: &str,
-    ) -> gix::ObjectId {
-        repo.commit_changes_to_ref(MAIN_BRANCH, changes, message).unwrap().0
+    fn commit_files(repo: &GitRepo, changes: &[FileChange], message: &str) -> gix::ObjectId {
+        repo.commit_changes_to_ref(MAIN_BRANCH, changes, message)
+            .unwrap()
+            .0
     }
 
     #[test]

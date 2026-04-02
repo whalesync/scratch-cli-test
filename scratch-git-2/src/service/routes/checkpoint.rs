@@ -27,9 +27,7 @@ pub async fn create_checkpoint(
             let git_repo = GitRepo::open(&repos_dir, &id)?;
 
             let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
-            let dirty_oid = git_repo
-                .resolve_ref(DIRTY_BRANCH)
-                .unwrap_or(main_oid);
+            let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH).unwrap_or(main_oid);
 
             git_repo.write_tag(&format!("main_{}", body.name), main_oid)?;
             git_repo.write_tag(&format!("dirty_{}", body.name), dirty_oid)?;
@@ -45,10 +43,7 @@ pub async fn create_checkpoint(
     }
 }
 
-pub async fn list_checkpoints(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn list_checkpoints(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();
@@ -72,9 +67,7 @@ pub async fn list_checkpoints(
             for (name, _) in &main_tags {
                 if dirty_tags.contains(name) {
                     // Get commit info from dirty tag
-                    if let Ok(dirty_tag_oid) =
-                        git_repo.resolve_ref(&format!("dirty_{}", name))
-                    {
+                    if let Ok(dirty_tag_oid) = git_repo.resolve_ref(&format!("dirty_{}", name)) {
                         if let Ok(info) = git_repo.read_commit_info(dirty_tag_oid) {
                             checkpoints.push(json!({
                                 "name": name,
@@ -116,18 +109,12 @@ pub async fn revert_checkpoint(
             let main_tag_oid = git_repo
                 .resolve_ref(&format!("main_{}", body.name))
                 .map_err(|_| {
-                    AppError::internal(format!(
-                        "Checkpoint {} not found or incomplete",
-                        body.name
-                    ))
+                    AppError::internal(format!("Checkpoint {} not found or incomplete", body.name))
                 })?;
             let dirty_tag_oid = git_repo
                 .resolve_ref(&format!("dirty_{}", body.name))
                 .map_err(|_| {
-                    AppError::internal(format!(
-                        "Checkpoint {} not found or incomplete",
-                        body.name
-                    ))
+                    AppError::internal(format!("Checkpoint {} not found or incomplete", body.name))
                 })?;
 
             git_repo.force_ref(MAIN_BRANCH, main_tag_oid)?;

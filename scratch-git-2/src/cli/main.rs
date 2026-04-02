@@ -13,11 +13,7 @@ use commands::{auth, connections, files, index, linked, plan_publish, syncs, wor
 use config::project_config;
 
 #[derive(Parser)]
-#[command(
-    name = "scratchmd",
-    version,
-    about = "Scratch content management CLI"
-)]
+#[command(name = "scratchmd", version, about = "Scratch content management CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -132,7 +128,8 @@ fn build_client(server_url: &str) -> anyhow::Result<ApiClient> {
 async fn main() {
     let cli = Cli::parse();
     // Priority: --scratch-url / SCRATCH_URL  >  scratchmd.config.yaml  >  compiled default
-    let server_url = cli.scratch_url
+    let server_url = cli
+        .scratch_url
         .or_else(|| project_config::load_server_url(cli.config.as_deref()))
         .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());
 
@@ -142,13 +139,9 @@ async fn main() {
             auth::run(command, &url).await
         }
 
-        Commands::Workspaces { command } => {
-            workspaces::run(command, &server_url, cli.json).await
-        }
+        Commands::Workspaces { command } => workspaces::run(command, &server_url, cli.json).await,
 
-        Commands::Files { command } => {
-            files::run(command, &server_url, cli.json).await
-        }
+        Commands::Files { command } => files::run(command, &server_url, cli.json).await,
 
         Commands::Connections { workspace, command } => match build_client(&server_url) {
             Ok(client) => connections::run(command, &client, workspace.as_deref(), cli.json).await,
@@ -162,11 +155,16 @@ async fn main() {
 
         Commands::Syncs { workspace, command } => {
             // Local commands don't need an API client
-            if matches!(command, syncs::SyncsCommands::ValidateLocal { .. } | syncs::SyncsCommands::RunLocal { .. }) {
+            if matches!(
+                command,
+                syncs::SyncsCommands::ValidateLocal { .. } | syncs::SyncsCommands::RunLocal { .. }
+            ) {
                 syncs::run_local_cmd(command, cli.json)
             } else {
                 match build_client(&server_url) {
-                    Ok(client) => syncs::run(command, &client, workspace.as_deref(), cli.json).await,
+                    Ok(client) => {
+                        syncs::run(command, &client, workspace.as_deref(), cli.json).await
+                    }
                     Err(e) => Err(e),
                 }
             }
@@ -180,16 +178,21 @@ async fn main() {
         },
 
         Commands::BuildIndex { workspace } => index::build_command(&workspace),
-        Commands::DumpIndex { workspace, connection } => index::dump_command(&workspace, connection.as_deref()),
-        Commands::GenerateDocs { workspace } => {
-            (|| -> anyhow::Result<()> {
-                let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;
-                let name = wb_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-                commands::generate_docs::write_docs(&wb_dir, &name)?;
-                println!("Docs written to {}", wb_dir.display());
-                Ok(())
-            })()
-        }
+        Commands::DumpIndex {
+            workspace,
+            connection,
+        } => index::dump_command(&workspace, connection.as_deref()),
+        Commands::GenerateDocs { workspace } => (|| -> anyhow::Result<()> {
+            let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;
+            let name = wb_dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            commands::generate_docs::write_docs(&wb_dir, &name)?;
+            println!("Docs written to {}", wb_dir.display());
+            Ok(())
+        })(),
     };
 
     if let Err(e) = result {

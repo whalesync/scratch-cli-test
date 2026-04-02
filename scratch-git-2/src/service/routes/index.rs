@@ -28,18 +28,29 @@ pub async fn build_index(State(state): State<AppState>, Path(id): Path<String>) 
             // First pass: build FK map from .scratch/**/schema.json files
             let mut fk_map: HashMap<String, Vec<idx::FkField>> = HashMap::new();
             for (path, oid) in &blobs {
-                let Some(scratch_rest) = path.strip_prefix(".scratch/") else { continue };
+                let Some(scratch_rest) = path.strip_prefix(".scratch/") else {
+                    continue;
+                };
                 if !scratch_rest.ends_with("/schema.json") && scratch_rest != "schema.json" {
                     continue;
                 }
                 let folder_key = if scratch_rest == "schema.json" {
                     String::new()
                 } else {
-                    scratch_rest.strip_suffix("/schema.json").unwrap_or("").to_string()
+                    scratch_rest
+                        .strip_suffix("/schema.json")
+                        .unwrap_or("")
+                        .to_string()
                 };
-                let Ok(content) = git_repo.read_blob(*oid) else { continue };
-                let Ok(text) = std::str::from_utf8(&content) else { continue };
-                let Ok(schema) = serde_json::from_str::<Value>(text) else { continue };
+                let Ok(content) = git_repo.read_blob(*oid) else {
+                    continue;
+                };
+                let Ok(text) = std::str::from_utf8(&content) else {
+                    continue;
+                };
+                let Ok(schema) = serde_json::from_str::<Value>(text) else {
+                    continue;
+                };
                 let fk_fields = idx::extract_fk_fields(&schema);
                 if !fk_fields.is_empty() {
                     fk_map.insert(folder_key, fk_fields);
@@ -68,14 +79,22 @@ pub async fn build_index(State(state): State<AppState>, Path(id): Path<String>) 
                     continue;
                 }
 
-                let Ok(content) = git_repo.read_blob(*oid) else { continue };
-                let Ok(text) = std::str::from_utf8(&content) else { continue };
-                let Ok(value) = serde_json::from_str::<Value>(text) else { continue };
+                let Ok(content) = git_repo.read_blob(*oid) else {
+                    continue;
+                };
+                let Ok(text) = std::str::from_utf8(&content) else {
+                    continue;
+                };
+                let Ok(value) = serde_json::from_str::<Value>(text) else {
+                    continue;
+                };
 
                 // Extract remote_id (handle both string and numeric ids)
-                let remote_id = value
-                    .get("id")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+                let remote_id = value.get("id").and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                });
 
                 // FK references
                 if let Some(fk_fields) = fk_map.get(&folder) {
@@ -132,8 +151,7 @@ pub async fn dump_index(State(state): State<AppState>, Path(id): Path<String>) -
             if !db_path.exists() {
                 return Err(AppError::not_found(format!("index not built for {}", id)));
             }
-            let files =
-                idx::read_index(&db_path).map_err(|e| AppError::internal(e.to_string()))?;
+            let files = idx::read_index(&db_path).map_err(|e| AppError::internal(e.to_string()))?;
             let refs =
                 idx::read_references(&db_path).map_err(|e| AppError::internal(e.to_string()))?;
 
@@ -194,8 +212,10 @@ pub async fn lookup_index(
         move || {
             let map = idx::lookup_by_remote_ids(&db_path, &body.folder, &body.remote_ids)
                 .map_err(|e| AppError::internal(e.to_string()))?;
-            let json_map: serde_json::Map<String, Value> =
-                map.into_iter().map(|(k, v)| (k, Value::String(v))).collect();
+            let json_map: serde_json::Map<String, Value> = map
+                .into_iter()
+                .map(|(k, v)| (k, Value::String(v)))
+                .collect();
             Ok::<_, AppError>(Value::Object(json_map))
         }
     })
@@ -285,11 +305,12 @@ pub async fn lookup_index_filenames(
     let result = tokio::task::spawn_blocking({
         let db_path = state.index_db_path(&id);
         move || {
-            let map =
-                idx::lookup_filenames_to_remote_ids(&db_path, &body.folder, &body.filenames)
-                    .map_err(|e| AppError::internal(e.to_string()))?;
-            let json_map: serde_json::Map<String, Value> =
-                map.into_iter().map(|(k, v)| (k, Value::String(v))).collect();
+            let map = idx::lookup_filenames_to_remote_ids(&db_path, &body.folder, &body.filenames)
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            let json_map: serde_json::Map<String, Value> = map
+                .into_iter()
+                .map(|(k, v)| (k, Value::String(v)))
+                .collect();
             Ok::<_, AppError>(Value::Object(json_map))
         }
     })
@@ -389,9 +410,14 @@ fn collect_blobs(
         let mut children: Vec<(String, gix::ObjectId, bool)> = Vec::new();
         for entry_ref in tree.iter() {
             if let Ok(entry) = entry_ref {
-                let name = std::str::from_utf8(entry.filename()).unwrap_or("").to_string();
-                let full_path =
-                    if prefix.is_empty() { name.clone() } else { format!("{}/{}", prefix, name) };
+                let name = std::str::from_utf8(entry.filename())
+                    .unwrap_or("")
+                    .to_string();
+                let full_path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
                 let oid: gix::ObjectId = entry.object_id().into();
                 children.push((full_path, oid, entry.mode().is_tree()));
             }

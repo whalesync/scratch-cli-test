@@ -56,11 +56,13 @@ impl WorkspaceLayout {
     }
 
     pub fn bare_repo_path(&self, repo_id: &str) -> PathBuf {
-        self.repos_dir().join(format!("{}.git", repo_basename(repo_id)))
+        self.repos_dir()
+            .join(format!("{}.git", repo_basename(repo_id)))
     }
 
     pub fn index_db_path(&self, repo_id: &str) -> PathBuf {
-        self.repos_dir().join(format!("{}.db", repo_basename(repo_id)))
+        self.repos_dir()
+            .join(format!("{}.db", repo_basename(repo_id)))
     }
 
     pub fn dirty_checkout_path(&self, connector_name: &str) -> PathBuf {
@@ -145,8 +147,14 @@ mod tests {
 
         assert_eq!(layout.root_dir(), root.as_path());
         assert_eq!(layout.repos_dir(), root);
-        assert_eq!(layout.locul_dir(), PathBuf::from("/tmp/repos/org123/wkb456/.temp"));
-        assert_eq!(layout.scratch_root(), PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch"));
+        assert_eq!(
+            layout.locul_dir(),
+            PathBuf::from("/tmp/repos/org123/wkb456/.temp")
+        );
+        assert_eq!(
+            layout.scratch_root(),
+            PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch")
+        );
         assert_eq!(
             layout.bare_repo_path("org123/wkb456/ca789"),
             PathBuf::from("/tmp/repos/org123/wkb456/ca789.git")

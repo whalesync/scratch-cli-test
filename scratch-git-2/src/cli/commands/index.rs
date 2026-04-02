@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use crate::config::markers;
-use crate::shared::layout::WorkspaceLayout;
 use crate::shared::index;
+use crate::shared::layout::WorkspaceLayout;
 
 pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
@@ -27,7 +27,11 @@ pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
         let db = layout.index_db_path(&connection.repo_path);
 
         if !master.exists() {
-            eprintln!("  {} — master worktree not found at {}, skipping", conn_dir_name, master.display());
+            eprintln!(
+                "  {} — master worktree not found at {}, skipping",
+                conn_dir_name,
+                master.display()
+            );
             eprintln!("    Run 'scratchmd workspaces init' to set up the master worktree.");
             continue;
         }
@@ -60,10 +64,7 @@ pub fn dump_command(workspace_start: &std::path::Path, filter: Option<&str>) -> 
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
     if workspace_marker.connections.is_empty() {
-        anyhow::bail!(
-            "No connections found in {}",
-            workspace_dir.display()
-        );
+        anyhow::bail!("No connections found in {}", workspace_dir.display());
     }
 
     for connection in &workspace_marker.connections {
@@ -121,15 +122,19 @@ pub fn dump_command(workspace_start: &std::path::Path, filter: Option<&str>) -> 
 }
 
 fn resolve_workspace(start: &std::path::Path) -> anyhow::Result<PathBuf> {
-    let abs = start.canonicalize()
-        .unwrap_or_else(|_| start.to_path_buf());
+    let abs = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     Ok(markers::find_nearest_workspace(&abs).unwrap_or(abs))
 }
 
-fn read_workspace_marker(workspace_dir: &std::path::Path) -> anyhow::Result<markers::WorkspaceMarker> {
+fn read_workspace_marker(
+    workspace_dir: &std::path::Path,
+) -> anyhow::Result<markers::WorkspaceMarker> {
     let marker_path = markers::marker_path(workspace_dir);
     match markers::read(&marker_path) {
         Ok(markers::Marker::Workspace(marker)) => Ok(marker),
-        _ => anyhow::bail!("Could not read workspace marker at {}", marker_path.display()),
+        _ => anyhow::bail!(
+            "Could not read workspace marker at {}",
+            marker_path.display()
+        ),
     }
 }

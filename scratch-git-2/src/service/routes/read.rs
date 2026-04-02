@@ -167,7 +167,10 @@ pub async fn files_from_folder(
         let id = id.clone();
         move || {
             let branch = body.branch.as_deref().unwrap_or(MAIN_BRANCH);
-            let folder = body.folder_path.strip_prefix('/').unwrap_or(&body.folder_path);
+            let folder = body
+                .folder_path
+                .strip_prefix('/')
+                .unwrap_or(&body.folder_path);
 
             let git_repo = GitRepo::open(&repos_dir, &id)?;
             let commit_oid = match git_repo.resolve_ref(branch) {
@@ -244,23 +247,32 @@ pub async fn files(
             let commit_oid = match git_repo.resolve_ref(branch) {
                 Ok(oid) => oid,
                 Err(_) => {
-                    let results: Vec<_> = body.paths.iter().map(|path| json!({ "path": path, "content": serde_json::Value::Null })).collect();
+                    let results: Vec<_> = body
+                        .paths
+                        .iter()
+                        .map(|path| json!({ "path": path, "content": serde_json::Value::Null }))
+                        .collect();
                     return Ok(json!(results));
                 }
             };
 
             // Group paths by folder to minimize tree traversals
-            let mut by_folder: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            let mut by_folder: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
             for path in &body.paths {
                 let normalized = path.strip_prefix('/').unwrap_or(path);
                 let (folder, filename) = match normalized.rfind('/') {
                     Some(idx) => (&normalized[..idx], &normalized[idx + 1..]),
                     None => ("", normalized),
                 };
-                by_folder.entry(folder.to_string()).or_default().push(filename.to_string());
+                by_folder
+                    .entry(folder.to_string())
+                    .or_default()
+                    .push(filename.to_string());
             }
 
-            let mut results_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+            let mut results_map: std::collections::HashMap<String, Option<String>> =
+                std::collections::HashMap::new();
 
             for (folder, filenames) in by_folder {
                 if let Ok(entries) = git_repo.read_tree_at_path(commit_oid, &folder) {
@@ -269,9 +281,13 @@ pub async fn files(
                         .filter(|(_, _, is_tree)| !*is_tree)
                         .map(|(name, oid, _)| (name.as_str(), *oid))
                         .collect();
-                    
+
                     for filename in filenames {
-                        let full_path = if folder.is_empty() { filename.clone() } else { format!("{}/{}", folder, filename) };
+                        let full_path = if folder.is_empty() {
+                            filename.clone()
+                        } else {
+                            format!("{}/{}", folder, filename)
+                        };
                         let content = match oid_map.get(filename.as_str()) {
                             Some(oid) => Some(git_repo.read_blob_to_string(*oid)?),
                             None => None,
@@ -280,17 +296,25 @@ pub async fn files(
                     }
                 } else {
                     for filename in filenames {
-                        let full_path = if folder.is_empty() { filename.clone() } else { format!("{}/{}", folder, filename) };
+                        let full_path = if folder.is_empty() {
+                            filename.clone()
+                        } else {
+                            format!("{}/{}", folder, filename)
+                        };
                         results_map.insert(full_path, None);
                     }
                 }
             }
 
-            let results: Vec<_> = body.paths.iter().map(|path| {
-                let normalized = path.strip_prefix('/').unwrap_or(path).to_string();
-                let content = results_map.get(&normalized).cloned().flatten();
-                json!({ "path": path, "content": content })
-            }).collect();
+            let results: Vec<_> = body
+                .paths
+                .iter()
+                .map(|path| {
+                    let normalized = path.strip_prefix('/').unwrap_or(path).to_string();
+                    let content = results_map.get(&normalized).cloned().flatten();
+                    json!({ "path": path, "content": content })
+                })
+                .collect();
 
             Ok::<_, AppError>(json!(results))
         }
@@ -371,9 +395,7 @@ pub async fn files_paginated(
                         };
                         json!({ "name": name, "path": path })
                     } else {
-                        let content = git_repo
-                            .read_blob_to_string(*oid)
-                            .unwrap_or_default();
+                        let content = git_repo.read_blob_to_string(*oid).unwrap_or_default();
                         json!({ "name": name, "content": content })
                     }
                 })
@@ -492,7 +514,11 @@ pub async fn archive(
                 .header(header::CONTENT_TYPE, "application/zip")
                 .body(Body::from(buf))
                 .unwrap_or_else(|_| {
-                    envelope_error(&state, Some(&id), AppError::internal("Failed to build response"))
+                    envelope_error(
+                        &state,
+                        Some(&id),
+                        AppError::internal("Failed to build response"),
+                    )
                 })
         }
         Ok(Err(e)) => envelope_error(&state, Some(&id), e),

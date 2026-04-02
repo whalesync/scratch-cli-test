@@ -168,7 +168,9 @@ mod tests {
         assert!(conflicts.is_empty());
 
         // dirty should now see the file from main
-        let content = repo.get_file_content(DIRTY_BRANCH, "from-main.txt").unwrap();
+        let content = repo
+            .get_file_content(DIRTY_BRANCH, "from-main.txt")
+            .unwrap();
         assert_eq!(content.as_deref(), Some("main content"));
     }
 
@@ -208,11 +210,15 @@ mod tests {
 
         // dirty should have both files
         assert_eq!(
-            repo.get_file_content(DIRTY_BRANCH, "user-file.txt").unwrap().as_deref(),
+            repo.get_file_content(DIRTY_BRANCH, "user-file.txt")
+                .unwrap()
+                .as_deref(),
             Some("user content")
         );
         assert_eq!(
-            repo.get_file_content(DIRTY_BRANCH, "main-file.txt").unwrap().as_deref(),
+            repo.get_file_content(DIRTY_BRANCH, "main-file.txt")
+                .unwrap()
+                .as_deref(),
             Some("main content")
         );
     }
@@ -255,7 +261,10 @@ mod tests {
         let (success, _) = repo.rebase_dirty("ours").unwrap();
         assert!(success);
 
-        assert!(repo.get_file_content(DIRTY_BRANCH, "to-delete.txt").unwrap().is_none());
+        assert!(repo
+            .get_file_content(DIRTY_BRANCH, "to-delete.txt")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -311,7 +320,10 @@ mod tests {
         let (success, _) = repo.rebase_dirty("diff3").unwrap();
         assert!(success);
 
-        let result = repo.get_file_content(DIRTY_BRANCH, "shared.txt").unwrap().unwrap();
+        let result = repo
+            .get_file_content(DIRTY_BRANCH, "shared.txt")
+            .unwrap()
+            .unwrap();
         // Both edits should be merged
         assert!(result.contains("USER"), "user edit should be preserved");
         assert!(result.contains("MAIN"), "main edit should be preserved");

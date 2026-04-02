@@ -9,10 +9,7 @@ use crate::service::git::repo::GitRepo;
 use crate::service::state::AppState;
 use crate::service::types::*;
 
-pub async fn status(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn status(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();
@@ -43,10 +40,7 @@ pub async fn status(
     }
 }
 
-pub async fn has_dirty(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn has_dirty(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();
@@ -80,10 +74,7 @@ pub async fn has_dirty(
     }
 }
 
-pub async fn count(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn count(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();

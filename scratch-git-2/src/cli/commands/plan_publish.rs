@@ -37,11 +37,17 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
         let db_path = layout.index_db_path(&connection.repo_path);
 
         if !dirty_dir.exists() {
-            eprintln!("  {conn_name}: dirty checkout not found at {}, skipping", dirty_dir.display());
+            eprintln!(
+                "  {conn_name}: dirty checkout not found at {}, skipping",
+                dirty_dir.display()
+            );
             continue;
         }
         if !master_dir.exists() {
-            eprintln!("  {conn_name}: master worktree not found at {}, skipping", master_dir.display());
+            eprintln!(
+                "  {conn_name}: master worktree not found at {}, skipping",
+                master_dir.display()
+            );
             eprintln!("    Run 'scratchmd workspaces init' to set up the master worktree.");
             continue;
         }
@@ -82,7 +88,10 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
 // publish-from-git: trigger server-side publish for all connectors with a plan
 // ---------------------------------------------------------------------------
 
-pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::ApiClient) -> anyhow::Result<()> {
+pub async fn run_publish_from_git(
+    workspace_start: &Path,
+    client: &crate::api::ApiClient,
+) -> anyhow::Result<()> {
     let workspace = resolve_workspace(workspace_start)?;
     let workspace_marker = read_workspace_marker(&workspace)?;
     let layout = WorkspaceLayout::for_cli(&workspace);
@@ -95,16 +104,27 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
 
     for connection in &workspace_marker.connections {
         let conn_name = connection.dir_name.clone();
-        let manifest_dir = layout.connection_scratch_path(&conn_name).join(".publish-plans");
-        let plan_dir = match std::fs::read_dir(&manifest_dir).ok().and_then(|mut d| d.next()) {
+        let manifest_dir = layout
+            .connection_scratch_path(&conn_name)
+            .join(".publish-plans");
+        let plan_dir = match std::fs::read_dir(&manifest_dir)
+            .ok()
+            .and_then(|mut d| d.next())
+        {
             Some(Ok(e)) if e.path().is_dir() => e.path(),
             _ => {
-                eprintln!("  {conn_name}: no publish plan found — run 'scratchmd plan-publish' first");
+                eprintln!(
+                    "  {conn_name}: no publish plan found — run 'scratchmd plan-publish' first"
+                );
                 continue;
             }
         };
 
-        let plan_timestamp = plan_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let plan_timestamp = plan_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let plan_path = format!(".scratch/.publish-plans/{}", plan_timestamp);
 
         match client
@@ -112,7 +132,10 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
             .await
         {
             Ok(resp) => {
-                let job_id = resp.get("jobId").and_then(|v| v.as_str()).unwrap_or("(unknown)");
+                let job_id = resp
+                    .get("jobId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(unknown)");
                 println!("  {conn_name}: publish job queued (jobId: {job_id})");
                 any_triggered = true;
             }
@@ -136,23 +159,53 @@ pub async fn run_publish_from_git(workspace_start: &Path, client: &crate::api::A
 fn print_report(conn_name: &str, result: &PlanResult) {
     println!("  {conn_name}");
     for fr in &result.folder_reports {
-        let label = if fr.folder.is_empty() { "(root)".to_string() } else { fr.folder.clone() };
+        let label = if fr.folder.is_empty() {
+            "(root)".to_string()
+        } else {
+            fr.folder.clone()
+        };
 
         let mut raw_parts = vec![];
-        if fr.raw_modified  > 0 { raw_parts.push(format!("{} modified", fr.raw_modified)); }
-        if fr.raw_added     > 0 { raw_parts.push(format!("{} added", fr.raw_added)); }
-        if fr.raw_deleted   > 0 { raw_parts.push(format!("{} deleted", fr.raw_deleted)); }
-        if fr.raw_ref_clear > 0 { raw_parts.push(format!("{} ref-clear", fr.raw_ref_clear)); }
+        if fr.raw_modified > 0 {
+            raw_parts.push(format!("{} modified", fr.raw_modified));
+        }
+        if fr.raw_added > 0 {
+            raw_parts.push(format!("{} added", fr.raw_added));
+        }
+        if fr.raw_deleted > 0 {
+            raw_parts.push(format!("{} deleted", fr.raw_deleted));
+        }
+        if fr.raw_ref_clear > 0 {
+            raw_parts.push(format!("{} ref-clear", fr.raw_ref_clear));
+        }
 
         let mut plan_parts = vec![];
-        if fr.plan_edit     > 0 { plan_parts.push(format!("{} edit", fr.plan_edit)); }
-        if fr.plan_create   > 0 { plan_parts.push(format!("{} create", fr.plan_create)); }
-        if fr.plan_delete   > 0 { plan_parts.push(format!("{} delete", fr.plan_delete)); }
-        if fr.plan_backfill > 0 { plan_parts.push(format!("{} backfill", fr.plan_backfill)); }
-        if fr.plan_rename   > 0 { plan_parts.push(format!("{} rename", fr.plan_rename)); }
+        if fr.plan_edit > 0 {
+            plan_parts.push(format!("{} edit", fr.plan_edit));
+        }
+        if fr.plan_create > 0 {
+            plan_parts.push(format!("{} create", fr.plan_create));
+        }
+        if fr.plan_delete > 0 {
+            plan_parts.push(format!("{} delete", fr.plan_delete));
+        }
+        if fr.plan_backfill > 0 {
+            plan_parts.push(format!("{} backfill", fr.plan_backfill));
+        }
+        if fr.plan_rename > 0 {
+            plan_parts.push(format!("{} rename", fr.plan_rename));
+        }
 
-        let raw_str  = if raw_parts.is_empty()  { "no changes".to_string() } else { raw_parts.join(", ") };
-        let plan_str = if plan_parts.is_empty() { "no ops".to_string()      } else { plan_parts.join(", ") };
+        let raw_str = if raw_parts.is_empty() {
+            "no changes".to_string()
+        } else {
+            raw_parts.join(", ")
+        };
+        let plan_str = if plan_parts.is_empty() {
+            "no ops".to_string()
+        } else {
+            plan_parts.join(", ")
+        };
 
         println!("    {label}  ({raw_str})  →  ({plan_str})");
     }
@@ -171,7 +224,10 @@ fn read_workspace_marker(workspace: &Path) -> anyhow::Result<markers::WorkspaceM
     let marker_path = markers::marker_path(workspace);
     match markers::read(&marker_path) {
         Ok(markers::Marker::Workspace(marker)) => Ok(marker),
-        _ => anyhow::bail!("Could not read workspace marker at {}", marker_path.display()),
+        _ => anyhow::bail!(
+            "Could not read workspace marker at {}",
+            marker_path.display()
+        ),
     }
 }
 
@@ -201,10 +257,18 @@ mod tests {
         let conn_dir = root.join(conn);
         std::fs::create_dir_all(&conn_dir).unwrap();
 
-        let master_dir = root.join(".scratch").join("connections").join("master").join(conn);
+        let master_dir = root
+            .join(".scratch")
+            .join("connections")
+            .join("master")
+            .join(conn);
         std::fs::create_dir_all(&master_dir).unwrap();
 
-        let scratch_dir = root.join(".scratch").join("connections").join("scratch").join(conn);
+        let scratch_dir = root
+            .join(".scratch")
+            .join("connections")
+            .join("scratch")
+            .join(conn);
         let db_path = root.join(".repos").join("conn_test_id.db");
 
         (tmp, conn_dir, master_dir, scratch_dir, db_path)
@@ -223,20 +287,33 @@ mod tests {
 
     fn find_plan_root(scratch_dir: &Path) -> Option<PathBuf> {
         let plans_dir = scratch_dir.join(".publish-plans");
-        if !plans_dir.exists() { return None; }
-        std::fs::read_dir(&plans_dir).ok()?
+        if !plans_dir.exists() {
+            return None;
+        }
+        std::fs::read_dir(&plans_dir)
+            .ok()?
             .flatten()
             .find(|e| e.path().is_dir())
             .map(|e| e.path())
     }
 
-    fn phase_file(scratch_dir: &Path, plan_root: &Path, folder: &str, phase: &str, filename: &str) -> PathBuf {
+    fn phase_file(
+        scratch_dir: &Path,
+        plan_root: &Path,
+        folder: &str,
+        phase: &str,
+        filename: &str,
+    ) -> PathBuf {
         let ts = plan_root.file_name().unwrap().to_string_lossy();
         let plan_subdir = format!("publish-plan-{ts}");
         if folder.is_empty() {
             scratch_dir.join(plan_subdir).join(phase).join(filename)
         } else {
-            scratch_dir.join(folder).join(plan_subdir).join(phase).join(filename)
+            scratch_dir
+                .join(folder)
+                .join(plan_subdir)
+                .join(phase)
+                .join(filename)
         }
     }
 
@@ -244,8 +321,16 @@ mod tests {
     fn test_simple_edit() {
         let (tmp, conn_dir, master_dir, scratch_dir, _db_path) = make_workspace("my-conn");
 
-        write_json(&master_dir, "public/posts/rec1.json", &json!({"id": "rec1", "fields": {"title": "Old"}}));
-        write_json(&conn_dir, "public/posts/rec1.json", &json!({"id": "rec1", "fields": {"title": "New"}}));
+        write_json(
+            &master_dir,
+            "public/posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Old"}}),
+        );
+        write_json(
+            &conn_dir,
+            "public/posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "New"}}),
+        );
 
         run(tmp.path()).unwrap();
 
@@ -256,9 +341,16 @@ mod tests {
         assert_eq!(plan["summary"]["create"], 0);
         assert_eq!(plan["summary"]["delete"], 0);
 
-        let edit_file = phase_file(&scratch_dir, &plan_root, "public/posts", "edit", "rec1.json");
+        let edit_file = phase_file(
+            &scratch_dir,
+            &plan_root,
+            "public/posts",
+            "edit",
+            "rec1.json",
+        );
         assert!(edit_file.exists(), "edit file not created");
-        let edit_content: Value = serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
+        let edit_content: Value =
+            serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
         assert_eq!(edit_content["content"]["fields"]["title"], "New");
     }
 
@@ -267,7 +359,11 @@ mod tests {
         let (tmp, conn_dir, master_dir, scratch_dir, _db_path) = make_workspace("my-conn");
 
         write_json(&master_dir, "posts/old.json", &json!({"id": "rec_old"}));
-        write_json(&conn_dir, "posts/new.json", &json!({"fields": {"title": "New Post"}}));
+        write_json(
+            &conn_dir,
+            "posts/new.json",
+            &json!({"fields": {"title": "New Post"}}),
+        );
         write_json(&master_dir, "posts/same.json", &json!({"id": "rec_same"}));
         write_json(&conn_dir, "posts/same.json", &json!({"id": "rec_same"}));
 
@@ -282,7 +378,8 @@ mod tests {
 
         let delete_file = phase_file(&scratch_dir, &plan_root, "posts", "delete", "old.json");
         assert!(delete_file.exists(), "delete file not created");
-        let delete_content: Value = serde_json::from_str(&std::fs::read_to_string(delete_file).unwrap()).unwrap();
+        let delete_content: Value =
+            serde_json::from_str(&std::fs::read_to_string(delete_file).unwrap()).unwrap();
         assert_eq!(delete_content["remoteId"], "rec_old");
     }
 
@@ -290,12 +387,23 @@ mod tests {
     fn test_nothing_to_publish_when_identical() {
         let (tmp, conn_dir, master_dir, scratch_dir, _db_path) = make_workspace("my-conn");
 
-        write_json(&master_dir, "posts/rec1.json", &json!({"id": "rec1", "fields": {"title": "Same"}}));
-        write_json(&conn_dir, "posts/rec1.json", &json!({"id": "rec1", "fields": {"title": "Same"}}));
+        write_json(
+            &master_dir,
+            "posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Same"}}),
+        );
+        write_json(
+            &conn_dir,
+            "posts/rec1.json",
+            &json!({"id": "rec1", "fields": {"title": "Same"}}),
+        );
 
         run(tmp.path()).unwrap();
 
-        assert!(find_plan_root(&scratch_dir).is_none(), "should not create plan when nothing changed");
+        assert!(
+            find_plan_root(&scratch_dir).is_none(),
+            "should not create plan when nothing changed"
+        );
     }
 
     #[test]
@@ -304,7 +412,11 @@ mod tests {
 
         write_json(&master_dir, "posts/existing.json", &json!({"id": "rec1"}));
         write_json(&conn_dir, "posts/existing.json", &json!({"id": "rec1"}));
-        write_json(&conn_dir, "posts/scratch_pending_abc.json", &json!({"fields": {"title": "New"}}));
+        write_json(
+            &conn_dir,
+            "posts/scratch_pending_abc.json",
+            &json!({"fields": {"title": "New"}}),
+        );
 
         run(tmp.path()).unwrap();
 
@@ -321,26 +433,34 @@ mod tests {
 
         write_json(&master_dir, "posts/existing.json", &json!({"id": "rec1"}));
         write_json(&conn_dir, "posts/existing.json", &json!({"id": "rec1"}));
-        write_json(&conn_dir, "posts/new.json", &json!({
-            "fields": {
-                "title": "Hello",
-                "image": "@asset/uploads/img.png"
-            }
-        }));
+        write_json(
+            &conn_dir,
+            "posts/new.json",
+            &json!({
+                "fields": {
+                    "title": "Hello",
+                    "image": "@asset/uploads/img.png"
+                }
+            }),
+        );
 
         run(tmp.path()).unwrap();
 
         let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
         let create_file = phase_file(&scratch_dir, &plan_root, "posts", "create", "new.json");
         assert!(create_file.exists());
-        let content: Value = serde_json::from_str(&std::fs::read_to_string(create_file).unwrap()).unwrap();
-        assert!(content["fields"]["image"].is_null(), "asset pseudo-ref should be stripped to null");
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(create_file).unwrap()).unwrap();
+        assert!(
+            content["fields"]["image"].is_null(),
+            "asset pseudo-ref should be stripped to null"
+        );
     }
 
     #[test]
     fn test_compute_changed_fields() {
         let master = json!({"id": "1", "fields": {"title": "Old", "count": 5}});
-        let dirty  = json!({"id": "1", "fields": {"title": "New", "count": 5}});
+        let dirty = json!({"id": "1", "fields": {"title": "New", "count": 5}});
         // Use the shared module's build_publish_plan indirectly via a workspace test
         // For unit testing compute_changed_fields, we test via the plan output
         let tmp = TempDir::new().unwrap();
@@ -361,8 +481,12 @@ mod tests {
 
         let plan_root = find_plan_root(&scratch_dir).expect("plan dir");
         let edit_file = phase_file(&scratch_dir, &plan_root, "t", "edit", "r.json");
-        let content: Value = serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
         assert_eq!(content["changedFields"]["fields"]["title"], "New");
-        assert!(content["changedFields"]["fields"].get("count").is_none(), "unchanged field should not appear");
+        assert!(
+            content["changedFields"]["fields"].get("count").is_none(),
+            "unchanged field should not appear"
+        );
     }
 }

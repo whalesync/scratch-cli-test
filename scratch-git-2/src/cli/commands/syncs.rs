@@ -86,9 +86,13 @@ pub async fn run(
         SyncsCommands::List => list(client, &workbook_id, json).await,
         SyncsCommands::Show { id } => show(client, &workbook_id, &id, json).await,
         SyncsCommands::Create { config } => create(client, &workbook_id, &config, json).await,
-        SyncsCommands::Update { id, config } => update(client, &workbook_id, &id, &config, json).await,
+        SyncsCommands::Update { id, config } => {
+            update(client, &workbook_id, &id, &config, json).await
+        }
         SyncsCommands::Delete { id, yes } => delete(client, &workbook_id, &id, yes, json).await,
-        SyncsCommands::Run { id, no_wait } => run_sync(client, &workbook_id, &id, no_wait, json).await,
+        SyncsCommands::Run { id, no_wait } => {
+            run_sync(client, &workbook_id, &id, no_wait, json).await
+        }
         SyncsCommands::Download { id, output } => {
             download(client, &workbook_id, id.as_deref(), output.as_deref(), json).await
         }
@@ -124,7 +128,11 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
     println!("Found {} sync(s):", syncs.len());
     println!();
     for s in &syncs {
-        let name = if s.display_name.is_empty() { "(unnamed)" } else { &s.display_name };
+        let name = if s.display_name.is_empty() {
+            "(unnamed)"
+        } else {
+            &s.display_name
+        };
         println!("  Name:    {}", name);
         println!("  ID:      {}", s.id);
         if !s.sync_state.is_empty() {
@@ -220,11 +228,17 @@ fn load_config_value(config: &str) -> anyhow::Result<serde_json::Value> {
         return Ok(serde_json::from_str(&data)?);
     }
     // Treat as inline JSON
-    Ok(serde_json::from_str(config)
-        .map_err(|_| anyhow::anyhow!("config value is not valid JSON and is not a readable file path"))?)
+    Ok(serde_json::from_str(config).map_err(|_| {
+        anyhow::anyhow!("config value is not valid JSON and is not a readable file path")
+    })?)
 }
 
-async fn create(client: &ApiClient, workbook_id: &str, config: &str, json: bool) -> anyhow::Result<()> {
+async fn create(
+    client: &ApiClient,
+    workbook_id: &str,
+    config: &str,
+    json: bool,
+) -> anyhow::Result<()> {
     let body = load_config_value(config)?;
     let sync = client.create_sync(workbook_id, &body).await?;
 
@@ -233,7 +247,11 @@ async fn create(client: &ApiClient, workbook_id: &str, config: &str, json: bool)
         return Ok(());
     }
 
-    let name = if sync.display_name.is_empty() { "(unnamed)" } else { &sync.display_name };
+    let name = if sync.display_name.is_empty() {
+        "(unnamed)"
+    } else {
+        &sync.display_name
+    };
     println!();
     println!("Sync \"{}\" created successfully.", name);
     println!("  ID: {}", sync.id);
@@ -256,7 +274,11 @@ async fn update(
         return Ok(());
     }
 
-    let name = if sync.display_name.is_empty() { "(unnamed)" } else { &sync.display_name };
+    let name = if sync.display_name.is_empty() {
+        "(unnamed)"
+    } else {
+        &sync.display_name
+    };
     println!();
     println!("Sync \"{}\" updated successfully.", name);
     println!();
@@ -274,7 +296,10 @@ async fn delete(
     let name = display_name(&sync);
 
     if !yes && !json {
-        print!("Are you sure you want to delete sync \"{}\" ({})? [y/N] ", name, id);
+        print!(
+            "Are you sure you want to delete sync \"{}\" ({})? [y/N] ",
+            name, id
+        );
         io::stdout().flush()?;
         let mut line = String::new();
         io::stdin().lock().read_line(&mut line)?;
@@ -313,14 +338,20 @@ async fn run_sync(
 
     if no_wait {
         if json {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "jobId": resp.job_id }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "jobId": resp.job_id }))?
+            );
         } else {
             println!("Sync job queued (job ID: {}).", resp.job_id);
         }
         return Ok(());
     }
 
-    eprint!("Sync job started (job ID: {}). Waiting for completion", resp.job_id);
+    eprint!(
+        "Sync job started (job ID: {}). Waiting for completion",
+        resp.job_id
+    );
     api::poll_job(client, &resp.job_id).await?;
 
     if json {
@@ -399,7 +430,11 @@ async fn download(
         );
     } else {
         println!();
-        println!("Downloaded {} sync config(s) to {}/", written.len(), output_dir.display());
+        println!(
+            "Downloaded {} sync config(s) to {}/",
+            written.len(),
+            output_dir.display()
+        );
         println!();
         for f in &written {
             println!("  {}", f);
@@ -413,11 +448,19 @@ async fn download(
 }
 
 fn display_name(s: &Sync) -> &str {
-    if s.display_name.is_empty() { "(unnamed)" } else { &s.display_name }
+    if s.display_name.is_empty() {
+        "(unnamed)"
+    } else {
+        &s.display_name
+    }
 }
 
 fn sync_config_filename(display_name: &str, sync_id: &str) -> String {
-    let name = if display_name.is_empty() { sync_id } else { display_name };
+    let name = if display_name.is_empty() {
+        sync_id
+    } else {
+        display_name
+    };
     let sanitized: String = name
         .chars()
         .map(|c| match c {
@@ -537,7 +580,9 @@ fn default_string_type() -> String {
 
 impl Default for AutoConvertOptions {
     fn default() -> Self {
-        Self { target_type: "string".to_string() }
+        Self {
+            target_type: "string".to_string(),
+        }
     }
 }
 
@@ -561,8 +606,9 @@ struct RecordMatching {
 
 fn validate_local(sync_path: Option<&str>, _json: bool) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let wb_dir = markers::find_nearest_workspace(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
+    let wb_dir = markers::find_nearest_workspace(&cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
 
     let syncs_dir = workbook_syncs_dir(&wb_dir);
     if !syncs_dir.exists() {
@@ -582,7 +628,11 @@ fn validate_local(sync_path: Option<&str>, _json: bool) -> anyhow::Result<()> {
     let mut any_errors = false;
 
     for sync_file in &sync_files {
-        let name = sync_file.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let name = sync_file
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let errors = validate_sync_file(sync_file, &wb_dir);
         if !errors.is_empty() {
             any_errors = true;
@@ -673,7 +723,10 @@ fn validate_sync_fields(config: &LocalSyncConfig, workspace: &Path) -> Vec<SyncV
             errors.push(SyncValidationError {
                 table_mapping_index: Some(ti),
                 field_mapping_index: None,
-                error_msg: format!("destination folder not found: {}", tm.destination_data_folder_id),
+                error_msg: format!(
+                    "destination folder not found: {}",
+                    tm.destination_data_folder_id
+                ),
                 error_type: LocalErrorType::InvalidField,
             });
         }
@@ -750,7 +803,11 @@ fn split_connection_folder(folder_id: &str) -> (&str, &str) {
     }
 }
 
-fn load_local_schema(workspace: &Path, connection: &str, folder: &str) -> Option<serde_json::Value> {
+fn load_local_schema(
+    workspace: &Path,
+    connection: &str,
+    folder: &str,
+) -> Option<serde_json::Value> {
     let path = WorkspaceLayout::for_cli(workspace)
         .connection_scratch_path(connection)
         .join(folder)
@@ -773,7 +830,10 @@ fn local_schema_has_path(schema: &serde_json::Value, path: &str) -> bool {
     true
 }
 
-fn collect_local_sync_files(syncs_dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<PathBuf>> {
+fn collect_local_sync_files(
+    syncs_dir: &Path,
+    filter: Option<&str>,
+) -> anyhow::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(syncs_dir)?.flatten() {
         let path = entry.path();
@@ -801,8 +861,9 @@ fn collect_local_sync_files(syncs_dir: &Path, filter: Option<&str>) -> anyhow::R
 fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let cwd = std::env::current_dir()?;
-    let wb_dir = markers::find_nearest_workspace(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
+    let wb_dir = markers::find_nearest_workspace(&cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
 
     let syncs_dir = workbook_syncs_dir(&wb_dir);
     if !syncs_dir.exists() {
@@ -821,7 +882,11 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
     let mut all_results: Vec<serde_json::Value> = Vec::new();
 
     for sync_file in &sync_files {
-        let name = sync_file.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let name = sync_file
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         if !json {
             println!("Running sync: {}", name);
             let _ = io::stdout().flush();
@@ -848,7 +913,10 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
                 if json {
                     all_results.push(serde_json::json!({ "sync": name, "updated": result.updated, "created": result.created }));
                 } else {
-                    println!("  {} updated, {} created (pending)", result.updated, result.created);
+                    println!(
+                        "  {} updated, {} created (pending)",
+                        result.updated, result.created
+                    );
                     let _ = io::stdout().flush();
                 }
             }
@@ -865,10 +933,13 @@ fn run_local(sync_path: Option<&str>, json: bool) -> anyhow::Result<()> {
 
     let elapsed_ms = started.elapsed().as_millis();
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "results": all_results,
-            "elapsedMs": elapsed_ms,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "results": all_results,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
     } else {
         let elapsed = format!("{:.3}s", elapsed_ms as f64 / 1000.0);
         println!("Done ({})", elapsed);
@@ -906,8 +977,10 @@ fn build_rhai_context(wb_dir: &Path, cfg: &LocalSyncConfig) -> anyhow::Result<Rh
         for cm in &tm.column_mappings {
             for tc in get_transformer_configs(cm) {
                 if tc.kind == "rhai" {
-                    let opts: RhaiOptions = serde_json::from_value(tc.options.clone())
-                        .map_err(|e| anyhow::anyhow!("rhai transformer missing 'script' option: {e}"))?;
+                    let opts: RhaiOptions =
+                        serde_json::from_value(tc.options.clone()).map_err(|e| {
+                            anyhow::anyhow!("rhai transformer missing 'script' option: {e}")
+                        })?;
                     if scripts.contains_key(&opts.script) {
                         continue;
                     }
@@ -952,7 +1025,10 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
             anyhow::bail!("source folder not found: {}", tm.source_data_folder_id);
         }
         if !dst_dir.exists() {
-            anyhow::bail!("destination folder not found: {}", tm.destination_data_folder_id);
+            anyhow::bail!(
+                "destination folder not found: {}",
+                tm.destination_data_folder_id
+            );
         }
 
         // Pass 1: index destination records as match_key -> path only (no full parse in memory)
@@ -978,7 +1054,11 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
         if !json {
             let ms = pass1_start.elapsed().as_millis();
             let elapsed = format!("{:.3}s", ms as f64 / 1000.0);
-            println!("  {} destination records indexed ({})", dst_index.len(), elapsed);
+            println!(
+                "  {} destination records indexed ({})",
+                dst_index.len(),
+                elapsed
+            );
             let _ = io::stdout().flush();
         }
 
@@ -1012,20 +1092,29 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
                 let mut dst_val: serde_json::Value = serde_json::from_str(&dst_data)?;
                 for cm in &tm.column_mappings {
                     if let Some(src_v) = get_dot(&src_val, &cm.source_column_id) {
-                        let transformed =
-                            apply_transformer_pipeline(src_v, &get_transformer_configs(cm), &rhai_ctx);
+                        let transformed = apply_transformer_pipeline(
+                            src_v,
+                            &get_transformer_configs(cm),
+                            &rhai_ctx,
+                        );
                         set_dot(&mut dst_val, &cm.destination_column_id, transformed);
                     }
                 }
-                std::fs::write(dst_path, format!("{}\n", serde_json::to_string_pretty(&dst_val)?))?;
+                std::fs::write(
+                    dst_path,
+                    format!("{}\n", serde_json::to_string_pretty(&dst_val)?),
+                )?;
                 updated.fetch_add(1, Ordering::Relaxed);
             } else {
                 // No match — create pending record
                 let mut pending: serde_json::Value = serde_json::json!({});
                 for cm in &tm.column_mappings {
                     if let Some(src_v) = get_dot(&src_val, &cm.source_column_id) {
-                        let transformed =
-                            apply_transformer_pipeline(src_v, &get_transformer_configs(cm), &rhai_ctx);
+                        let transformed = apply_transformer_pipeline(
+                            src_v,
+                            &get_transformer_configs(cm),
+                            &rhai_ctx,
+                        );
                         set_dot(&mut pending, &cm.destination_column_id, transformed);
                     }
                 }
@@ -1035,8 +1124,7 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
                     path.hash(&mut h);
                     format!("{:x}", h.finish())
                 };
-                let pending_path =
-                    dst_dir.join(format!("scratch_pending_{}.json", &hash[..8]));
+                let pending_path = dst_dir.join(format!("scratch_pending_{}.json", &hash[..8]));
                 std::fs::write(
                     &pending_path,
                     format!("{}\n", serde_json::to_string_pretty(&pending)?),
@@ -1060,7 +1148,10 @@ fn apply_sync(wb_dir: &Path, cfg: &LocalSyncConfig, json: bool) -> anyhow::Resul
         total_created += created.into_inner();
     }
 
-    Ok(SyncResult { updated: total_updated, created: total_created })
+    Ok(SyncResult {
+        updated: total_updated,
+        created: total_created,
+    })
 }
 
 /// Normalizes a ColumnMapping's transformer config(s) into a slice, mirroring
@@ -1097,9 +1188,15 @@ fn apply_transformer_pipeline(
                 apply_auto_convert(current, &opts)
             }
             "rhai" => {
-                let script_name = t.options.get("script").and_then(|v| v.as_str()).unwrap_or("");
+                let script_name = t
+                    .options
+                    .get("script")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 match rhai_ctx.scripts.get(script_name) {
-                    Some(ast) => apply_rhai(&rhai_ctx.engine, ast, current.clone()).unwrap_or(current),
+                    Some(ast) => {
+                        apply_rhai(&rhai_ctx.engine, ast, current.clone()).unwrap_or(current)
+                    }
                     None => current,
                 }
             }
@@ -1109,12 +1206,17 @@ fn apply_transformer_pipeline(
     current
 }
 
-fn apply_string_to_number(value: serde_json::Value, opts: &StringToNumberOptions) -> serde_json::Value {
+fn apply_string_to_number(
+    value: serde_json::Value,
+    opts: &StringToNumberOptions,
+) -> serde_json::Value {
     use serde_json::Value;
     match &value {
         Value::Number(n) => {
             if opts.parse_integer {
-                return Value::Number(serde_json::Number::from(n.as_f64().unwrap_or(0.0).trunc() as i64));
+                return Value::Number(serde_json::Number::from(
+                    n.as_f64().unwrap_or(0.0).trunc() as i64
+                ));
             }
             value
         }
@@ -1122,7 +1224,10 @@ fn apply_string_to_number(value: serde_json::Value, opts: &StringToNumberOptions
             let mut cleaned = s.trim().to_string();
             if opts.strip_currency {
                 cleaned = cleaned
-                    .replace(['$', '€', '£', '¥', '₹', '₽', '₩', '₴', '₪', '฿', '₫', '₦'], "")
+                    .replace(
+                        ['$', '€', '£', '¥', '₹', '₽', '₩', '₴', '₪', '฿', '₫', '₦'],
+                        "",
+                    )
                     .replace(',', "");
                 cleaned = cleaned.trim().to_string();
             }
@@ -1159,9 +1264,7 @@ fn apply_auto_convert(value: serde_json::Value, opts: &AutoConvertOptions) -> se
             Value::String(_) => value,
             Value::Number(n) => Value::String(n.to_string()),
             Value::Bool(b) => Value::String(b.to_string()),
-            Value::Array(arr) if arr.len() == 1 => {
-                apply_auto_convert(arr[0].clone(), opts)
-            }
+            Value::Array(arr) if arr.len() == 1 => apply_auto_convert(arr[0].clone(), opts),
             Value::Array(arr) => Value::String(
                 arr.iter()
                     .map(|v| match v {
@@ -1185,8 +1288,14 @@ fn apply_auto_convert(value: serde_json::Value, opts: &AutoConvertOptions) -> se
             };
             match as_f64 {
                 Some(f) => {
-                    let n = if opts.target_type == "integer" { f.trunc() } else { f };
-                    serde_json::Number::from_f64(n).map(Value::Number).unwrap_or(value)
+                    let n = if opts.target_type == "integer" {
+                        f.trunc()
+                    } else {
+                        f
+                    };
+                    serde_json::Number::from_f64(n)
+                        .map(Value::Number)
+                        .unwrap_or(value)
                 }
                 None => value,
             }
@@ -1244,7 +1353,11 @@ fn json_to_string(v: &serde_json::Value) -> String {
 // Rhai evaluation
 // ---------------------------------------------------------------------------
 
-fn apply_rhai(engine: &rhai::Engine, ast: &rhai::AST, value: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+fn apply_rhai(
+    engine: &rhai::Engine,
+    ast: &rhai::AST,
+    value: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
     let mut scope = rhai::Scope::new();
     scope.push("value", json_to_dynamic(value));
     let result: rhai::Dynamic = engine.eval_ast_with_scope(&mut scope, ast)?;
@@ -1263,7 +1376,10 @@ fn json_to_dynamic(value: serde_json::Value) -> rhai::Dynamic {
             Dynamic::from(v)
         }
         serde_json::Value::Object(map) => {
-            let m: rhai::Map = map.into_iter().map(|(k, v)| (k.into(), json_to_dynamic(v))).collect();
+            let m: rhai::Map = map
+                .into_iter()
+                .map(|(k, v)| (k.into(), json_to_dynamic(v)))
+                .collect();
             Dynamic::from(m)
         }
     }
@@ -1292,7 +1408,9 @@ fn dynamic_to_json(value: rhai::Dynamic) -> serde_json::Value {
     }
     if let Some(map) = value.try_cast::<rhai::Map>() {
         return serde_json::Value::Object(
-            map.into_iter().map(|(k, v)| (k.to_string(), dynamic_to_json(v))).collect(),
+            map.into_iter()
+                .map(|(k, v)| (k.to_string(), dynamic_to_json(v)))
+                .collect(),
         );
     }
     serde_json::Value::Null

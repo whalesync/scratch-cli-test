@@ -74,8 +74,10 @@ impl TempWorktree {
 
         run(&[
             "commit",
-            "-m", message,
-            "--author", "Scratch <scratch@whalesync.com>",
+            "-m",
+            message,
+            "--author",
+            "Scratch <scratch@whalesync.com>",
         ])
     }
 
@@ -108,6 +110,8 @@ fn uuid_v4() -> String {
         .as_nanos();
     // Mix in thread id for uniqueness across concurrent calls
     let tid = std::thread::current().id();
-    let hash = seed.wrapping_mul(6364136223846793005).wrapping_add(format!("{tid:?}").len() as u128);
+    let hash = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(format!("{tid:?}").len() as u128);
     format!("{:032x}", hash)
 }

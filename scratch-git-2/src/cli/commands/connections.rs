@@ -15,22 +15,62 @@ struct AuthField {
 
 fn service_auth_fields(service: &str) -> Option<Vec<AuthField>> {
     match service {
-        "WEBFLOW" => Some(vec![AuthField { key: "apiKey", display_name: "API Key", required: true }]),
-        "AUDIENCEFUL" => Some(vec![AuthField { key: "apiKey", display_name: "API Key", required: true }]),
+        "WEBFLOW" => Some(vec![AuthField {
+            key: "apiKey",
+            display_name: "API Key",
+            required: true,
+        }]),
+        "AUDIENCEFUL" => Some(vec![AuthField {
+            key: "apiKey",
+            display_name: "API Key",
+            required: true,
+        }]),
         "SHOPIFY" => Some(vec![
-            AuthField { key: "shopDomain", display_name: "Shop Domain", required: true },
-            AuthField { key: "apiKey", display_name: "API Key", required: true },
+            AuthField {
+                key: "shopDomain",
+                display_name: "Shop Domain",
+                required: true,
+            },
+            AuthField {
+                key: "apiKey",
+                display_name: "API Key",
+                required: true,
+            },
         ]),
         "MOCO" => Some(vec![
-            AuthField { key: "domain", display_name: "Moco Domain", required: true },
-            AuthField { key: "apiKey", display_name: "API Key", required: true },
+            AuthField {
+                key: "domain",
+                display_name: "Moco Domain",
+                required: true,
+            },
+            AuthField {
+                key: "apiKey",
+                display_name: "API Key",
+                required: true,
+            },
         ]),
         "WORDPRESS" => Some(vec![
-            AuthField { key: "endpoint", display_name: "WordPress URL", required: true },
-            AuthField { key: "username", display_name: "Username", required: true },
-            AuthField { key: "password", display_name: "Application Password", required: true },
+            AuthField {
+                key: "endpoint",
+                display_name: "WordPress URL",
+                required: true,
+            },
+            AuthField {
+                key: "username",
+                display_name: "Username",
+                required: true,
+            },
+            AuthField {
+                key: "password",
+                display_name: "Application Password",
+                required: true,
+            },
         ]),
-        "AIRTABLE" => Some(vec![AuthField { key: "apiKey", display_name: "API Key", required: true }]),
+        "AIRTABLE" => Some(vec![AuthField {
+            key: "apiKey",
+            display_name: "API Key",
+            required: true,
+        }]),
         "POSTGRES" => Some(vec![AuthField {
             key: "connectionString",
             display_name: "Connection String",
@@ -41,7 +81,11 @@ fn service_auth_fields(service: &str) -> Option<Vec<AuthField>> {
             display_name: "Connection String",
             required: true,
         }]),
-        "PIPEDRIVE" => Some(vec![AuthField { key: "apiKey", display_name: "API Key", required: true }]),
+        "PIPEDRIVE" => Some(vec![AuthField {
+            key: "apiKey",
+            display_name: "API Key",
+            required: true,
+        }]),
         _ => None,
     }
 }
@@ -86,11 +130,15 @@ pub async fn run(
     let workbook_id = config::resolve_workspace_id(workspace)?;
     match cmd {
         ConnectionsCommands::List => list(client, &workbook_id, json).await,
-        ConnectionsCommands::Add { service, params, name } => {
-            add(client, &workbook_id, &service, &params, &name, json).await
-        }
+        ConnectionsCommands::Add {
+            service,
+            params,
+            name,
+        } => add(client, &workbook_id, &service, &params, &name, json).await,
         ConnectionsCommands::Show { id } => show(client, &workbook_id, &id, json).await,
-        ConnectionsCommands::Remove { id, yes } => remove(client, &workbook_id, &id, yes, json).await,
+        ConnectionsCommands::Remove { id, yes } => {
+            remove(client, &workbook_id, &id, yes, json).await
+        }
     }
 }
 
@@ -110,17 +158,30 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
     }
 
     println!();
-    println!("  {:<36}  {:<14}  {:<20}  {:<8}  {}", "ID", "SERVICE", "NAME", "HEALTH", "CREATED");
-    println!("  {:<36}  {:<14}  {:<20}  {:<8}  {}", "----", "-------", "----", "------", "-------");
+    println!(
+        "  {:<36}  {:<14}  {:<20}  {:<8}  {}",
+        "ID", "SERVICE", "NAME", "HEALTH", "CREATED"
+    );
+    println!(
+        "  {:<36}  {:<14}  {:<20}  {:<8}  {}",
+        "----", "-------", "----", "------", "-------"
+    );
     for c in &connections {
         let health = c.health_status.as_deref().unwrap_or("-");
-        let created = if c.created_at.len() > 10 { &c.created_at[..10] } else { &c.created_at };
+        let created = if c.created_at.len() > 10 {
+            &c.created_at[..10]
+        } else {
+            &c.created_at
+        };
         let name = if c.display_name.len() > 20 {
             format!("{}...", &c.display_name[..17])
         } else {
             c.display_name.clone()
         };
-        println!("  {:<36}  {:<14}  {:<20}  {:<8}  {}", c.id, c.service, name, health, created);
+        println!(
+            "  {:<36}  {:<14}  {:<20}  {:<8}  {}",
+            c.id, c.service, name, health, created
+        );
     }
     println!();
     Ok(())
@@ -129,9 +190,9 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
 fn parse_params(raw: &[String]) -> anyhow::Result<HashMap<String, String>> {
     let mut map = HashMap::new();
     for p in raw {
-        let (k, v) = p.split_once('=').ok_or_else(|| {
-            anyhow::anyhow!("invalid --param format {:?}, expected key=value", p)
-        })?;
+        let (k, v) = p
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("invalid --param format {:?}, expected key=value", p))?;
         map.insert(k.to_string(), v.to_string());
     }
     Ok(map)
@@ -163,7 +224,11 @@ async fn add(
             .map(|f| f.display_name)
             .collect();
         if !missing.is_empty() {
-            anyhow::bail!("Missing required params for {}: {}", service, missing.join(", "));
+            anyhow::bail!(
+                "Missing required params for {}: {}",
+                service,
+                missing.join(", ")
+            );
         }
     }
 

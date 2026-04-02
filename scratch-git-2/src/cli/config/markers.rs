@@ -197,8 +197,8 @@ pub fn write_workspace(
         },
         connections: connections.to_vec(),
     };
-    let content = serde_yaml::to_string(&marker)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let content =
+        serde_yaml::to_string(&marker).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(marker_path(dir), content)
 }
 

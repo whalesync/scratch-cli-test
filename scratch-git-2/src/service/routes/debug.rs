@@ -18,10 +18,7 @@ pub async fn slow_request() -> impl IntoResponse {
     axum::Json(json!({ "ok": true, "slept_seconds": 30 }))
 }
 
-pub async fn graph(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn graph(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();

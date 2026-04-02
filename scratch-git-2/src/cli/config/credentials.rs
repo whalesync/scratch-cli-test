@@ -17,7 +17,11 @@ pub struct EnvCredentials {
     pub api_token: String,
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub email: String,
-    #[serde(rename = "expiresAt", skip_serializing_if = "String::is_empty", default)]
+    #[serde(
+        rename = "expiresAt",
+        skip_serializing_if = "String::is_empty",
+        default
+    )]
     pub expires_at: String,
 }
 
@@ -100,5 +104,7 @@ pub fn clear(server_url: &str) -> anyhow::Result<()> {
 }
 
 pub fn is_logged_in(server_url: &str) -> bool {
-    get(server_url).map(|c| !c.api_token.is_empty()).unwrap_or(false)
+    get(server_url)
+        .map(|c| !c.api_token.is_empty())
+        .unwrap_or(false)
 }

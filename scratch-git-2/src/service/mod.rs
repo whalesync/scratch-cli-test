@@ -2,8 +2,8 @@ pub mod config;
 pub mod envelope;
 pub mod error;
 pub mod git;
-pub mod routes;
 pub mod graceful_shutdown;
+pub mod routes;
 pub mod state;
 pub mod types;
 pub mod worktree;
@@ -41,9 +41,7 @@ async fn timing_middleware(req: Request, next: Next) -> impl IntoResponse {
 }
 
 pub async fn run() {
-    tracing::info!(
-        "[API] Scratch-git starting",
-    );
+    tracing::info!("[API] Scratch-git starting",);
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -53,10 +51,7 @@ pub async fn run() {
     let config = Config::from_env();
     let state = AppState::new(&config);
 
-    tracing::info!(
-        "[API] Repos directory (v1): {}",
-        config.repos_dir.display()
-    );
+    tracing::info!("[API] Repos directory (v1): {}", config.repos_dir.display());
     tracing::info!(
         "[API] Repos directory (v1) exists: {}",
         config.repos_dir.exists()
@@ -72,27 +67,15 @@ pub async fn run() {
             "/api/repo/manage/{id}/init",
             post(routes::manage::init_repo),
         )
-        .route(
-            "/api/repo/manage/{id}",
-            delete(routes::manage::delete_repo),
-        )
-        .route(
-            "/api/repo/manage/{id}/exists",
-            get(routes::manage::exists),
-        )
-        .route(
-            "/api/repo/manage/{id}/reset",
-            post(routes::manage::reset),
-        )
+        .route("/api/repo/manage/{id}", delete(routes::manage::delete_repo))
+        .route("/api/repo/manage/{id}/exists", get(routes::manage::exists))
+        .route("/api/repo/manage/{id}/reset", post(routes::manage::reset))
         .route(
             "/api/repo/manage/{id}/count-objects",
             get(routes::manage::count_objects),
         )
         .route("/api/repo/manage/{id}/gc", post(routes::manage::gc))
-        .route(
-            "/api/repo/manage/copy",
-            post(routes::manage::copy_repo),
-        )
+        .route("/api/repo/manage/copy", post(routes::manage::copy_repo))
         .route(
             "/api/repo/manage/{id}/strip-prefix",
             post(routes::manage::strip_prefix),
@@ -114,10 +97,7 @@ pub async fn run() {
             "/api/repo/read/{id}/blobs-by-oid",
             post(routes::read::blobs_by_oid),
         )
-        .route(
-            "/api/repo/read/{id}/archive",
-            get(routes::read::archive),
-        )
+        .route("/api/repo/read/{id}/archive", get(routes::read::archive))
         // Write
         .route(
             "/api/repo/write/{id}/files",
@@ -131,35 +111,20 @@ pub async fn run() {
             "/api/repo/write/{id}/data-folder",
             delete(routes::write::delete_data_folder),
         )
-        .route(
-            "/api/repo/write/{id}/publish",
-            post(routes::write::publish),
-        )
+        .route("/api/repo/write/{id}/publish", post(routes::write::publish))
         .route(
             "/api/repo/write/{id}/discard-changes",
             post(routes::write::discard_changes),
         )
-        .route(
-            "/api/repo/write/{id}/rebase",
-            post(routes::write::rebase),
-        )
-        .route(
-            "/api/repo/write/{id}/rename",
-            post(routes::write::rename),
-        )
+        .route("/api/repo/write/{id}/rebase", post(routes::write::rebase))
+        .route("/api/repo/write/{id}/rename", post(routes::write::rename))
         // Diff
-        .route(
-            "/api/repo/diff/{id}/status",
-            get(routes::diff::status),
-        )
+        .route("/api/repo/diff/{id}/status", get(routes::diff::status))
         .route(
             "/api/repo/diff/{id}/status/has-dirty",
             get(routes::diff::has_dirty),
         )
-        .route(
-            "/api/repo/diff/{id}/status/count",
-            get(routes::diff::count),
-        )
+        .route("/api/repo/diff/{id}/status/count", get(routes::diff::count))
         .route(
             "/api/repo/diff/{id}/folder-diff",
             get(routes::diff::folder_diff),
@@ -182,10 +147,7 @@ pub async fn run() {
             "/api/repo/index/{id}/build",
             post(routes::index::build_index),
         )
-        .route(
-            "/api/repo/index/{id}/dump",
-            get(routes::index::dump_index),
-        )
+        .route("/api/repo/index/{id}/dump", get(routes::index::dump_index))
         .route(
             "/api/repo/index/{id}/lookup",
             post(routes::index::lookup_index),
@@ -208,10 +170,7 @@ pub async fn run() {
             post(routes::plan_publish::build_plan),
         )
         // Debug
-        .route(
-            "/api/repo/debug/{id}/graph",
-            get(routes::debug::graph),
-        )
+        .route("/api/repo/debug/{id}/graph", get(routes::debug::graph))
         .route(
             "/api/repo/debug/slow-request",
             get(routes::debug::slow_request),
@@ -259,10 +218,12 @@ pub async fn run() {
     // and wait for in-flight requests to complete before exiting.
     let (mut api_shutdown_rx, mut git_shutdown_rx) = graceful_shutdown::spawn_shutdown_handler();
 
-    let api_server = axum::serve(listener, app)
-        .with_graceful_shutdown(async move { api_shutdown_rx.changed().await.ok(); });
-    let git_server = axum::serve(git_listener, git_app)
-        .with_graceful_shutdown(async move { git_shutdown_rx.changed().await.ok(); });
+    let api_server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        api_shutdown_rx.changed().await.ok();
+    });
+    let git_server = axum::serve(git_listener, git_app).with_graceful_shutdown(async move {
+        git_shutdown_rx.changed().await.ok();
+    });
 
     let (api_result, git_result) = tokio::join!(api_server, git_server);
     if let Err(e) = api_result {

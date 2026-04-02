@@ -182,7 +182,8 @@ pub fn build_publish_plan_with_scratch_dir(
     for rel_path in &edit_set {
         let folder = folder_of(rel_path);
 
-        let dirty_content_str = dirty_files.get(rel_path)
+        let dirty_content_str = dirty_files
+            .get(rel_path)
             .or_else(|| master_files.get(rel_path));
         let dirty_content_str = match dirty_content_str {
             Some(s) => s,
@@ -194,10 +195,12 @@ pub fn build_publish_plan_with_scratch_dir(
         };
 
         let dirty_val: Value = match serde_json::from_str(dirty_content_str) {
-            Ok(v) => v, Err(_) => continue,
+            Ok(v) => v,
+            Err(_) => continue,
         };
         let master_val: Value = match serde_json::from_str(master_content_str) {
-            Ok(v) => v, Err(_) => continue,
+            Ok(v) => v,
+            Err(_) => continue,
         };
 
         let fk_paths = get_schema_fk_paths(&folder, master_dir, &mut schema_cache);
@@ -234,10 +237,12 @@ pub fn build_publish_plan_with_scratch_dir(
         let filename = filename_of(rel_path);
 
         let dirty_content_str = match dirty_files.get(rel_path) {
-            Some(s) => s, None => continue,
+            Some(s) => s,
+            None => continue,
         };
         let dirty_val: Value = match serde_json::from_str(dirty_content_str) {
-            Ok(v) => v, Err(_) => continue,
+            Ok(v) => v,
+            Err(_) => continue,
         };
 
         let fk_paths = get_schema_fk_paths(&folder, master_dir, &mut schema_cache);
@@ -274,7 +279,10 @@ pub fn build_publish_plan_with_scratch_dir(
 
     // --- Delete phase ---
     for rel_path in &deleted {
-        let remote_id = deleted_remote_ids.get(rel_path).cloned().unwrap_or_default();
+        let remote_id = deleted_remote_ids
+            .get(rel_path)
+            .cloned()
+            .unwrap_or_default();
         entries.push(PlanEntry {
             rel_path: rel_path.clone(),
             phase: Phase::Delete,
@@ -289,15 +297,19 @@ pub fn build_publish_plan_with_scratch_dir(
 
     // 8. Count phases
     let summary = PlanSummary {
-        edit:     entries.iter().filter(|e| e.phase == Phase::Edit).count(),
-        create:   entries.iter().filter(|e| e.phase == Phase::Create).count(),
-        delete:   entries.iter().filter(|e| e.phase == Phase::Delete).count(),
-        backfill: entries.iter().filter(|e| e.phase == Phase::Backfill).count(),
-        rename:   entries.iter().filter(|e| e.phase == Phase::Rename).count(),
+        edit: entries.iter().filter(|e| e.phase == Phase::Edit).count(),
+        create: entries.iter().filter(|e| e.phase == Phase::Create).count(),
+        delete: entries.iter().filter(|e| e.phase == Phase::Delete).count(),
+        backfill: entries
+            .iter()
+            .filter(|e| e.phase == Phase::Backfill)
+            .count(),
+        rename: entries.iter().filter(|e| e.phase == Phase::Rename).count(),
     };
 
     // 9. Build per-folder reports
-    let folder_reports = build_folder_reports(&entries, &modified, &added, &deleted, &ref_clear_candidates);
+    let folder_reports =
+        build_folder_reports(&entries, &modified, &added, &deleted, &ref_clear_candidates);
 
     // 10. Write plan files.
     cleanup_old_plan_dirs(scratch_dir);
@@ -326,7 +338,9 @@ pub fn build_publish_plan_with_scratch_dir(
         } else {
             scratch_dir.join(&folder)
         };
-        let phase_dir = plan_base.join(format!("publish-plan-{}", timestamp)).join(entry.phase.dir_name());
+        let phase_dir = plan_base
+            .join(format!("publish-plan-{}", timestamp))
+            .join(entry.phase.dir_name());
         std::fs::create_dir_all(&phase_dir)?;
         let file_value = match (entry.phase, &entry.changed_fields) {
             (Phase::Edit | Phase::Backfill, Some(cf)) => {
@@ -334,7 +348,10 @@ pub fn build_publish_plan_with_scratch_dir(
             }
             _ => entry.content.clone(),
         };
-        std::fs::write(phase_dir.join(&filename), serde_json::to_string_pretty(&file_value)?)?;
+        std::fs::write(
+            phase_dir.join(&filename),
+            serde_json::to_string_pretty(&file_value)?,
+        )?;
     }
 
     // 11. Write plan.json manifest
@@ -348,9 +365,15 @@ pub fn build_publish_plan_with_scratch_dir(
         summary,
         table_paths,
     };
-    std::fs::write(plan_root.join("plan.json"), serde_json::to_string_pretty(&meta)?)?;
+    std::fs::write(
+        plan_root.join("plan.json"),
+        serde_json::to_string_pretty(&meta)?,
+    )?;
 
-    Ok(Some(PlanResult { meta, folder_reports }))
+    Ok(Some(PlanResult {
+        meta,
+        folder_reports,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -364,26 +387,46 @@ fn build_folder_reports(
     deleted: &[String],
     ref_clear_candidates: &HashSet<String>,
 ) -> Vec<FolderReport> {
-    let folders: Vec<String> = entries.iter()
+    let folders: Vec<String> = entries
+        .iter()
         .map(|e| folder_of(&e.rel_path))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
 
-    folders.into_iter().map(|folder| {
-        FolderReport {
-            raw_modified:  modified.iter().filter(|r| folder_of(r) == folder).count(),
-            raw_added:     added.iter().filter(|r| folder_of(r) == folder).count(),
-            raw_deleted:   deleted.iter().filter(|r| folder_of(r) == folder).count(),
-            raw_ref_clear: ref_clear_candidates.iter().filter(|r| folder_of(r) == folder).count(),
-            plan_edit:     entries.iter().filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Edit).count(),
-            plan_create:   entries.iter().filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Create).count(),
-            plan_delete:   entries.iter().filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Delete).count(),
-            plan_backfill: entries.iter().filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Backfill).count(),
-            plan_rename:   entries.iter().filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Rename).count(),
+    folders
+        .into_iter()
+        .map(|folder| FolderReport {
+            raw_modified: modified.iter().filter(|r| folder_of(r) == folder).count(),
+            raw_added: added.iter().filter(|r| folder_of(r) == folder).count(),
+            raw_deleted: deleted.iter().filter(|r| folder_of(r) == folder).count(),
+            raw_ref_clear: ref_clear_candidates
+                .iter()
+                .filter(|r| folder_of(r) == folder)
+                .count(),
+            plan_edit: entries
+                .iter()
+                .filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Edit)
+                .count(),
+            plan_create: entries
+                .iter()
+                .filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Create)
+                .count(),
+            plan_delete: entries
+                .iter()
+                .filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Delete)
+                .count(),
+            plan_backfill: entries
+                .iter()
+                .filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Backfill)
+                .count(),
+            plan_rename: entries
+                .iter()
+                .filter(|e| folder_of(&e.rel_path) == folder && e.phase == Phase::Rename)
+                .count(),
             folder,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -396,10 +439,7 @@ fn get_schema_fk_paths<'a>(
     cache: &'a mut HashMap<String, Vec<FkPath>>,
 ) -> &'a [FkPath] {
     if !cache.contains_key(folder) {
-        let schema_path = master_dir
-            .join(".scratch")
-            .join(folder)
-            .join("schema.json");
+        let schema_path = master_dir.join(".scratch").join(folder).join("schema.json");
 
         let fk_paths = if schema_path.exists() {
             std::fs::read_to_string(&schema_path)
@@ -428,7 +468,10 @@ fn extract_fk_paths(schema: &Value) -> Vec<FkPath> {
 fn extract_fk_paths_rec(schema: &Value, path: &[String], out: &mut Vec<FkPath>) {
     if let Some(fk) = schema.get("x-scratch-foreign-key") {
         if let Some(id) = fk.get("linkedTableId").and_then(|v| v.as_str()) {
-            out.push(FkPath { path: path.to_vec(), _target_table_id: id.to_string() });
+            out.push(FkPath {
+                path: path.to_vec(),
+                _target_table_id: id.to_string(),
+            });
         }
     }
 
@@ -490,23 +533,28 @@ fn strip_pseudo_refs(value: &Value, fk_paths: &[FkPath]) -> Value {
 fn strip_asset_pseudo_refs(value: &Value) -> Value {
     match value {
         Value::String(s) => {
-            if s.starts_with("@asset/") { Value::Null } else { value.clone() }
+            if s.starts_with("@asset/") {
+                Value::Null
+            } else {
+                value.clone()
+            }
         }
-        Value::Array(arr) => {
-            Value::Array(
-                arr.iter()
-                    .filter(|item| !item.as_str().map(|s| s.starts_with("@asset/")).unwrap_or(false))
-                    .map(strip_asset_pseudo_refs)
-                    .collect(),
-            )
-        }
-        Value::Object(obj) => {
-            Value::Object(
-                obj.iter()
-                    .map(|(k, v)| (k.clone(), strip_asset_pseudo_refs(v)))
-                    .collect(),
-            )
-        }
+        Value::Array(arr) => Value::Array(
+            arr.iter()
+                .filter(|item| {
+                    !item
+                        .as_str()
+                        .map(|s| s.starts_with("@asset/"))
+                        .unwrap_or(false)
+                })
+                .map(strip_asset_pseudo_refs)
+                .collect(),
+        ),
+        Value::Object(obj) => Value::Object(
+            obj.iter()
+                .map(|(k, v)| (k.clone(), strip_asset_pseudo_refs(v)))
+                .collect(),
+        ),
         _ => value.clone(),
     }
 }
@@ -619,8 +667,8 @@ fn query_ref_clear_candidates(
     db_path: &Path,
     deleted_ids: &HashSet<String>,
 ) -> anyhow::Result<HashSet<String>> {
-    let db = Connection::open(db_path)
-        .map_err(|e| anyhow::anyhow!("failed to open index.db: {e}"))?;
+    let db =
+        Connection::open(db_path).map_err(|e| anyhow::anyhow!("failed to open index.db: {e}"))?;
 
     let exists: bool = db
         .query_row(
@@ -642,9 +690,11 @@ fn query_ref_clear_candidates(
             "SELECT source_folder, source_filename FROM file_references WHERE target_remote_id = ?1",
         ).map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
 
-        let rows = stmt.query_map(rusqlite::params![id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }).map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
 
         for row in rows {
             let (folder, filename) = row.map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -670,17 +720,31 @@ fn collect_files(root: &Path) -> anyhow::Result<HashMap<String, String>> {
     Ok(map)
 }
 
-fn collect_files_rec(root: &Path, dir: &Path, map: &mut HashMap<String, String>) -> anyhow::Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
+fn collect_files_rec(
+    root: &Path,
+    dir: &Path,
+    map: &mut HashMap<String, String>,
+) -> anyhow::Result<()> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         if path.is_dir() {
-            if name.starts_with('.') { continue; }
+            if name.starts_with('.') {
+                continue;
+            }
             collect_files_rec(root, &path, map)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            if name == "schema.json" { continue; }
-            let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
+            if name == "schema.json" {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
             if let Ok(content) = std::fs::read_to_string(&path) {
                 map.insert(rel, content);
             }
@@ -739,7 +803,9 @@ fn now_iso8601() -> String {
 
 /// Recursively remove all `publish-plan-*` dirs found anywhere under `scratch_dir`.
 pub fn cleanup_old_plan_dirs(scratch_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(scratch_dir) else { return };
+    let Ok(entries) = std::fs::read_dir(scratch_dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();

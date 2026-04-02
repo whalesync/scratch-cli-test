@@ -106,20 +106,30 @@ fn collect_fk_fields(
     dir: &Path,
     map: &mut HashMap<String, Vec<FkField>>,
 ) -> anyhow::Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
             collect_fk_fields(scratch_root, &path, map)?;
-        } else if path.file_name().map(|n| n == "schema.json").unwrap_or(false) {
+        } else if path
+            .file_name()
+            .map(|n| n == "schema.json")
+            .unwrap_or(false)
+        {
             let parent = path.parent().unwrap_or(scratch_root);
             let folder_rel = parent
                 .strip_prefix(scratch_root)
                 .unwrap_or(parent)
                 .to_string_lossy()
                 .to_string();
-            let Ok(raw) = std::fs::read_to_string(&path) else { continue };
-            let Ok(schema) = serde_json::from_str::<Value>(&raw) else { continue };
+            let Ok(raw) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(schema) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
             let fk_fields = extract_fk_fields(&schema);
             if !fk_fields.is_empty() {
                 map.insert(folder_rel, fk_fields);
@@ -272,7 +282,11 @@ pub fn build_from_entries(
             params![src_folder, src_filename, target_table_id, target_remote_id],
         )
         .map_err(|e| {
-            anyhow::anyhow!("failed to insert reference for {}/{}: {e}", src_folder, src_filename)
+            anyhow::anyhow!(
+                "failed to insert reference for {}/{}: {e}",
+                src_folder,
+                src_filename
+            )
         })?;
     }
 
@@ -289,7 +303,9 @@ fn index_dir(
     fk_map: &HashMap<String, Vec<FkField>>,
     count: &mut usize,
 ) -> anyhow::Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -325,7 +341,10 @@ fn index_file(
         Err(_) => return Ok(()),
     };
 
-    let remote_id = value.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let remote_id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let parent = path.parent().unwrap_or(root);
     let folder = parent
@@ -333,7 +352,11 @@ fn index_file(
         .unwrap_or(parent)
         .to_string_lossy()
         .to_string();
-    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let filename = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
     conn.execute(
         "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
@@ -366,7 +389,11 @@ fn index_file(
                         params![folder, filename, fk.target_table_id, target_remote_id],
                     )
                     .map_err(|e| {
-                        anyhow::anyhow!("failed to insert reference for {}/{}: {e}", folder, filename)
+                        anyhow::anyhow!(
+                            "failed to insert reference for {}/{}: {e}",
+                            folder,
+                            filename
+                        )
                     })?;
                 }
             }
@@ -424,22 +451,36 @@ pub fn upsert_single_file(
     let value: Value = serde_json::from_str(json_content)
         .map_err(|e| anyhow::anyhow!("failed to parse JSON for {}/{}: {e}", folder, filename))?;
 
-    let remote_id = value
-        .get("id")
-        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+    let remote_id = value.get("id").and_then(|v| {
+        v.as_str()
+            .map(|s| s.to_string())
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+    });
 
     conn.execute(
         "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
         params![folder, filename, remote_id],
     )
-    .map_err(|e| anyhow::anyhow!("failed to upsert index row for {}/{}: {e}", folder, filename))?;
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "failed to upsert index row for {}/{}: {e}",
+            folder,
+            filename
+        )
+    })?;
 
     // Delete old references for this file, then re-insert
     conn.execute(
         "DELETE FROM file_references WHERE source_folder = ?1 AND source_filename = ?2",
         params![folder, filename],
     )
-    .map_err(|e| anyhow::anyhow!("failed to delete old references for {}/{}: {e}", folder, filename))?;
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "failed to delete old references for {}/{}: {e}",
+            folder,
+            filename
+        )
+    })?;
 
     for fk in fk_fields {
         if let Some(ref_val) = get_by_path(&value, &fk.field_path) {
@@ -464,7 +505,11 @@ pub fn upsert_single_file(
                     params![folder, filename, fk.target_table_id, target_id],
                 )
                 .map_err(|e| {
-                    anyhow::anyhow!("failed to insert reference for {}/{}: {e}", folder, filename)
+                    anyhow::anyhow!(
+                        "failed to insert reference for {}/{}: {e}",
+                        folder,
+                        filename
+                    )
                 })?;
             }
         }
@@ -540,7 +585,11 @@ pub fn delete_entries(db_path: &Path, entries: &[(String, String)]) -> anyhow::R
             params![folder, filename],
         )
         .map_err(|e| {
-            anyhow::anyhow!("failed to delete references for {}/{}: {e}", folder, filename)
+            anyhow::anyhow!(
+                "failed to delete references for {}/{}: {e}",
+                folder,
+                filename
+            )
         })?;
     }
     Ok(())
@@ -574,12 +623,16 @@ pub fn lookup_filenames_to_remote_ids(
          WHERE folder = ?1 AND filename IN ({placeholders}) AND remote_id IS NOT NULL"
     );
 
-    let mut stmt = conn.prepare(&sql).map_err(|e| anyhow::anyhow!("prepare failed: {e}"))?;
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| anyhow::anyhow!("prepare failed: {e}"))?;
 
     use rusqlite::types::ToSql;
     let folder_val: &dyn ToSql = &folder;
-    let fn_vals: Vec<Box<dyn ToSql>> =
-        filenames.iter().map(|s| Box::new(s.clone()) as Box<dyn ToSql>).collect();
+    let fn_vals: Vec<Box<dyn ToSql>> = filenames
+        .iter()
+        .map(|s| Box::new(s.clone()) as Box<dyn ToSql>)
+        .collect();
     let mut all_params: Vec<&dyn ToSql> = vec![folder_val];
     for v in &fn_vals {
         all_params.push(v.as_ref());
@@ -587,11 +640,14 @@ pub fn lookup_filenames_to_remote_ids(
 
     let mut map = HashMap::new();
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(all_params.iter().copied()), |row| {
-            let filename: String = row.get(0)?;
-            let remote_id: String = row.get(1)?;
-            Ok((filename, remote_id))
-        })
+        .query_map(
+            rusqlite::params_from_iter(all_params.iter().copied()),
+            |row| {
+                let filename: String = row.get(0)?;
+                let remote_id: String = row.get(1)?;
+                Ok((filename, remote_id))
+            },
+        )
         .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
 
     for row in rows {
@@ -631,13 +687,17 @@ pub fn lookup_by_remote_ids(
         "SELECT remote_id, filename FROM file_index WHERE folder = ?1 AND remote_id IN ({placeholders})"
     );
 
-    let mut stmt = conn.prepare(&sql).map_err(|e| anyhow::anyhow!("prepare failed: {e}"))?;
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| anyhow::anyhow!("prepare failed: {e}"))?;
 
     // Build params: folder first, then each remote_id
     use rusqlite::types::ToSql;
     let folder_val: &dyn ToSql = &folder;
-    let id_vals: Vec<Box<dyn ToSql>> =
-        remote_ids.iter().map(|s| Box::new(s.clone()) as Box<dyn ToSql>).collect();
+    let id_vals: Vec<Box<dyn ToSql>> = remote_ids
+        .iter()
+        .map(|s| Box::new(s.clone()) as Box<dyn ToSql>)
+        .collect();
     let mut all_params: Vec<&dyn ToSql> = vec![folder_val];
     for v in &id_vals {
         all_params.push(v.as_ref());
@@ -645,11 +705,14 @@ pub fn lookup_by_remote_ids(
 
     let mut map = HashMap::new();
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(all_params.iter().copied()), |row| {
-            let remote_id: String = row.get(0)?;
-            let filename: String = row.get(1)?;
-            Ok((remote_id, filename))
-        })
+        .query_map(
+            rusqlite::params_from_iter(all_params.iter().copied()),
+            |row| {
+                let remote_id: String = row.get(0)?;
+                let filename: String = row.get(1)?;
+                Ok((remote_id, filename))
+            },
+        )
         .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
 
     for row in rows {
@@ -764,11 +827,17 @@ connections:
         );
         assert_eq!(
             conn_scratch_dir(root, "AIRTABLE - My Conn"),
-            root.join(".scratch").join("connections").join("scratch").join("AIRTABLE - My Conn")
+            root.join(".scratch")
+                .join("connections")
+                .join("scratch")
+                .join("AIRTABLE - My Conn")
         );
         assert_eq!(
             master_dir(root, "AIRTABLE - My Conn"),
-            root.join(".scratch").join("connections").join("master").join("AIRTABLE - My Conn")
+            root.join(".scratch")
+                .join("connections")
+                .join("master")
+                .join("AIRTABLE - My Conn")
         );
         assert_eq!(
             db_path(root, "AIRTABLE - My Conn"),
@@ -795,7 +864,10 @@ workbook:
 
         assert_eq!(
             db_path(root, "legacy-conn"),
-            root.join(".scratch").join("connections").join("legacy-conn").join("index.db")
+            root.join(".scratch")
+                .join("connections")
+                .join("legacy-conn")
+                .join("index.db")
         );
     }
 }

@@ -204,7 +204,9 @@ mod tests {
             change_type: ChangeType::Add,
         }];
 
-        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        let (new_tree, stats) = repo
+            .apply_changes_to_tree(empty_tree, &changes, "")
+            .unwrap();
         assert_ne!(new_tree, empty_tree);
         assert_eq!(stats.created, vec!["hello.txt"]);
         assert!(stats.updated.is_empty());
@@ -223,13 +225,17 @@ mod tests {
             change_type: ChangeType::Add,
         }];
 
-        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        let (new_tree, stats) = repo
+            .apply_changes_to_tree(empty_tree, &changes, "")
+            .unwrap();
         assert_ne!(new_tree, empty_tree);
         assert_eq!(stats.created, vec!["folder/sub/file.txt"]);
 
         // Verify the file is actually readable via the tree
         let commit_oid = repo.write_commit(new_tree, &[], "test").unwrap();
-        let content = repo.get_file_content_by_commit(commit_oid, "folder/sub/file.txt").unwrap();
+        let content = repo
+            .get_file_content_by_commit(commit_oid, "folder/sub/file.txt")
+            .unwrap();
         assert_eq!(content.as_deref(), Some("nested content"));
     }
 
@@ -245,7 +251,9 @@ mod tests {
             oid: None,
             change_type: ChangeType::Add,
         }];
-        let (tree_v1, _) = repo.apply_changes_to_tree(empty_tree, &add_changes, "").unwrap();
+        let (tree_v1, _) = repo
+            .apply_changes_to_tree(empty_tree, &add_changes, "")
+            .unwrap();
 
         // Modify the file
         let mod_changes = vec![FileChange {
@@ -254,7 +262,9 @@ mod tests {
             oid: None,
             change_type: ChangeType::Modify,
         }];
-        let (tree_v2, stats) = repo.apply_changes_to_tree(tree_v1, &mod_changes, "").unwrap();
+        let (tree_v2, stats) = repo
+            .apply_changes_to_tree(tree_v1, &mod_changes, "")
+            .unwrap();
 
         assert_ne!(tree_v1, tree_v2);
         assert_eq!(stats.updated, vec!["file.txt"]);
@@ -272,7 +282,9 @@ mod tests {
             oid: None,
             change_type: ChangeType::Add,
         }];
-        let (tree_v1, _) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        let (tree_v1, _) = repo
+            .apply_changes_to_tree(empty_tree, &changes, "")
+            .unwrap();
 
         // "Modify" with identical content
         let mod_changes = vec![FileChange {
@@ -281,7 +293,9 @@ mod tests {
             oid: None,
             change_type: ChangeType::Modify,
         }];
-        let (tree_v2, stats) = repo.apply_changes_to_tree(tree_v1, &mod_changes, "").unwrap();
+        let (tree_v2, stats) = repo
+            .apply_changes_to_tree(tree_v1, &mod_changes, "")
+            .unwrap();
 
         assert_eq!(tree_v1, tree_v2); // Tree OID unchanged
         assert_eq!(stats.unchanged, vec!["file.txt"]);
@@ -307,7 +321,9 @@ mod tests {
                 change_type: ChangeType::Add,
             },
         ];
-        let (tree_v1, _) = repo.apply_changes_to_tree(empty_tree, &add_changes, "").unwrap();
+        let (tree_v1, _) = repo
+            .apply_changes_to_tree(empty_tree, &add_changes, "")
+            .unwrap();
 
         // Delete one file
         let del_changes = vec![FileChange {
@@ -316,14 +332,22 @@ mod tests {
             oid: None,
             change_type: ChangeType::Delete,
         }];
-        let (tree_v2, _) = repo.apply_changes_to_tree(tree_v1, &del_changes, "").unwrap();
+        let (tree_v2, _) = repo
+            .apply_changes_to_tree(tree_v1, &del_changes, "")
+            .unwrap();
 
         assert_ne!(tree_v1, tree_v2);
 
         // Verify only keep.txt remains
         let commit_oid = repo.write_commit(tree_v2, &[], "test").unwrap();
-        assert!(repo.get_file_content_by_commit(commit_oid, "keep.txt").unwrap().is_some());
-        assert!(repo.get_file_content_by_commit(commit_oid, "remove.txt").unwrap().is_none());
+        assert!(repo
+            .get_file_content_by_commit(commit_oid, "keep.txt")
+            .unwrap()
+            .is_some());
+        assert!(repo
+            .get_file_content_by_commit(commit_oid, "remove.txt")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -346,16 +370,22 @@ mod tests {
             },
         ];
 
-        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        let (new_tree, stats) = repo
+            .apply_changes_to_tree(empty_tree, &changes, "")
+            .unwrap();
         assert_eq!(stats.created.len(), 2);
 
         let commit_oid = repo.write_commit(new_tree, &[], "test").unwrap();
         assert_eq!(
-            repo.get_file_content_by_commit(commit_oid, "dir/a.txt").unwrap().as_deref(),
+            repo.get_file_content_by_commit(commit_oid, "dir/a.txt")
+                .unwrap()
+                .as_deref(),
             Some("aaa")
         );
         assert_eq!(
-            repo.get_file_content_by_commit(commit_oid, "dir/b.txt").unwrap().as_deref(),
+            repo.get_file_content_by_commit(commit_oid, "dir/b.txt")
+                .unwrap()
+                .as_deref(),
             Some("bbb")
         );
     }
@@ -375,12 +405,16 @@ mod tests {
             change_type: ChangeType::Add,
         }];
 
-        let (new_tree, stats) = repo.apply_changes_to_tree(empty_tree, &changes, "").unwrap();
+        let (new_tree, stats) = repo
+            .apply_changes_to_tree(empty_tree, &changes, "")
+            .unwrap();
         assert_eq!(stats.created, vec!["file.txt"]);
 
         let commit_oid = repo.write_commit(new_tree, &[], "test").unwrap();
         assert_eq!(
-            repo.get_file_content_by_commit(commit_oid, "file.txt").unwrap().as_deref(),
+            repo.get_file_content_by_commit(commit_oid, "file.txt")
+                .unwrap()
+                .as_deref(),
             Some("blob content")
         );
     }

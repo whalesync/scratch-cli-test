@@ -68,12 +68,27 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let workbook_id = config::resolve_workspace_id(workspace)?;
     match cmd {
-        LinkedCommands::Available { connection_id, refresh: _ } => {
-            available(client, &workbook_id, connection_id.as_deref(), json).await
-        }
+        LinkedCommands::Available {
+            connection_id,
+            refresh: _,
+        } => available(client, &workbook_id, connection_id.as_deref(), json).await,
         LinkedCommands::List => list(client, &workbook_id, json).await,
-        LinkedCommands::Add { connection_id, table_ids, name, filter } => {
-            add(client, &workbook_id, &connection_id, &table_ids, &name, &filter, json).await
+        LinkedCommands::Add {
+            connection_id,
+            table_ids,
+            name,
+            filter,
+        } => {
+            add(
+                client,
+                &workbook_id,
+                &connection_id,
+                &table_ids,
+                &name,
+                &filter,
+                json,
+            )
+            .await
         }
         LinkedCommands::Remove { id, yes } => {
             let folder_id = config::resolve_data_folder_id(id.as_deref())?;
@@ -119,7 +134,9 @@ async fn available(
             println!("  - {} ({})  ID: {}", c.display_name, c.service, c.id);
         }
         println!();
-        println!("To list tables for a connection, run: scratchmd linked available <connection-id>");
+        println!(
+            "To list tables for a connection, run: scratchmd linked available <connection-id>"
+        );
         return Ok(());
     }
 
@@ -128,7 +145,10 @@ async fn available(
 
     if table_list.discovery_mode == "SEARCH" {
         if json {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "discoveryMode": "SEARCH" }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "discoveryMode": "SEARCH" }))?
+            );
         } else {
             println!();
             println!("This connection uses search-based table discovery.");
@@ -153,7 +173,10 @@ async fn available(
         if t.disabled {
             println!("  - {} (not available)", t.display_name);
         } else if t.disabled_creates {
-            println!("  - {} (ID: {}) (creates not supported)", t.display_name, t.id);
+            println!(
+                "  - {} (ID: {}) (creates not supported)",
+                t.display_name, t.id
+            );
         } else {
             println!("  - {} (ID: {})", t.display_name, t.id);
         }
@@ -180,10 +203,17 @@ async fn list(client: &ApiClient, workbook_id: &str, json: bool) -> anyhow::Resu
 
     println!();
     for group in &groups {
-        let service = group.service.as_deref().map(|s| format!(" ({})", s)).unwrap_or_default();
+        let service = group
+            .service
+            .as_deref()
+            .map(|s| format!(" ({})", s))
+            .unwrap_or_default();
         println!("  {}{}", group.name, service);
         for df in &group.data_folders {
-            let lock = df.lock.as_deref().filter(|s| !s.is_empty())
+            let lock = df
+                .lock
+                .as_deref()
+                .filter(|s| !s.is_empty())
                 .map(|s| format!(" [{}]", s))
                 .unwrap_or_default();
             println!("    - {}  (ID: {}){}", df.name, df.id, lock);
@@ -211,7 +241,10 @@ async fn add(
     }
 
     // Check if any table is disabled
-    if let Ok(table_list) = client.list_connection_tables(workbook_id, connection_id).await {
+    if let Ok(table_list) = client
+        .list_connection_tables(workbook_id, connection_id)
+        .await
+    {
         let requested = table_ids.join(",");
         for t in &table_list.tables {
             if t.id.to_string() == requested && t.disabled {
@@ -220,8 +253,11 @@ async fn add(
         }
     }
 
-    let display_name =
-        if name.is_empty() { table_ids[0].clone() } else { name.to_string() };
+    let display_name = if name.is_empty() {
+        table_ids[0].clone()
+    } else {
+        name.to_string()
+    };
 
     let req = CreateLinkedTableRequest {
         name: display_name,
@@ -255,7 +291,10 @@ async fn remove(
     let name = &detail.table.name;
 
     if !yes && !json {
-        print!("Are you sure you want to unlink \"{}\" ({})? [y/N] ", name, folder_id);
+        print!(
+            "Are you sure you want to unlink \"{}\" ({})? [y/N] ",
+            name, folder_id
+        );
         io::stdout().flush()?;
         let mut line = String::new();
         io::stdin().lock().read_line(&mut line)?;
@@ -285,7 +324,12 @@ async fn remove(
     super::files::download_workbook(client.base_url(), client.token(), workbook_id).await
 }
 
-async fn show(client: &ApiClient, workbook_id: &str, folder_id: &str, json: bool) -> anyhow::Result<()> {
+async fn show(
+    client: &ApiClient,
+    workbook_id: &str,
+    folder_id: &str,
+    json: bool,
+) -> anyhow::Result<()> {
     let detail = client.get_linked_table(workbook_id, folder_id).await?;
 
     if json {
@@ -340,11 +384,16 @@ async fn pull(
     let resp = if file_paths.is_empty() {
         client.pull_linked_table(workbook_id, folder_id).await?
     } else {
-        client.pull_linked_table_files(workbook_id, folder_id, file_paths).await?
+        client
+            .pull_linked_table_files(workbook_id, folder_id, file_paths)
+            .await?
     };
 
     if !json {
-        eprint!("Pull job started (job ID: {}). Waiting for completion", resp.job_id);
+        eprint!(
+            "Pull job started (job ID: {}). Waiting for completion",
+            resp.job_id
+        );
     }
 
     api::poll_job(client, &resp.job_id).await?;
@@ -365,7 +414,10 @@ async fn publish(
     let resp = client.publish_linked_table(workbook_id, folder_id).await?;
 
     if !json {
-        eprint!("Publish job started (job ID: {}). Waiting for completion", resp.job_id);
+        eprint!(
+            "Publish job started (job ID: {}). Waiting for completion",
+            resp.job_id
+        );
     }
 
     api::poll_job(client, &resp.job_id).await?;

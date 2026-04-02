@@ -5,6 +5,6 @@ pub mod index;
 pub mod manage;
 pub mod plan_publish;
 pub mod read;
+pub mod smart_http;
 pub mod system;
 pub mod write;
-pub mod smart_http;

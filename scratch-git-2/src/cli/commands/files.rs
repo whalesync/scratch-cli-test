@@ -95,6 +95,7 @@ fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
         }
         results.push(download_single_repo(ctx, &token)?);
         if update_master_worktree(ctx, &token).is_ok() {
+            let _ = sync_schema_files_from_master(ctx);
             rebuild_index_for_conn(ctx, json);
         }
     }
@@ -164,7 +165,10 @@ fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<
 
     let elapsed = started.elapsed().as_millis();
     if json {
-        println!("{}", serde_json::json!({ "pushed": any_pushed, "elapsedMs": elapsed }));
+        println!(
+            "{}",
+            serde_json::json!({ "pushed": any_pushed, "elapsedMs": elapsed })
+        );
     } else if any_pushed {
         println!("Force-pushed. ({})", format_elapsed(elapsed));
     } else {
@@ -173,7 +177,11 @@ fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<
     Ok(())
 }
 
-pub async fn download_workbook(_base_url: &str, token: &str, workbook_id: &str) -> anyhow::Result<()> {
+pub async fn download_workbook(
+    _base_url: &str,
+    token: &str,
+    workbook_id: &str,
+) -> anyhow::Result<()> {
     let Some(workspace_dir) = crate::config::find_workspace_dir(workbook_id) else {
         eprintln!("(Workspace not initialized locally — skipping file download)");
         return Ok(());
@@ -184,6 +192,7 @@ pub async fn download_workbook(_base_url: &str, token: &str, workbook_id: &str) 
     for ctx in &contexts {
         download_single_repo(ctx, token)?;
         if update_master_worktree(ctx, token).is_ok() {
+            let _ = sync_schema_files_from_master(ctx);
             rebuild_index_for_conn(ctx, true);
         }
     }
@@ -193,9 +202,15 @@ pub async fn download_workbook(_base_url: &str, token: &str, workbook_id: &str) 
 fn resolve_workspace_and_connections(
     cwd: &Path,
     server_url: &str,
-) -> anyhow::Result<(markers::WorkspaceMarker, PathBuf, Vec<ConnectionContext>, String)> {
-    let workspace_dir = markers::find_nearest_workspace(cwd)
-        .ok_or_else(|| anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory."))?;
+) -> anyhow::Result<(
+    markers::WorkspaceMarker,
+    PathBuf,
+    Vec<ConnectionContext>,
+    String,
+)> {
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let workspace_server_url = if workspace_marker.workbook.server_url.is_empty() {
         server_url.to_string()
@@ -203,14 +218,22 @@ fn resolve_workspace_and_connections(
         workspace_marker.workbook.server_url.clone()
     };
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, Some(cwd))?;
-    Ok((workspace_marker, workspace_dir, contexts, workspace_server_url))
+    Ok((
+        workspace_marker,
+        workspace_dir,
+        contexts,
+        workspace_server_url,
+    ))
 }
 
 fn read_workspace_marker(workspace_dir: &Path) -> anyhow::Result<markers::WorkspaceMarker> {
     let marker_path = markers::marker_path(workspace_dir);
     match markers::read(&marker_path) {
         Ok(markers::Marker::Workspace(marker)) => Ok(marker),
-        _ => anyhow::bail!("Could not read workspace marker at {}", marker_path.display()),
+        _ => anyhow::bail!(
+            "Could not read workspace marker at {}",
+            marker_path.display()
+        ),
     }
 }
 
@@ -220,7 +243,8 @@ fn build_connection_contexts(
     cwd_filter: Option<&Path>,
 ) -> anyhow::Result<Vec<ConnectionContext>> {
     let layout = WorkspaceLayout::for_cli(workspace_dir);
-    let selected = cwd_filter.and_then(|cwd| detect_selected_connection(workspace_dir, cwd, workspace_marker));
+    let selected =
+        cwd_filter.and_then(|cwd| detect_selected_connection(workspace_dir, cwd, workspace_marker));
 
     let contexts = workspace_marker
         .connections
@@ -305,16 +329,14 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
 
     for act in &actions {
         match act {
-            MergeAction::KeepLocal { path, content, .. } => {
-                match content {
-                    Some(content) => {
-                        target_map.insert(path.clone(), content.clone());
-                    }
-                    None => {
-                        target_map.remove(path.as_str());
-                    }
+            MergeAction::KeepLocal { path, content, .. } => match content {
+                Some(content) => {
+                    target_map.insert(path.clone(), content.clone());
                 }
-            }
+                None => {
+                    target_map.remove(path.as_str());
+                }
+            },
             MergeAction::WriteRemote { path, content } => {
                 if let Some(content) = content {
                     if base_map.contains_key(path.as_str()) {
@@ -358,6 +380,7 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
 fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<UploadResult> {
     let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = read_git_tree(&ctx.bare_repo, &base_hash)?;
+    sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
     if maps_equal(&base_map, &local_map) {
@@ -372,91 +395,13 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
         git_fetch(&ctx.bare_repo, token)?;
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
         let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
-        let actions = compute_merge_actions(&base_map, &local_map, &remote_map);
-
-        let mut merged = remote_map.clone();
-        let mut messages = Vec::new();
-        let mut result = UploadResult {
-            status: "uploaded".to_string(),
-            retries: attempt,
-            ..Default::default()
-        };
-
-        for act in &actions {
-            match act {
-                MergeAction::KeepLocal { path, content, warning } => {
-                    match content {
-                        Some(content) => {
-                            merged.insert(path.clone(), content.clone());
-                            if remote_map
-                                .get(path.as_str())
-                                .map(|remote| remote != content)
-                                .unwrap_or(true)
-                            {
-                                result.files_uploaded += 1;
-                                result.uploaded_paths.push(path.clone());
-                            }
-                        }
-                        None => {
-                            merged.remove(path.as_str());
-                            if remote_map.contains_key(path.as_str()) {
-                                result.files_deleted += 1;
-                                result.deleted_paths.push(path.clone());
-                            }
-                        }
-                    }
-                    if let Some(warning) = warning {
-                        messages.push(warning.clone());
-                    }
-                }
-                MergeAction::WriteRemote { path, content } => match content {
-                    Some(content) => {
-                        merged.insert(path.clone(), content.clone());
-                    }
-                    None => {
-                        merged.remove(path.as_str());
-                    }
-                },
-                MergeAction::Delete { path, warning } => {
-                    merged.remove(path.as_str());
-                    if remote_map.contains_key(path.as_str()) {
-                        result.files_deleted += 1;
-                        result.deleted_paths.push(path.clone());
-                    }
-                    if let Some(warning) = warning {
-                        messages.push(warning.clone());
-                    }
-                }
-                MergeAction::Merge {
-                    path,
-                    base,
-                    local,
-                    remote,
-                } => {
-                    let content = merge_content(path, Some(base), Some(local), Some(remote));
-                    merged.insert(path.clone(), content);
-                    result.files_merged += 1;
-                    result.merged_paths.push(path.clone());
-                    result.conflicts_auto_resolved += 1;
-                }
-            }
-        }
-
-        merged.retain(|path, _| {
-            !path.starts_with(".scratch/")
-                || path.starts_with(".scratch/.publish-plans/")
-                || is_plan_phase_file(path)
-        });
-
-        for (path, value) in &local_map {
-            if path.starts_with(".scratch/.publish-plans/") || is_plan_phase_file(path) {
-                merged.insert(path.clone(), value.clone());
-            }
-        }
+        let (merged, mut result, messages) =
+            prepare_upload_merge(&base_map, &local_map, &remote_map, attempt);
 
         if maps_equal(&merged, &remote_map) {
             git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
             materialize_local_repo(ctx, &merged)?;
+            sync_schema_files_from_master(ctx)?;
             return Ok(UploadResult {
                 status: "up_to_date".to_string(),
                 ..Default::default()
@@ -473,11 +418,14 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
         match git_push(&ctx.bare_repo, token) {
             Ok(()) => {
                 materialize_local_repo(ctx, &merged)?;
+                sync_schema_files_from_master(ctx)?;
                 result.messages = messages;
                 return Ok(result);
             }
             Err(err) => {
-                if err.to_string().contains("non-fast-forward") || err.to_string().contains("rejected") {
+                if err.to_string().contains("non-fast-forward")
+                    || err.to_string().contains("rejected")
+                {
                     // Restore the local dirty ref to the pre-upload base so a failed push
                     // does not leave the workspace in a permanently diverged state.
                     git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &base_hash)?;
@@ -500,6 +448,7 @@ fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Res
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
         None => HashMap::new(),
     };
+    sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
     if maps_equal(&base_map, &local_map) {
@@ -528,7 +477,12 @@ fn git_fetch(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
     let output = Command::new("git")
         .arg(format!("--git-dir={}", bare_repo.display()))
         .args(&auth)
-        .args(["fetch", "origin", "refs/heads/dirty:refs/remotes/origin/dirty", "--force"])
+        .args([
+            "fetch",
+            "origin",
+            "refs/heads/dirty:refs/remotes/origin/dirty",
+            "--force",
+        ])
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -542,7 +496,12 @@ fn git_fetch_main(bare_repo: &Path, token: &str) {
     let _ = Command::new("git")
         .arg(format!("--git-dir={}", bare_repo.display()))
         .args(&auth)
-        .args(["fetch", "origin", "refs/heads/main:refs/remotes/origin/main", "--force"])
+        .args([
+            "fetch",
+            "origin",
+            "refs/heads/main:refs/remotes/origin/main",
+            "--force",
+        ])
         .output();
 }
 
@@ -566,7 +525,9 @@ fn git_rev_parse_optional(bare_repo: &Path, rev: &str) -> anyhow::Result<Option<
     if !output.status.success() {
         return Ok(None);
     }
-    Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
 }
 
 fn git_update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
@@ -609,7 +570,11 @@ fn git_push_force(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn materialize_treeish_to_worktree(bare_repo: &Path, treeish: &str, work_tree: &Path) -> anyhow::Result<()> {
+fn materialize_treeish_to_worktree(
+    bare_repo: &Path,
+    treeish: &str,
+    work_tree: &Path,
+) -> anyhow::Result<()> {
     clear_dir_contents(work_tree, true)?;
     std::fs::create_dir_all(work_tree)?;
 
@@ -622,7 +587,9 @@ fn materialize_treeish_to_worktree(bare_repo: &Path, treeish: &str, work_tree: &
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("pathspec '.' did not match any file(s) known to git") && treeish_is_empty(bare_repo, treeish)? {
+        if stderr.contains("pathspec '.' did not match any file(s) known to git")
+            && treeish_is_empty(bare_repo, treeish)?
+        {
             return Ok(());
         }
         anyhow::bail!(
@@ -662,9 +629,9 @@ fn commit_file_map_to_dirty_ref(
     message: &str,
 ) -> anyhow::Result<String> {
     let staging_root = create_staging_dir()?;
+    let index_path = create_staging_index_path();
     let result = (|| {
         materialize_full_repo_state(&staging_root, files)?;
-        let index_path = staging_root.join(".git-index");
 
         if let Some(parent_hash) = parent_hash {
             git_read_tree(bare_repo, &index_path, parent_hash)?;
@@ -678,6 +645,8 @@ fn commit_file_map_to_dirty_ref(
     })();
 
     let _ = std::fs::remove_dir_all(&staging_root);
+    let _ = std::fs::remove_file(&index_path);
+    let _ = std::fs::remove_file(index_lock_path(&index_path));
     result
 }
 
@@ -689,6 +658,18 @@ fn create_staging_dir() -> anyhow::Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("scratchmd-stage-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+fn create_staging_index_path() -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!("scratchmd-index-{}-{nanos}", std::process::id()))
+}
+
+fn index_lock_path(index_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.lock", index_path.to_string_lossy()))
 }
 
 fn materialize_full_repo_state(root: &Path, files: &FileMap) -> anyhow::Result<()> {
@@ -715,7 +696,11 @@ fn git_read_tree(bare_repo: &Path, index_path: &Path, treeish: &str) -> anyhow::
     Ok(())
 }
 
-fn git_add_all_with_index(bare_repo: &Path, work_tree: &Path, index_path: &Path) -> anyhow::Result<()> {
+fn git_add_all_with_index(
+    bare_repo: &Path,
+    work_tree: &Path,
+    index_path: &Path,
+) -> anyhow::Result<()> {
     let output = Command::new("git")
         .env("GIT_INDEX_FILE", index_path)
         .arg(format!("--git-dir={}", bare_repo.display()))
@@ -802,7 +787,10 @@ fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
         .stdout(Stdio::piped())
         .spawn()?;
 
-    let hashes: String = entries.iter().map(|(_, hash)| format!("{hash}\n")).collect();
+    let hashes: String = entries
+        .iter()
+        .map(|(_, hash)| format!("{hash}\n"))
+        .collect();
     child.stdin.take().unwrap().write_all(hashes.as_bytes())?;
     let batch_output = child.wait_with_output()?;
     let data = batch_output.stdout;
@@ -907,6 +895,35 @@ fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Res
         } else if !rel_path.starts_with(".scratch") {
             write_file(&ctx.dirty_dir.join(rel_path), content)?;
         }
+    }
+
+    Ok(())
+}
+
+fn sync_schema_files_from_master(ctx: &ConnectionContext) -> anyhow::Result<()> {
+    let master_scratch_dir = ctx.master_dir.join(".scratch");
+    sync_schema_files_dir(&master_scratch_dir, &master_scratch_dir, &ctx.scratch_dir)
+}
+
+fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            sync_schema_files_dir(root, &path, scratch_dir)?;
+            continue;
+        }
+
+        if !ft.is_file() || entry.file_name() != "schema.json" {
+            continue;
+        }
+
+        let rel = path.strip_prefix(root)?;
+        write_file(&scratch_dir.join(rel), &std::fs::read(&path)?)?;
     }
 
     Ok(())
@@ -1051,6 +1068,89 @@ fn compute_merge_actions(base: &FileMap, local: &FileMap, remote: &FileMap) -> V
     actions
 }
 
+fn prepare_upload_merge(
+    base_map: &FileMap,
+    local_map: &FileMap,
+    remote_map: &FileMap,
+    attempt: i32,
+) -> (FileMap, UploadResult, Vec<String>) {
+    let actions = compute_merge_actions(base_map, local_map, remote_map);
+
+    let mut merged = remote_map.clone();
+    let mut messages = Vec::new();
+    let mut result = UploadResult {
+        status: "uploaded".to_string(),
+        retries: attempt,
+        ..Default::default()
+    };
+
+    for act in &actions {
+        match act {
+            MergeAction::KeepLocal {
+                path,
+                content,
+                warning,
+            } => {
+                match content {
+                    Some(content) => {
+                        merged.insert(path.clone(), content.clone());
+                        if remote_map
+                            .get(path.as_str())
+                            .map(|remote| remote != content)
+                            .unwrap_or(true)
+                        {
+                            result.files_uploaded += 1;
+                            result.uploaded_paths.push(path.clone());
+                        }
+                    }
+                    None => {
+                        merged.remove(path.as_str());
+                        if remote_map.contains_key(path.as_str()) {
+                            result.files_deleted += 1;
+                            result.deleted_paths.push(path.clone());
+                        }
+                    }
+                }
+                if let Some(warning) = warning {
+                    messages.push(warning.clone());
+                }
+            }
+            MergeAction::WriteRemote { path, content } => match content {
+                Some(content) => {
+                    merged.insert(path.clone(), content.clone());
+                }
+                None => {
+                    merged.remove(path.as_str());
+                }
+            },
+            MergeAction::Delete { path, warning } => {
+                merged.remove(path.as_str());
+                if remote_map.contains_key(path.as_str()) {
+                    result.files_deleted += 1;
+                    result.deleted_paths.push(path.clone());
+                }
+                if let Some(warning) = warning {
+                    messages.push(warning.clone());
+                }
+            }
+            MergeAction::Merge {
+                path,
+                base,
+                local,
+                remote,
+            } => {
+                let content = merge_content(path, Some(base), Some(local), Some(remote));
+                merged.insert(path.clone(), content);
+                result.files_merged += 1;
+                result.merged_paths.push(path.clone());
+                result.conflicts_auto_resolved += 1;
+            }
+        }
+    }
+
+    (merged, result, messages)
+}
+
 fn merge_content(
     _path: &str,
     base: Option<&Vec<u8>>,
@@ -1101,10 +1201,6 @@ fn normalize_crlf(data: Vec<u8>) -> Vec<u8> {
     out
 }
 
-fn is_plan_phase_file(path: &str) -> bool {
-    path.contains("/.scratch/publish-plan-")
-}
-
 fn maps_equal(left: &FileMap, right: &FileMap) -> bool {
     if left.len() != right.len() {
         return false;
@@ -1150,9 +1246,11 @@ fn aggregate_upload(results: &[UploadResult]) -> UploadResult {
         agg.conflicts_auto_resolved += result.conflicts_auto_resolved;
         agg.retries += result.retries;
         agg.messages.extend(result.messages.iter().cloned());
-        agg.uploaded_paths.extend(result.uploaded_paths.iter().cloned());
+        agg.uploaded_paths
+            .extend(result.uploaded_paths.iter().cloned());
         agg.merged_paths.extend(result.merged_paths.iter().cloned());
-        agg.deleted_paths.extend(result.deleted_paths.iter().cloned());
+        agg.deleted_paths
+            .extend(result.deleted_paths.iter().cloned());
     }
     agg
 }
@@ -1170,7 +1268,11 @@ fn print_file_list(paths: &[String]) {
     }
 }
 
-fn print_download_result(result: &DownloadResult, elapsed_ms: u128, json: bool) -> anyhow::Result<()> {
+fn print_download_result(
+    result: &DownloadResult,
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
     if json {
         println!(
             "{}",
@@ -1188,7 +1290,8 @@ fn print_download_result(result: &DownloadResult, elapsed_ms: u128, json: bool) 
         return Ok(());
     }
 
-    let total = result.files_created + result.files_updated + result.files_merged + result.files_deleted;
+    let total =
+        result.files_created + result.files_updated + result.files_merged + result.files_deleted;
     let elapsed = format_elapsed(elapsed_ms);
     if total == 0 {
         println!(
@@ -1313,7 +1416,8 @@ fn rebuild_index_for_conn(ctx: &ConnectionContext, quiet: bool) {
 
 fn update_master_worktree(ctx: &ConnectionContext, token: &str) -> anyhow::Result<()> {
     git_fetch_main(&ctx.bare_repo, token);
-    let Some(main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")? else {
+    let Some(main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
+    else {
         return Ok(());
     };
     materialize_treeish_to_worktree(&ctx.bare_repo, &main_hash, &ctx.master_dir)
@@ -1332,6 +1436,7 @@ impl ToSlashLossy for Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use tempfile::TempDir;
 
     fn workspace_marker(connections: &[(&str, &str)]) -> markers::WorkspaceMarker {
@@ -1387,7 +1492,8 @@ mod tests {
         std::fs::write(ctx.dirty_dir.join("posts/rec1.json"), "{}").unwrap();
         std::fs::write(ctx.scratch_dir.join("posts/schema.json"), "{}").unwrap();
         std::fs::write(
-            ctx.scratch_dir.join("posts/publish-plan-1/create/rec2.json"),
+            ctx.scratch_dir
+                .join("posts/publish-plan-1/create/rec2.json"),
             "{}",
         )
         .unwrap();
@@ -1412,5 +1518,105 @@ mod tests {
         assert!(!ctx.dirty_dir.join("posts/rec1.json").exists());
         assert!(ctx.scratch_dir.join("posts/schema.json").exists());
         assert!(!ctx.scratch_dir.join(".publish-plans/1/plan.json").exists());
+    }
+
+    #[test]
+    fn prepare_upload_merge_keeps_schema_and_publish_plan_files() {
+        let base = HashMap::from([("posts/rec.json".to_string(), b"{\"v\":1}".to_vec())]);
+        let remote = base.clone();
+        let local = HashMap::from([
+            ("posts/rec.json".to_string(), b"{\"v\":2}".to_vec()),
+            (
+                ".scratch/posts/schema.json".to_string(),
+                b"{\"schema\":{}}".to_vec(),
+            ),
+            (
+                ".scratch/posts/publish-plan-123/edit/rec.json".to_string(),
+                b"{\"content\":{}}".to_vec(),
+            ),
+            (
+                ".scratch/.publish-plans/123/plan.json".to_string(),
+                b"{\"summary\":{}}".to_vec(),
+            ),
+        ]);
+
+        let (merged, result, _) = prepare_upload_merge(&base, &local, &remote, 0);
+
+        assert_eq!(result.files_uploaded, 4);
+        assert!(merged.contains_key(".scratch/posts/schema.json"));
+        assert!(merged.contains_key(".scratch/posts/publish-plan-123/edit/rec.json"));
+        assert!(merged.contains_key(".scratch/.publish-plans/123/plan.json"));
+    }
+
+    #[test]
+    fn sync_schema_files_from_master_restores_missing_schema() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ConnectionContext {
+            conn_dir_name: "Conn".to_string(),
+            dirty_dir: tmp.path().join("Conn"),
+            scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
+            master_dir: tmp.path().join(".scratch/connections/master/Conn"),
+            bare_repo: tmp.path().join(".repos/conn.git"),
+            db_path: tmp.path().join(".repos/conn.db"),
+        };
+
+        std::fs::create_dir_all(ctx.master_dir.join(".scratch/posts")).unwrap();
+        std::fs::write(
+            ctx.master_dir.join(".scratch/posts/schema.json"),
+            "{\"schema\":{\"fields\":[]}}",
+        )
+        .unwrap();
+
+        sync_schema_files_from_master(&ctx).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(ctx.scratch_dir.join("posts/schema.json")).unwrap(),
+            "{\"schema\":{\"fields\":[]}}"
+        );
+    }
+
+    #[test]
+    fn commit_file_map_to_dirty_ref_does_not_commit_temp_index_files() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let bare_repo = tmp.path().join("repo.git");
+        run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
+
+        let files = HashMap::from([("posts/rec.json".to_string(), b"{}".to_vec())]);
+        commit_file_map_to_dirty_ref(&bare_repo, None, &files, "test commit").unwrap();
+
+        let output = Command::new("git")
+            .arg(format!("--git-dir={}", bare_repo.display()))
+            .args(["ls-tree", "-r", "--name-only", "dirty"])
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        let paths = String::from_utf8_lossy(&output.stdout);
+        assert!(paths.lines().any(|line| line == "posts/rec.json"));
+        assert!(!paths.lines().any(|line| line == ".git-index"));
+        assert!(!paths.lines().any(|line| line == ".git-index.lock"));
+    }
+
+    fn git_available() -> bool {
+        Command::new("git").arg("--version").output().is_ok()
+    }
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

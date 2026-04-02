@@ -42,7 +42,11 @@ struct WorkbookListOutput {
 impl From<Workbook> for WorkbookOutput {
     fn from(wb: Workbook) -> Self {
         Self {
-            connector_accounts: if wb.connector_accounts.is_empty() { None } else { Some(wb.connector_accounts) },
+            connector_accounts: if wb.connector_accounts.is_empty() {
+                None
+            } else {
+                Some(wb.connector_accounts)
+            },
             created_at: wb.created_at,
             data_folders: None,
             git_url: wb.git_url,
@@ -104,7 +108,10 @@ pub enum WorkspacesCommands {
 
 pub async fn run(cmd: WorkspacesCommands, server_url: &str, json: bool) -> anyhow::Result<()> {
     match cmd {
-        WorkspacesCommands::List { sort_by, sort_order } => list(server_url, &sort_by, &sort_order, json).await,
+        WorkspacesCommands::List {
+            sort_by,
+            sort_order,
+        } => list(server_url, &sort_by, &sort_order, json).await,
         WorkspacesCommands::Create { name } => create(server_url, &name, json).await,
         WorkspacesCommands::Show { id } => show(server_url, &id, json).await,
         WorkspacesCommands::Delete { id } => delete(server_url, &id).await,
@@ -127,7 +134,11 @@ async fn list(server_url: &str, sort_by: &str, sort_order: &str, json: bool) -> 
 
     if json {
         let output = WorkbookListOutput {
-            workbooks: resp.workbooks.into_iter().map(WorkbookOutput::from).collect(),
+            workbooks: resp
+                .workbooks
+                .into_iter()
+                .map(WorkbookOutput::from)
+                .collect(),
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
@@ -142,7 +153,11 @@ async fn list(server_url: &str, sort_by: &str, sort_order: &str, json: bool) -> 
     println!("Found {} workspace(s):", resp.workbooks.len());
     println!();
     for wb in &resp.workbooks {
-        let name = if wb.name.is_empty() { "(unnamed)" } else { &wb.name };
+        let name = if wb.name.is_empty() {
+            "(unnamed)"
+        } else {
+            &wb.name
+        };
         println!("  Name:    {}", name);
         println!("  ID:      {}", wb.id);
         println!("  Created: {}", wb.created_at);
@@ -164,7 +179,11 @@ async fn create(server_url: &str, name: &str, json: bool) -> anyhow::Result<()> 
     println!();
     println!("Workspace created successfully!");
     println!();
-    let name = if wb.name.is_empty() { "(unnamed)" } else { &wb.name };
+    let name = if wb.name.is_empty() {
+        "(unnamed)"
+    } else {
+        &wb.name
+    };
     println!("  ID:      {}", wb.id);
     println!("  Name:    {}", name);
     println!("  Created: {}", wb.created_at);
@@ -177,7 +196,10 @@ async fn show(server_url: &str, id: &str, json: bool) -> anyhow::Result<()> {
     let wb: Workbook = client.get(&format!("workbooks/{}", id)).await?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&WorkbookOutput::from(wb))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&WorkbookOutput::from(wb))?
+        );
         return Ok(());
     }
 
@@ -256,7 +278,11 @@ async fn init(
     let token = client.token().to_string();
 
     let wb: Workbook = client.get(&format!("workbooks/{}", workbook_id)).await?;
-    let wb_name = if wb.name.is_empty() { workbook_id.to_string() } else { wb.name.clone() };
+    let wb_name = if wb.name.is_empty() {
+        workbook_id.to_string()
+    } else {
+        wb.name.clone()
+    };
     let target_dir = PathBuf::from(output_dir).join(&wb_name);
 
     // Check if already initialized
@@ -311,7 +337,10 @@ async fn init(
         );
     } else {
         println!();
-        println!("Initialized workspace '{}' ({} files, {})", wb.name, total_files, elapsed);
+        println!(
+            "Initialized workspace '{}' ({} files, {})",
+            wb.name, total_files, elapsed
+        );
         println!("  Directory: {}", target_dir.display());
         if wb.version >= 2 {
             println!("    .repos/");
@@ -338,7 +367,9 @@ fn init_v1(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     markers::write_workspace(target_dir, &wb.id, &wb.name, &org_id, server_url, &[])?;
 
     // Write data folder markers for matching subdirectories
-    let all_folders: Vec<_> = wb.connector_accounts.iter()
+    let all_folders: Vec<_> = wb
+        .connector_accounts
+        .iter()
         .flat_map(|ca| ca.data_folders.iter())
         .collect();
     for df in all_folders {
@@ -370,7 +401,14 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
         })
         .collect();
     let org_id = derive_workbook_org_id(wb);
-    markers::write_workspace(target_dir, &wb.id, &wb.name, &org_id, server_url, &connections)?;
+    markers::write_workspace(
+        target_dir,
+        &wb.id,
+        &wb.name,
+        &org_id,
+        server_url,
+        &connections,
+    )?;
 
     let mut total = 0i64;
     total += init_workbook_repo(wb, &layout, token)?;
@@ -398,6 +436,7 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
         match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {
             Ok(()) => {
+                sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
                 if let Some(parent) = db_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -406,14 +445,21 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
                 }
             }
             Err(_) => {
-                eprintln!("  Note: could not create master checkout for {} (main branch may not exist)", dir_name);
+                eprintln!(
+                    "  Note: could not create master checkout for {} (main branch may not exist)",
+                    dir_name
+                );
             }
         }
 
         total += count_files(&dirty_dir);
     }
 
-    let wb_name = if wb.name.is_empty() { wb.id.as_str() } else { wb.name.as_str() };
+    let wb_name = if wb.name.is_empty() {
+        wb.id.as_str()
+    } else {
+        wb.name.as_str()
+    };
     let _ = super::generate_docs::write_docs(target_dir, wb_name);
 
     Ok(total)
@@ -472,7 +518,10 @@ fn init_workbook_repo(wb: &Workbook, layout: &WorkspaceLayout, token: &str) -> a
     Ok(count_files(&workbook_dir))
 }
 
-fn materialize_workbook_checkout(bare_repo: &Path, work_tree: &Path) -> anyhow::Result<&'static str> {
+fn materialize_workbook_checkout(
+    bare_repo: &Path,
+    work_tree: &Path,
+) -> anyhow::Result<&'static str> {
     match git_checkout_branch_from_bare(bare_repo, MAIN_BRANCH, work_tree) {
         Ok(()) => Ok(MAIN_BRANCH),
         Err(main_err) => {
@@ -510,7 +559,11 @@ fn git_clone_bare(url: &str, target_dir: &Path, token: &str) -> anyhow::Result<(
     Ok(())
 }
 
-fn git_checkout_branch_from_bare(bare_repo: &Path, branch: &str, work_tree: &Path) -> anyhow::Result<()> {
+fn git_checkout_branch_from_bare(
+    bare_repo: &Path,
+    branch: &str,
+    work_tree: &Path,
+) -> anyhow::Result<()> {
     std::fs::create_dir_all(work_tree)?;
 
     let output = Command::new("git")
@@ -557,7 +610,11 @@ fn branch_is_empty(bare_repo: &Path, branch: &str) -> anyhow::Result<bool> {
     Ok(output.stdout.is_empty())
 }
 
-fn materialize_dirty_checkout(bare_repo: &Path, dirty_dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
+fn materialize_dirty_checkout(
+    bare_repo: &Path,
+    dirty_dir: &Path,
+    scratch_dir: &Path,
+) -> anyhow::Result<()> {
     git_checkout_branch_from_bare(bare_repo, DIRTY_BRANCH, dirty_dir)?;
     move_dirty_scratch_to_layout(dirty_dir, scratch_dir)
 }
@@ -581,6 +638,41 @@ fn move_dirty_scratch_to_layout(dirty_dir: &Path, scratch_dir: &Path) -> anyhow:
     Ok(())
 }
 
+fn sync_schema_files_from_master_checkout(
+    master_dir: &Path,
+    scratch_dir: &Path,
+) -> anyhow::Result<()> {
+    let master_scratch_dir = master_dir.join(".scratch");
+    sync_schema_files_dir(&master_scratch_dir, &master_scratch_dir, scratch_dir)
+}
+
+fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            sync_schema_files_dir(root, &path, scratch_dir)?;
+            continue;
+        }
+
+        if !ft.is_file() || entry.file_name() != "schema.json" {
+            continue;
+        }
+
+        let rel = path.strip_prefix(root)?;
+        if let Some(parent) = scratch_dir.join(rel).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&path, scratch_dir.join(rel))?;
+    }
+
+    Ok(())
+}
+
 /// Count non-dot files recursively (excluding .git directories).
 fn count_files(dir: &Path) -> i64 {
     let mut count = 0i64;
@@ -589,7 +681,9 @@ fn count_files(dir: &Path) -> i64 {
 }
 
 fn walk_count(dir: &Path, count: &mut i64) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -666,8 +760,8 @@ fn repo_path_prefix(repo_path: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::process::Command;
+    use tempfile::TempDir;
 
     fn workbook_with_repo_paths(repo_paths: &[&str]) -> Workbook {
         Workbook {
@@ -697,7 +791,10 @@ mod tests {
     #[test]
     fn derive_workbook_repo_id_uses_shared_repo_prefix() {
         let wb = workbook_with_repo_paths(&["org123/wkb_test/ca_1", "org123/wkb_test/ca_2"]);
-        assert_eq!(derive_workbook_repo_id(&wb).as_deref(), Some("org123/wkb_test/wkb_test"));
+        assert_eq!(
+            derive_workbook_repo_id(&wb).as_deref(),
+            Some("org123/wkb_test/wkb_test")
+        );
     }
 
     #[test]
@@ -728,6 +825,27 @@ mod tests {
     }
 
     #[test]
+    fn sync_schema_files_from_master_checkout_copies_schema_into_connection_scratch() {
+        let tmp = TempDir::new().unwrap();
+        let master_dir = tmp.path().join(".scratch/connections/master/conn");
+        let scratch_dir = tmp.path().join(".scratch/connections/scratch/conn");
+
+        std::fs::create_dir_all(master_dir.join(".scratch/posts")).unwrap();
+        std::fs::write(
+            master_dir.join(".scratch/posts/schema.json"),
+            "{\"schema\":{}}",
+        )
+        .unwrap();
+
+        sync_schema_files_from_master_checkout(&master_dir, &scratch_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(scratch_dir.join("posts/schema.json")).unwrap(),
+            "{\"schema\":{}}"
+        );
+    }
+
+    #[test]
     fn git_checkout_branch_from_bare_allows_empty_branch_tree() {
         if !git_available() {
             eprintln!("skipping git-dependent test: git executable not available");
@@ -743,10 +861,22 @@ mod tests {
         run_git(&repo_dir, &["checkout", "-b", "dirty"]);
         run_git(
             &repo_dir,
-            &["-c", "user.name=Scratch", "-c", "user.email=scratch@example.com", "commit", "--allow-empty", "-m", "empty"],
+            &[
+                "-c",
+                "user.name=Scratch",
+                "-c",
+                "user.email=scratch@example.com",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "empty",
+            ],
         );
         run_git(tmp.path(), &["init", "--bare", "repo.git"]);
-        run_git(&repo_dir, &["remote", "add", "origin", bare_dir.to_str().unwrap()]);
+        run_git(
+            &repo_dir,
+            &["remote", "add", "origin", bare_dir.to_str().unwrap()],
+        );
         run_git(&repo_dir, &["push", "origin", "dirty:dirty"]);
 
         git_checkout_branch_from_bare(&bare_dir, "dirty", &work_tree).unwrap();
@@ -800,7 +930,10 @@ mod tests {
             ],
         );
         run_git(tmp.path(), &["init", "--bare", "repo.git"]);
-        run_git(&repo_dir, &["remote", "add", "origin", bare_dir.to_str().unwrap()]);
+        run_git(
+            &repo_dir,
+            &["remote", "add", "origin", bare_dir.to_str().unwrap()],
+        );
         run_git(&repo_dir, &["push", "origin", "main:main"]);
         run_git(&repo_dir, &["push", "origin", "dirty:dirty"]);
 

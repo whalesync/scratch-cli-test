@@ -53,14 +53,21 @@ async fn login(server_url: &str, no_browser: bool) -> anyhow::Result<()> {
     if !no_browser {
         println!("Opening browser...");
         if let Err(e) = open::that(&verify_url) {
-            eprintln!("Could not open browser: {}. Please open the URL manually.", e);
+            eprintln!(
+                "Could not open browser: {}. Please open the URL manually.",
+                e
+            );
         }
     }
 
     println!("\nWaiting for authorization...");
 
     let poll_secs = if init.interval > 0 { init.interval } else { 5 };
-    let expire_secs = if init.expires_in > 0 { init.expires_in } else { 300 };
+    let expire_secs = if init.expires_in > 0 {
+        init.expires_in
+    } else {
+        300
+    };
     let deadline = std::time::Instant::now() + Duration::from_secs(expire_secs);
 
     loop {
@@ -133,4 +140,3 @@ fn status(server_url: &str) -> anyhow::Result<()> {
     println!();
     Ok(())
 }
-

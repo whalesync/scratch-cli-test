@@ -36,8 +36,7 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| repos_dir.clone());
 
-        let build_version =
-            env::var("BUILD_VERSION").unwrap_or_else(|_| "0.0.0-local".to_string());
+        let build_version = env::var("BUILD_VERSION").unwrap_or_else(|_| "0.0.0-local".to_string());
 
         Self {
             port,

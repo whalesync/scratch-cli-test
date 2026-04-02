@@ -33,13 +33,21 @@ pub async fn git_backend(
 
     if !repo_path.exists() {
         tracing::error!("[GIT] Repository not found: {:?}", repo_path);
-        return (StatusCode::NOT_FOUND, format!("Repository not found: {}", repo_id)).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            format!("Repository not found: {}", repo_id),
+        )
+            .into_response();
     }
 
     let head_path = repo_path.join("HEAD");
     if !head_path.exists() {
         tracing::error!("[GIT] Invalid git repository (no HEAD): {:?}", repo_path);
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Invalid git repository: {}", repo_id)).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Invalid git repository: {}", repo_id),
+        )
+            .into_response();
     }
 
     tracing::info!(
@@ -131,7 +139,8 @@ pub async fn git_backend(
             }
             Err(e) => {
                 tracing::error!("[GIT] Failed to read CGI headers: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Git backend read error").into_response();
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Git backend read error")
+                    .into_response();
             }
         }
     }

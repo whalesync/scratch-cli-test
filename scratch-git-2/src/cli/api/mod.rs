@@ -84,7 +84,10 @@ impl ApiClient {
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError { status: status.as_u16(), body });
+            return Err(ApiError::ServerError {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         let data = resp.json::<R>().await?;
@@ -110,7 +113,10 @@ impl ApiClient {
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError { status: status.as_u16(), body });
+            return Err(ApiError::ServerError {
+                status: status.as_u16(),
+                body,
+            });
         }
         Ok(())
     }
@@ -124,7 +130,11 @@ impl ApiClient {
         self.do_request::<(), R>(Method::GET, &full, None).await
     }
 
-    pub async fn post<B: Serialize, R: DeserializeOwned>(&self, path: &str, body: &B) -> ApiResult<R> {
+    pub async fn post<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> ApiResult<R> {
         self.do_request(Method::POST, path, Some(body)).await
     }
 
@@ -132,7 +142,11 @@ impl ApiClient {
         self.do_request::<(), R>(Method::POST, path, None).await
     }
 
-    pub async fn patch<B: Serialize, R: DeserializeOwned>(&self, path: &str, body: &B) -> ApiResult<R> {
+    pub async fn patch<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> ApiResult<R> {
         self.do_request(Method::PATCH, path, Some(body)).await
     }
 
@@ -149,11 +163,18 @@ impl ApiClient {
     pub async fn auth_initiate(base_url: &str) -> ApiResult<AuthInitiateResponse> {
         let client = Client::new();
         let url = format!("{}/cli/v1/auth/initiate", base_url.trim_end_matches('/'));
-        let resp = client.post(&url).header("User-Agent", "Scratch-cli/1.0").send().await?;
+        let resp = client
+            .post(&url)
+            .header("User-Agent", "Scratch-cli/1.0")
+            .send()
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError { status: status.as_u16(), body });
+            return Err(ApiError::ServerError {
+                status: status.as_u16(),
+                body,
+            });
         }
         Ok(resp.json().await?)
     }
@@ -162,11 +183,19 @@ impl ApiClient {
         let client = Client::new();
         let url = format!("{}/cli/v1/auth/poll", base_url.trim_end_matches('/'));
         let body = serde_json::json!({ "pollingCode": polling_code });
-        let resp = client.post(&url).json(&body).header("User-Agent", "Scratch-cli/1.0").send().await?;
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .header("User-Agent", "Scratch-cli/1.0")
+            .send()
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError { status: status.as_u16(), body: body_text });
+            return Err(ApiError::ServerError {
+                status: status.as_u16(),
+                body: body_text,
+            });
         }
         Ok(resp.json().await?)
     }
@@ -313,7 +342,10 @@ pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
             }
             "failed" => {
                 eprintln!();
-                return Err(ApiError::Other(format!("Job failed: {}", progress.failed_reason)));
+                return Err(ApiError::Other(format!(
+                    "Job failed: {}",
+                    progress.failed_reason
+                )));
             }
             "canceled" => {
                 eprintln!();
@@ -323,7 +355,9 @@ pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
                 eprint!(".");
                 if std::time::Instant::now() > deadline {
                     eprintln!();
-                    return Err(ApiError::Other("Job timed out after 30 minutes".to_string()));
+                    return Err(ApiError::Other(
+                        "Job timed out after 30 minutes".to_string(),
+                    ));
                 }
                 sleep(interval).await;
             }
@@ -364,11 +398,13 @@ pub struct CreateConnectionRequest {
 
 impl ApiClient {
     pub async fn list_connections(&self, workbook_id: &str) -> ApiResult<Vec<Connection>> {
-        self.get(&format!("workbooks/{}/connections", workbook_id)).await
+        self.get(&format!("workbooks/{}/connections", workbook_id))
+            .await
     }
 
     pub async fn get_connection(&self, workbook_id: &str, id: &str) -> ApiResult<Connection> {
-        self.get(&format!("workbooks/{}/connections/{}", workbook_id, id)).await
+        self.get(&format!("workbooks/{}/connections/{}", workbook_id, id))
+            .await
     }
 
     pub async fn create_connection(
@@ -376,11 +412,13 @@ impl ApiClient {
         workbook_id: &str,
         req: &CreateConnectionRequest,
     ) -> ApiResult<Connection> {
-        self.post(&format!("workbooks/{}/connections", workbook_id), req).await
+        self.post(&format!("workbooks/{}/connections", workbook_id), req)
+            .await
     }
 
     pub async fn delete_connection(&self, workbook_id: &str, id: &str) -> ApiResult<()> {
-        self.delete_void(&format!("workbooks/{}/connections/{}", workbook_id, id)).await
+        self.delete_void(&format!("workbooks/{}/connections/{}", workbook_id, id))
+            .await
     }
 }
 
@@ -412,8 +450,10 @@ impl<'de> serde::Deserialize<'de> for TablePreviewId {
             serde_json::Value::String(s) => Ok(TablePreviewId(s.clone())),
             serde_json::Value::Object(obj) => {
                 if let Some(serde_json::Value::Array(arr)) = obj.get("remoteId") {
-                    let parts: Vec<String> =
-                        arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect();
+                    let parts: Vec<String> = arr
+                        .iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect();
                     return Ok(TablePreviewId(parts.join(",")));
                 }
                 Err(D::Error::custom("cannot parse TablePreviewId"))
@@ -530,7 +570,10 @@ impl ApiClient {
     ) -> ApiResult<TableSearchResult> {
         let encoded = urlencoding::encode(search_term);
         self.get_query(
-            &format!("workbooks/{}/connections/{}/tables/search", workbook_id, connection_id),
+            &format!(
+                "workbooks/{}/connections/{}/tables/search",
+                workbook_id, connection_id
+            ),
             &format!("searchTerm={}", encoded),
         )
         .await
@@ -545,7 +588,8 @@ impl ApiClient {
         workbook_id: &str,
         folder_id: &str,
     ) -> ApiResult<LinkedTableDetail> {
-        self.get(&format!("workbooks/{}/linked/{}", workbook_id, folder_id)).await
+        self.get(&format!("workbooks/{}/linked/{}", workbook_id, folder_id))
+            .await
     }
 
     pub async fn create_linked_table(
@@ -553,11 +597,13 @@ impl ApiClient {
         workbook_id: &str,
         req: &CreateLinkedTableRequest,
     ) -> ApiResult<LinkedTable> {
-        self.post(&format!("workbooks/{}/linked", workbook_id), req).await
+        self.post(&format!("workbooks/{}/linked", workbook_id), req)
+            .await
     }
 
     pub async fn delete_linked_table(&self, workbook_id: &str, folder_id: &str) -> ApiResult<()> {
-        self.delete_void(&format!("workbooks/{}/linked/{}", workbook_id, folder_id)).await
+        self.delete_void(&format!("workbooks/{}/linked/{}", workbook_id, folder_id))
+            .await
     }
 
     pub async fn pull_linked_table(
@@ -565,7 +611,11 @@ impl ApiClient {
         workbook_id: &str,
         folder_id: &str,
     ) -> ApiResult<JobStartedResponse> {
-        self.post_no_body(&format!("workbooks/{}/linked/{}/pull", workbook_id, folder_id)).await
+        self.post_no_body(&format!(
+            "workbooks/{}/linked/{}/pull",
+            workbook_id, folder_id
+        ))
+        .await
     }
 
     pub async fn pull_linked_table_files(
@@ -587,7 +637,11 @@ impl ApiClient {
         workbook_id: &str,
         folder_id: &str,
     ) -> ApiResult<JobStartedResponse> {
-        self.post_no_body(&format!("workbooks/{}/linked/{}/publish", workbook_id, folder_id)).await
+        self.post_no_body(&format!(
+            "workbooks/{}/linked/{}/publish",
+            workbook_id, folder_id
+        ))
+        .await
     }
 
     pub async fn publish_from_git(
@@ -669,11 +723,17 @@ impl ApiClient {
     }
 
     pub async fn get_sync(&self, workbook_id: &str, sync_id: &str) -> ApiResult<Sync> {
-        self.get(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id)).await
+        self.get(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id))
+            .await
     }
 
-    pub async fn get_sync_raw(&self, workbook_id: &str, sync_id: &str) -> ApiResult<serde_json::Value> {
-        self.get(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id)).await
+    pub async fn get_sync_raw(
+        &self,
+        workbook_id: &str,
+        sync_id: &str,
+    ) -> ApiResult<serde_json::Value> {
+        self.get(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id))
+            .await
     }
 
     pub async fn create_sync(
@@ -681,7 +741,8 @@ impl ApiClient {
         workbook_id: &str,
         body: &serde_json::Value,
     ) -> ApiResult<Sync> {
-        self.post(&format!("workbooks/{}/syncs", workbook_id), body).await
+        self.post(&format!("workbooks/{}/syncs", workbook_id), body)
+            .await
     }
 
     pub async fn update_sync(
@@ -690,19 +751,26 @@ impl ApiClient {
         sync_id: &str,
         body: &serde_json::Value,
     ) -> ApiResult<Sync> {
-        self.patch(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id), body).await
+        self.patch(
+            &format!("workbooks/{}/syncs/{}", workbook_id, sync_id),
+            body,
+        )
+        .await
     }
 
     pub async fn delete_sync(&self, workbook_id: &str, sync_id: &str) -> ApiResult<()> {
-        self.delete_void(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id)).await
+        self.delete_void(&format!("workbooks/{}/syncs/{}", workbook_id, sync_id))
+            .await
     }
 
     pub async fn run_sync(&self, workbook_id: &str, sync_id: &str) -> ApiResult<RunSyncResponse> {
-        self.post_no_body(&format!("workbooks/{}/syncs/{}/run", workbook_id, sync_id)).await
+        self.post_no_body(&format!("workbooks/{}/syncs/{}/run", workbook_id, sync_id))
+            .await
     }
 
     pub async fn export_syncs(&self, workbook_id: &str) -> ApiResult<Vec<ExportSyncConfig>> {
-        self.get(&format!("workbooks/{}/syncs/export", workbook_id)).await
+        self.get(&format!("workbooks/{}/syncs/export", workbook_id))
+            .await
     }
 
     pub async fn export_sync(

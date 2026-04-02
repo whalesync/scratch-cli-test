@@ -17,12 +17,8 @@ impl GitRepo {
     /// Open an existing bare git repository.
     pub fn open(repos_dir: &Path, repo_id: &str) -> Result<Self, AppError> {
         let repo_path = repos_dir.join(format!("{}.git", repo_id));
-        let repo = gix::open(&repo_path).map_err(|_| {
-            AppError::not_found(format!(
-                "Repository not found: {}",
-                repo_id
-            ))
-        })?;
+        let repo = gix::open(&repo_path)
+            .map_err(|_| AppError::not_found(format!("Repository not found: {}", repo_id)))?;
         Ok(Self {
             repo,
             _repo_path: repo_path,
@@ -624,7 +620,8 @@ impl GitRepo {
             let (prefix, main_child) = extract_child_tree(main_oid)?;
             let (_, dirty_child) = extract_child_tree(dirty_oid)?;
             let new_main = make_orphan(main_child, "Strip connection prefix")?;
-            let new_dirty = self.write_commit(dirty_child, &[new_main], "Strip connection prefix (dirty)")?;
+            let new_dirty =
+                self.write_commit(dirty_child, &[new_main], "Strip connection prefix (dirty)")?;
             self.force_ref(MAIN_BRANCH, new_main)?;
             self.force_ref(DIRTY_BRANCH, new_dirty)?;
             self.write_tag("merge_base", new_main)?;
@@ -642,8 +639,13 @@ impl GitRepo {
             let (_, merge_base_child) = extract_child_tree(merge_base_oid)?;
             let new_merge_base =
                 make_orphan(merge_base_child, "Strip connection prefix (merge_base)")?;
-            let new_main = self.write_commit(main_child, &[new_merge_base], "Strip connection prefix")?;
-            let new_dirty = self.write_commit(dirty_child, &[new_merge_base], "Strip connection prefix (dirty)")?;
+            let new_main =
+                self.write_commit(main_child, &[new_merge_base], "Strip connection prefix")?;
+            let new_dirty = self.write_commit(
+                dirty_child,
+                &[new_merge_base],
+                "Strip connection prefix (dirty)",
+            )?;
             self.force_ref(MAIN_BRANCH, new_main)?;
             self.force_ref(DIRTY_BRANCH, new_dirty)?;
             self.write_tag("merge_base", new_merge_base)?;
@@ -734,7 +736,10 @@ mod tests {
 
         let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
         let entries = repo.read_tree_at_path(commit_oid, "").unwrap();
-        let (_, blob_oid, _) = entries.iter().find(|(name, _, _)| name == "hello.txt").unwrap();
+        let (_, blob_oid, _) = entries
+            .iter()
+            .find(|(name, _, _)| name == "hello.txt")
+            .unwrap();
 
         let content = repo.read_blob_to_string(*blob_oid).unwrap();
         assert_eq!(content, "hello world");

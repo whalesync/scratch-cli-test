@@ -7,8 +7,8 @@ use serde_json::json;
 use crate::service::envelope::envelope_result;
 use crate::service::error::AppError;
 use crate::service::state::AppState;
-use crate::shared::plan_publish;
 use crate::service::worktree::TempWorktree;
+use crate::shared::plan_publish;
 
 const DIRTY_BRANCH: &str = "dirty";
 const MAIN_BRANCH: &str = "main";
@@ -44,16 +44,29 @@ pub async fn build_plan(
                     tokio::task::spawn_blocking(move || {
                         let bare_repo = repos_dir.join(format!("{}.git", id));
                         if !bare_repo.exists() {
-                            return Err(AppError::not_found(format!("Repository not found: {}", id)));
+                            return Err(AppError::not_found(format!(
+                                "Repository not found: {}",
+                                id
+                            )));
                         }
 
                         let worktrees_root = repos_dir.join(".worktrees");
 
                         // Materialize both branches
-                        let dirty_wt = TempWorktree::create(&bare_repo, DIRTY_BRANCH, &worktrees_root)
-                            .map_err(|e| AppError::internal(format!("Failed to create dirty worktree: {e}")))?;
-                        let main_wt = TempWorktree::create(&bare_repo, MAIN_BRANCH, &worktrees_root)
-                            .map_err(|e| AppError::internal(format!("Failed to create main worktree: {e}")))?;
+                        let dirty_wt =
+                            TempWorktree::create(&bare_repo, DIRTY_BRANCH, &worktrees_root)
+                                .map_err(|e| {
+                                    AppError::internal(format!(
+                                        "Failed to create dirty worktree: {e}"
+                                    ))
+                                })?;
+                        let main_wt =
+                            TempWorktree::create(&bare_repo, MAIN_BRANCH, &worktrees_root)
+                                .map_err(|e| {
+                                    AppError::internal(format!(
+                                        "Failed to create main worktree: {e}"
+                                    ))
+                                })?;
 
                         let db_path = index_dir.join(format!("{}.db", id));
                         let timestamp = plan_publish::now_compact();
@@ -72,11 +85,14 @@ pub async fn build_plan(
                         match result {
                             Some(plan_result) => {
                                 // Commit the plan files to dirty branch
-                                dirty_wt.commit(&format!(
-                                    "Publish plan {} for {}",
-                                    plan_result.meta.plan_id, body.connection_name
-                                ))
-                                .map_err(|e| AppError::internal(format!("Failed to commit plan: {e}")))?;
+                                dirty_wt
+                                    .commit(&format!(
+                                        "Publish plan {} for {}",
+                                        plan_result.meta.plan_id, body.connection_name
+                                    ))
+                                    .map_err(|e| {
+                                        AppError::internal(format!("Failed to commit plan: {e}"))
+                                    })?;
 
                                 Ok(json!({
                                     "success": true,
