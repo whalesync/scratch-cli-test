@@ -371,6 +371,27 @@ build scratch-git docker image:
     - !reference [.rules, on_merge_to_prod]
 
 # =============================================================================
+# SCRATCH-DESKTOP SUBPROJECT
+# =============================================================================
+
+.build-and-test-scratch-desktop:
+  stage: build and test
+  interruptible: true
+  script:
+    - cd scratch-desktop
+    - !reference [.use_nvm, script]
+    - yarn lint-strict
+    - yarn build
+
+build and test scratch-desktop:
+  extends: .build-and-test-scratch-desktop
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, scratch-desktop]
+    - !reference [.rules, on_merge_to_master]
+
+# =============================================================================
 # MISC
 # =============================================================================
 

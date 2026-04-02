@@ -208,6 +208,18 @@ local build scratch-git docker image:
       changes: !reference [.changes, scratch-git-docker]
 
 # -----------------------------------------------------------------------------
+# Scratch Desktop
+# -----------------------------------------------------------------------------
+
+local build and test scratch-desktop:
+  extends:
+    - .build-and-test-scratch-desktop
+    - .local-runner-defaults
+  rules:
+    - if: *local-user-if
+      changes: !reference [.changes, scratch-desktop]
+
+# -----------------------------------------------------------------------------
 # Smoke Tests
 # -----------------------------------------------------------------------------
 
