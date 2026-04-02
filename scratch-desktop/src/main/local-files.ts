@@ -10,6 +10,8 @@
 import { readdir, readFile, stat } from 'fs/promises';
 import { basename, extname, join } from 'path';
 
+import { listUnreviewedChanges } from './scratchmd';
+
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
 
 interface WorkspaceConfig {
@@ -74,6 +76,9 @@ const MAX_INLINE_BINARY_SIZE = 5 * 1024 * 1024;
 
 /** Max concurrency for batch file reads */
 const BATCH_CONCURRENCY = 10;
+
+/** Hard limit for grid data pagination values (offset and limit). */
+const GRID_DATA_MAX_PAGINATION = 1000;
 
 const MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -227,6 +232,8 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 
 // ── Grid data ──
 
+export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
+
 interface ReadGridDataOptions {
   offset?: number;
   limit?: number;
@@ -234,6 +241,8 @@ interface ReadGridDataOptions {
   sortOrder?: 'asc' | 'desc';
   filter?: Record<string, unknown>;
   columns?: string[];
+  filterStatus?: FilterStatus;
+  workspacePath?: string;
 }
 
 interface GridDataResult {
@@ -254,10 +263,32 @@ interface GridDataResult {
  * returned and the column order matches the requested list.
  */
 export async function readGridData(folderPath: string, opts: ReadGridDataOptions): Promise<GridDataResult> {
+  console.debug('readGridData', folderPath, opts);
+
+  if (opts.offset !== undefined && opts.offset > GRID_DATA_MAX_PAGINATION) {
+    throw new Error(
+      `readGridData offset (${opts.offset}) exceeds the hardcoded maximum of ${GRID_DATA_MAX_PAGINATION}. `,
+    );
+  }
+  if (opts.limit !== undefined && opts.limit > GRID_DATA_MAX_PAGINATION) {
+    throw new Error(
+      `readGridData limit (${opts.limit}) exceeds the hardcoded maximum of ${GRID_DATA_MAX_PAGINATION}. `,
+    );
+  }
+
   let allNames = await getCachedFileNames(folderPath);
 
   // Only include JSON files
   allNames = allNames.filter((name) => extname(name).toLowerCase() === '.json');
+
+  // Apply status filter
+  if (opts.filterStatus) {
+    if (!opts.workspacePath) {
+      throw new Error(`readGridData filterStatus '${opts.filterStatus}' requires workspacePath to be set.`);
+    }
+    const allowed = await resolveFilterStatus(opts.filterStatus, folderPath, opts.workspacePath, allNames);
+    allNames = allNames.filter((name) => allowed.has(name));
+  }
 
   // Read, parse, and flatten all matching files
   const columnSet = new Set<string>();
@@ -308,7 +339,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
 
   // Paginate
   const offset = Math.max(0, opts.offset ?? 0);
-  const limit = Math.max(1, opts.limit ?? 1000);
+  const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
   let rows = allRows.slice(offset, offset + limit);
 
   let columns = Array.from(columnSet);
@@ -500,6 +531,95 @@ async function collectLeafFolders(root: string, dir: string, out: FolderEntry[])
   for (const sub of subdirs) {
     await collectLeafFolders(root, join(dir, sub.name), out);
   }
+}
+
+async function resolveFilterStatus(
+  filterStatus: FilterStatus,
+  folderPath: string,
+  workspacePath: string,
+  jsonNames: string[],
+): Promise<Set<string>> {
+  if (filterStatus === 'unreviewed') {
+    const entries = await listUnreviewedChanges(workspacePath);
+    // CLI returns paths like /subfolder/file.json with connectionName.
+    // folderPath is absolute: workspacePath/connectionName/subfolder
+    const names = new Set<string>();
+    for (const entry of entries) {
+      const absolutePath = join(workspacePath, entry.connectionName, entry.path.replace(/^\//, ''));
+      if (absolutePath.startsWith(folderPath + '/') || absolutePath.startsWith(folderPath + '\\')) {
+        names.add(absolutePath.slice(folderPath.length + 1));
+      }
+    }
+    return names;
+  }
+
+  // unpublished / published both need the dirty-vs-master comparison
+  const unpublishedNames = await computeUnpublishedNames(folderPath, workspacePath);
+
+  if (filterStatus === 'unpublished') {
+    return unpublishedNames;
+  }
+
+  // published = all JSON files NOT in the unpublished set
+  const published = new Set<string>();
+  for (const name of jsonNames) {
+    if (!unpublishedNames.has(name)) {
+      published.add(name);
+    }
+  }
+  return published;
+}
+
+/**
+ * Derives the master directory that corresponds to the given dirty `folderPath`.
+ *
+ * Workspace layout (CLI):
+ *   workspace/ConnectionName/sub/folder   → dirty checkout
+ *   workspace/.scratch/connections/master/ConnectionName/sub/folder → master
+ *
+ * `folderPath` must be an absolute path inside the workspace's dirty checkout.
+ */
+export function masterPathForFolder(folderPath: string, workspacePath: string): string {
+  // folderPath is e.g. /ws/ConnName/sub/folder, workspacePath is /ws
+  // Strip workspace prefix to get ConnName/sub/folder
+  const rel = folderPath.slice(workspacePath.length + 1); // ConnName/sub/folder
+  return join(workspacePath, '.scratch', 'connections', 'master', rel);
+}
+
+/**
+ * Compares JSON files in `folderPath` (dirty) against the corresponding master directory.
+ * Returns the set of filenames that differ from or are absent in master (i.e. unpublished).
+ */
+export async function computeUnpublishedNames(folderPath: string, workspacePath: string): Promise<Set<string>> {
+  const masterDir = masterPathForFolder(folderPath, workspacePath);
+  const dirtyNames = await getCachedFileNames(folderPath);
+  const jsonNames = dirtyNames.filter((name) => extname(name).toLowerCase() === '.json');
+
+  const unpublished = new Set<string>();
+
+  for (let i = 0; i < jsonNames.length; i += BATCH_CONCURRENCY) {
+    const batch = jsonNames.slice(i, i + BATCH_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (name) => {
+        const dirtyPath = join(folderPath, name);
+        const masterPath = join(masterDir, name);
+        try {
+          const [dirtyContent, masterContent] = await Promise.all([
+            readFile(dirtyPath, 'utf-8'),
+            readFile(masterPath, 'utf-8'),
+          ]);
+          if (dirtyContent !== masterContent) {
+            unpublished.add(name);
+          }
+        } catch {
+          // Master file doesn't exist → file is unpublished (new)
+          unpublished.add(name);
+        }
+      }),
+    );
+  }
+
+  return unpublished;
 }
 
 async function statFileEntry(folderPath: string, name: string): Promise<FileEntry> {
