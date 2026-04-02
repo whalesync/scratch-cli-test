@@ -1,0 +1,379 @@
+/**
+ * Local file access layer for Scratch Desktop.
+ *
+ * All filesystem I/O for workspace files lives here, in the main process.
+ * The renderer accesses these functions via IPC handlers registered in index.ts.
+ *
+ * Target format: Rust CLI / .scratch workspace layout.
+ */
+
+import { readdir, readFile, stat } from 'fs/promises';
+import { basename, extname, join } from 'path';
+
+// ── Types (duplicated from renderer types to avoid cross-process import issues) ──
+
+interface WorkspaceConfig {
+  apiUrl: string;
+  workbookId: string;
+  orgId: string;
+  authToken?: string;
+}
+
+interface FolderEntry {
+  name: string;
+  path: string;
+  fileCount: number;
+  lastModified: number;
+  totalSize: number;
+}
+
+interface FolderMetadata extends FolderEntry {
+  schema: Record<string, unknown> | null;
+}
+
+interface ListFilesOptions {
+  offset: number;
+  limit: number;
+  sortBy?: 'name' | 'modified' | 'size';
+  sortOrder?: 'asc' | 'desc';
+  filter?: {
+    search?: string;
+    extensions?: string[];
+  };
+}
+
+interface ListFilesResult {
+  files: FileEntry[];
+  total: number;
+  offset: number;
+}
+
+interface FileEntry {
+  name: string;
+  path: string;
+  size: number;
+  lastModified: number;
+  extension: string;
+  isJson: boolean;
+}
+
+type FileContent =
+  | { type: 'json'; path: string; data: Record<string, unknown>; size: number }
+  | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
+  | { type: 'error'; path: string; error: string };
+
+// ── Constants ──
+
+const SCRATCH_DIR = '.scratch';
+const CONFIG_FILE = 'config.json';
+const SCHEMAS_DIR = 'schemas';
+const HIDDEN_PREFIX = '.';
+
+/** Max binary file size (5 MB) to inline as base64 */
+const MAX_INLINE_BINARY_SIZE = 5 * 1024 * 1024;
+
+/** Max concurrency for batch file reads */
+const BATCH_CONCURRENCY = 10;
+
+const MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.csv': 'text/csv',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.html': 'text/html',
+};
+
+// ── Filename cache ──
+
+interface CachedDirListing {
+  names: string[];
+  mtime: number;
+}
+
+const dirCache = new Map<string, CachedDirListing>();
+
+// ── Public functions ──
+
+export async function readWorkspaceConfig(workspacePath: string): Promise<WorkspaceConfig> {
+  const configPath = join(workspacePath, SCRATCH_DIR, CONFIG_FILE);
+  const content = await readFile(configPath, 'utf-8');
+  const parsed = JSON.parse(content) as Record<string, unknown>;
+  return {
+    apiUrl: (parsed.api_url as string) ?? '',
+    workbookId: (parsed.workbook_id as string) ?? '',
+    orgId: (parsed.org_id as string) ?? '',
+    authToken: (parsed.auth_token as string) ?? undefined,
+  };
+}
+
+export async function listFolders(workspacePath: string): Promise<FolderEntry[]> {
+  const folders: FolderEntry[] = [];
+  await collectLeafFolders(workspacePath, workspacePath, folders);
+  return folders;
+}
+
+export async function getFolderMetadata(folderPath: string, workspacePath: string): Promise<FolderMetadata> {
+  const folderName = basename(folderPath);
+  const meta = await computeFolderStats(folderPath);
+  const schema = await readSchema(workspacePath, folderName);
+
+  return {
+    name: folderName,
+    path: folderPath,
+    fileCount: meta.fileCount,
+    lastModified: meta.lastModified,
+    totalSize: meta.totalSize,
+    schema,
+  };
+}
+
+export async function listFiles(folderPath: string, opts: ListFilesOptions): Promise<ListFilesResult> {
+  const allNames = await getCachedFileNames(folderPath);
+
+  // Filter
+  let filtered = allNames;
+  if (opts.filter) {
+    filtered = applyFilter(filtered, opts.filter);
+  }
+
+  const total = filtered.length;
+
+  // Sort (default: name asc). For 'modified' and 'size' sorting, we need stat info
+  // on all filtered files which is expensive — only do it if explicitly requested.
+  if (opts.sortBy === 'modified' || opts.sortBy === 'size') {
+    filtered = await sortByStatField(folderPath, filtered, opts.sortBy, opts.sortOrder ?? 'asc');
+  } else {
+    filtered = sortByName(filtered, opts.sortOrder ?? 'asc');
+  }
+
+  // Paginate
+  const offset = Math.max(0, opts.offset);
+  const limit = Math.max(1, opts.limit);
+  const page = filtered.slice(offset, offset + limit);
+
+  // Stat only the page
+  const files = await Promise.all(page.map((name) => statFileEntry(folderPath, name)));
+
+  return { files, total, offset };
+}
+
+export async function readFileContent(filePath: string): Promise<FileContent> {
+  try {
+    const fileStat = await stat(filePath);
+    const ext = extname(filePath).toLowerCase();
+
+    if (ext === '.json') {
+      const content = await readFile(filePath, 'utf-8');
+      const data = JSON.parse(content) as Record<string, unknown>;
+      return { type: 'json', path: filePath, data, size: fileStat.size };
+    }
+
+    const mimeType = MIME_TYPES[ext] ?? 'application/octet-stream';
+    const result: FileContent = { type: 'binary', path: filePath, mimeType, size: fileStat.size };
+
+    if (fileStat.size <= MAX_INLINE_BINARY_SIZE) {
+      const buffer = await readFile(filePath);
+      result.base64 = buffer.toString('base64');
+    }
+
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { type: 'error', path: filePath, error: message };
+  }
+}
+
+export async function readBatch(filePaths: string[], opts?: { maxSize?: number }): Promise<FileContent[]> {
+  const results: FileContent[] = [];
+
+  // Process in batches to limit concurrency
+  for (let i = 0; i < filePaths.length; i += BATCH_CONCURRENCY) {
+    const batch = filePaths.slice(i, i + BATCH_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (filePath) => {
+        if (opts?.maxSize) {
+          try {
+            const fileStat = await stat(filePath);
+            if (fileStat.size > opts.maxSize) {
+              return {
+                type: 'binary' as const,
+                path: filePath,
+                mimeType: MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+                size: fileStat.size,
+              };
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { type: 'error' as const, path: filePath, error: message };
+          }
+        }
+        return readFileContent(filePath);
+      }),
+    );
+    results.push(...batchResults);
+  }
+
+  return results;
+}
+
+export async function readSchema(workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> {
+  try {
+    const schemaPath = join(workspacePath, SCRATCH_DIR, SCHEMAS_DIR, `${folderName}.json`);
+    const content = await readFile(schemaPath, 'utf-8');
+    return JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// ── Internal helpers ──
+
+async function computeFolderStats(
+  folderPath: string,
+): Promise<{ fileCount: number; lastModified: number; totalSize: number }> {
+  const entries = await readdir(folderPath, { withFileTypes: true });
+  let fileCount = 0;
+  let lastModified = 0;
+  let totalSize = 0;
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (entry.name.startsWith(HIDDEN_PREFIX)) continue;
+
+    fileCount++;
+    try {
+      const fileStat = await stat(join(folderPath, entry.name));
+      totalSize += fileStat.size;
+      const mtime = fileStat.mtimeMs;
+      if (mtime > lastModified) lastModified = mtime;
+    } catch {
+      // Skip files we can't stat
+    }
+  }
+
+  return { fileCount, lastModified, totalSize };
+}
+
+async function getCachedFileNames(folderPath: string): Promise<string[]> {
+  const folderStat = await stat(folderPath);
+  const folderMtime = folderStat.mtimeMs;
+
+  const cached = dirCache.get(folderPath);
+  if (cached && cached.mtime === folderMtime) {
+    return cached.names;
+  }
+
+  const entries = await readdir(folderPath, { withFileTypes: true });
+  const names = entries.filter((e) => e.isFile() && !e.name.startsWith(HIDDEN_PREFIX)).map((e) => e.name);
+
+  dirCache.set(folderPath, { names, mtime: folderMtime });
+  return names;
+}
+
+function applyFilter(names: string[], filter: { search?: string; extensions?: string[] }): string[] {
+  let result = names;
+
+  if (filter.search) {
+    const needle = filter.search.toLowerCase();
+    result = result.filter((name) => name.toLowerCase().includes(needle));
+  }
+
+  if (filter.extensions && filter.extensions.length > 0) {
+    const exts = new Set(filter.extensions.map((e) => e.toLowerCase()));
+    result = result.filter((name) => exts.has(extname(name).toLowerCase()));
+  }
+
+  return result;
+}
+
+function sortByName(names: string[], order: 'asc' | 'desc'): string[] {
+  const sorted = [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  return order === 'desc' ? sorted.reverse() : sorted;
+}
+
+async function sortByStatField(
+  folderPath: string,
+  names: string[],
+  field: 'modified' | 'size',
+  order: 'asc' | 'desc',
+): Promise<string[]> {
+  const stats = await Promise.all(
+    names.map(async (name) => {
+      try {
+        const fileStat = await stat(join(folderPath, name));
+        return { name, value: field === 'modified' ? fileStat.mtimeMs : fileStat.size };
+      } catch {
+        return { name, value: 0 };
+      }
+    }),
+  );
+
+  stats.sort((a, b) => (order === 'asc' ? a.value - b.value : b.value - a.value));
+  return stats.map((s) => s.name);
+}
+
+/**
+ * Recursively walks the directory tree from `dir`, collecting leaf folders
+ * (directories that contain no subdirectories) into `out`. The `name` for
+ * each entry is the relative path from `root` so the UI can display the
+ * full folder path (e.g. "AIRTABLE - Airtable/Blog Posts - Rob/Tags").
+ */
+async function collectLeafFolders(root: string, dir: string, out: FolderEntry[]): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const subdirs = entries.filter((e) => e.isDirectory() && e.name !== SCRATCH_DIR && !e.name.startsWith(HIDDEN_PREFIX));
+
+  if (subdirs.length === 0) {
+    // Leaf folder — only add if it's not the root itself
+    if (dir !== root) {
+      const meta = await computeFolderStats(dir);
+      const relativePath = dir.slice(root.length + 1); // strip root + separator
+      out.push({
+        name: relativePath,
+        path: dir,
+        fileCount: meta.fileCount,
+        lastModified: meta.lastModified,
+        totalSize: meta.totalSize,
+      });
+    }
+    return;
+  }
+
+  for (const sub of subdirs) {
+    await collectLeafFolders(root, join(dir, sub.name), out);
+  }
+}
+
+async function statFileEntry(folderPath: string, name: string): Promise<FileEntry> {
+  const filePath = join(folderPath, name);
+  const ext = extname(name).toLowerCase();
+
+  try {
+    const fileStat = await stat(filePath);
+    return {
+      name,
+      path: filePath,
+      size: fileStat.size,
+      lastModified: fileStat.mtimeMs,
+      extension: ext,
+      isJson: ext === '.json',
+    };
+  } catch {
+    return {
+      name,
+      path: filePath,
+      size: 0,
+      lastModified: 0,
+      extension: ext,
+      isJson: ext === '.json',
+    };
+  }
+}

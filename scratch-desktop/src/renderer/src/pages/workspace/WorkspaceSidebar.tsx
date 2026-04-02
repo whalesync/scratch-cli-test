@@ -3,17 +3,28 @@ import { Bug, Folder, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
 import { Workspace } from '../../types/workspace';
+import { LocalFolder } from './WorkspaceContent';
 
 interface WorkspaceSidebarProps {
   workspace: Workspace;
+  localFolders: LocalFolder[];
   width: number;
   minWidth: number;
   maxWidth: number;
+  selectedFolderPath: string | null;
+  onSelectFolder: (folderPath: string) => void;
 }
 
-export function WorkspaceSidebar({ workspace, width, minWidth, maxWidth }: WorkspaceSidebarProps) {
+export function WorkspaceSidebar({
+  workspace,
+  localFolders,
+  width,
+  minWidth,
+  maxWidth,
+  selectedFolderPath,
+  onSelectFolder,
+}: WorkspaceSidebarProps) {
   const navigate = useNavigate();
-  const folders = workspace.dataFolders ?? [];
 
   return (
     <Stack
@@ -31,33 +42,30 @@ export function WorkspaceSidebar({ workspace, width, minWidth, maxWidth }: Works
     >
       {/* Folder tree */}
       <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} py="xs">
-        {folders.length === 0 && (
+        {localFolders.length === 0 && (
           <Text size="xs" c="dimmed" px="sm" py="xs">
-            No connections yet
+            No folders yet
           </Text>
         )}
-        {folders.map((folder) => (
+        {localFolders.map((folder) => (
           <UnstyledButton
-            key={folder.id}
+            key={folder.path}
             px="sm"
             py={6}
+            onClick={() => onSelectFolder(folder.path)}
             style={{
               width: '100%',
               display: 'flex',
               alignItems: 'center',
               gap: 8,
+              backgroundColor: selectedFolderPath === folder.path ? 'var(--fg-divider)' : undefined,
             }}
           >
             <Folder size={14} color="var(--fg-secondary)" />
             <Box style={{ flex: 1, minWidth: 0 }}>
               <Text size="sm" c="var(--fg-primary)" truncate>
-                {folder.path || '/'}
+                {folder.name}
               </Text>
-              {folder.connectorDisplayName && (
-                <Text size="xs" c="dimmed" truncate>
-                  {folder.connectorDisplayName}
-                </Text>
-              )}
             </Box>
           </UnstyledButton>
         ))}

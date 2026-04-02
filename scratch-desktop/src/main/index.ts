@@ -6,6 +6,15 @@ import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
+import {
+  getFolderMetadata,
+  listFiles,
+  listFolders,
+  readBatch,
+  readFileContent,
+  readSchema,
+  readWorkspaceConfig,
+} from './local-files';
 
 const appStartTime = performance.now();
 
@@ -351,6 +360,34 @@ ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string
 ipcMain.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();
 });
+
+// Local file access IPC handlers
+ipcMain.handle('files:workspace-config', async (_, workspacePath: string) => readWorkspaceConfig(workspacePath));
+ipcMain.handle('files:list-folders', async (_, workspacePath: string) => listFolders(workspacePath));
+ipcMain.handle('files:folder-metadata', async (_, folderPath: string, workspacePath: string) =>
+  getFolderMetadata(folderPath, workspacePath),
+);
+ipcMain.handle(
+  'files:list-files',
+  async (
+    _,
+    folderPath: string,
+    opts: {
+      offset: number;
+      limit: number;
+      sortBy?: 'name' | 'modified' | 'size';
+      sortOrder?: 'asc' | 'desc';
+      filter?: { search?: string; extensions?: string[] };
+    },
+  ) => listFiles(folderPath, opts),
+);
+ipcMain.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
+ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
+  readBatch(filePaths, opts),
+);
+ipcMain.handle('files:read-schema', async (_, workspacePath: string, folderName: string) =>
+  readSchema(workspacePath, folderName),
+);
 
 void app.whenReady().then(() => {
   logPerf('main appReady (from app start)', performance.now() - appStartTime);

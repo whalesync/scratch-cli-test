@@ -49,10 +49,79 @@ interface ScratchDesktopAPI {
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
 }
 
+interface ScratchFilesAPI {
+  workspaceConfig: (workspacePath: string) => Promise<{
+    apiUrl: string;
+    workbookId: string;
+    orgId: string;
+    authToken?: string;
+  }>;
+  listFolders: (workspacePath: string) => Promise<
+    Array<{
+      name: string;
+      path: string;
+      fileCount: number;
+      lastModified: number;
+      totalSize: number;
+    }>
+  >;
+  getFolderMetadata: (
+    folderPath: string,
+    workspacePath: string,
+  ) => Promise<{
+    name: string;
+    path: string;
+    fileCount: number;
+    lastModified: number;
+    totalSize: number;
+    schema: Record<string, unknown> | null;
+  }>;
+  listFiles: (
+    folderPath: string,
+    opts: {
+      offset: number;
+      limit: number;
+      sortBy?: 'name' | 'modified' | 'size';
+      sortOrder?: 'asc' | 'desc';
+      filter?: { search?: string; extensions?: string[] };
+    },
+  ) => Promise<{
+    files: Array<{
+      name: string;
+      path: string;
+      size: number;
+      lastModified: number;
+      extension: string;
+      isJson: boolean;
+    }>;
+    total: number;
+    offset: number;
+  }>;
+  readFile: (
+    filePath: string,
+  ) => Promise<
+    | { type: 'json'; path: string; data: Record<string, unknown>; size: number }
+    | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
+    | { type: 'error'; path: string; error: string }
+  >;
+  readBatch: (
+    filePaths: string[],
+    opts?: { maxSize?: number },
+  ) => Promise<
+    Array<
+      | { type: 'json'; path: string; data: Record<string, unknown>; size: number }
+      | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
+      | { type: 'error'; path: string; error: string }
+    >
+  >;
+  readSchema: (workspacePath: string, folderName: string) => Promise<Record<string, unknown> | null>;
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI;
     scratchAuth: ScratchAuthAPI;
     scratchDesktop: ScratchDesktopAPI;
+    scratchFiles: ScratchFilesAPI;
   }
 }

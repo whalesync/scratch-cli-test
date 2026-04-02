@@ -121,7 +121,7 @@ export function WorkspacePage() {
         deleting={deleting}
         onDelete={handleDelete}
       />
-      <WorkspaceContent workspace={workspace} />
+      <WorkspaceContent workspace={workspace} localPath={localPath} />
     </Box>
   );
 }

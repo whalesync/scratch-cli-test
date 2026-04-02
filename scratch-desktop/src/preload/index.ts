@@ -65,11 +65,85 @@ const scratchDesktop = {
   },
 };
 
+const scratchFiles = {
+  workspaceConfig: (
+    workspacePath: string,
+  ): Promise<{
+    apiUrl: string;
+    workbookId: string;
+    orgId: string;
+    authToken?: string;
+  }> => ipcRenderer.invoke('files:workspace-config', workspacePath),
+  listFolders: (
+    workspacePath: string,
+  ): Promise<
+    Array<{
+      name: string;
+      path: string;
+      fileCount: number;
+      lastModified: number;
+      totalSize: number;
+    }>
+  > => ipcRenderer.invoke('files:list-folders', workspacePath),
+  getFolderMetadata: (
+    folderPath: string,
+    workspacePath: string,
+  ): Promise<{
+    name: string;
+    path: string;
+    fileCount: number;
+    lastModified: number;
+    totalSize: number;
+    schema: Record<string, unknown> | null;
+  }> => ipcRenderer.invoke('files:folder-metadata', folderPath, workspacePath),
+  listFiles: (
+    folderPath: string,
+    opts: {
+      offset: number;
+      limit: number;
+      sortBy?: 'name' | 'modified' | 'size';
+      sortOrder?: 'asc' | 'desc';
+      filter?: { search?: string; extensions?: string[] };
+    },
+  ): Promise<{
+    files: Array<{
+      name: string;
+      path: string;
+      size: number;
+      lastModified: number;
+      extension: string;
+      isJson: boolean;
+    }>;
+    total: number;
+    offset: number;
+  }> => ipcRenderer.invoke('files:list-files', folderPath, opts),
+  readFile: (
+    filePath: string,
+  ): Promise<
+    | { type: 'json'; path: string; data: Record<string, unknown>; size: number }
+    | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
+    | { type: 'error'; path: string; error: string }
+  > => ipcRenderer.invoke('files:read-file', filePath),
+  readBatch: (
+    filePaths: string[],
+    opts?: { maxSize?: number },
+  ): Promise<
+    Array<
+      | { type: 'json'; path: string; data: Record<string, unknown>; size: number }
+      | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
+      | { type: 'error'; path: string; error: string }
+    >
+  > => ipcRenderer.invoke('files:read-batch', filePaths, opts),
+  readSchema: (workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> =>
+    ipcRenderer.invoke('files:read-schema', workspacePath, folderName),
+};
+
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI);
     contextBridge.exposeInMainWorld('scratchAuth', scratchAuth);
     contextBridge.exposeInMainWorld('scratchDesktop', scratchDesktop);
+    contextBridge.exposeInMainWorld('scratchFiles', scratchFiles);
   } catch (error) {
     console.error(error);
   }
@@ -80,4 +154,6 @@ if (process.contextIsolated) {
   window.scratchAuth = scratchAuth;
   // @ts-expect-error -- fallback for non-isolated contexts
   window.scratchDesktop = scratchDesktop;
+  // @ts-expect-error -- fallback for non-isolated contexts
+  window.scratchFiles = scratchFiles;
 }

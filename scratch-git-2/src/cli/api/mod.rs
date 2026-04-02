@@ -67,7 +67,7 @@ impl ApiClient {
             .client
             .request(method, &url)
             .header("Authorization", format!("API-Token {}", self.token))
-            .header("User-Agent", "scratchmd");
+            .header("User-Agent", "Scratch-cli/1.0");
 
         if let Some(b) = body {
             req = req.json(b);
@@ -98,7 +98,7 @@ impl ApiClient {
             .client
             .request(method, &url)
             .header("Authorization", format!("API-Token {}", self.token))
-            .header("User-Agent", "scratchmd")
+            .header("User-Agent", "Scratch-cli/1.0")
             .send()
             .await?;
         let status = resp.status();
@@ -148,8 +148,8 @@ impl ApiClient {
 
     pub async fn auth_initiate(base_url: &str) -> ApiResult<AuthInitiateResponse> {
         let client = Client::new();
-        let url = format!("{}/auth/initiate", base_url.trim_end_matches('/'));
-        let resp = client.post(&url).header("User-Agent", "scratchmd").send().await?;
+        let url = format!("{}/cli/v1/auth/initiate", base_url.trim_end_matches('/'));
+        let resp = client.post(&url).header("User-Agent", "Scratch-cli/1.0").send().await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -160,9 +160,9 @@ impl ApiClient {
 
     pub async fn auth_poll(base_url: &str, polling_code: &str) -> ApiResult<AuthPollResponse> {
         let client = Client::new();
-        let url = format!("{}/auth/poll", base_url.trim_end_matches('/'));
+        let url = format!("{}/cli/v1/auth/poll", base_url.trim_end_matches('/'));
         let body = serde_json::json!({ "pollingCode": polling_code });
-        let resp = client.post(&url).json(&body).header("User-Agent", "scratchmd").send().await?;
+        let resp = client.post(&url).json(&body).header("User-Agent", "Scratch-cli/1.0").send().await?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
