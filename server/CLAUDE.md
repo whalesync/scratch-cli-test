@@ -43,4 +43,4 @@ Audit logs are persistent tracking of updates to a user or organizations data en
   - downloading files from a data folder
 - Changing permissions on an entity
 - Adding or removing user from an organization
-- Interactions through the `scratch-cli`
+- Interactions through the `scratchmd` CLI (`scratch-git-2/src/cli/`)

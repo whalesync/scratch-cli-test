@@ -2,7 +2,7 @@
 
 ## Overview
 
-Scratch Desktop is an Electron-based desktop client for the Scratch system. It combines a React/Mantine renderer with device-code OAuth authentication and will integrate the Rust CLI (`experimental/scratch-cli-2`) for local file operations. The app communicates with the Scratch server for auth, workspace management, and connections. It depends on the CLI for most operation logic, especially when download and uploading files, triggering pulls and publishing operations.
+Scratch Desktop is an Electron-based desktop client for the Scratch system. It combines a React/Mantine renderer with device-code OAuth authentication and integrates the Rust CLI (`scratch-git-2/src/cli/`, the `scratchmd` binary) for local file operations. The app communicates with the Scratch server for auth, workspace management, and connections. It depends on the CLI for most operation logic, especially when downloading and uploading files, triggering pulls and publishing operations.
 
 > **Terminology**: The server API uses "workbook" internally, but the desktop app UI uses "workspace" as the user-facing term.
 

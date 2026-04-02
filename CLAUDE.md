@@ -19,12 +19,12 @@ Instructions for Claude Code when working in this repository. Subdirectory CLAUD
 
 This is a Yarn workspaces monorepo managed by Turborepo.
 
-| Package       | Path             | Description                                                 |
-| ------------- | ---------------- | ----------------------------------------------------------- |
-| Client        | `/client`        | Next.js web app (port 3000)                                 |
-| Server        | `/server`        | NestJS API server (port 3010)                               |
-| scratch-git-2 | `/scratch-git-2` | Rust git microservice (ports 3100 API + 3101 HTTP backend)  |
-| scratch-cli   | `/scratch-cli`   | CLI tool in go for interacting with Scratch and local files |
+| Package       | Path                     | Description                                                                 |
+| ------------- | ------------------------ | --------------------------------------------------------------------------- |
+| Client        | `/client`                | Next.js web app (port 3000)                                                 |
+| Server        | `/server`                | NestJS API server (port 3010)                                               |
+| scratch-git-2 | `/scratch-git-2`         | Rust git microservice (ports 3100 API + 3101 HTTP backend)                  |
+| scratchmd CLI | `/scratch-git-2/src/cli` | Rust CLI (`scratchmd` command) for interacting with Scratch and local files |
 
 | shared-types | `/packages/shared-types` | Yarn package containing shared TypeScript types between client and server |
 | Infrastructure | `/terraform` | Terraform for GCP test and production environments |
@@ -144,7 +144,7 @@ server/src/[resource]/
 When creating or modifying REST API endpoints, update all consumers:
 
 - React client (`client/src/lib/api/`)
-- CLI (`scratch-cli/internal/api/` and `scratch-cli/internal/cmd/`)
+- Rust CLI (`scratch-git-2/src/cli/`)
 
 #### Real-time Updates
 
