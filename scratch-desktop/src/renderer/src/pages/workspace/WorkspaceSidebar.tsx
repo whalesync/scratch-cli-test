@@ -1,9 +1,10 @@
 import { Text12Regular, Text13Regular } from '@/components/base/text';
 import { Box, Group, Stack, UnstyledButton } from '@mantine/core';
-import { Bug, Folder, Settings } from 'lucide-react';
+import { Bug, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
 import { Workspace } from '../../types/workspace';
+import { FolderTree } from './FolderTree';
 import { LocalFolder } from './WorkspaceContent';
 
 interface WorkspaceSidebarProps {
@@ -48,28 +49,11 @@ export function WorkspaceSidebar({
             No folders yet
           </Text12Regular>
         )}
-        {localFolders.map((folder) => (
-          <UnstyledButton
-            key={folder.path}
-            px="sm"
-            py={6}
-            onClick={() => onSelectFolder(folder.path)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              backgroundColor: selectedFolderPath === folder.path ? 'var(--fg-divider)' : undefined,
-            }}
-          >
-            <Folder size={14} color="var(--fg-secondary)" />
-            <Box style={{ flex: 1, minWidth: 0 }}>
-              <Text13Regular c="var(--fg-primary)" truncate>
-                {folder.name}
-              </Text13Regular>
-            </Box>
-          </UnstyledButton>
-        ))}
+        <FolderTree
+          localFolders={localFolders}
+          selectedFolderPath={selectedFolderPath}
+          onSelectFolder={onSelectFolder}
+        />
       </Box>
 
       {/* Footer */}

@@ -16,17 +16,18 @@ export interface LocalFolder {
 interface WorkspaceContentProps {
   workspace: Workspace;
   localPath: string | null;
+  selectedFolderPath: string | null;
+  onSelectFolder: (folderPath: string | null) => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 500;
 const DEFAULT_SIDEBAR_WIDTH = 280;
 
-export function WorkspaceContent({ workspace, localPath }: WorkspaceContentProps) {
+export function WorkspaceContent({ workspace, localPath, selectedFolderPath, onSelectFolder }: WorkspaceContentProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
-  const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
 
   const handleResizeStart = useCallback(() => {
     setIsResizing(true);
@@ -40,9 +41,12 @@ export function WorkspaceContent({ workspace, localPath }: WorkspaceContentProps
     setIsResizing(false);
   }, []);
 
-  const handleSelectFolder = useCallback((folderPath: string) => {
-    setSelectedFolderPath((prev) => (prev === folderPath ? null : folderPath));
-  }, []);
+  const handleSelectFolder = useCallback(
+    (folderPath: string) => {
+      onSelectFolder(selectedFolderPath === folderPath ? null : folderPath);
+    },
+    [selectedFolderPath, onSelectFolder],
+  );
 
   // Load local folders when workspace is downloaded
   useEffect(() => {

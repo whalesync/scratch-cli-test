@@ -292,7 +292,7 @@ ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string)
   ),
 );
 ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
-  shell.showItemInFolder(folderPath);
+  void shell.openPath(folderPath);
 });
 ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();

@@ -18,6 +18,7 @@ export function WorkspacePage() {
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchWorkspace = useCallback(async () => {
@@ -125,6 +126,7 @@ export function WorkspacePage() {
       <WorkspaceHeader
         workspace={workspace}
         localPath={localPath}
+        selectedFolderPath={selectedFolderPath}
         isDownloaded={localPath !== null}
         downloading={downloading}
         onDownload={() => void handleDownload()}
@@ -132,7 +134,12 @@ export function WorkspacePage() {
         onDelete={() => void handleDelete()}
         onPublishAll={() => setPublishModalOpen(true)}
       />
-      <WorkspaceContent workspace={workspace} localPath={localPath} />
+      <WorkspaceContent
+        workspace={workspace}
+        localPath={localPath}
+        selectedFolderPath={selectedFolderPath}
+        onSelectFolder={setSelectedFolderPath}
+      />
     </Box>
   );
 }

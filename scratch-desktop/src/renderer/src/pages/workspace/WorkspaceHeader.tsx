@@ -1,6 +1,7 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
 import { Text13Medium } from '@/components/base/text';
-import { Box, Group } from '@mantine/core';
+import { Box, Group, Tooltip } from '@mantine/core';
+import { useViewportSize } from '@mantine/hooks';
 import {
   ArrowLeft,
   ChevronDown,
@@ -18,6 +19,7 @@ import { Workspace } from '../../types/workspace';
 interface WorkspaceHeaderProps {
   workspace: Workspace;
   localPath: string | null;
+  selectedFolderPath: string | null;
   isDownloaded: boolean;
   downloading: boolean;
   onDownload: () => void;
@@ -29,6 +31,7 @@ interface WorkspaceHeaderProps {
 export function WorkspaceHeader({
   workspace,
   localPath,
+  selectedFolderPath,
   isDownloaded,
   downloading,
   onDownload,
@@ -37,6 +40,9 @@ export function WorkspaceHeader({
   onPublishAll,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
+  const { width } = useViewportSize();
+  const compact = width > 0 && width < 800;
+  const targetPath = selectedFolderPath ?? localPath;
 
   return (
     <Group
@@ -61,54 +67,119 @@ export function WorkspaceHeader({
 
       {/* Action buttons */}
       <Group gap="xs">
-        {!isDownloaded && (
-          <ButtonPrimaryLight
-            size="compact-xs"
-            leftSection={<DownloadIcon size={12} />}
-            loading={downloading}
-            onClick={() => void onDownload()}
-          >
-            Download
-          </ButtonPrimaryLight>
-        )}
-        <ButtonSecondaryGhost
-          size="compact-xs"
-          leftSection={<FolderOpen size={12} />}
-          disabled={!localPath}
-          onClick={() => void (localPath && window.scratchDesktop.showInFolder(localPath))}
-        >
-          Show in Finder
-        </ButtonSecondaryGhost>
-        <ButtonSecondaryGhost
-          size="compact-xs"
-          leftSection={<Terminal size={12} />}
-          disabled={!localPath}
-          onClick={() => void (localPath && window.scratchDesktop.openInTerminal(localPath))}
-        >
-          Open in Terminal
-        </ButtonSecondaryGhost>
-        <ButtonSecondaryGhost size="compact-xs" leftSection={<Download size={12} />}>
-          Pull All
-        </ButtonSecondaryGhost>
-        {isDownloaded && (
+        {!isDownloaded &&
+          (compact ? (
+            <Tooltip label="Download">
+              <IconButtonGhost
+                size="compact-xs"
+                color="green.8"
+                c="green.8"
+                loading={downloading}
+                onClick={() => void onDownload()}
+              >
+                <DownloadIcon size={12} />
+              </IconButtonGhost>
+            </Tooltip>
+          ) : (
+            <ButtonPrimaryLight
+              size="compact-xs"
+              leftSection={<DownloadIcon size={12} />}
+              loading={downloading}
+              onClick={() => void onDownload()}
+            >
+              Download
+            </ButtonPrimaryLight>
+          ))}
+        {compact ? (
+          <Tooltip label="Show in Finder">
+            <IconButtonGhost
+              size="compact-xs"
+              disabled={!targetPath}
+              onClick={() => void (targetPath && window.scratchDesktop.showInFolder(targetPath))}
+            >
+              <FolderOpen size={12} />
+            </IconButtonGhost>
+          </Tooltip>
+        ) : (
           <ButtonSecondaryGhost
             size="compact-xs"
-            leftSection={<Upload size={12} />}
-            onClick={() => void onPublishAll()}
+            leftSection={<FolderOpen size={12} />}
+            disabled={!targetPath}
+            onClick={() => void (targetPath && window.scratchDesktop.showInFolder(targetPath))}
           >
-            Publish All
+            Show in Finder
           </ButtonSecondaryGhost>
         )}
-        {isDownloaded && (
-          <ButtonDangerLight
+        {compact ? (
+          <Tooltip label="Open in Terminal">
+            <IconButtonGhost
+              size="compact-xs"
+              disabled={!targetPath}
+              onClick={() => void (targetPath && window.scratchDesktop.openInTerminal(targetPath))}
+            >
+              <Terminal size={12} />
+            </IconButtonGhost>
+          </Tooltip>
+        ) : (
+          <ButtonSecondaryGhost
             size="compact-xs"
-            leftSection={<Trash2 size={12} />}
-            loading={deleting}
-            onClick={() => void onDelete()}
+            leftSection={<Terminal size={12} />}
+            disabled={!targetPath}
+            onClick={() => void (targetPath && window.scratchDesktop.openInTerminal(targetPath))}
           >
-            Delete Local Copy
-          </ButtonDangerLight>
+            Open in Terminal
+          </ButtonSecondaryGhost>
         )}
+        {compact ? (
+          <Tooltip label="Pull All">
+            <IconButtonGhost size="compact-xs">
+              <Download size={12} />
+            </IconButtonGhost>
+          </Tooltip>
+        ) : (
+          <ButtonSecondaryGhost size="compact-xs" leftSection={<Download size={12} />}>
+            Pull All
+          </ButtonSecondaryGhost>
+        )}
+        {isDownloaded &&
+          (compact ? (
+            <Tooltip label="Publish All">
+              <IconButtonGhost size="compact-xs" onClick={() => void onPublishAll()}>
+                <Upload size={12} />
+              </IconButtonGhost>
+            </Tooltip>
+          ) : (
+            <ButtonSecondaryGhost
+              size="compact-xs"
+              leftSection={<Upload size={12} />}
+              onClick={() => void onPublishAll()}
+            >
+              Publish All
+            </ButtonSecondaryGhost>
+          ))}
+        {isDownloaded &&
+          (compact ? (
+            <Tooltip label="Delete Local Copy">
+              <IconButtonGhost
+                size="compact-xs"
+                color="red.6"
+                c="red.6"
+                loading={deleting}
+                onClick={() => void onDelete()}
+              >
+                <Trash2 size={12} />
+              </IconButtonGhost>
+            </Tooltip>
+          ) : (
+            <ButtonDangerLight
+              size="compact-xs"
+              leftSection={<Trash2 size={12} />}
+              loading={deleting}
+              onClick={() => void onDelete()}
+            >
+              Delete Local Copy
+            </ButtonDangerLight>
+          ))}
       </Group>
     </Group>
   );
