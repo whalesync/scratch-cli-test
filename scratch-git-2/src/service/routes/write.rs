@@ -221,7 +221,10 @@ pub struct DeleteDataFolderBody {
 /// Build the list of file changes needed to remove a data folder.
 /// Deletes both the data folder (e.g. `Companies`) and its `.scratch/` metadata (e.g. `.scratch/Companies`).
 fn data_folder_delete_changes(folder_path: &str) -> Vec<FileChange> {
-    let target_folder = folder_path.strip_prefix('/').unwrap_or(folder_path).to_string();
+    let target_folder = folder_path
+        .strip_prefix('/')
+        .unwrap_or(folder_path)
+        .to_string();
     let scratch_folder = format!(".scratch/{}", target_folder);
     vec![
         FileChange {
@@ -257,7 +260,10 @@ pub async fn delete_data_folder(
         let write_locks = state.write_locks.clone();
 
         let changes = data_folder_delete_changes(&folder_path);
-        let target_folder = folder_path.strip_prefix('/').unwrap_or(&folder_path).to_string();
+        let target_folder = folder_path
+            .strip_prefix('/')
+            .unwrap_or(&folder_path)
+            .to_string();
         let message = format!("Remove data folder {}", target_folder);
 
         // Delete from main

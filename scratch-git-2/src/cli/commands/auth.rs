@@ -188,7 +188,9 @@ fn set_credentials(
         anyhow::bail!("email is not a valid email address");
     }
     if chrono::DateTime::parse_from_rfc3339(&expires_at).is_err() {
-        anyhow::bail!("expiresAt must be a valid ISO 8601 datetime (e.g. 2026-09-29T18:07:42.614Z)");
+        anyhow::bail!(
+            "expiresAt must be a valid ISO 8601 datetime (e.g. 2026-09-29T18:07:42.614Z)"
+        );
     }
 
     credentials::set(
