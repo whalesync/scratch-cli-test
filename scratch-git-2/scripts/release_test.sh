@@ -61,7 +61,11 @@ DIST_DIR="$(pwd)/dist-release-test"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-# 4. Build all targets pointing at test server
+# 4. Inject release version into Cargo.toml so the binary reports the correct version
+VERSION_NO_TEST="${MAJOR}.${MINOR}.${PATCH}"
+sed -i "s/^version = .*/version = \"$VERSION_NO_TEST\"/" Cargo.toml
+
+# Build all targets pointing at test server
 declare -A TARGETS=(
   ["aarch64-apple-darwin"]="${BINARY}_darwin_arm64"
   ["x86_64-unknown-linux-gnu"]="${BINARY}_linux_amd64"
