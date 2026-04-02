@@ -3,6 +3,7 @@ import React, { Suspense } from 'react';
 import { HashRouter, Route, Routes } from 'react-router-dom';
 import { SWRConfig } from 'swr';
 import { Layout } from './components/Layout';
+import { useCurrentUser } from './hooks/use-current-user';
 import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { AppMantineProvider } from './providers/MantineProvider';
@@ -40,6 +41,24 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AppRoutes() {
+  const { user } = useCurrentUser();
+
+  return (
+    <PostHogProvider user={user}>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/workspace/:id" element={<WorkspacePage />} />
+            <Route path="/workspace/:id/debug" element={<WorkspacePageDebug />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </PostHogProvider>
+  );
+}
+
 function App() {
   return (
     <SWRConfig value={{ revalidateOnFocus: false }}>
@@ -47,17 +66,7 @@ function App() {
         <AuthProvider>
           <AuthGate>
             <HashRouter>
-              <PostHogProvider>
-                <Suspense fallback={<PageLoader />}>
-                  <Routes>
-                    <Route element={<Layout />}>
-                      <Route path="/" element={<HomePage />} />
-                      <Route path="/workspace/:id" element={<WorkspacePage />} />
-                      <Route path="/workspace/:id/debug" element={<WorkspacePageDebug />} />
-                    </Route>
-                  </Routes>
-                </Suspense>
-              </PostHogProvider>
+              <AppRoutes />
             </HashRouter>
           </AuthGate>
         </AuthProvider>

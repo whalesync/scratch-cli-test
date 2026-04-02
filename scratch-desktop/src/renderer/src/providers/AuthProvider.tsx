@@ -1,4 +1,4 @@
-import { createContext, startTransition, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { API_CONFIG } from '../lib/api';
 import { logPerf } from '../lib/perf';
 
@@ -219,11 +219,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setExpiringSoon(false);
   }, []);
 
-  return (
-    <AuthContext.Provider
-      value={{ isAuthenticated, isLoading, email, expiringSoon, login, logout, cancelLogin, authFlow }}
-    >
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({ isAuthenticated, isLoading, email, expiringSoon, login, logout, cancelLogin, authFlow }),
+    [isAuthenticated, isLoading, email, expiringSoon, login, logout, cancelLogin, authFlow],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -1,12 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useCurrentUser } from '../hooks/use-current-user';
 import { identifyUser, initPostHog, trackPageView } from '../lib/posthog';
+import { User } from '../types/user';
 
-export function PostHogProvider({ children }: { children: React.ReactNode }) {
+interface PostHogProviderProps {
+  user: User | null;
+  children: React.ReactNode;
+}
+
+export function PostHogProvider({ user, children }: PostHogProviderProps) {
   const initRef = useRef(false);
   const identifiedRef = useRef(false);
-  const { user } = useCurrentUser();
   const location = useLocation();
 
   // Initialize PostHog once, deferred to idle time

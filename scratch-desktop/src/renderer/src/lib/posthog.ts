@@ -22,6 +22,8 @@ async function getPostHog(): Promise<PostHogInstance | null> {
     person_profiles: 'identified_only',
     defaults: '2025-05-24',
     capture_pageview: false,
+    autocapture: false,
+    disable_session_recording: true,
   });
 
   posthog.register({ app_platform: 'desktop' });

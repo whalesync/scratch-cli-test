@@ -104,3 +104,16 @@ For built executables you can provide an environment variable and launch the app
 ```bash
 OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch
 ```
+
+## Performance (agent guidelines)
+
+When generating or changing `scratch-desktop` code, follow these constraints unless the user explicitly asks otherwise.
+
+- **Main process** — Do not block the Electron main thread with heavy synchronous work (large disk I/O, big JSON parse/transform, crypto batches). Use async APIs, offload to workers/child processes, or move non-window-critical work out of the hot path. Do not add synchronous IPC handlers that run expensive logic.
+- **IPC** — Do not use synchronous renderer↔main IPC (`invoke`/`handle` must stay async; never introduce `sendSync` or equivalent). Prefer a single batched or debounced call over many rapid-fire IPC messages. Avoid shipping large objects across IPC when a file path, stream, or incremental result suffices.
+- **Preload** — Keep preload thin: expose minimal surfaces via `contextBridge`. Do not import heavy dependency trees or run one-off expensive setup in preload unless required for security; push logic to main (async) or renderer as appropriate.
+- **React renderer** — Split or narrow context value updates so high-level providers do not force full-app re-renders on every tick. For long lists or tables, use virtualization (or equivalent) instead of rendering thousands of nodes. Do not put unbounded work in `useEffect` on every render; stabilize dependency arrays and guard expensive paths. Use `React.lazy` / route-level code splitting for heavy pages or features when adding new routes or large dependencies.
+- **Assets and network** — Prefer bundled/local static assets for UI. Do not add remote-loaded UI dependencies without a clear need. Avoid loading huge images or fonts eagerly in the root entry when they are only needed on a sub-route.
+- **Windows and Electron options** — Do not add extra `BrowserWindow` instances for work that a hidden renderer or main-process job can do. Do not disable hardware acceleration or relaxed security flags as a performance fix without explicit user direction.
+- **Lifecycle** — Clean up subscriptions, intervals, and IPC listeners in matching teardown (`useEffect` return, window `closed`, etc.) so new code does not leak handlers across navigations or HMR.
+- **Verification** — When changing performance-sensitive paths, note in the response that dev (`yarn dev`) is noisier than production; recommend validating behavior on `yarn build` output when the change targets startup or steady-state jank.

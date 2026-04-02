@@ -23,17 +23,36 @@ export function ResizeHandle({ onResizeStart, onResize, onResizeEnd }: ResizeHan
   );
 
   useEffect(() => {
+    let rafId: number | null = null;
+    let pendingDelta = 0;
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDraggingRef.current) return;
 
-      const deltaX = e.clientX - lastXRef.current;
+      pendingDelta += e.clientX - lastXRef.current;
       lastXRef.current = e.clientX;
-      onResize(deltaX);
+
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          const delta = pendingDelta;
+          pendingDelta = 0;
+          onResize(delta);
+        });
+      }
     };
 
     const handleMouseUp = () => {
       if (isDraggingRef.current) {
         isDraggingRef.current = false;
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+          if (pendingDelta !== 0) {
+            onResize(pendingDelta);
+            pendingDelta = 0;
+          }
+        }
         onResizeEnd();
       }
     };
@@ -44,6 +63,9 @@ export function ResizeHandle({ onResizeStart, onResize, onResizeEnd }: ResizeHan
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
     };
   }, [onResize, onResizeEnd]);
 
