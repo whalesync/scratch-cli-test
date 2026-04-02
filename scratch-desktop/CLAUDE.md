@@ -44,9 +44,14 @@ Copy `.env.example` to `.env` and configure:
 
 ```
 VITE_SCRATCH_API_URL=http://localhost:3010  # Scratch server URL
+VITE_SCRATCH_WEB_URL=http://localhost:3000  # Scratch web client URL (for external browser links)
 ```
 
 These are embedded at build time via Vite's `import.meta.env`.
+
+## UI Components
+
+Before implementing or modifying any React UI in the renderer, read [`src/renderer/src/components/UI_SYSTEM.md`](src/renderer/src/components/UI_SYSTEM.md). It defines the standard text, button, icon, and color components that must be used instead of raw Mantine imports or inline styles.
 
 ## Code Conventions
 

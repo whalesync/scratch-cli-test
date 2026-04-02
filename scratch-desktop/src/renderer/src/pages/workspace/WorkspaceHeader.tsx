@@ -1,4 +1,5 @@
-import { ActionIcon, Box, Button, Group, Text } from '@mantine/core';
+import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
+import { Box, Group, Text } from '@mantine/core';
 import {
   ArrowLeft,
   ChevronDown,
@@ -10,6 +11,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { ButtonDangerLight, ButtonSecondaryGhost } from '../../components/base/buttons';
 import { Workspace } from '../../types/workspace';
 
 interface WorkspaceHeaderProps {
@@ -37,8 +39,8 @@ export function WorkspaceHeader({
 
   return (
     <Group
-      h={60}
-      px="md"
+      h={40}
+      pr="xs"
       justify="space-between"
       style={{
         borderBottom: '1px solid var(--fg-divider)',
@@ -46,10 +48,10 @@ export function WorkspaceHeader({
       }}
     >
       {/* Back button + Workspace selector */}
-      <Group gap="sm">
-        <ActionIcon variant="subtle" size="sm" onClick={() => void navigate('/')}>
-          <ArrowLeft size={16} />
-        </ActionIcon>
+      <Group gap="xs">
+        <IconButtonGhost onClick={() => void navigate('/')}>
+          <ArrowLeft size={12} />
+        </IconButtonGhost>
         <Box style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
           <Text fw={600} size="sm">
             {workspace.name || 'Untitled Workspace'}
@@ -61,53 +63,52 @@ export function WorkspaceHeader({
       {/* Action buttons */}
       <Group gap="xs">
         {!isDownloaded && (
-          <Button
-            variant="filled"
-            size="xs"
-            leftSection={<DownloadIcon size={14} />}
+          <ButtonPrimaryLight
+            size="compact-xs"
+            leftSection={<DownloadIcon size={12} />}
             loading={downloading}
             onClick={() => void onDownload()}
           >
             Download
-          </Button>
+          </ButtonPrimaryLight>
         )}
-        <Button
-          variant="subtle"
-          size="xs"
-          leftSection={<FolderOpen size={14} />}
+        <ButtonSecondaryGhost
+          size="compact-xs"
+          leftSection={<FolderOpen size={12} />}
           disabled={!localPath}
           onClick={() => void (localPath && window.scratchDesktop.showInFolder(localPath))}
         >
           Show in Finder
-        </Button>
-        <Button
-          variant="subtle"
-          size="xs"
-          leftSection={<Terminal size={14} />}
+        </ButtonSecondaryGhost>
+        <ButtonSecondaryGhost
+          size="compact-xs"
+          leftSection={<Terminal size={12} />}
           disabled={!localPath}
           onClick={() => void (localPath && window.scratchDesktop.openInTerminal(localPath))}
         >
           Open in Terminal
-        </Button>
-        <Button variant="subtle" size="xs" leftSection={<Download size={14} />}>
+        </ButtonSecondaryGhost>
+        <ButtonSecondaryGhost size="compact-xs" leftSection={<Download size={12} />}>
           Pull All
-        </Button>
+        </ButtonSecondaryGhost>
         {isDownloaded && (
-          <Button variant="subtle" size="xs" leftSection={<Upload size={14} />} onClick={() => void onPublishAll()}>
+          <ButtonSecondaryGhost
+            size="compact-xs"
+            leftSection={<Upload size={12} />}
+            onClick={() => void onPublishAll()}
+          >
             Publish All
-          </Button>
+          </ButtonSecondaryGhost>
         )}
         {isDownloaded && (
-          <Button
-            variant="subtle"
-            color="red"
-            size="xs"
-            leftSection={<Trash2 size={14} />}
+          <ButtonDangerLight
+            size="compact-xs"
+            leftSection={<Trash2 size={12} />}
             loading={deleting}
             onClick={() => void onDelete()}
           >
             Delete Local Copy
-          </Button>
+          </ButtonDangerLight>
         )}
       </Group>
     </Group>

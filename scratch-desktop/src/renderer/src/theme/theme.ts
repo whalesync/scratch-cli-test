@@ -31,7 +31,7 @@ const FONT_FAMILY = 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
 const FONT_FAMILY_MONOSPACE = 'Geist Mono, ui-monospace, Courier, monospace';
 const FONT_FAMILY_HEADING = 'Funnel Display, Inter, -apple-system, BlinkMacSystemFont, sans-serif';
 
-export const SCRATCHPAD_MANTINE_THEME = createTheme({
+export const SCRATCH_MANTINE_THEME = createTheme({
   fontFamily: FONT_FAMILY,
   fontFamilyMonospace: FONT_FAMILY_MONOSPACE,
 

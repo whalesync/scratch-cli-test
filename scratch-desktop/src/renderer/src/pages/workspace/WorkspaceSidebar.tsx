@@ -85,6 +85,10 @@ export function WorkspaceSidebar({
           style={{
             width: '100%',
           }}
+          onClick={() => {
+            const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
+            void window.scratchAuth.openExternal(`${webUrl}/workspace/${workspace.id}/connections`);
+          }}
         >
           <Group gap={8} wrap="nowrap">
             <Settings size={14} color="var(--fg-secondary)" />
