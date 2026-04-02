@@ -5,6 +5,7 @@ import { useParams } from 'react-router-dom';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
+import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { WorkspaceContent } from './workspace/WorkspaceContent';
 import { WorkspaceHeader } from './workspace/WorkspaceHeader';
 
@@ -15,6 +16,7 @@ export function WorkspacePage() {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchWorkspace = useCallback(async () => {
@@ -113,6 +115,12 @@ export function WorkspacePage() {
 
   return (
     <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+      <PublishChangesModal
+        opened={publishModalOpen}
+        onClose={() => setPublishModalOpen(false)}
+        workspaceName={workspace.name}
+        localPath={localPath}
+      />
       <WorkspaceHeader
         workspace={workspace}
         isDownloaded={localPath !== null}
@@ -120,6 +128,7 @@ export function WorkspacePage() {
         onDownload={() => void handleDownload()}
         deleting={deleting}
         onDelete={() => void handleDelete()}
+        onPublishAll={() => setPublishModalOpen(true)}
       />
       <WorkspaceContent workspace={workspace} localPath={localPath} />
     </Box>

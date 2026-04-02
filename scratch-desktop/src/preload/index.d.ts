@@ -42,6 +42,16 @@ interface ScratchDesktopAPI {
   listUnreviewedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
+  listLocalPublishPlans: (workspacePath: string) => Promise<
+    Array<{
+      planId: string;
+      createdAt: string;
+      connectionName: string;
+      connectionId: string;
+      summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
+      tablePaths: string[];
+    }>
+  >;
   pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
   listLocalSyncs: (workspacePath: string) => Promise<string[]>;
   validateLocalSync: (
@@ -51,6 +61,7 @@ interface ScratchDesktopAPI {
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
   startPlanPublish: (workspacePath: string) => Promise<{ sessionId: string }>;
   startPublishFromGit: (workspacePath: string) => Promise<{ sessionId: string }>;
+  triggerPublishFromGit: (workspacePath: string) => Promise<{ stdout: string; stderr: string; jobIds: string[] }>;
   startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;
   toggleDevTools: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;

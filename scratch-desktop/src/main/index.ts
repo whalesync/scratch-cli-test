@@ -40,6 +40,21 @@ interface UnreviewedChangeEntry {
   status: string;
 }
 
+interface LocalPublishPlan {
+  planId: string;
+  createdAt: string;
+  connectionName: string;
+  connectionId: string;
+  summary: {
+    edit: number;
+    create: number;
+    delete: number;
+    backfill: number;
+    rename: number;
+  };
+  tablePaths: string[];
+}
+
 function registryPath(): string {
   return join(app.getPath('home'), '.scratchmd', 'workspaces.yaml');
 }
@@ -381,6 +396,74 @@ async function listUnreviewedChanges(workspacePath: string): Promise<UnreviewedC
   return result.entries ?? [];
 }
 
+async function listLocalPublishPlans(workspacePath: string): Promise<LocalPublishPlan[]> {
+  const plansRoot = join(workspacePath, '.scratch', 'connections', 'scratch');
+
+  try {
+    const connectionEntries = await readdir(plansRoot, { withFileTypes: true });
+    const plans = await Promise.all(
+      connectionEntries
+        .filter((entry) => entry.isDirectory())
+        .map(async (connectionEntry) => {
+          const manifestRoot = join(plansRoot, connectionEntry.name, '.publish-plans');
+
+          try {
+            const manifestEntries = await readdir(manifestRoot, { withFileTypes: true });
+            const parsedPlans = await Promise.all(
+              manifestEntries
+                .filter((entry) => entry.isDirectory())
+                .map(async (manifestEntry) => {
+                  const manifestPath = join(manifestRoot, manifestEntry.name, 'plan.json');
+                  const contents = await readFile(manifestPath, 'utf8');
+                  return JSON.parse(contents) as LocalPublishPlan;
+                }),
+            );
+            return parsedPlans;
+          } catch (error) {
+            const nodeError = error as NodeJS.ErrnoException;
+            if (nodeError.code === 'ENOENT') {
+              return [];
+            }
+            throw error;
+          }
+        }),
+    );
+
+    return plans
+      .flat()
+      .sort(
+        (left, right) =>
+          left.connectionName.localeCompare(right.connectionName) || left.planId.localeCompare(right.planId),
+      );
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function triggerPublishFromGit(
+  workspacePath: string,
+): Promise<{ stdout: string; stderr: string; jobIds: string[] }> {
+  const result = await runScratchmdCapture(['publish-from-git'], workspacePath);
+  if (result.exitCode !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
+    throw new Error(message);
+  }
+
+  const jobIds = Array.from(result.stdout.matchAll(/jobId:\s*([^) \n]+)/g), (match) => match[1]).filter(
+    (jobId): jobId is string => typeof jobId === 'string' && jobId.length > 0,
+  );
+  const uniqueJobIds: string[] = Array.from(new Set(jobIds));
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    jobIds: uniqueJobIds,
+  };
+}
+
 function windowIconPath(): string {
   const relative =
     process.platform === 'win32'
@@ -482,6 +565,9 @@ ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string) =>
 ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
 );
+ipcMain.handle('scratch:list-local-publish-plans', async (_, workspacePath: string) =>
+  listLocalPublishPlans(workspacePath),
+);
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
   runScratchmd(['files', 'upload'], workspacePath),
 );
@@ -497,6 +583,9 @@ ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string
 );
 ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: string) =>
   startScratchmdLiveCommand(event.sender, ['publish-from-git'], workspacePath),
+);
+ipcMain.handle('scratch:trigger-publish-from-git', async (_, workspacePath: string) =>
+  triggerPublishFromGit(workspacePath),
 );
 ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string) =>
   startScratchmdLiveSequence(

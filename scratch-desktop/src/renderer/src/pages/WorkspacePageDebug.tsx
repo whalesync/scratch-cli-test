@@ -406,25 +406,19 @@ export function WorkspacePageDebug() {
     }
   }, [localPath, selectedRunSync]);
 
-  const handleOpenPublishPlan = useCallback(() => {
-    setPublishPlanModalOpen(true);
-    setPublishPlanOutput('');
-    setPublishPlanExitCode(null);
-    setPublishPlanError(null);
-    publishPlanSessionIdRef.current = null;
-  }, []);
-
-  const handleCreatePublishPlan = useCallback(async () => {
+  const handleOpenPublishPlan = useCallback(async () => {
     if (!localPath) {
       return;
     }
 
     try {
+      setPublishPlanModalOpen(true);
       setStartingPublishPlan(true);
       setRunningPublishPlan(true);
       setPublishPlanOutput('');
       setPublishPlanExitCode(null);
       setPublishPlanError(null);
+      publishPlanSessionIdRef.current = null;
       const { sessionId } = await window.scratchDesktop.startPlanPublish(localPath);
       publishPlanSessionIdRef.current = sessionId;
     } catch (err) {
@@ -897,7 +891,7 @@ export function WorkspacePageDebug() {
       >
         <Stack gap="md">
           <Text size="sm" c="dimmed">
-            This will build a publish plan for the full local workspace.
+            This starts building a publish plan for the full local workspace immediately.
           </Text>
 
           {publishPlanError && (
@@ -905,16 +899,6 @@ export function WorkspacePageDebug() {
               {publishPlanError}
             </Alert>
           )}
-
-          <Group justify="flex-end">
-            <Button
-              onClick={() => void handleCreatePublishPlan()}
-              loading={startingPublishPlan}
-              disabled={runningPublishPlan}
-            >
-              Create publish plan
-            </Button>
-          </Group>
 
           <LiveCommandOutput
             output={publishPlanOutput}

@@ -19,6 +19,7 @@ interface WorkspaceHeaderProps {
   onDownload: () => void;
   deleting: boolean;
   onDelete: () => void;
+  onPublishAll: () => void;
 }
 
 export function WorkspaceHeader({
@@ -28,6 +29,7 @@ export function WorkspaceHeader({
   onDownload,
   deleting,
   onDelete,
+  onPublishAll,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
 
@@ -76,9 +78,11 @@ export function WorkspaceHeader({
         <Button variant="subtle" size="xs" leftSection={<Download size={14} />}>
           Pull All
         </Button>
-        <Button variant="subtle" size="xs" leftSection={<Upload size={14} />}>
-          Publish All
-        </Button>
+        {isDownloaded && (
+          <Button variant="subtle" size="xs" leftSection={<Upload size={14} />} onClick={() => void onPublishAll()}>
+            Publish All
+          </Button>
+        )}
         {isDownloaded && (
           <Button
             variant="subtle"

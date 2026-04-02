@@ -48,6 +48,18 @@ const scratchDesktop = {
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
     ipcRenderer.invoke('scratch:list-unreviewed-changes', workspacePath),
+  listLocalPublishPlans: (
+    workspacePath: string,
+  ): Promise<
+    Array<{
+      planId: string;
+      createdAt: string;
+      connectionName: string;
+      connectionId: string;
+      summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
+      tablePaths: string[];
+    }>
+  > => ipcRenderer.invoke('scratch:list-local-publish-plans', workspacePath),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
     ipcRenderer.invoke('scratch:push-workspace-changes', workspacePath),
   listLocalSyncs: (workspacePath: string): Promise<string[]> =>
@@ -63,6 +75,8 @@ const scratchDesktop = {
     ipcRenderer.invoke('scratch:start-plan-publish', workspacePath),
   startPublishFromGit: (workspacePath: string): Promise<{ sessionId: string }> =>
     ipcRenderer.invoke('scratch:start-publish-from-git', workspacePath),
+  triggerPublishFromGit: (workspacePath: string): Promise<{ stdout: string; stderr: string; jobIds: string[] }> =>
+    ipcRenderer.invoke('scratch:trigger-publish-from-git', workspacePath),
   startPublishAll: (workspacePath: string): Promise<{ sessionId: string }> =>
     ipcRenderer.invoke('scratch:start-publish-all', workspacePath),
   toggleDevTools: (): Promise<void> => ipcRenderer.invoke('scratch:toggle-devtools'),
