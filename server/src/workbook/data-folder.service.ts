@@ -19,6 +19,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { DecryptedCredentials } from 'src/remote-service/connector-account/types/encrypted-credentials.interface';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
@@ -381,7 +382,17 @@ export class DataFolderService {
     // Delete folder in git from both branches to avoid orphaned files in git status
     // Note: dataFolder.path includes leading slash, which is handled by service
     if (dataFolder.path) {
-      await this.scratchGitService.removeDataFolder(dataFolder.workbookId as WorkbookId, dataFolder.path);
+      try {
+        const repoId = dataFolder.connectorAccountId
+          ? await this.scratchGitService.resolveConnectionRepoPath(dataFolder.connectorAccountId)
+          : (dataFolder.workbookId as WorkbookId);
+        await this.scratchGitService.removeDataFolder(repoId, dataFolder.path);
+      } catch (err) {
+        // Git repo/folder may not exist yet (e.g., table linked but never pulled) — safe to ignore
+        if (!(err instanceof ScratchGitNotFoundError)) {
+          throw err;
+        }
+      }
     }
 
     // Delete associated pull/publish schedules (no FK cascade exists for Schedule.entityId)

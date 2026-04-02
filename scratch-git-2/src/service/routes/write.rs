@@ -218,6 +218,27 @@ pub struct DeleteDataFolderBody {
     pub path: Option<String>,
 }
 
+/// Build the list of file changes needed to remove a data folder.
+/// Deletes both the data folder (e.g. `Companies`) and its `.scratch/` metadata (e.g. `.scratch/Companies`).
+fn data_folder_delete_changes(folder_path: &str) -> Vec<FileChange> {
+    let target_folder = folder_path.strip_prefix('/').unwrap_or(folder_path).to_string();
+    let scratch_folder = format!(".scratch/{}", target_folder);
+    vec![
+        FileChange {
+            path: target_folder,
+            content: None,
+            oid: None,
+            change_type: ChangeType::Delete,
+        },
+        FileChange {
+            path: scratch_folder,
+            content: None,
+            oid: None,
+            change_type: ChangeType::Delete,
+        },
+    ]
+}
+
 pub async fn delete_data_folder(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -235,10 +256,8 @@ pub async fn delete_data_folder(
         let id = id.clone();
         let write_locks = state.write_locks.clone();
 
-        let target_folder = folder_path
-            .strip_prefix('/')
-            .unwrap_or(&folder_path)
-            .to_string();
+        let changes = data_folder_delete_changes(&folder_path);
+        let target_folder = folder_path.strip_prefix('/').unwrap_or(&folder_path).to_string();
         let message = format!("Remove data folder {}", target_folder);
 
         // Delete from main
@@ -246,17 +265,11 @@ pub async fn delete_data_folder(
             .with_lock(&id, MAIN_BRANCH, || {
                 let repos_dir = repos_dir.clone();
                 let id = id.clone();
-                let target_folder = target_folder.clone();
+                let changes = changes.clone();
                 let message = message.clone();
                 async move {
                     tokio::task::spawn_blocking(move || {
                         let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let changes = vec![FileChange {
-                            path: target_folder,
-                            content: None,
-                            oid: None,
-                            change_type: ChangeType::Delete,
-                        }];
                         git_repo
                             .commit_changes_to_ref(MAIN_BRANCH, &changes, &message)?
                             .0;
@@ -269,27 +282,18 @@ pub async fn delete_data_folder(
             .await?;
 
         // Delete from dirty
-        let target_folder = folder_path
-            .strip_prefix('/')
-            .unwrap_or(&folder_path)
-            .to_string();
+        let changes = data_folder_delete_changes(&folder_path);
         let message = format!("Remove data folder {}", target_folder);
 
         write_locks
             .with_lock(&id, DIRTY_BRANCH, || {
                 let repos_dir = repos_dir.clone();
                 let id = id.clone();
-                let target_folder = target_folder.clone();
+                let changes = changes.clone();
                 let message = message.clone();
                 async move {
                     tokio::task::spawn_blocking(move || {
                         let git_repo = GitRepo::open(&repos_dir, &id)?;
-                        let changes = vec![FileChange {
-                            path: target_folder,
-                            content: None,
-                            oid: None,
-                            change_type: ChangeType::Delete,
-                        }];
                         git_repo
                             .commit_changes_to_ref(DIRTY_BRANCH, &changes, &message)?
                             .0;
@@ -658,5 +662,30 @@ pub async fn rename(
     match result {
         Ok(inner) => envelope_result(&state, &id, inner),
         Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_folder_delete_changes_includes_scratch_metadata() {
+        let changes = data_folder_delete_changes("/Companies");
+
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].path, "Companies");
+        assert_eq!(changes[0].change_type, ChangeType::Delete);
+        assert_eq!(changes[1].path, ".scratch/Companies");
+        assert_eq!(changes[1].change_type, ChangeType::Delete);
+    }
+
+    #[test]
+    fn data_folder_delete_changes_handles_path_without_leading_slash() {
+        let changes = data_folder_delete_changes("Products");
+
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].path, "Products");
+        assert_eq!(changes[1].path, ".scratch/Products");
     }
 }

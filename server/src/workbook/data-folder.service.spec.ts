@@ -5,6 +5,7 @@ import type { ScratchConfigService } from 'src/config/scratch-config.service';
 import type { DbService } from 'src/db/db.service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import type { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import type { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -248,5 +249,152 @@ describe('DataFolderService dotfile filtering', () => {
       expect(result.files.map((f) => f.path)).toEqual(['my-folder/record-1.json', 'my-folder/record-2.json']);
       expect(result.nextCursor).toBe('cursor-abc');
     });
+  });
+});
+
+/* eslint-disable @typescript-eslint/unbound-method */
+describe('DataFolderService.deleteFolder', () => {
+  const WORKBOOK_ID = 'wkb_test' as WorkbookId;
+  const FOLDER_ID = 'dfd_test' as DataFolderId;
+  const ORG_ID = 'org_test';
+  const CONNECTOR_ACCOUNT_ID = 'coa_test';
+  const RESOLVED_REPO_ID = 'org_test/wkb_test/coa_test';
+  const ACTOR: Actor = {
+    userId: 'usr_test',
+    organizationId: ORG_ID,
+    workspacePermissions: [{ workbookId: WORKBOOK_ID, role: 'editor' }],
+  };
+
+  let service: DataFolderService;
+  let mockDb: jest.Mocked<DbService>;
+  let mockScratchGitService: jest.Mocked<ScratchGitService>;
+  let mockWorkbookService: jest.Mocked<WorkbookService>;
+  let mockWorkbookEventService: jest.Mocked<WorkbookEventService>;
+  let mockPosthogService: jest.Mocked<PostHogService>;
+  let mockAuditLogService: jest.Mocked<AuditLogService>;
+
+  const now = new Date();
+
+  const makeDataFolder = (overrides: Record<string, unknown> = {}) => ({
+    id: FOLDER_ID,
+    path: '/Companies',
+    workbookId: WORKBOOK_ID,
+    name: 'Companies',
+    connectorAccountId: CONNECTOR_ACCOUNT_ID,
+    connectorAccount: null,
+    connectorService: null,
+    schema: null,
+    filter: null,
+    lock: null,
+    version: 1,
+    tableId: [],
+    options: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mockDb = {
+      client: {
+        dataFolder: {
+          findUnique: jest.fn().mockResolvedValue(makeDataFolder()),
+          delete: jest.fn().mockResolvedValue(undefined),
+        },
+        schedule: {
+          deleteMany: jest.fn().mockResolvedValue(undefined),
+        },
+      },
+    } as unknown as jest.Mocked<DbService>;
+
+    mockScratchGitService = {
+      removeDataFolder: jest.fn().mockResolvedValue(undefined),
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue(RESOLVED_REPO_ID),
+    } as unknown as jest.Mocked<ScratchGitService>;
+
+    mockWorkbookService = {
+      findOne: jest.fn().mockResolvedValue({ id: WORKBOOK_ID, name: 'Test Workbook', organizationId: ORG_ID }),
+    } as unknown as jest.Mocked<WorkbookService>;
+
+    mockWorkbookEventService = {
+      sendWorkbookEvent: jest.fn(),
+    } as unknown as jest.Mocked<WorkbookEventService>;
+
+    mockPosthogService = {
+      trackRemoveDataFolder: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
+
+    mockAuditLogService = {
+      logEvent: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<AuditLogService>;
+
+    const stub = {} as unknown;
+    service = new DataFolderService(
+      mockWorkbookService,
+      mockDb,
+      stub as ConnectorAccountService,
+      stub as ConnectorsService,
+      stub as ScratchConfigService,
+      stub as BullEnqueuerService,
+      mockAuditLogService,
+      mockPosthogService,
+      mockScratchGitService,
+      stub as FilesService,
+      mockWorkbookEventService,
+    );
+  });
+
+  it('should resolve connector account repo path when folder has connectorAccountId', async () => {
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    expect(mockScratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(CONNECTOR_ACCOUNT_ID);
+    expect(mockScratchGitService.removeDataFolder).toHaveBeenCalledWith(RESOLVED_REPO_ID, '/Companies');
+  });
+
+  it('should fall back to workbookId as repo ID when folder has no connectorAccountId', async () => {
+    (mockDb.client.dataFolder.findUnique as jest.Mock).mockResolvedValue(makeDataFolder({ connectorAccountId: null }));
+
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    expect(mockScratchGitService.resolveConnectionRepoPath).not.toHaveBeenCalled();
+    expect(mockScratchGitService.removeDataFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/Companies');
+  });
+
+  it('should gracefully handle ScratchGitNotFoundError (folder never pulled)', async () => {
+    (mockScratchGitService.removeDataFolder as jest.Mock).mockRejectedValue(
+      new ScratchGitNotFoundError('/api/repo/write/test/data-folder', 'File not found'),
+    );
+
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    // Should still delete from DB despite git 404
+    expect(mockDb.client.dataFolder.delete).toHaveBeenCalledWith({ where: { id: FOLDER_ID } });
+  });
+
+  it('should rethrow non-ScratchGitNotFoundError errors', async () => {
+    (mockScratchGitService.removeDataFolder as jest.Mock).mockRejectedValue(new Error('Connection refused'));
+
+    await expect(service.deleteFolder(FOLDER_ID, ACTOR)).rejects.toThrow('Connection refused');
+
+    // Should NOT delete from DB when git fails with unexpected error
+    expect(mockDb.client.dataFolder.delete).not.toHaveBeenCalled();
+  });
+
+  it('should skip git deletion when folder has no path', async () => {
+    (mockDb.client.dataFolder.findUnique as jest.Mock).mockResolvedValue(makeDataFolder({ path: null }));
+
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    expect(mockScratchGitService.removeDataFolder).not.toHaveBeenCalled();
+    expect(mockDb.client.dataFolder.delete).toHaveBeenCalled();
+  });
+
+  it('should delete schedules and DB record after git cleanup', async () => {
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    expect(mockDb.client.schedule.deleteMany).toHaveBeenCalledWith({
+      where: { entityId: FOLDER_ID, action: { in: ['PULL', 'PUBLISH'] } },
+    });
+    expect(mockDb.client.dataFolder.delete).toHaveBeenCalledWith({ where: { id: FOLDER_ID } });
   });
 });
