@@ -1,6 +1,5 @@
 use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use clap::Subcommand;
 
@@ -311,11 +310,7 @@ async fn init(
     }
 
     let started = std::time::Instant::now();
-    let total_files = if wb.version >= 2 {
-        init_v2(&wb, &target_dir, server_url, &token)?
-    } else {
-        init_v1(&wb, &target_dir, server_url, &token)?
-    };
+    let total_files = init_v2(&wb, &target_dir, server_url, &token)?;
     crate::config::workspaces::upsert(&wb.id, &target_dir)?;
     let elapsed_ms = started.elapsed().as_millis();
     let elapsed = if elapsed_ms < 1000 {
@@ -342,45 +337,17 @@ async fn init(
             wb.name, total_files, elapsed
         );
         println!("  Directory: {}", target_dir.display());
-        if wb.version >= 2 {
-            println!("    .repos/");
-            println!("    .scratch/");
-            println!("      connections/");
-            println!("      workspace/");
-            for ca in &wb.connector_accounts {
-                let dir_name = connector_dir_name(&ca.service, &ca.display_name);
-                println!("    {}/", dir_name);
-            }
+        println!("    .repos/");
+        println!("    .scratch/");
+        println!("      connections/");
+        println!("      workspace/");
+        for ca in &wb.connector_accounts {
+            let dir_name = connector_dir_name(&ca.service, &ca.display_name);
+            println!("    {}/", dir_name);
         }
         println!();
     }
     Ok(())
-}
-
-fn init_v1(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> anyhow::Result<i64> {
-    if wb.git_url.is_empty() {
-        anyhow::bail!("Server did not return git URL for workspace");
-    }
-
-    git_clone(&wb.git_url, target_dir, token)?;
-    let org_id = derive_workbook_org_id(wb);
-    markers::write_workspace(target_dir, &wb.id, &wb.name, &org_id, server_url, &[])?;
-
-    // Write data folder markers for matching subdirectories
-    let all_folders: Vec<_> = wb
-        .connector_accounts
-        .iter()
-        .flat_map(|ca| ca.data_folders.iter())
-        .collect();
-    for df in all_folders {
-        let dir = target_dir.join(&df.name);
-        if dir.exists() {
-            // TODO: remove once root .scratchmd owns all metadata.
-            let _ = (dir, &df.id, &df.name);
-        }
-    }
-
-    Ok(count_files(target_dir))
 }
 
 fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> anyhow::Result<i64> {
@@ -465,29 +432,6 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     Ok(total)
 }
 
-/// Clone a git repo into `target_dir`, checking out the `dirty` branch.
-fn git_clone(url: &str, target_dir: &Path, token: &str) -> anyhow::Result<()> {
-    let auth_header = format!("Authorization: API-Token {}", token);
-    let status = Command::new("git")
-        .args([
-            "-c",
-            &format!("http.extraHeader={}", auth_header),
-            "clone",
-            "--quiet",
-            "--branch",
-            "dirty",
-            "--single-branch",
-            url,
-            target_dir.to_str().unwrap_or("."),
-        ])
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!("git clone failed for {}", url);
-    }
-    Ok(())
-}
-
 fn init_workbook_repo(wb: &Workbook, layout: &WorkspaceLayout, token: &str) -> anyhow::Result<i64> {
     let workbook_dir = layout.workbook_materialization_path();
     std::fs::create_dir_all(workbook_dir.join("syncs"))?;
@@ -535,28 +479,7 @@ fn materialize_workbook_checkout(
 }
 
 fn git_clone_bare(url: &str, target_dir: &Path, token: &str) -> anyhow::Result<()> {
-    if let Some(parent) = target_dir.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let auth_header = format!("Authorization: API-Token {}", token);
-    let output = Command::new("git")
-        .args([
-            "-c",
-            &format!("http.extraHeader={}", auth_header),
-            "clone",
-            "--bare",
-            "--quiet",
-            url,
-            target_dir.to_str().unwrap_or("."),
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git clone --bare failed for {}: {}", url, stderr.trim());
-    }
-    Ok(())
+    crate::git_ops::clone_bare(url, target_dir, token)
 }
 
 fn git_checkout_branch_from_bare(
@@ -564,50 +487,7 @@ fn git_checkout_branch_from_bare(
     branch: &str,
     work_tree: &Path,
 ) -> anyhow::Result<()> {
-    std::fs::create_dir_all(work_tree)?;
-
-    let output = Command::new("git")
-        .current_dir(work_tree)
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .arg(format!("--work-tree={}", work_tree.display()))
-        .args(["checkout", branch, "--", "."])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("pathspec '.' did not match any file(s) known to git")
-            && branch_is_empty(bare_repo, branch)?
-        {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "git checkout {} failed for {}: {}",
-            branch,
-            bare_repo.display(),
-            stderr.trim()
-        );
-    }
-
-    Ok(())
-}
-
-fn branch_is_empty(bare_repo: &Path, branch: &str) -> anyhow::Result<bool> {
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["ls-tree", "-r", "--name-only", branch])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "git ls-tree {} failed for {}: {}",
-            branch,
-            bare_repo.display(),
-            stderr.trim()
-        );
-    }
-
-    Ok(output.stdout.is_empty())
+    crate::commands::files::materialize_treeish_to_worktree(bare_repo, branch, work_tree)
 }
 
 fn materialize_dirty_checkout(
@@ -762,6 +642,29 @@ mod tests {
     use super::*;
     use std::process::Command;
     use tempfile::TempDir;
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn commit_all(cwd: &Path, message: &str) {
+        run_git(cwd, &["add", "-A"]);
+        run_git(
+            cwd,
+            &[
+                "-c",
+                "user.name=Scratch",
+                "-c",
+                "user.email=scratch@example.com",
+                "commit",
+                "-m",
+                message,
+            ],
+        );
+    }
 
     fn workbook_with_repo_paths(repo_paths: &[&str]) -> Workbook {
         Workbook {
@@ -941,6 +844,65 @@ mod tests {
 
         assert_eq!(branch, "main");
         assert!(work_tree.join("syncs/a.json").exists());
+    }
+
+    #[test]
+    fn git_clone_bare_clones_remote_refs_and_origin() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let remote_bare = tmp.path().join("remote.git");
+        let local_bare = tmp.path().join("local.git");
+
+        run_git(tmp.path(), &["init", "source"]);
+        run_git(&source_dir, &["checkout", "-b", "main"]);
+        write_file(&source_dir.join("syncs/a.json"), "{}");
+        commit_all(&source_dir, "main content");
+
+        run_git(&source_dir, &["checkout", "-b", "dirty"]);
+        write_file(&source_dir.join("posts/rec1.json"), "{\"id\":\"rec1\"}");
+        commit_all(&source_dir, "dirty content");
+
+        run_git(tmp.path(), &["init", "--bare", "remote.git"]);
+        run_git(
+            &source_dir,
+            &["remote", "add", "origin", remote_bare.to_str().unwrap()],
+        );
+        run_git(&source_dir, &["push", "origin", "main:main"]);
+        run_git(&source_dir, &["push", "origin", "dirty:dirty"]);
+
+        git_clone_bare(remote_bare.to_str().unwrap(), &local_bare, "test-token").unwrap();
+
+        let dirty_ref = Command::new("git")
+            .arg(format!("--git-dir={}", local_bare.display()))
+            .args(["rev-parse", "dirty"])
+            .output()
+            .unwrap();
+        assert!(dirty_ref.status.success());
+
+        let main_ref = Command::new("git")
+            .arg(format!("--git-dir={}", local_bare.display()))
+            .args(["rev-parse", "main"])
+            .output()
+            .unwrap();
+        assert!(main_ref.status.success());
+
+        let origin_url = Command::new("git")
+            .arg(format!("--git-dir={}", local_bare.display()))
+            .args(["config", "--get", "remote.origin.url"])
+            .output()
+            .unwrap();
+        assert!(origin_url.status.success());
+        let expected_origin = std::fs::canonicalize(&remote_bare).unwrap();
+        let actual_origin = std::fs::canonicalize(String::from_utf8_lossy(&origin_url.stdout).trim()).unwrap();
+        assert_eq!(
+            actual_origin,
+            expected_origin
+        );
     }
 
     #[test]

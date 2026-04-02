@@ -4,6 +4,7 @@ mod shared;
 mod api;
 mod commands;
 mod config;
+mod git_ops;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};

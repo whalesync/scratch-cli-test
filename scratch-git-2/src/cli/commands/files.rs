@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use clap::Subcommand;
 
@@ -675,73 +674,23 @@ fn git_auth_args(token: &str) -> [String; 2] {
 }
 
 fn git_fetch(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
-    let auth = git_auth_args(token);
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(&auth)
-        .args([
-            "fetch",
-            "origin",
-            "refs/heads/dirty:refs/remotes/origin/dirty",
-            "--force",
-        ])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git fetch failed: {}", stderr.trim());
-    }
-    Ok(())
+    crate::git_ops::fetch_origin(bare_repo, token)
 }
 
 fn git_fetch_main(bare_repo: &Path, token: &str) {
-    let auth = git_auth_args(token);
-    let _ = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(&auth)
-        .args([
-            "fetch",
-            "origin",
-            "refs/heads/main:refs/remotes/origin/main",
-            "--force",
-        ])
-        .output();
+    let _ = crate::git_ops::fetch_origin(bare_repo, token);
 }
 
 fn git_rev_parse(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["rev-parse", rev])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git rev-parse {} failed: {}", rev, stderr.trim());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    crate::git_ops::rev_parse_to_string(bare_repo, rev)
 }
 
 fn git_rev_parse_optional(bare_repo: &Path, rev: &str) -> anyhow::Result<Option<String>> {
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["rev-parse", rev])
-        .output()?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    Ok(Some(
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
-    ))
+    crate::git_ops::rev_parse_optional_to_string(bare_repo, rev)
 }
 
 fn git_update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["update-ref", refname, object])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git update-ref {} failed: {}", refname, stderr.trim());
-    }
-    Ok(())
+    crate::git_ops::update_ref(bare_repo, refname, object)
 }
 
 fn git_push(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
@@ -779,49 +728,7 @@ pub(crate) fn materialize_treeish_to_worktree(
 ) -> anyhow::Result<()> {
     clear_dir_contents(work_tree, true)?;
     std::fs::create_dir_all(work_tree)?;
-
-    let output = Command::new("git")
-        .current_dir(work_tree)
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .arg(format!("--work-tree={}", work_tree.display()))
-        .args(["checkout", treeish, "--", "."])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("pathspec '.' did not match any file(s) known to git")
-            && treeish_is_empty(bare_repo, treeish)?
-        {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "git checkout {} failed for {}: {}",
-            treeish,
-            bare_repo.display(),
-            stderr.trim()
-        );
-    }
-
-    Ok(())
-}
-
-fn treeish_is_empty(bare_repo: &Path, treeish: &str) -> anyhow::Result<bool> {
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["ls-tree", "-r", "--name-only", treeish])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "git ls-tree {} failed for {}: {}",
-            treeish,
-            bare_repo.display(),
-            stderr.trim()
-        );
-    }
-
-    Ok(output.stdout.is_empty())
+    crate::git_ops::materialize_treeish_to_directory(bare_repo, treeish, work_tree)
 }
 
 fn commit_file_map_to_dirty_ref(
@@ -830,195 +737,17 @@ fn commit_file_map_to_dirty_ref(
     files: &FileMap,
     message: &str,
 ) -> anyhow::Result<String> {
-    let staging_root = create_staging_dir()?;
-    let index_path = create_staging_index_path();
-    let result = (|| {
-        materialize_full_repo_state(&staging_root, files)?;
-
-        if let Some(parent_hash) = parent_hash {
-            git_read_tree(bare_repo, &index_path, parent_hash)?;
-        }
-
-        git_add_all_with_index(bare_repo, &staging_root, &index_path)?;
-        let tree_hash = git_write_tree(bare_repo, &index_path)?;
-        let commit_hash = git_commit_tree(bare_repo, &tree_hash, parent_hash, message)?;
-        git_update_ref(&bare_repo, "refs/heads/dirty", &commit_hash)?;
-        Ok(commit_hash)
-    })();
-
-    let _ = std::fs::remove_dir_all(&staging_root);
-    let _ = std::fs::remove_file(&index_path);
-    let _ = std::fs::remove_file(index_lock_path(&index_path));
-    result
-}
-
-fn create_staging_dir() -> anyhow::Result<PathBuf> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("scratchmd-stage-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-fn create_staging_index_path() -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    std::env::temp_dir().join(format!("scratchmd-index-{}-{nanos}", std::process::id()))
-}
-
-fn index_lock_path(index_path: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.lock", index_path.to_string_lossy()))
-}
-
-fn materialize_full_repo_state(root: &Path, files: &FileMap) -> anyhow::Result<()> {
-    for (rel_path, content) in files {
-        let full_path = root.join(rel_path);
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(full_path, content)?;
-    }
-    Ok(())
-}
-
-fn git_read_tree(bare_repo: &Path, index_path: &Path, treeish: &str) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .env("GIT_INDEX_FILE", index_path)
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["read-tree", treeish])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git read-tree {} failed: {}", treeish, stderr.trim());
-    }
-    Ok(())
-}
-
-fn git_add_all_with_index(
-    bare_repo: &Path,
-    work_tree: &Path,
-    index_path: &Path,
-) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .env("GIT_INDEX_FILE", index_path)
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .arg(format!("--work-tree={}", work_tree.display()))
-        .args(["add", "-A"])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git add -A failed: {}", stderr.trim());
-    }
-    Ok(())
-}
-
-fn git_write_tree(bare_repo: &Path, index_path: &Path) -> anyhow::Result<String> {
-    let output = Command::new("git")
-        .env("GIT_INDEX_FILE", index_path)
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["write-tree"])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git write-tree failed: {}", stderr.trim());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn git_commit_tree(
-    bare_repo: &Path,
-    tree_hash: &str,
-    parent_hash: Option<&str>,
-    message: &str,
-) -> anyhow::Result<String> {
-    let mut command = Command::new("git");
-    command
-        .env("GIT_AUTHOR_NAME", "Scratch CLI")
-        .env("GIT_AUTHOR_EMAIL", "cli@scratch.md")
-        .env("GIT_COMMITTER_NAME", "Scratch CLI")
-        .env("GIT_COMMITTER_EMAIL", "cli@scratch.md")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .arg("commit-tree")
-        .arg(tree_hash);
-
-    if let Some(parent_hash) = parent_hash {
-        command.arg("-p").arg(parent_hash);
-    }
-
-    let output = command.arg("-m").arg(message).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git commit-tree failed: {}", stderr.trim());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    crate::git_ops::commit_file_map_to_ref(
+        bare_repo,
+        "refs/heads/dirty",
+        parent_hash,
+        files,
+        message,
+    )
 }
 
 fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
-    let ls_output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["ls-tree", "-r", hash])
-        .output()?;
-
-    if !ls_output.status.success() {
-        return Ok(HashMap::new());
-    }
-
-    let stdout = String::from_utf8_lossy(&ls_output.stdout);
-    let mut entries: Vec<(String, String)> = Vec::new();
-    for line in stdout.lines() {
-        if let Some((info, path)) = line.split_once('\t') {
-            let parts: Vec<&str> = info.split_whitespace().collect();
-            if parts.len() >= 3 && parts[1] == "blob" {
-                entries.push((path.to_string(), parts[2].to_string()));
-            }
-        }
-    }
-
-    if entries.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let mut child = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["cat-file", "--batch"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    let hashes: String = entries
-        .iter()
-        .map(|(_, hash)| format!("{hash}\n"))
-        .collect();
-    child.stdin.take().unwrap().write_all(hashes.as_bytes())?;
-    let batch_output = child.wait_with_output()?;
-    let data = batch_output.stdout;
-
-    let mut map = FileMap::new();
-    let mut cursor = 0usize;
-    for (path, _) in &entries {
-        let header_end = data[cursor..]
-            .iter()
-            .position(|&byte| byte == b'\n')
-            .ok_or_else(|| anyhow::anyhow!("unexpected git cat-file batch output"))?;
-        let header = std::str::from_utf8(&data[cursor..cursor + header_end])?;
-        cursor += header_end + 1;
-
-        let size: usize = header
-            .split_whitespace()
-            .nth(2)
-            .and_then(|value| value.parse().ok())
-            .ok_or_else(|| anyhow::anyhow!("invalid batch header: {}", header))?;
-
-        let content = normalize_crlf(data[cursor..cursor + size].to_vec());
-        cursor += size + 1;
-        map.insert(path.clone(), content);
-    }
-
-    Ok(map)
+    crate::git_ops::read_tree_files(bare_repo, hash)
 }
 
 fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
@@ -1748,6 +1477,77 @@ mod tests {
         }
     }
 
+    struct BareFixture {
+        _tmp: TempDir,
+        source_dir: PathBuf,
+        remote_bare: PathBuf,
+        local_bare: PathBuf,
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn commit_all(cwd: &Path, message: &str) {
+        run_git(cwd, &["add", "-A"]);
+        run_git(
+            cwd,
+            &[
+                "-c",
+                "user.name=Scratch",
+                "-c",
+                "user.email=scratch@example.com",
+                "commit",
+                "-m",
+                message,
+            ],
+        );
+    }
+
+    fn create_bare_fixture() -> BareFixture {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let remote_bare = tmp.path().join("remote.git");
+        let local_bare = tmp.path().join("local.git");
+
+        run_git(tmp.path(), &["init", "source"]);
+        run_git(&source_dir, &["checkout", "-b", "main"]);
+        write_file(&source_dir.join("syncs/a.json"), "{}");
+        commit_all(&source_dir, "main content");
+
+        run_git(&source_dir, &["checkout", "-b", "dirty"]);
+        write_file(&source_dir.join("posts/rec1.json"), "{\"id\":\"rec1\"}");
+        commit_all(&source_dir, "dirty content");
+
+        run_git(tmp.path(), &["init", "--bare", "remote.git"]);
+        run_git(
+            &source_dir,
+            &["remote", "add", "origin", remote_bare.to_str().unwrap()],
+        );
+        run_git(&source_dir, &["push", "origin", "main:main"]);
+        run_git(&source_dir, &["push", "origin", "dirty:dirty"]);
+
+        run_git(
+            tmp.path(),
+            &[
+                "clone",
+                "--bare",
+                remote_bare.to_str().unwrap(),
+                local_bare.to_str().unwrap(),
+            ],
+        );
+
+        BareFixture {
+            _tmp: tmp,
+            source_dir,
+            remote_bare,
+            local_bare,
+        }
+    }
+
     #[test]
     fn detect_selected_connection_from_connection_subdir() {
         let workspace = Path::new("/tmp/workspace");
@@ -1886,6 +1686,110 @@ mod tests {
         assert!(paths.lines().any(|line| line == "posts/rec.json"));
         assert!(!paths.lines().any(|line| line == ".git-index"));
         assert!(!paths.lines().any(|line| line == ".git-index.lock"));
+    }
+
+    #[test]
+    fn git_fetch_updates_remote_tracking_dirty_ref() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let fixture = create_bare_fixture();
+
+        write_file(&fixture.source_dir.join("posts/rec2.json"), "{\"id\":\"rec2\"}");
+        commit_all(&fixture.source_dir, "remote dirty update");
+        run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
+
+        git_fetch(&fixture.local_bare, "test-token").unwrap();
+
+        let local_tracking = git_rev_parse(&fixture.local_bare, "refs/remotes/origin/dirty").unwrap();
+        let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
+        assert_eq!(local_tracking, remote_dirty);
+    }
+
+    #[test]
+    fn git_push_updates_remote_dirty_branch() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let fixture = create_bare_fixture();
+        let parent = git_rev_parse(&fixture.local_bare, "dirty").unwrap();
+        let files = HashMap::from([(
+            "posts/rec1.json".to_string(),
+            b"{\"id\":\"rec1\",\"fields\":{\"title\":\"Updated\"}}".to_vec(),
+        )]);
+        let commit_hash = commit_file_map_to_dirty_ref(
+            &fixture.local_bare,
+            Some(parent.as_str()),
+            &files,
+            "local update",
+        )
+        .unwrap();
+
+        git_push(&fixture.local_bare, "test-token").unwrap();
+
+        let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
+        assert_eq!(remote_dirty, commit_hash);
+    }
+
+    #[test]
+    fn git_push_force_overwrites_diverged_remote_dirty_branch() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let fixture = create_bare_fixture();
+
+        write_file(
+            &fixture.source_dir.join("posts/server-only.json"),
+            "{\"id\":\"server-only\"}",
+        );
+        commit_all(&fixture.source_dir, "remote only update");
+        run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
+
+        let stale_parent = git_rev_parse(&fixture.local_bare, "dirty").unwrap();
+        let files = HashMap::from([(
+            "posts/local-only.json".to_string(),
+            b"{\"id\":\"local-only\"}".to_vec(),
+        )]);
+        let local_commit = commit_file_map_to_dirty_ref(
+            &fixture.local_bare,
+            Some(stale_parent.as_str()),
+            &files,
+            "diverged local update",
+        )
+        .unwrap();
+
+        let push_err = git_push(&fixture.local_bare, "test-token").unwrap_err();
+        assert!(push_err.to_string().contains("git push failed"));
+
+        git_push_force(&fixture.local_bare, "test-token").unwrap();
+
+        let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
+        assert_eq!(remote_dirty, local_commit);
+    }
+
+    #[test]
+    fn materialize_treeish_to_worktree_creates_plain_directory_without_git_metadata() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let fixture = create_bare_fixture();
+        let work_tree = fixture._tmp.path().join("materialized");
+        std::fs::create_dir_all(&work_tree).unwrap();
+        std::fs::write(work_tree.join("stale.txt"), "stale").unwrap();
+
+        materialize_treeish_to_worktree(&fixture.local_bare, "dirty", &work_tree).unwrap();
+
+        assert!(work_tree.join("posts/rec1.json").exists());
+        assert!(!work_tree.join("stale.txt").exists());
+        assert!(!work_tree.join(".git").exists());
     }
 
     fn git_available() -> bool {
