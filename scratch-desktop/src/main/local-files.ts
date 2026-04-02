@@ -225,6 +225,111 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
   return results;
 }
 
+// ── Grid data ──
+
+interface ReadGridDataOptions {
+  offset?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  filter?: Record<string, unknown>;
+  columns?: string[];
+}
+
+interface GridDataResult {
+  rows: Array<Record<string, unknown>>;
+  columns: string[];
+  total: number;
+  offset: number;
+}
+
+/**
+ * Reads JSON files from a folder and returns their contents as flat records
+ * suitable for Glide Data Grid. Each JSON file becomes one row. Top-level
+ * keys become columns. Only JSON files are included; non-JSON files are skipped.
+ *
+ * The `columns` array in the result is the union of all keys found across the
+ * returned rows, in insertion order (first file's keys first, then any new keys
+ * from subsequent files). If `opts.columns` is provided, only those columns are
+ * returned and the column order matches the requested list.
+ */
+export async function readGridData(folderPath: string, opts: ReadGridDataOptions): Promise<GridDataResult> {
+  let allNames = await getCachedFileNames(folderPath);
+
+  // Only include JSON files
+  allNames = allNames.filter((name) => extname(name).toLowerCase() === '.json');
+
+  // Read, parse, and flatten all matching files
+  const columnSet = new Set<string>();
+  let allRows: Array<Record<string, unknown>> = [];
+
+  for (let i = 0; i < allNames.length; i += BATCH_CONCURRENCY) {
+    const batch = allNames.slice(i, i + BATCH_CONCURRENCY);
+    const batchRows = await Promise.all(
+      batch.map(async (name) => {
+        try {
+          const content = await readFile(join(folderPath, name), 'utf-8');
+          const parsed: unknown = JSON.parse(content);
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            return null;
+          }
+          return flattenObject(parsed as Record<string, unknown>);
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    for (const row of batchRows) {
+      if (row === null) {
+        continue;
+      }
+      for (const key of Object.keys(row)) {
+        columnSet.add(key);
+      }
+      allRows.push(row);
+    }
+  }
+
+  // Filter rows by column values
+  if (opts.filter) {
+    const filterEntries = Object.entries(opts.filter);
+    allRows = allRows.filter((row) => filterEntries.every(([col, expected]) => col in row && row[col] === expected));
+  }
+
+  const total = allRows.length;
+
+  // Sort by column value
+  if (opts.sortBy) {
+    const sortKey = opts.sortBy;
+    const order = opts.sortOrder ?? 'asc';
+    allRows = sortRowsByColumn(allRows, sortKey, order);
+  }
+
+  // Paginate
+  const offset = Math.max(0, opts.offset ?? 0);
+  const limit = Math.max(1, opts.limit ?? 1000);
+  let rows = allRows.slice(offset, offset + limit);
+
+  let columns = Array.from(columnSet);
+
+  // If specific columns requested, filter and reorder
+  if (opts.columns && opts.columns.length > 0) {
+    columns = opts.columns.filter((c) => columnSet.has(c));
+    rows = rows.map((row) => {
+      const filtered: Record<string, unknown> = {};
+      for (const col of columns) {
+        if (col in row) {
+          filtered[col] = row[col];
+        }
+      }
+      return filtered;
+    });
+  }
+
+  return { rows, columns, total, offset };
+}
+
 export async function readSchema(workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> {
   try {
     const schemaPath = join(workspacePath, SCRATCH_DIR, SCHEMAS_DIR, `${folderName}.json`);
@@ -236,6 +341,51 @@ export async function readSchema(workspacePath: string, folderName: string): Pro
 }
 
 // ── Internal helpers ──
+
+/**
+ * Flattens a nested object into dot-separated keys.
+ * `{ id: "a", fields: { field1: "b" } }` → `{ id: "a", "fields.field1": "b" }`
+ * Arrays and non-plain-object values are kept as leaf values (not recursed into).
+ */
+function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const flatKey = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      Object.assign(result, flattenObject(value as Record<string, unknown>, flatKey));
+    } else {
+      result[flatKey] = value;
+    }
+  }
+  return result;
+}
+
+function sortRowsByColumn(
+  rows: Array<Record<string, unknown>>,
+  column: string,
+  order: 'asc' | 'desc',
+): Array<Record<string, unknown>> {
+  return [...rows].sort((a, b) => {
+    const va = a[column];
+    const vb = b[column];
+
+    // Missing values sort last regardless of order
+    if (va === undefined && vb === undefined) return 0;
+    if (va === undefined) return 1;
+    if (vb === undefined) return -1;
+
+    let cmp: number;
+    if (typeof va === 'number' && typeof vb === 'number') {
+      cmp = va - vb;
+    } else {
+      const sa = typeof va === 'string' ? va : JSON.stringify(va);
+      const sb = typeof vb === 'string' ? vb : JSON.stringify(vb);
+      cmp = sa.localeCompare(sb, undefined, { sensitivity: 'base', numeric: true });
+    }
+
+    return order === 'desc' ? -cmp : cmp;
+  });
+}
 
 async function computeFolderStats(
   folderPath: string,

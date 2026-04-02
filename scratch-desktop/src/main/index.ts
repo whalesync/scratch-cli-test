@@ -12,6 +12,7 @@ import {
   listFolders,
   readBatch,
   readFileContent,
+  readGridData,
   readSchema,
   readWorkspaceConfig,
 } from './local-files';
@@ -530,7 +531,10 @@ ipcMain.handle(
       sortOrder?: 'asc' | 'desc';
       filter?: { search?: string; extensions?: string[] };
     },
-  ) => listFiles(folderPath, opts),
+  ) => {
+    console.debug('files:list-files', folderPath);
+    return listFiles(folderPath, opts);
+  },
 );
 ipcMain.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
 ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
@@ -538,6 +542,21 @@ ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSi
 );
 ipcMain.handle('files:read-schema', async (_, workspacePath: string, folderName: string) =>
   readSchema(workspacePath, folderName),
+);
+ipcMain.handle(
+  'files:read-grid-data',
+  async (
+    _,
+    folderPath: string,
+    opts?: {
+      offset?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      filter?: Record<string, unknown>;
+      columns?: string[];
+    },
+  ) => readGridData(folderPath, opts ?? {}),
 );
 
 void app.whenReady().then(() => {

@@ -148,6 +148,22 @@ const scratchFiles = {
   > => ipcRenderer.invoke('files:read-batch', filePaths, opts),
   readSchema: (workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> =>
     ipcRenderer.invoke('files:read-schema', workspacePath, folderName),
+  readGridData: (
+    folderPath: string,
+    opts?: {
+      offset?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      filter?: Record<string, unknown>;
+      columns?: string[];
+    },
+  ): Promise<{
+    rows: Array<Record<string, unknown>>;
+    columns: string[];
+    total: number;
+    offset: number;
+  }> => ipcRenderer.invoke('files:read-grid-data', folderPath, opts ?? {}),
 };
 
 if (process.contextIsolated) {

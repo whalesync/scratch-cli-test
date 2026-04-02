@@ -122,6 +122,22 @@ interface ScratchFilesAPI {
     >
   >;
   readSchema: (workspacePath: string, folderName: string) => Promise<Record<string, unknown> | null>;
+  readGridData: (
+    folderPath: string,
+    opts?: {
+      offset?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      filter?: Record<string, unknown>;
+      columns?: string[];
+    },
+  ) => Promise<{
+    rows: Array<Record<string, unknown>>;
+    columns: string[];
+    total: number;
+    offset: number;
+  }>;
 }
 
 declare global {
