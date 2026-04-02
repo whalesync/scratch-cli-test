@@ -1,5 +1,6 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
-import { Box, Group, Text } from '@mantine/core';
+import { Text13Medium } from '@/components/base/text';
+import { Box, Group } from '@mantine/core';
 import {
   ArrowLeft,
   ChevronDown,
@@ -53,9 +54,7 @@ export function WorkspaceHeader({
           <ArrowLeft size={12} />
         </IconButtonGhost>
         <Box style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <Text fw={600} size="sm">
-            {workspace.name || 'Untitled Workspace'}
-          </Text>
+          <Text13Medium>{workspace.name || 'Untitled Workspace'}</Text13Medium>
           <ChevronDown size={14} color="var(--fg-muted)" />
         </Box>
       </Group>

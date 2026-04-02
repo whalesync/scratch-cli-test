@@ -1,4 +1,5 @@
-import { Box, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Text12Regular, Text13Regular } from '@/components/base/text';
+import { Box, Group, Stack, UnstyledButton } from '@mantine/core';
 import { Bug, Folder, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
@@ -43,9 +44,9 @@ export function WorkspaceSidebar({
       {/* Folder tree */}
       <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} py="xs">
         {localFolders.length === 0 && (
-          <Text size="xs" c="dimmed" px="sm" py="xs">
+          <Text12Regular c="dimmed" px="sm" py="xs">
             No folders yet
-          </Text>
+          </Text12Regular>
         )}
         {localFolders.map((folder) => (
           <UnstyledButton
@@ -63,9 +64,9 @@ export function WorkspaceSidebar({
           >
             <Folder size={14} color="var(--fg-secondary)" />
             <Box style={{ flex: 1, minWidth: 0 }}>
-              <Text size="sm" c="var(--fg-primary)" truncate>
+              <Text13Regular c="var(--fg-primary)" truncate>
                 {folder.name}
-              </Text>
+              </Text13Regular>
             </Box>
           </UnstyledButton>
         ))}
@@ -92,9 +93,7 @@ export function WorkspaceSidebar({
         >
           <Group gap={8} wrap="nowrap">
             <Settings size={14} color="var(--fg-secondary)" />
-            <Text size="sm" c="var(--fg-secondary)">
-              Manage Connections
-            </Text>
+            <Text13Regular c="var(--fg-secondary)">Manage Connections</Text13Regular>
           </Group>
         </UnstyledButton>
 
@@ -108,9 +107,7 @@ export function WorkspaceSidebar({
         >
           <Group gap={8} wrap="nowrap">
             <Bug size={14} color="var(--fg-secondary)" />
-            <Text size="sm" c="var(--fg-secondary)">
-              Debug
-            </Text>
+            <Text13Regular c="var(--fg-secondary)">Debug</Text13Regular>
           </Group>
         </UnstyledButton>
 

@@ -1,4 +1,5 @@
-import { Group, Menu, Text, UnstyledButton } from '@mantine/core';
+import { Text13Regular } from '@/components/base/text';
+import { Group, Menu, UnstyledButton } from '@mantine/core';
 import { LogOut, TerminalSquare, UserRound } from 'lucide-react';
 import { useCurrentUser } from '../hooks/use-current-user';
 import { useAuth } from '../providers/AuthProvider';
@@ -13,9 +14,9 @@ export function UserMenu() {
         <UnstyledButton px="sm" py={8} style={{ width: '100%' }}>
           <Group gap={8} wrap="nowrap">
             <UserRound size={14} color="var(--fg-secondary)" />
-            <Text size="sm" c="var(--fg-secondary)" truncate>
+            <Text13Regular c="var(--fg-secondary)" truncate>
               {user?.email}
-            </Text>
+            </Text13Regular>
           </Group>
         </UnstyledButton>
       </Menu.Target>

@@ -1,4 +1,7 @@
-import { Box, Button, Code, Loader, Paper, Stack, Text, Title } from '@mantine/core';
+import { Box, Code, Loader, Paper, Stack } from '@mantine/core';
+import logoColor from '../assets/logo-color.svg';
+import { ButtonPrimaryLight, ButtonSecondaryGhost } from '../components/base/buttons';
+import { Text13Regular, TextTitle3 } from '../components/base/text';
 import { useAuth } from '../providers/AuthProvider';
 
 export function LoginPage() {
@@ -14,26 +17,27 @@ export function LoginPage() {
         padding: 20,
       }}
     >
-      <Paper shadow="sm" p="xl" radius="md" w={420}>
+      <Paper p="xl" radius="md" w={420} withBorder={false}>
         <Stack gap="lg" align="center">
-          <Title order={3}>Log in to Scratch</Title>
+          <img src={logoColor} alt="Scratch" width={64} height={64} />
+          <TextTitle3>Log in to Scratch</TextTitle3>
 
           {!authFlow.active && !authFlow.error && (
             <>
-              <Text c="dimmed" ta="center" size="sm">
+              <Text13Regular c="dimmed" ta="center">
                 Authenticate by logging in through your browser.
-              </Text>
-              <Button onClick={() => void login()} fullWidth size="md">
+              </Text13Regular>
+              <ButtonPrimaryLight onClick={() => void login()} fullWidth>
                 Log in with Scratch
-              </Button>
+              </ButtonPrimaryLight>
             </>
           )}
 
           {authFlow.active && authFlow.userCode && (
             <>
-              <Text c="dimmed" ta="center" size="sm">
+              <Text13Regular c="dimmed" ta="center">
                 Enter this code in the browser window that just opened:
-              </Text>
+              </Text13Regular>
               <Code
                 block
                 style={{
@@ -48,13 +52,9 @@ export function LoginPage() {
               </Code>
               <Stack gap="xs" align="center">
                 <Loader size="sm" />
-                <Text size="sm" c="dimmed">
-                  Waiting for authorization...
-                </Text>
+                <Text13Regular c="dimmed">Waiting for authorization...</Text13Regular>
               </Stack>
-              <Button variant="subtle" onClick={cancelLogin} size="sm">
-                Cancel
-              </Button>
+              <ButtonSecondaryGhost onClick={cancelLogin}>Cancel</ButtonSecondaryGhost>
             </>
           )}
 
@@ -62,12 +62,12 @@ export function LoginPage() {
 
           {authFlow.error && (
             <>
-              <Text c="red" ta="center" size="sm">
+              <Text13Regular c="red" ta="center">
                 {authFlow.error}
-              </Text>
-              <Button onClick={() => void login()} fullWidth size="md">
+              </Text13Regular>
+              <ButtonPrimaryLight onClick={() => void login()} fullWidth>
                 Try again
-              </Button>
+              </ButtonPrimaryLight>
             </>
           )}
         </Stack>

@@ -51,7 +51,7 @@ These are embedded at build time via Vite's `import.meta.env`.
 
 ## UI Components
 
-Before implementing or modifying any React UI in the renderer, read [`src/renderer/src/components/UI_SYSTEM.md`](src/renderer/src/components/UI_SYSTEM.md). It defines the standard text, button, icon, and color components that must be used instead of raw Mantine imports or inline styles.
+Before implementing or modifying any React UI in the renderer, read [`UI_SYSTEM.md`](UI_SYSTEM.md). It defines the standard text, button, icon, and color components that must be used instead of raw Mantine imports or inline styles.
 
 ## Code Conventions
 

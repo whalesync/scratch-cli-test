@@ -1,21 +1,9 @@
-import {
-  Alert,
-  Box,
-  Button,
-  Center,
-  Divider,
-  Group,
-  Loader,
-  Modal,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Alert, Box, Center, Divider, Group, Loader, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ButtonCompactPrimary, ButtonPrimaryLight, ButtonSecondaryOutline } from '../components/base/buttons';
 import { UserMenu } from '../components/user-menu';
 import { WorkspaceCard } from '../components/WorkspaceCard';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
@@ -133,9 +121,8 @@ export function HomePage() {
     <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <Group px="xl" pt="xl" pb="md" justify="space-between" style={{ flexShrink: 0 }}>
         <Title order={2}>Your Workspaces</Title>
-        <Button
-          variant="default"
-          leftSection={<Plus size={16} />}
+        <ButtonCompactPrimary
+          leftSection={<Plus size={12} />}
           onClick={() => {
             setNewWorkspaceName('');
             setCreateError(null);
@@ -143,7 +130,7 @@ export function HomePage() {
           }}
         >
           New Workspace
-        </Button>
+        </ButtonCompactPrimary>
       </Group>
 
       <Box style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -212,12 +199,10 @@ export function HomePage() {
               </Alert>
             )}
             <Group justify="flex-end">
-              <Button variant="default" onClick={() => setCreateModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleCreateWorkspace()} disabled={!newWorkspaceName.trim()}>
+              <ButtonSecondaryOutline onClick={() => setCreateModalOpen(false)}>Cancel</ButtonSecondaryOutline>
+              <ButtonPrimaryLight onClick={() => void handleCreateWorkspace()} disabled={!newWorkspaceName.trim()}>
                 Create
-              </Button>
+              </ButtonPrimaryLight>
             </Group>
           </Stack>
         )}

@@ -1,6 +1,7 @@
-import { Badge, Card, Group, Text } from '@mantine/core';
+import { Badge, Card, Group } from '@mantine/core';
 import { useNavigate } from 'react-router-dom';
 import { Workspace } from '../types/workspace';
+import { Text12Regular, Text13Medium } from './base/text';
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -55,21 +56,19 @@ export function WorkspaceCard({
       onClick={onClick ?? (() => void navigate(`/workspace/${workspace.id}`))}
     >
       <Group justify="space-between" align="flex-start" gap="sm">
-        <Text fw={500} size="sm" lineClamp={1}>
-          {workspace.name || 'Untitled Workspace'}
-        </Text>
+        <Text13Medium lineClamp={1}>{workspace.name || 'Untitled Workspace'}</Text13Medium>
         <Badge color={isDownloaded ? 'green' : 'gray'} variant={isDownloaded ? 'light' : 'outline'}>
           {isDownloaded ? 'Downloaded' : 'Not downloaded'}
         </Badge>
       </Group>
       <Group gap="xs" mt={4}>
-        <Text size="xs" c="dimmed">
+        <Text12Regular c="dimmed">
           {folderCount} {folderCount === 1 ? 'folder' : 'folders'}
-        </Text>
+        </Text12Regular>
       </Group>
-      <Text size="xs" c="dimmed" mt={2}>
+      <Text12Regular c="dimmed" mt={2}>
         Updated {formatRelativeTime(workspace.updatedAt)}
-      </Text>
+      </Text12Regular>
     </Card>
   );
 }
