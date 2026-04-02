@@ -166,6 +166,7 @@ impl ApiClient {
         let resp = client
             .post(&url)
             .header("User-Agent", "Scratch-cli/1.0")
+            .header("Content-Length", "0")
             .send()
             .await?;
         let status = resp.status();
