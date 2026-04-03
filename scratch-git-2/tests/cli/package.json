@@ -6,7 +6,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "test:integration": "jest --runInBand --forceExit",
-    "test:watch": "jest --runInBand --watch --forceExit"
+    "test:watch": "jest --runInBand --watch --forceExit",
+    "smoke:publish": "node scripts/smoke-publish.js"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

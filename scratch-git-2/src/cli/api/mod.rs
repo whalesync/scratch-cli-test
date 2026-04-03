@@ -290,10 +290,14 @@ mod tests;
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct JobProgress {
-    pub id: String,
+    #[serde(rename = "bullJobId", default)]
+    pub bull_job_id: String,
+    #[serde(rename = "dbJobId", default)]
+    pub db_job_id: String,
+    #[serde(default, alias = "state")]
     pub status: String,
-    #[serde(rename = "failedReason", default)]
-    pub failed_reason: String,
+    #[serde(rename = "failedReason", default, alias = "failed_reason")]
+    pub failed_reason: Option<String>,
 }
 
 /// Response from endpoints that start a background job.
@@ -301,6 +305,10 @@ pub struct JobProgress {
 pub struct JobStartedResponse {
     #[serde(rename = "jobId")]
     pub job_id: String,
+}
+
+fn job_progress_path(job_id: &str) -> String {
+    format!("jobs/{}/progress", job_id)
 }
 
 /// Poll a job until it completes or fails. Prints dots to stderr.
@@ -313,7 +321,7 @@ pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
     let deadline = std::time::Instant::now() + timeout;
 
     loop {
-        let progress: JobProgress = client.get(&format!("jobs/{}", job_id)).await?;
+        let progress: JobProgress = client.get(&job_progress_path(job_id)).await?;
         match progress.status.as_str() {
             "completed" => {
                 eprintln!();
@@ -323,7 +331,7 @@ pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
                 eprintln!();
                 return Err(ApiError::Other(format!(
                     "Job failed: {}",
-                    progress.failed_reason
+                    progress.failed_reason.unwrap_or_else(|| "unknown failure".to_string())
                 )));
             }
             "canceled" => {
