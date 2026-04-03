@@ -25,4 +25,5 @@ export const Service = {
   HUBSPOT: 'HUBSPOT',
   LINEAR: 'LINEAR',
   BREVO: 'BREVO',
+  INTERCOM: 'INTERCOM',
 } as const;

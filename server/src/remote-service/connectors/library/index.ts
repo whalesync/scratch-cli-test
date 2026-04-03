@@ -5,6 +5,7 @@ import './airtable/airtable-connector';
 import './audienceful/audienceful-connector';
 import './brevo/brevo-connector';
 import './hubspot/hubspot-connector';
+import './intercom/intercom-connector';
 import './linear/linear-connector';
 import './memberstack/memberstack-connector';
 import './moco/moco-connector';

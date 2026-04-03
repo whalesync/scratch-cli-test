@@ -80,7 +80,7 @@ export abstract class Connector<
 | `pullRecordFilesByIds(tableSpec, ids, callback)`          | `abstract pullRecordFilesByIds(tableSpec: BaseJsonTableSpec, ids: string[], callback: (params: { files: ConnectorFile[] }) => Promise<void>): Promise<void>`                                                                                  | Fetch specific records by ID (bulk where supported, silently skip 404s)                                               |
 | `getBatchSize(operation)`                                 | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                                                  | Max batch size per CRUD operation (must be > 0)                                                                       |
 | `createRecords(tableSpec, files)`                         | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                                                      | Create records, return files with remote IDs assigned                                                                 |
-| `updateRecords(tableSpec, files, changedFields?)`           | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> \| undefined)[]): Promise<void>`                                                                                                        | Update existing records (see [Partial Field Updates](#partial-field-updates-changedfields))                             |
+| `updateRecords(tableSpec, files, changedFields?)`         | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> \| undefined)[]): Promise<void>`                                                                                       | Update existing records (see [Partial Field Updates](#partial-field-updates-changedfields))                           |
 | `deleteRecords(tableSpec, files)`                         | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                                                 | Delete records                                                                                                        |
 | `getSuggestedRecordFileNames(records, tableSpec)`         | `abstract getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string \| undefined)[]`                                                                                                                       | Suggest human-friendly filenames for pulled records (without extension). Return `undefined` per record to use its ID. |
 | `extractConnectorErrorDetails(error)`                     | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                                                | Translate service errors to user-friendly messages                                                                    |
@@ -602,6 +602,14 @@ When adding a new connector, touch all of these:
 - [ ] Register via `connectorRegistry.register()` at the bottom of your connector file (see example below)
 - [ ] Add credential fields to `DecryptedCredentials` interface if needed (`packages/shared-types/src/connector-account-types.ts`)
 - [ ] Add `AuthParser` and register via `createAuthParser` in your registration if auth pre-processing is needed
+- [ ] Add barrel import in `server/src/remote-service/connectors/library/index.ts`
+
+### Connector Logo
+
+- [ ] Find or create an SVG logo for the service (e.g., from [Simple Icons](https://simpleicons.org/))
+- [ ] Upload to the static assets GCS bucket: `gcloud storage cp <logo>.svg gs://spv1eu-production-static/connector-icons/<service-name>.svg --content-type="image/svg+xml"`
+- [ ] Reference in connector metadata as `logo: 'https://static.scratch.md/connector-icons/<service-name>.svg'`
+- [ ] Verify the logo is accessible at the URL
 
 ### Server — OAuth (if applicable)
 
@@ -723,6 +731,7 @@ The metadata is served at `GET /connectors/metadata` and consumed by the client 
 | ------------------ | ----------------------------------------------------------- | ------------------------------------ |
 | **Cursor-based**   | API returns `next_cursor` / `has_more`                      | Notion                               |
 | **Offset-based**   | API supports `offset` + `limit` params                      | WordPress, Webflow, PostgreSQL       |
+| **Page-based**     | API supports `page` + `per_page` params                     | Intercom                             |
 | **Async iterator** | SDK provides generator or you build one wrapping pagination | Airtable, Shopify, Moco, Audienceful |
 
 For resumability, pass `connectorProgress` in the callback. Cursor and offset patterns naturally support this. Async iterators do not easily support mid-stream resume.
@@ -785,6 +794,7 @@ async createConnector(ctx) {
 | Shopify    | `entityType` (e.g., `'products'`)    | `[entityType]`           |
 | WordPress  | `tableId` (e.g., `'posts'`)          | `[tableId]`              |
 | PostgreSQL | `sanitizeForTableWsId(tableName)`    | `['public', tableName]`  |
+| Intercom   | `tableType` (e.g., `'articles'`)     | `[tableType]`            |
 
 ### Partial Field Updates (`changedFields`)
 
