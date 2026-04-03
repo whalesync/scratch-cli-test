@@ -1,6 +1,6 @@
 # Gix Upgrade Notes
 
-Last reviewed: 2026-04-02
+Last reviewed: 2026-04-03
 
 ## Current state
 
@@ -79,13 +79,49 @@ The main reasons to stay on `0.70.0` for now are:
 
 In other words: upgrading now would be a general maintenance move, not a targeted fix for the transport problem that motivated the investigation.
 
-## Important implementation note
+## Current status of the CLI gix migration
 
-The recent CLI clone/fetch migration was kept fairly isolated behind:
+Last reviewed: 2026-04-03
 
-- `/Users/ijd/repos/spinner/scratch-git-2/src/cli/git_ops.rs`
+### Clone and fetch: regression back to system git
 
-That means a future `gix` upgrade can mostly revisit the internals there without redesigning higher-level CLI command flow. The upgrade would still be crate-wide, but the transport-specific logic now has a clearer home.
+Commit `65cb4dd6` ("replacing remaining dependencies on git with gix") successfully migrated `clone_bare` and `fetch_origin` to use gix natively:
+
+- `clone_bare` used `gix::prepare_clone_bare()` with `.with_in_memory_config_overrides([auth_header])`
+- `fetch_origin` used gix's `remote.connect(Direction::Fetch)` → `prepare_fetch()` → `receive()`
+- A helper `sync_local_heads_from_remote_branches()` mapped remote refs to local heads after clone
+
+However, the follow-up refactor commit `39a1fe63` ("reorg cli structure - split local and remote ops and extract tests") split `git_ops.rs` into `git_ops/local.rs` and `git_ops/remote.rs`, and **reverted all remote operations back to `Command::new("git")`**. The working gix implementations were lost in the reorganization.
+
+The local operations in `git_ops/local.rs` correctly use gix. Only `git_ops/remote.rs` shells out to system git.
+
+This regression causes DEV-9889: on machines without a git credential helper, `git clone --bare` fails with `could not read Username for 'https://api.scratch.md:443': Device not configured` because an HTTP→HTTPS redirect strips the `Authorization` header that was injected via `-c http.extraHeader`.
+
+**To fix clone and fetch**: restore the gix-based implementations from commit `65cb4dd6`. The code is proven and the gix 0.70 APIs support it.
+
+### Push: no gix support in any version
+
+Push remains the hard problem. Confirmed as of 2026-04-03:
+
+- **gix 0.70 through 0.81**: The `Connection` struct only exposes `ref_map()` and `prepare_fetch()`. There is no `prepare_push()`, `send_pack()`, or push module with execution logic.
+- **gix-protocol**: The `Command` enum only has `LsRefs` and `Fetch` variants. No `ReceivePack`.
+- **gitoxide roadmap**: Push is explicitly "outscoped" from the gix 1.0 roadmap (tracking issue #470). The open issue #306 ("client push to remote") has been open since January 2022 with no implementation.
+
+Push is used in the CLI's upload flow (`files.rs`): `push_origin_dirty` and `force_push_origin_dirty` save local changes back to the server. Without push, users can clone and view but cannot save.
+
+### Options for push without system git
+
+1. **HTTP API endpoint**: Add a server endpoint that accepts file content directly (e.g., POST the dirty file map as JSON). The CLI already builds file maps in memory via gix. The server commits to the bare repo on its side. This bypasses the git push protocol entirely.
+
+2. **libgit2 / git2-rs**: The `git2` Rust crate wraps libgit2, which does support push. This would add a C dependency to compile and link, but would give full git protocol support.
+
+3. **Keep system git for push only**: Accept a partial dependency on system git for the push path. Give a clear error message when git is missing ("git is required for saving changes; install Xcode Command Line Tools or Homebrew git") instead of the current cryptic credential error. Harden with `-c credential.helper=` and `GIT_TERMINAL_PROMPT=0`.
+
+4. **Lower-level protocol implementation**: Use `gix-transport` and `gix-protocol` directly to implement the `send-pack` client. This is technically possible but complex and fragile — essentially reimplementing what gix has not yet built.
+
+### Implementation note
+
+Remote transport logic lives in `src/cli/git_ops/remote.rs`. Local repo operations in `src/cli/git_ops/local.rs` already use gix correctly. The split is clean — fixing remote.rs does not require changes to local.rs or to higher-level command flow.
 
 ## What to check if we revisit this later
 

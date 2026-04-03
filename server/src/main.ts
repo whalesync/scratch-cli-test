@@ -1,5 +1,6 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ScratchConfigService } from './config/scratch-config.service';
 import {
@@ -35,7 +36,13 @@ async function bootstrap(): Promise<void> {
 
   Error.stackTraceLimit = STACK_TRACE_LIMIT;
 
-  const app = await NestFactory.create(AppModule, { bodyParser: false, bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false, bufferLogs: true });
+
+  // Trust the first proxy (load balancer) so that req.protocol and req.ip
+  // reflect the original client request rather than the LB→server hop.
+  // Without this, req.protocol is always 'http' behind TLS-terminating proxies,
+  // which causes generated URLs (e.g. git clone URLs) to use http:// instead of https://.
+  app.set('trust proxy', 1);
 
   // Turn on class validation for body and URL params (DTOs).
   app.useGlobalPipes(new ValidationPipe());
