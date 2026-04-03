@@ -1,8 +1,8 @@
 import DataEditor, { GridCellKind, type GridColumn, type Item } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Loader, Stack } from '@mantine/core';
+import { Box, Group, Loader, Stack } from '@mantine/core';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Text12Regular, Text13Regular } from '../../components/base/text';
+import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
 
 interface GridDataResult {
   rows: Array<Record<string, unknown>>;
@@ -11,8 +11,11 @@ interface GridDataResult {
   offset: number;
 }
 
+type FilterStatus = 'unreviewed' | 'published';
+
 interface FolderDataGridProps {
   selectedFolderPath: string | null;
+  workspacePath: string | null;
 }
 
 function toDisplayString(value: unknown): string {
@@ -28,7 +31,42 @@ function inferCellKind(value: unknown): GridCellKind {
   return GridCellKind.Text;
 }
 
-export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath }: FolderDataGridProps) {
+function FilterPill({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number | null;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Box
+      component="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 8px',
+        borderRadius: 10,
+        border: active ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
+        backgroundColor: active ? 'var(--mantine-color-blue-0)' : 'transparent',
+        cursor: 'pointer',
+        lineHeight: 1,
+      }}
+    >
+      <Text12Medium c={active ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
+        {label}
+        {count != null && ` (${count.toLocaleString()})`}
+      </Text12Medium>
+    </Box>
+  );
+}
+
+export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath, workspacePath }: FolderDataGridProps) {
   const [gridData, setGridData] = useState<GridDataResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +74,8 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath 
     column: null,
     direction: null,
   });
+  const [filterStatus, setFilterStatus] = useState<FilterStatus | null>(null);
+  const [filterCounts, setFilterCounts] = useState<{ unreviewed: number; published: number } | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -69,8 +109,17 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath 
     setLoading(true);
     setError(null);
 
+    const opts: {
+      filterStatus?: 'unreviewed' | 'unpublished' | 'published';
+      workspacePath?: string;
+    } = {};
+    if (filterStatus && workspacePath) {
+      opts.filterStatus = filterStatus;
+      opts.workspacePath = workspacePath;
+    }
+
     window.scratchFiles
-      .readGridData(selectedFolderPath)
+      .readGridData(selectedFolderPath, opts)
       .then((result) => {
         if (!cancelled) {
           setGridData(result);
@@ -91,12 +140,49 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath 
     return () => {
       cancelled = true;
     };
-  }, [selectedFolderPath]);
+  }, [selectedFolderPath, filterStatus, workspacePath]);
 
-  // Reset sort when folder changes
+  // Reset sort and filter when folder changes
   useEffect(() => {
     setSort({ column: null, direction: null });
+    setFilterStatus(null);
+    setFilterCounts(null);
   }, [selectedFolderPath]);
+
+  // Fetch filter counts when folder changes (requires workspacePath)
+  useEffect(() => {
+    if (!selectedFolderPath || !workspacePath) {
+      setFilterCounts(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    Promise.all([
+      window.scratchFiles.readGridData(selectedFolderPath, {
+        filterStatus: 'unreviewed',
+        workspacePath,
+        limit: 0,
+      }),
+      window.scratchFiles.readGridData(selectedFolderPath, {
+        filterStatus: 'published',
+        workspacePath,
+        limit: 0,
+      }),
+    ])
+      .then(([unreviewed, published]) => {
+        if (!cancelled) {
+          setFilterCounts({ unreviewed: unreviewed.total, published: published.total });
+        }
+      })
+      .catch(() => {
+        // Filter counts are non-critical; silently ignore errors
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFolderPath, workspacePath]);
 
   const columns: GridColumn[] = (gridData?.columns ?? []).map((name) => ({
     id: name,
@@ -166,6 +252,12 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath 
     [columns],
   );
 
+  const handleFilterToggle = useCallback((status: FilterStatus) => {
+    setFilterStatus((prev) => (prev === status ? null : status));
+  }, []);
+
+  const showFilterBar = workspacePath && selectedFolderPath && !error;
+
   return (
     <Stack
       gap={0}
@@ -178,6 +270,33 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath 
         overflow: 'hidden',
       }}
     >
+      {showFilterBar && (
+        <Box
+          style={{
+            padding: '6px 12px',
+            borderBottom: '0.5px solid var(--fg-divider)',
+          }}
+        >
+          <Group gap={6} align="center">
+            <Text12Medium c="var(--fg-muted)" style={{ marginRight: 4 }}>
+              Filter
+            </Text12Medium>
+            <FilterPill
+              label="Needs review"
+              count={filterCounts?.unreviewed ?? null}
+              active={filterStatus === 'unreviewed'}
+              onClick={() => handleFilterToggle('unreviewed')}
+            />
+            <FilterPill
+              label="Approved"
+              count={filterCounts?.published ?? null}
+              active={filterStatus === 'published'}
+              onClick={() => handleFilterToggle('published')}
+            />
+          </Group>
+        </Box>
+      )}
+
       {!selectedFolderPath && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text13Regular c="dimmed">Select a folder to view data</Text13Regular>
@@ -198,7 +317,9 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath 
 
       {selectedFolderPath && !loading && !error && gridData && gridData.rows.length === 0 && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Text13Regular c="dimmed">No data in this folder</Text13Regular>
+          <Text13Regular c="dimmed">
+            {filterStatus ? 'No rows match the current filter' : 'No data in this folder'}
+          </Text13Regular>
         </Box>
       )}
 

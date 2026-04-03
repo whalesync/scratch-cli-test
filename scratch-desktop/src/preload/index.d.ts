@@ -144,6 +144,8 @@ interface ScratchFilesAPI {
       sortOrder?: 'asc' | 'desc';
       filter?: Record<string, unknown>;
       columns?: string[];
+      filterStatus?: 'unreviewed' | 'unpublished' | 'published';
+      workspacePath?: string;
     },
   ) => Promise<{
     rows: Array<Record<string, unknown>>;

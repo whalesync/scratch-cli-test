@@ -92,7 +92,7 @@ export function WorkspaceContent({ workspace, localPath, selectedFolderPath, onS
       <ResizeHandle onResizeStart={handleResizeStart} onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
       {/* Data grid — memoized so sidebar width changes don't re-render it */}
-      <FolderDataGrid selectedFolderPath={selectedFolderPath} />
+      <FolderDataGrid selectedFolderPath={selectedFolderPath} workspacePath={localPath} />
     </Box>
   );
 }
