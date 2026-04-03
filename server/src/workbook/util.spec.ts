@@ -1,4 +1,4 @@
-import { deduplicateFileName, resolveBaseFileName } from './util';
+import { deduplicateFileName, normalizeFileName, resolveBaseFileName } from './util';
 
 describe('resolveBaseFileName', () => {
   it('should return normalized slug when slug is present', () => {
@@ -31,6 +31,29 @@ describe('resolveBaseFileName', () => {
 
   it('should normalize special characters in slug', () => {
     expect(resolveBaseFileName({ slugValue: 'hello_world!@#', idValue: 'abc123' })).toBe('helloworld');
+  });
+});
+
+describe('normalizeFileName', () => {
+  it('should not truncate names under 80 characters', () => {
+    expect(normalizeFileName('short-name')).toBe('short-name');
+  });
+
+  it('should truncate names longer than 80 characters', () => {
+    const longName = 'a'.repeat(100);
+    expect(normalizeFileName(longName)).toHaveLength(80);
+  });
+
+  it('should remove trailing hyphens after truncation', () => {
+    // Create a string where char 80 lands in the middle of a hyphen sequence
+    const name = 'a'.repeat(79) + '- more words here';
+    const result = normalizeFileName(name);
+    expect(result).not.toMatch(/-$/);
+    expect(result.length).toBeLessThanOrEqual(80);
+  });
+
+  it('should handle all-special-character input resulting in empty string', () => {
+    expect(normalizeFileName('!!!@@@###')).toBe('');
   });
 });
 

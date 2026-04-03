@@ -1,11 +1,13 @@
 import * as posixPath from 'path/posix';
 
+const MAX_FILENAME_LENGTH = 80;
+
 /**
  * @param filename - name of the file to slugify
  * @returns a version of the file name that is safe to use as a file name
  */
 export function normalizeFileName(filename: string): string {
-  return filename
+  const normalized = filename
     .toString() // Ensure the input is a string
     .normalize('NFD') // Split accented letters into base letter and accent
     .replace(/[\u0300-\u036f]/g, '') // Remove all previously split accents (diacritical marks)
@@ -14,6 +16,12 @@ export function normalizeFileName(filename: string): string {
     .replace(/\s+/g, '-') // Replace spaces with hyphens
     .replace(/[^a-z0-9 -]/g, '') // Remove all non-alphanumeric characters, except hyphens and spaces
     .replace(/-+/g, '-'); // Replace multiple hyphens with a single hyphen
+
+  if (normalized.length <= MAX_FILENAME_LENGTH) {
+    return normalized;
+  }
+
+  return normalized.slice(0, MAX_FILENAME_LENGTH).replace(/-+$/, '');
 }
 
 /**
