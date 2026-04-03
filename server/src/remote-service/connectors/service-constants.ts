@@ -24,4 +24,5 @@ export const Service = {
   MEMBERSTACK: 'MEMBERSTACK',
   HUBSPOT: 'HUBSPOT',
   LINEAR: 'LINEAR',
+  BREVO: 'BREVO',
 } as const;

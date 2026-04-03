@@ -82,3 +82,4 @@ client/next-env.d.ts
 /scratch-desktop/dist-release
 /scratch-desktop/dist-release-test
 
+.gstack/
