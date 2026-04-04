@@ -57,11 +57,14 @@ impl ApiClient {
         Some(Self::new(server_url, creds.api_token))
     }
 
-    async fn do_request<B, R>(&self, method: Method, path: &str, body: Option<&B>) -> ApiResult<R>
-    where
-        B: Serialize,
-        R: DeserializeOwned,
-    {
+    /// Build an authenticated request with standard headers.
+    /// Sets Content-Length: 0 when no body is provided — required by GCP load balancers.
+    fn build_request<B: Serialize>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+    ) -> reqwest::RequestBuilder {
         let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
         let mut req = self
             .client
@@ -71,45 +74,42 @@ impl ApiClient {
 
         if let Some(b) = body {
             req = req.json(b);
+        } else {
+            req = req.header("Content-Length", "0");
         }
+        req
+    }
 
-        let resp = req.send().await?;
-        let status = resp.status();
-
-        if status == StatusCode::UNAUTHORIZED {
-            return Err(ApiError::Unauthorized);
-        }
-        if status == StatusCode::NOT_FOUND {
-            return Err(ApiError::NotFound(path.to_string()));
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
-        }
-
+    /// Send a request and parse the JSON response.
+    async fn do_request<B, R>(&self, method: Method, path: &str, body: Option<&B>) -> ApiResult<R>
+    where
+        B: Serialize,
+        R: DeserializeOwned,
+    {
+        let resp = self.build_request(method, path, body).send().await?;
+        let resp = Self::check_response(resp).await?;
         let data = resp.json::<R>().await?;
         Ok(data)
     }
 
-    /// Perform a request discarding the response body (handles 200/204).
+    /// Send a request discarding the response body (handles 200/204).
     async fn do_request_void(&self, method: Method, path: &str) -> ApiResult<()> {
-        let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
         let resp = self
-            .client
-            .request(method, &url)
-            .header("Authorization", format!("API-Token {}", self.token))
-            .header("User-Agent", "Scratch-cli/1.0")
+            .build_request::<()>(method, path, None)
             .send()
             .await?;
+        Self::check_response(resp).await?;
+        Ok(())
+    }
+
+    /// Check response status, returning the response on success or an error on failure.
+    async fn check_response(resp: reqwest::Response) -> ApiResult<reqwest::Response> {
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
         }
         if status == StatusCode::NOT_FOUND {
-            return Err(ApiError::NotFound(path.to_string()));
+            return Err(ApiError::NotFound(resp.url().path().to_string()));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -118,7 +118,7 @@ impl ApiClient {
                 body,
             });
         }
-        Ok(())
+        Ok(resp)
     }
 
     pub async fn get<R: DeserializeOwned>(&self, path: &str) -> ApiResult<R> {
@@ -160,23 +160,33 @@ impl ApiClient {
 
     // ── Auth endpoints (no token needed) ───────────────────────────────────
 
+    /// Build an unauthenticated request with standard headers.
+    /// Sets Content-Length: 0 when no body is provided — required by GCP load balancers.
+    fn build_unauthed_request<B: Serialize>(
+        client: &Client,
+        method: Method,
+        url: &str,
+        body: Option<&B>,
+    ) -> reqwest::RequestBuilder {
+        let mut req = client
+            .request(method, url)
+            .header("User-Agent", "Scratch-cli/1.0");
+
+        if let Some(b) = body {
+            req = req.json(b);
+        } else {
+            req = req.header("Content-Length", "0");
+        }
+        req
+    }
+
     pub async fn auth_initiate(base_url: &str) -> ApiResult<AuthInitiateResponse> {
         let client = Client::new();
         let url = format!("{}/cli/v1/auth/initiate", base_url.trim_end_matches('/'));
-        let resp = client
-            .post(&url)
-            .header("User-Agent", "Scratch-cli/1.0")
-            .header("Content-Length", "0")
+        let resp = Self::build_unauthed_request::<()>(&client, Method::POST, &url, None)
             .send()
             .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
-        }
+        let resp = Self::check_response(resp).await?;
         Ok(resp.json().await?)
     }
 
@@ -184,20 +194,10 @@ impl ApiClient {
         let client = Client::new();
         let url = format!("{}/cli/v1/auth/poll", base_url.trim_end_matches('/'));
         let body = serde_json::json!({ "pollingCode": polling_code });
-        let resp = client
-            .post(&url)
-            .json(&body)
-            .header("User-Agent", "Scratch-cli/1.0")
+        let resp = Self::build_unauthed_request(&client, Method::POST, &url, Some(&body))
             .send()
             .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            return Err(ApiError::ServerError {
-                status: status.as_u16(),
-                body: body_text,
-            });
-        }
+        let resp = Self::check_response(resp).await?;
         Ok(resp.json().await?)
     }
 }
