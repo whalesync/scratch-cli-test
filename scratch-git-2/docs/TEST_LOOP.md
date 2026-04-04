@@ -67,6 +67,7 @@ Then push them to the workbook config git repo (admin-only button in Syncs sideb
 
 Normal sync create/update/delete flows now keep the workbook config repo up to date automatically.
 These server init + push APIs are deprecated and kept only for legacy/manual use:
+
 ```bash
 curl -X POST http://localhost:3010/cli/v1/workbooks/<workbook-id>/config/init \
      -H "Authorization: Bearer <token>"
@@ -76,6 +77,7 @@ curl -X POST http://localhost:3010/cli/v1/workbooks/<workbook-id>/config/push-sy
 
 The workbook config repo is now at `org/<orgId>/<workbookId>/<workbookId>.git` on the server.
 Clone it locally to inspect:
+
 ```bash
 # From inside the workspace directory:
 git clone http://localhost:3010/cli/v1/workbooks/<workbook-id>/config/git .scratch/workspace
@@ -129,18 +131,18 @@ scratchmd2 publish-from-git
 
 ## Quick reference
 
-| Command | What it does |
-|---|---|
-| `scratchmd2 auth login` | Authenticate with the Scratch server |
-| `scratchmd2 workspaces list` | List all workspaces |
-| `scratchmd2 workspaces init <id>` | Clone workspace locally |
-| `scratchmd2 files download` | Fetch + merge latest from server |
-| `scratchmd2 files upload` | Push local dirty changes to server |
-| `scratchmd2 build-index` | Rebuild SQLite index from master worktrees |
-| `scratchmd2 dump-index` | Print index contents |
-| `scratchmd2 syncs list` | List syncs for the workspace |
-| `scratchmd2 syncs run <id>` | Trigger server-side sync job (waits) |
-| `scratchmd2 syncs validate-local` | Validate local sync JSON configs |
-| `scratchmd2 syncs run-local` | Apply sync locally to dirty worktree |
-| `scratchmd2 plan-publish` | Build publish plan (diff dirty vs master) |
-| `scratchmd2 publish-from-git` | Trigger server publish from local plan |
+| Command                           | What it does                               |
+| --------------------------------- | ------------------------------------------ |
+| `scratchmd2 auth login`           | Authenticate with the Scratch server       |
+| `scratchmd2 workspaces list`      | List all workspaces                        |
+| `scratchmd2 workspaces init <id>` | Clone workspace locally                    |
+| `scratchmd2 files download`       | Fetch + merge latest from server           |
+| `scratchmd2 files upload`         | Push local dirty changes to server         |
+| `scratchmd2 build-index`          | Rebuild SQLite index from master worktrees |
+| `scratchmd2 dump-index`           | Print index contents                       |
+| `scratchmd2 syncs list`           | List syncs for the workspace               |
+| `scratchmd2 syncs run <id>`       | Trigger server-side sync job (waits)       |
+| `scratchmd2 syncs validate-local` | Validate local sync JSON configs           |
+| `scratchmd2 syncs run-local`      | Apply sync locally to dirty worktree       |
+| `scratchmd2 plan-publish`         | Build publish plan (diff dirty vs master)  |
+| `scratchmd2 publish-from-git`     | Trigger server publish from local plan     |

@@ -199,9 +199,7 @@ describeIfToken(
         expect(createdCollectionId).toBeDefined();
 
         const files = await collectPulledFiles(connector, collectionsSpec);
-        const found = files.find(
-          (f) => (f as unknown as { name: string }).name === `Test Collection ${TEST_SUFFIX}`,
-        );
+        const found = files.find((f) => (f as unknown as { name: string }).name === `Test Collection ${TEST_SUFFIX}`);
         expect(found).toBeDefined();
       });
 
@@ -303,9 +301,7 @@ describeIfToken(
         expect(createdArticleId).toBeDefined();
 
         const files = await collectPulledFiles(connector, articlesSpec);
-        const found = files.find(
-          (f) => (f as unknown as { title: string }).title === `Test Article ${TEST_SUFFIX}`,
-        );
+        const found = files.find((f) => (f as unknown as { title: string }).title === `Test Article ${TEST_SUFFIX}`);
         expect(found).toBeDefined();
       });
 
@@ -387,56 +383,60 @@ describeIfToken(
         expect(conversationsSpec.schema.properties).toHaveProperty('conversation_parts');
       });
 
-      it(
-        'pulls a page of conversations without hydration',
-        async () => {
-          // Use the internal API client to list just one page (avoids pulling all 20k+ records)
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          const apiClient = (connector as unknown as { client: { listConversations: (pageSize: number, hydrate: boolean) => AsyncGenerator<Record<string, unknown>[]> } }).client;
-
-          let firstBatch: Record<string, unknown>[] = [];
-          for await (const page of apiClient.listConversations(5, false)) {
-            firstBatch = page;
-            break; // Stop after first page
+      it('pulls a page of conversations without hydration', async () => {
+        // Use the internal API client to list just one page (avoids pulling all 20k+ records)
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        const apiClient = (
+          connector as unknown as {
+            client: {
+              listConversations: (pageSize: number, hydrate: boolean) => AsyncGenerator<Record<string, unknown>[]>;
+            };
           }
+        ).client;
 
-          expect(firstBatch.length).toBeGreaterThan(0);
+        let firstBatch: Record<string, unknown>[] = [];
+        for await (const page of apiClient.listConversations(5, false)) {
+          firstBatch = page;
+          break; // Stop after first page
+        }
 
-          const first = firstBatch[0] as { id: string; state: string; source: { body: string } };
-          expect(first.id).toBeDefined();
-          expect(first.state).toBeDefined();
-          expect(first.source).toBeDefined();
-        },
-        30_000,
-      );
+        expect(firstBatch.length).toBeGreaterThan(0);
 
-      it(
-        'fetches a single conversation by ID with full conversation_parts',
-        async () => {
-          // Get one conversation ID from a non-hydrated list call
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          const apiClient = (connector as unknown as { client: { listConversations: (pageSize: number, hydrate: boolean) => AsyncGenerator<Record<string, unknown>[]> } }).client;
+        const first = firstBatch[0] as { id: string; state: string; source: { body: string } };
+        expect(first.id).toBeDefined();
+        expect(first.state).toBeDefined();
+        expect(first.source).toBeDefined();
+      }, 30_000);
 
-          let conversationId: string | undefined;
-          for await (const page of apiClient.listConversations(1, false)) {
-            conversationId = (page[0] as { id: string }).id;
-            break;
+      it('fetches a single conversation by ID with full conversation_parts', async () => {
+        // Get one conversation ID from a non-hydrated list call
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        const apiClient = (
+          connector as unknown as {
+            client: {
+              listConversations: (pageSize: number, hydrate: boolean) => AsyncGenerator<Record<string, unknown>[]>;
+            };
           }
+        ).client;
 
-          if (!conversationId) return; // No conversations — skip
+        let conversationId: string | undefined;
+        for await (const page of apiClient.listConversations(1, false)) {
+          conversationId = (page[0] as { id: string }).id;
+          break;
+        }
 
-          // Fetch the full conversation via pullRecordFilesByIds (always hydrates)
-          const fetched: ConnectorFile[] = [];
-          await connector.pullRecordFilesByIds(conversationsSpec, [conversationId], async ({ files: batch }) => {
-            fetched.push(...batch);
-          });
+        if (!conversationId) return; // No conversations — skip
 
-          expect(fetched).toHaveLength(1);
-          expect((fetched[0] as unknown as { id: string }).id).toBe(conversationId);
-          expect(fetched[0]).toHaveProperty('conversation_parts');
-        },
-        30_000,
-      );
+        // Fetch the full conversation via pullRecordFilesByIds (always hydrates)
+        const fetched: ConnectorFile[] = [];
+        await connector.pullRecordFilesByIds(conversationsSpec, [conversationId], async ({ files: batch }) => {
+          fetched.push(...batch);
+        });
+
+        expect(fetched).toHaveLength(1);
+        expect((fetched[0] as unknown as { id: string }).id).toBe(conversationId);
+        expect(fetched[0]).toHaveProperty('conversation_parts');
+      }, 30_000);
     });
   },
   60_000,

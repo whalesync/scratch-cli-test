@@ -148,7 +148,7 @@ function sanitizeJsonOutput(stdout) {
 }
 
 function quoteIdent(identifier) {
-  return `"${identifier.replace(/"/g, "\"\"")}"`;
+  return `"${identifier.replace(/"/g, '""')}"`;
 }
 
 function resolveWorkspaceDir(parentDir, initDirectory) {
@@ -196,7 +196,9 @@ function readApiToken(serverUrl) {
     );
   }
 
-  const tokenMatch = blockMatch[1].match(/^\s{4}apiToken:\s*"?([^"\n]+)"?\s*$/m);
+  const tokenMatch = blockMatch[1].match(
+    /^\s{4}apiToken:\s*"?([^"\n]+)"?\s*$/m,
+  );
   if (!tokenMatch) {
     throw new Error(`apiToken missing for ${hostname} in ${credsPath}.`);
   }
@@ -219,11 +221,14 @@ function canExecuteBinary(candidate) {
 
 function resolveBinary(binaryArg) {
   const repoBinary = path.resolve(__dirname, "../../../target/debug/scratchmd");
-  const repoBinaryReady = fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
+  const repoBinaryReady =
+    fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
 
   if (binaryArg) {
     const looksLikePath =
-      binaryArg.includes("/") || binaryArg.startsWith(".") || path.isAbsolute(binaryArg);
+      binaryArg.includes("/") ||
+      binaryArg.startsWith(".") ||
+      path.isAbsolute(binaryArg);
 
     if (looksLikePath && canExecuteBinary(binaryArg)) {
       return binaryArg;
@@ -355,7 +360,9 @@ async function seedDatabase(databaseUrl, recordCount) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   try {
-    await client.query(`DROP TABLE IF EXISTS ${quoteIdent(TABLE_NAME)} CASCADE`);
+    await client.query(
+      `DROP TABLE IF EXISTS ${quoteIdent(TABLE_NAME)} CASCADE`,
+    );
     await client.query(`
       CREATE TABLE ${quoteIdent(TABLE_NAME)} (
         id INTEGER PRIMARY KEY,
@@ -436,7 +443,8 @@ function findTable(tables) {
   const suffix = tables.find(
     (table) =>
       typeof table.id === "string" &&
-      (table.id.endsWith(`/${TABLE_NAME}`) || table.id.endsWith(`:${TABLE_NAME}`)),
+      (table.id.endsWith(`/${TABLE_NAME}`) ||
+        table.id.endsWith(`:${TABLE_NAME}`)),
   );
   if (suffix) {
     return suffix;
@@ -459,15 +467,18 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
   let lastSummary = "";
 
   while (Date.now() - start < JOB_POLL_TIMEOUT_MS) {
-    const response = await fetch(`${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `API-Token ${apiToken}`,
-        "User-Agent": "Scratch-cli/1.0",
+    const response = await fetch(
+      `${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `API-Token ${apiToken}`,
+          "User-Agent": "Scratch-cli/1.0",
+        },
+        body: JSON.stringify({ jobIds }),
       },
-      body: JSON.stringify({ jobIds }),
-    });
+    );
 
     if (!response.ok) {
       throw new Error(`Job polling failed with HTTP ${response.status}`);
@@ -475,8 +486,8 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
 
     const statuses = await response.json();
     const byId = new Map(statuses.map((job) => [job.bullJobId, job]));
-    const hydrated = jobIds.map((jobId) =>
-      byId.get(jobId) || { bullJobId: jobId, state: "created" },
+    const hydrated = jobIds.map(
+      (jobId) => byId.get(jobId) || { bullJobId: jobId, state: "created" },
     );
     const summary = hydrated
       .map((job) => `${job.bullJobId}:${job.state}`)
@@ -534,12 +545,16 @@ async function main() {
   const serverUrl =
     cliArgs.serverUrl || process.env.SCRATCH_API_URL || "http://localhost:3010";
   const databasePrefix =
-    cliArgs.databaseUrl || process.env.DATABASE_URL || process.env.DATABASE_URL_PREFIX;
+    cliArgs.databaseUrl ||
+    process.env.DATABASE_URL ||
+    process.env.DATABASE_URL_PREFIX;
   const schema = process.env.DB_SCHEMA || "public";
   const recordCount = Number(
     cliArgs.recordCount || process.env.SMOKE_RECORD_COUNT || "3",
   );
-  const binary = resolveBinary(cliArgs.binary || process.env.SCRATCH_CLI_BINARY);
+  const binary = resolveBinary(
+    cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
+  );
   const workspaceRoot =
     cliArgs.workspaceRoot ||
     process.env.SMOKE_WORKSPACE_ROOT ||
@@ -638,7 +653,10 @@ async function main() {
         workspaceRoot,
       ]).stdout,
     );
-    state.workspaceDir = resolveWorkspaceDir(workspaceRoot, initResult.directory);
+    state.workspaceDir = resolveWorkspaceDir(
+      workspaceRoot,
+      initResult.directory,
+    );
     console.log(`Workspace dir: ${state.workspaceDir}`);
 
     printSection("Link test table");
@@ -646,13 +664,7 @@ async function main() {
       runCli(
         binary,
         serverUrl,
-        [
-          "linked",
-          "--workspace",
-          state.workbookId,
-          "available",
-          connection.id,
-        ],
+        ["linked", "--workspace", state.workbookId, "available", connection.id],
         { cwd: state.workspaceDir },
       ).stdout,
     );
@@ -681,13 +693,7 @@ async function main() {
     runCli(
       binary,
       serverUrl,
-      [
-        "linked",
-        "--workspace",
-        state.workbookId,
-        "pull",
-        linkedFolder.id,
-      ],
+      ["linked", "--workspace", state.workbookId, "pull", linkedFolder.id],
       { cwd: state.workspaceDir, noJson: true },
     );
     runCli(binary, serverUrl, ["files", "download"], {
@@ -778,28 +784,44 @@ async function main() {
 
       if (state.workspaceDir && state.workbookId) {
         try {
-          runCli(binary, serverUrl, ["workspaces", "unsync", state.workbookId, "--yes"], {
-            noJson: true,
-          });
+          runCli(
+            binary,
+            serverUrl,
+            ["workspaces", "unsync", state.workbookId, "--yes"],
+            {
+              noJson: true,
+            },
+          );
         } catch (error) {
-          console.warn(`[cleanup] Failed to unsync workspace: ${error.message}`);
+          console.warn(
+            `[cleanup] Failed to unsync workspace: ${error.message}`,
+          );
         }
       }
 
       if (state.workbookId) {
         try {
-          runCli(binary, serverUrl, ["workspaces", "delete", state.workbookId], {
-            noJson: true,
-          });
+          runCli(
+            binary,
+            serverUrl,
+            ["workspaces", "delete", state.workbookId],
+            {
+              noJson: true,
+            },
+          );
         } catch (error) {
-          console.warn(`[cleanup] Failed to delete workspace: ${error.message}`);
+          console.warn(
+            `[cleanup] Failed to delete workspace: ${error.message}`,
+          );
         }
       }
 
       try {
         await dropDatabase(adminDbUrl, dbName);
       } catch (error) {
-        console.warn(`[cleanup] Failed to drop database ${dbName}: ${error.message}`);
+        console.warn(
+          `[cleanup] Failed to drop database ${dbName}: ${error.message}`,
+        );
       }
     }
   }

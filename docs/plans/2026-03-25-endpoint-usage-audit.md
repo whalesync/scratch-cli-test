@@ -13,7 +13,6 @@ The Rust CLI prefixes all requests with `/cli/v1` and hits dedicated CLI control
 
 ### Legend
 
-
 | Symbol  | Meaning                                                         |
 | ------- | --------------------------------------------------------------- |
 | **Y**   | Actively used in production UI flows                            |
@@ -21,11 +20,9 @@ The Rust CLI prefixes all requests with `/cli/v1` and hits dedicated CLI control
 | **API** | Client API function exists but is never called from a component |
 | **-**   | No client usage at all                                          |
 
-
 ---
 
 ### DataFolderController (`/data-folder`)
-
 
 | #   | Method | Route                             | Handler                   | Client API Function                | UI Usage | Components                                              |
 | --- | ------ | --------------------------------- | ------------------------- | ---------------------------------- | -------- | ------------------------------------------------------- |
@@ -40,11 +37,9 @@ The Rust CLI prefixes all requests with `/cli/v1` and hits dedicated CLI control
 | 9   | POST   | `/data-folder/:id/refresh-schema` | `refreshDataFolderSchema` | `dataFolderApi.refreshSchema`      | **Y**    | DataFolderSchemaModal                                   |
 | 10  | GET    | `/data-folder/:id/schema-paths`   | `getSchemaPaths`          | `workbookApi.getSchemaPaths`       | **Y**    | ChooseTablesModal                                       |
 
-
 ---
 
 ### WorkbookController (`/workbook`)
-
 
 | #   | Method | Route                                    | Handler            | Client API Function            | UI Usage | Components                                                                                           |
 | --- | ------ | ---------------------------------------- | ------------------ | ------------------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
@@ -65,11 +60,9 @@ The Rust CLI prefixes all requests with `/cli/v1` and hits dedicated CLI control
 | 25  | PATCH  | `/workbook/:id/permission/:permissionId` | `updatePermission` | `workbookApi.updatePermission` | **Y**    | WorkspacePermissionsModal (via `useWorkspacePermissions`)                                            |
 | 26  | DELETE | `/workbook/:id/invite/:inviteId`         | `removeInvite`     | `workbookApi.deleteInvite`     | **Y**    | WorkspacePermissionsModal (via `useWorkspacePermissions`)                                            |
 
-
 ---
 
 ### FilesController (`/workbooks/:workbookId/files`)
-
 
 | #   | Method | Route                                             | Handler             | Client API Function          | UI Usage | Components                                                                                                                                         |
 | --- | ------ | ------------------------------------------------- | ------------------- | ---------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -82,13 +75,11 @@ The Rust CLI prefixes all requests with `/cli/v1` and hits dedicated CLI control
 | 33  | POST   | `/workbooks/:workbookId/files/publish`            | `publishFile`       | `filesApi.publishFile`       | **API**  | Function exists but UI uses `workbookApi.planPublishV2` for all publishing                                                                         |
 | 34  | GET    | `/workbooks/:workbookId/files/download`           | `downloadFolder`    | `filesApi.downloadFolder`    | **Y**    | TreeNode (download folder as ZIP)                                                                                                                  |
 
-
 ---
 
 ## Rust CLI Usage (`experimental/scratch-cli-2`)
 
 The CLI uses a `/cli/v1` prefix and hits **dedicated CLI controllers** in `server/src/cli/`:
-
 
 | CLI Controller                 | Server Path                         | CLI Commands                                                                                 |
 | ------------------------------ | ----------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -98,7 +89,6 @@ The CLI uses a `/cli/v1` prefix and hits **dedicated CLI controllers** in `serve
 | `cli-sync.controller.ts`       | `/cli/v1/workbooks/:id/syncs`       | `syncs list`, `syncs show`, `syncs create`, `syncs update`, `syncs delete`, `syncs run`      |
 | `cli-auth.controller.ts`       | `/cli/v1/auth`                      | `auth login`                                                                                 |
 
-
 **None of the 34 endpoints from DataFolderController, WorkbookController, or FilesController are called by the Rust CLI.** File sync in the CLI uses direct git operations (clone/fetch/push), not HTTP file APIs.
 
 ---
@@ -107,14 +97,11 @@ The CLI uses a `/cli/v1` prefix and hits **dedicated CLI controllers** in `serve
 
 ### Unused Endpoints (no client callers)
 
-
 | #   | Endpoint                        | Reason                                                                                      | Recommendation         |
 | --- | ------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------- |
 | 6   | POST `/data-folder/:id/publish` | No client API function references this route. Publishing uses `planPublishV2` flow instead. | **Remove** - dead code |
 
-
 ### Dead Client API Functions (API exists, never called from UI)
-
 
 | #   | Endpoint                                    | Client Function         | Reason                                                           | Recommendation                                                                   |
 | --- | ------------------------------------------- | ----------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -122,17 +109,13 @@ The CLI uses a `/cli/v1` prefix and hits **dedicated CLI controllers** in `serve
 | 32  | POST `/workbooks/:workbookId/files`         | `filesApi.createFile`   | NewFileModal uses `POST /data-folder/:id/files` instead          | **Remove API function** or migrate NewFileModal to use this endpoint             |
 | 33  | POST `/workbooks/:workbookId/files/publish` | `filesApi.publishFile`  | UI uses `planPublishV2` for all publishing workflows             | **Remove API function** and server endpoint if `planPublishV2` fully replaces it |
 
-
 ### Debug-Only Endpoints
-
 
 | #   | Endpoint                   | Reason                 | Recommendation                                                     |
 | --- | -------------------------- | ---------------------- | ------------------------------------------------------------------ |
 | 19  | POST `/workbook/:id/reset` | Only used in DebugMenu | **Keep** - useful for dev, but consider gating behind feature flag |
 
-
 ### Duplication to Resolve
-
 
 | Area          | Endpoints                                                                                                    | Issue                                                                                                   | Recommendation                                                                                                                                 |
 | ------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -140,11 +123,9 @@ The CLI uses a `/cli/v1` prefix and hits **dedicated CLI controllers** in `serve
 | File deletion | `filesApi.deleteFileByPath` (via `useFileByPath`) vs `workbookApi.deleteFile` (in RemoveFileModal)           | Two client API functions call the same server endpoint (`DELETE /workbooks/:workbookId/files/by-path`). | Consolidate to one API function. `filesApi.deleteFileByPath` is the canonical location.                                                        |
 | File publish  | `POST /data-folder/:id/publish` (#6) vs `POST /workbooks/:workbookId/files/publish` (#33) vs `planPublishV2` | Three publish mechanisms. Only `planPublishV2` is actively used.                                        | Remove #6 and #33 if `planPublishV2` is the permanent replacement.                                                                             |
 
-
 ---
 
 ## Summary
-
 
 | Category                                          | Count                                              |
 | ------------------------------------------------- | -------------------------------------------------- |
@@ -154,5 +135,3 @@ The CLI uses a `/cli/v1` prefix and hits **dedicated CLI controllers** in `serve
 | Debug-only                                        | 1 (#19)                                            |
 | No client usage at all                            | 1 (#6)                                             |
 | Unreferenced by Rust CLI                          | 34 (all - CLI uses separate `/cli/v1` controllers) |
-
-

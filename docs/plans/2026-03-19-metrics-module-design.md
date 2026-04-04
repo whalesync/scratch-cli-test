@@ -26,6 +26,7 @@ server/src/metrics/
 ### Step 1: Add OpenTelemetry dependencies
 
 Add to `server/package.json`:
+
 - `@opentelemetry/api`
 - `@opentelemetry/sdk-metrics`
 - `@opentelemetry/exporter-metrics-otlp-http`
@@ -36,6 +37,7 @@ Add to `server/package.json`:
 ### Step 2: Add config methods to ScratchConfigService
 
 Add to `server/src/config/scratch-config.service.ts`:
+
 - `getUseOpenTelemetryMetrics(): boolean` — reads `USE_OPENTELEMETRY_METRICS` env var (default `false`)
 - `getRunningInCloud(): boolean` — expose existing `runningInCloudRun` field (already has `isRunningInCloudRun()` static method, add instance method)
 - `getFriendlyServiceName(): string` — returns a service name string for OTel resource attributes (derive from `SERVICE_TYPE`)
@@ -44,6 +46,7 @@ Add to `server/src/config/scratch-config.service.ts`:
 ### Step 3: Create types.ts
 
 Port from Whalesync — identical enums:
+
 - `CustomMetricDimension` enum (NO_DIMENSION, TABLE_NAME, CONNECTOR_TYPE, JOB_TYPE)
 - `CustomMetricDimensionValue` type
 - `CustomMetricUnit` enum (KILOBYTES, MILLISECONDS, MILLISECONDS_DETAILED, AGGREGATED_COUNT, INSTANTANEOUS_COUNT, MAGNITUDE, EVENT_COUNT)
@@ -51,6 +54,7 @@ Port from Whalesync — identical enums:
 ### Step 4: Create custom-metrics.ts
 
 Skeleton with:
+
 - Empty `CustomMetric` enum (user will add values later)
 - `expectedDimensionForMetric()` function — switch statement returning dimension per metric
 - `unitForMetric()` function — switch statement returning unit per metric
@@ -59,6 +63,7 @@ Skeleton with:
 ### Step 5: Create custom-metrics-service.ts
 
 Port the Symbol-based interface pattern:
+
 - `CustomMetricsService` Symbol for DI
 - `CustomMetricsService` interface with `logValue()`, `withLoggedExecTime()`, `withLoggedExecTimeForConnector()`
 
@@ -73,6 +78,7 @@ Logs execution times via `WSLogger.info()`. `logValue()` is a no-op. Used in loc
 ### Step 8: Create opentelemetry/opentelemetry-metric-collector.ts
 
 Port from Whalesync with adaptations:
+
 - Use `assertUnreachable` from `server/src/utils/asserts.ts` — note: Spinner's version doesn't have the `assertUnreachableButStillReturn` variant, so add a local helper or handle the default case differently (return a counter as fallback with a type cast)
 - Same instrument creation logic (Counter, Gauge, Histogram based on unit type)
 - Same histogram bucket configurations
@@ -81,6 +87,7 @@ Port from Whalesync with adaptations:
 ### Step 9: Create opentelemetry/opentelemetry-metrics.service.ts
 
 Port from Whalesync with adaptations:
+
 - Namespace: `'scratch'` (instead of `'bottlenose'`)
 - Inject `ScratchConfigService` instead of `BottlenoseConfigService`
 - Use `ScratchConfigService` methods for environment, service name, build version, and running-in-cloud checks
@@ -90,6 +97,7 @@ Port from Whalesync with adaptations:
 ### Step 10: Create metrics.module.ts
 
 Factory provider pattern:
+
 - Inject `ScratchConfigService`
 - Decision tree (simplified, no AWS):
   1. `APP_ENV === 'automated_test'` or `test` → `StubMetricsService`
@@ -113,17 +121,17 @@ Port the test pattern from Whalesync — for each metric in the enum, verify the
 
 ## Key Adaptations from Whalesync
 
-| Whalesync | Scratch |
-|-----------|---------|
-| `BottlenoseConfigService` | `ScratchConfigService` |
-| `getWhalesyncEnvironment()` | `getScratchEnvironment()` |
-| `getRunningInCloud()` | `getRunningInCloud()` (new instance method) |
+| Whalesync                                   | Scratch                                                   |
+| ------------------------------------------- | --------------------------------------------------------- |
+| `BottlenoseConfigService`                   | `ScratchConfigService`                                    |
+| `getWhalesyncEnvironment()`                 | `getScratchEnvironment()`                                 |
+| `getRunningInCloud()`                       | `getRunningInCloud()` (new instance method)               |
 | `BottlenoseConfigService.isAutomatedTest()` | `ScratchConfigService.getScratchEnvironment() === 'test'` |
-| Namespace `'bottlenose'` | Namespace `'scratch'` |
-| `assertUnreachableButStillReturn` | Local fallback helper or type-safe default |
-| CloudWatch path | Removed entirely |
-| `ExperimentsModule` import | Not needed |
-| 228+ CustomMetric values | Empty enum with placeholder + TODO |
+| Namespace `'bottlenose'`                    | Namespace `'scratch'`                                     |
+| `assertUnreachableButStillReturn`           | Local fallback helper or type-safe default                |
+| CloudWatch path                             | Removed entirely                                          |
+| `ExperimentsModule` import                  | Not needed                                                |
+| 228+ CustomMetric values                    | Empty enum with placeholder + TODO                        |
 
 ## Files Modified (Existing)
 

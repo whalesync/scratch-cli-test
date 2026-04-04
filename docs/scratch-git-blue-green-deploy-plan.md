@@ -43,11 +43,11 @@ LB VIP :3100/:3101
 
 **Port assignments:**
 
-| Container            | API Port | Git Backend Port |
-|----------------------|----------|------------------|
-| nginx (external)     | 3100     | 3101             |
-| scratch-git-blue     | 3200     | 3201             |
-| scratch-git-green    | 3300     | 3301             |
+| Container         | API Port | Git Backend Port |
+| ----------------- | -------- | ---------------- |
+| nginx (external)  | 3100     | 3101             |
+| scratch-git-blue  | 3200     | 3201             |
+| scratch-git-green | 3300     | 3301             |
 
 ## State File
 
@@ -279,6 +279,7 @@ docker run -d \
 ```
 
 **Key differences from the current script:**
+
 - `mkfs.ext4` is guarded behind a `var.initialize_filesystem` Terraform variable (default `false`) — only set to `true` when provisioning a brand-new instance to avoid accidentally formatting an existing disk
 - Uses `--network host` instead of `-p` port mapping (all containers share the host network namespace, so nginx can reach blue/green on localhost)
 - Runs two scratch-git containers with different `PORT` and `GIT_BACKEND_PORT` env vars
@@ -378,6 +379,7 @@ echo "Deploy complete. Active slot: $TARGET"
 Update `gitlab-ci/stages/05-deploy.yml` to call the deploy script instead of re-running the startup script.
 
 **Current (test):**
+
 ```yaml
 deploy scratch-git to test environment:
   stage: deploy
@@ -389,10 +391,11 @@ deploy scratch-git to test environment:
       --zone europe-west1-b
       --tunnel-through-iap
       -- 'sudo google_metadata_script_runner startup'
-    - # ... health check ...
+    -  # ... health check ...
 ```
 
 **New (test):**
+
 ```yaml
 deploy scratch-git to test environment:
   stage: deploy
@@ -464,6 +467,7 @@ The first deploy after this change must run the **new startup script** (via `ter
 After that initial setup, all subsequent deploys use the deploy script and are zero-downtime.
 
 **Sequence:**
+
 1. Merge the Terraform changes
 2. `terraform apply` in test — updates the startup script metadata
 3. SSH into the test instance and run `sudo google_metadata_script_runner startup` (this is a one-time restart with downtime to bootstrap the new setup)

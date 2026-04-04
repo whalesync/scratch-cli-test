@@ -19,11 +19,11 @@ A failure at any step will prevent the connection. Test each step in order to fi
 
 ## Environment URLs
 
-| Environment | API Server                      | Client App                  |
-| ----------- | ------------------------------- | --------------------------- |
-| Local       | `http://localhost:3010`         | `http://localhost:3000`     |
-| Test        | `https://test-api.scratch.md`   | `https://test.scratch.md`   |
-| Production  | `https://api.scratch.md`        | `https://app.scratch.md`    |
+| Environment | API Server                    | Client App                |
+| ----------- | ----------------------------- | ------------------------- |
+| Local       | `http://localhost:3010`       | `http://localhost:3000`   |
+| Test        | `https://test-api.scratch.md` | `https://test.scratch.md` |
+| Production  | `https://api.scratch.md`      | `https://app.scratch.md`  |
 
 Replace `$API` and `$CLIENT` below with the appropriate URLs.
 
@@ -38,6 +38,7 @@ curl -s -o /dev/null -w "%{http_code}" -X POST $API/mcp
 **Expected:** `401` (Unauthorized — the route exists and the auth guard is active)
 
 **If 404:** The `/mcp` route is not registered. Check:
+
 - Is the `McpModule` imported in `app.module.ts`?
 - Is the server deployment up to date?
 - Are there path prefix or proxy issues in the load balancer / ingress?
@@ -49,6 +50,7 @@ curl -s $API/.well-known/oauth-protected-resource | jq .
 ```
 
 **Expected response:**
+
 ```json
 {
   "resource": "$API/mcp",
@@ -61,6 +63,7 @@ curl -s $API/.well-known/oauth-protected-resource | jq .
 **If 404:** The `.well-known` route is not registered. Check the `McpAuthController`.
 
 **Things to verify:**
+
 - `resource` points to the correct API host (not `localhost`)
 - `authorization_servers` uses the same origin as the API
 
@@ -71,6 +74,7 @@ curl -s $API/.well-known/oauth-authorization-server | jq .
 ```
 
 **Expected response:**
+
 ```json
 {
   "issuer": "$API",
@@ -86,6 +90,7 @@ curl -s $API/.well-known/oauth-authorization-server | jq .
 ```
 
 **Things to verify:**
+
 - All endpoint URLs point to the correct API host
 - `issuer` matches the API origin exactly
 
@@ -121,6 +126,7 @@ curl -s -o /dev/null -w "%{http_code}" "$CLIENT/mcp/authorize"
 **Expected:** `200` (the page itself will show "Invalid Authorization Request" without query params — that's normal)
 
 **If 404:** The client-side `/mcp/authorize` page is not deployed. Check:
+
 - Does the page exist in `client/src/app/mcp/authorize/page.tsx`?
 - Has the latest client build been deployed to this environment?
 
@@ -128,13 +134,13 @@ curl -s -o /dev/null -w "%{http_code}" "$CLIENT/mcp/authorize"
 
 ## Common Failure Modes
 
-| Symptom | Likely Cause |
-| ------- | ------------ |
-| Claude reports 404 | The client consent page (`/mcp/authorize`) is not deployed, or the MCP server URL is misconfigured in Claude |
-| 401 on `POST /mcp` with valid token | Token expired, wrong signing key, or `ENCRYPTION_MASTER_KEY` mismatch between environments |
-| OAuth flow starts but consent page says "Invalid Authorization Request" | Missing or malformed query parameters in the redirect — check Step 5 redirect URL |
-| Everything works locally but not on test/prod | Environment variables (`MCP_CLIENT_URL`, `JWT_SECRET`, etc.) not set or pointing to wrong hosts |
-| Client gets token but `POST /mcp` still fails | Check that the token scopes match what the MCP guard expects |
+| Symptom                                                                 | Likely Cause                                                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Claude reports 404                                                      | The client consent page (`/mcp/authorize`) is not deployed, or the MCP server URL is misconfigured in Claude |
+| 401 on `POST /mcp` with valid token                                     | Token expired, wrong signing key, or `ENCRYPTION_MASTER_KEY` mismatch between environments                   |
+| OAuth flow starts but consent page says "Invalid Authorization Request" | Missing or malformed query parameters in the redirect — check Step 5 redirect URL                            |
+| Everything works locally but not on test/prod                           | Environment variables (`MCP_CLIENT_URL`, `JWT_SECRET`, etc.) not set or pointing to wrong hosts              |
+| Client gets token but `POST /mcp` still fails                           | Check that the token scopes match what the MCP guard expects                                                 |
 
 ## Environment Variables to Check
 

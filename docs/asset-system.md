@@ -113,7 +113,6 @@ The default implementation returns an empty array. Connectors that contain asset
 - **`extractStandaloneEntity(input)`** — Phase 0: For `x-scratch-asset-table` tables where the record itself is the asset. Uses `recordRemoteId` as the asset ID, falls back to URL hash.
 
 - **`extractFromAnnotatedSchema(input, options)`** — Phase 1: Walks schema properties looking for `x-scratch-asset-field` annotations. Handles both array and scalar field values. Connectors provide callbacks for service-specific behavior:
-
   - `extractUrl(item)` — pull the URL from the item's shape
   - `resolveFieldValue(content, fieldName, schema)` — handle connector-specific field wrapping (e.g. Notion's property objects)
   - `extractMimeType(item)` — optional custom MIME extraction
@@ -185,7 +184,6 @@ Re-hosting downloads assets from their original (possibly expiring) URLs and upl
 `server/src/asset/asset-download.service.ts`:
 
 - **`downloadAndRehost(asset)`** — Never throws; returns `RehostResult` with success/error info.
-
   1. Validates the URL.
   2. Resolves a safe filename (priority: `asset.filename` → URL path basename → `remoteAssetId` + guessed extension).
   3. Computes GCS key: `v1/{workbookId}/{service}/{sha256(remoteAssetId)}/{filename}`

@@ -198,7 +198,7 @@ export const LINEAR_ENTITIES: EntityConfig[] = [
  */
 export function createLinearPluginConfig(): PluginConfig {
   return {
-    serviceName: 'linear',
+    serviceName: "linear",
     entities: LINEAR_ENTITIES,
     scalarMappings: LINEAR_SCALAR_MAPPINGS,
     fieldFilters: LINEAR_FIELD_FILTERS,

@@ -1,9 +1,9 @@
 'use client';
 
-import { Checkbox, Group, Modal, Stack } from '@mantine/core';
-import { useState } from 'react';
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text13Regular } from '@/app/components/base/text';
+import { Checkbox, Group, Modal, Stack } from '@mantine/core';
+import { useState } from 'react';
 
 interface PullAssetsModalProps {
   opened: boolean;

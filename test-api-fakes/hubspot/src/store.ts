@@ -16,7 +16,10 @@ export interface HubspotProperty {
 export interface HubspotRecord {
   id: string;
   properties: Record<string, string | null>;
-  associations?: Record<string, { results: Array<{ id: string; type: string }> }>;
+  associations?: Record<
+    string,
+    { results: Array<{ id: string; type: string }> }
+  >;
   createdAt: string;
   updatedAt: string;
   archived: boolean;
@@ -69,10 +72,15 @@ class Store {
   }
 
   getProperties(objectType: string): HubspotProperty[] {
-    return this.properties.get(objectType) ?? this.getDefaultProperties(objectType);
+    return (
+      this.properties.get(objectType) ?? this.getDefaultProperties(objectType)
+    );
   }
 
-  addRecord(objectType: string, properties: Record<string, string | null>): HubspotRecord {
+  addRecord(
+    objectType: string,
+    properties: Record<string, string | null>,
+  ): HubspotRecord {
     if (!this.records.has(objectType)) {
       this.records.set(objectType, new Map());
     }
@@ -191,7 +199,11 @@ class Store {
         fieldType: "text",
         description: "Object ID",
         hidden: false,
-        modificationMetadata: { archivable: false, readOnlyDefinition: true, readOnlyValue: true },
+        modificationMetadata: {
+          archivable: false,
+          readOnlyDefinition: true,
+          readOnlyValue: true,
+        },
       },
       {
         name: "createdate",
@@ -200,7 +212,11 @@ class Store {
         fieldType: "date",
         description: "Create date",
         hidden: false,
-        modificationMetadata: { archivable: false, readOnlyDefinition: true, readOnlyValue: true },
+        modificationMetadata: {
+          archivable: false,
+          readOnlyDefinition: true,
+          readOnlyValue: true,
+        },
       },
       {
         name: "lastmodifieddate",
@@ -209,13 +225,24 @@ class Store {
         fieldType: "date",
         description: "Last modified date",
         hidden: false,
-        modificationMetadata: { archivable: false, readOnlyDefinition: true, readOnlyValue: true },
+        modificationMetadata: {
+          archivable: false,
+          readOnlyDefinition: true,
+          readOnlyValue: true,
+        },
       },
     ];
 
     const objectSpecific: Record<string, HubspotProperty[]> = {
       contacts: [
-        { name: "email", label: "Email", type: "string", fieldType: "text", description: "Email", hidden: false },
+        {
+          name: "email",
+          label: "Email",
+          type: "string",
+          fieldType: "text",
+          description: "Email",
+          hidden: false,
+        },
         {
           name: "firstname",
           label: "First Name",
@@ -242,7 +269,14 @@ class Store {
         },
       ],
       companies: [
-        { name: "name", label: "Name", type: "string", fieldType: "text", description: "Company name", hidden: false },
+        {
+          name: "name",
+          label: "Name",
+          type: "string",
+          fieldType: "text",
+          description: "Company name",
+          hidden: false,
+        },
         {
           name: "domain",
           label: "Domain",

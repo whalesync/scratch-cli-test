@@ -7,16 +7,13 @@ const router = Router();
 router.get("/", (req, res) => {
   const members = store.listMembers();
 
-  const limit = Math.min(
-    parseInt(req.query.limit as string, 10) || 50,
-    200,
-  );
-  const order = (req.query.order as string)?.toUpperCase() === "DESC" ? "DESC" : "ASC";
+  const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+  const order =
+    (req.query.order as string)?.toUpperCase() === "DESC" ? "DESC" : "ASC";
   const afterCursor = req.query.after as string | undefined;
 
   // Sort by creation time
-  const sorted =
-    order === "DESC" ? [...members].reverse() : [...members];
+  const sorted = order === "DESC" ? [...members].reverse() : [...members];
 
   // Find start index from cursor
   let startIndex = 0;
@@ -54,8 +51,15 @@ router.get("/:idOrEmail", (req, res) => {
 
 // POST /members — create a member
 router.post("/", (req, res) => {
-  const { email, password, plans, customFields, metaData, json, loginRedirect } =
-    req.body;
+  const {
+    email,
+    password,
+    plans,
+    customFields,
+    metaData,
+    json,
+    loginRedirect,
+  } = req.body;
 
   if (!email) {
     res.status(400).json({ message: "email is required" });

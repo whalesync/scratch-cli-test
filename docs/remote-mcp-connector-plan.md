@@ -11,6 +11,7 @@ When connected, Claude will be able to list workbooks, browse data folders, read
 Claude supports **custom connectors** via remote MCP servers. These are internet-hosted services that expose tools and resources over the **Streamable HTTP** transport protocol. Claude discovers and invokes these tools on behalf of the user during conversations.
 
 Key protocol details:
+
 - **Transport**: Streamable HTTP — a single HTTP endpoint accepting POST (JSON-RPC messages) and GET (SSE streams)
 - **Auth**: OAuth 2.1 with PKCE, including metadata discovery (`/.well-known/oauth-authorization-server`) and dynamic client registration
 - **Message format**: JSON-RPC 2.0 over HTTP, with optional SSE streaming for responses
@@ -41,6 +42,7 @@ This is the single Streamable HTTP endpoint that Claude will POST JSON-RPC messa
 5. Clicks **"Add"**
 
 Once the admin has added the connector, team members:
+
 1. Go to **Settings > Connectors**
 2. Find the Scratch connector (marked with a "Custom" label)
 3. Click **"Connect"** — this triggers the OAuth 2.1 flow (browser opens the Scratch consent page, user logs in via Clerk, approves access)
@@ -57,6 +59,7 @@ Once the admin has added the connector, team members:
 ### Using the Connector in Conversations
 
 Once connected, users activate the Scratch connector per conversation:
+
 1. Click the **"+"** button in the Claude chat interface
 2. Select **"Connectors"**
 3. Toggle **Scratch** on
@@ -67,9 +70,9 @@ Claude will then have access to the Scratch MCP tools (list workbooks, read file
 
 There are two paths for obtaining OAuth client credentials:
 
-| Approach | When to use | How it works |
-|----------|-------------|--------------|
-| **Dynamic registration** | Individual users, first-time setup | Claude automatically calls `POST /mcp-auth/register` to get a `client_id`. No manual configuration needed. |
+| Approach                  | When to use                             | How it works                                                                                                                                                                       |
+| ------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dynamic registration**  | Individual users, first-time setup      | Claude automatically calls `POST /mcp-auth/register` to get a `client_id`. No manual configuration needed.                                                                         |
 | **Pre-registered client** | Team/Enterprise admins who want control | Admin generates a client ID + secret via a Scratch admin page or API, then enters them in Claude's Advanced settings. Allows the org to enforce specific redirect URIs and scopes. |
 
 For the MVP, supporting **dynamic client registration** is sufficient — it provides the smoothest setup experience and is the MCP-recommended approach. Pre-registered clients can be added later for enterprise controls.
@@ -94,11 +97,11 @@ After analyzing the codebase, integrating the MCP endpoint directly into the Nes
 
 **Mitigations for potential downsides:**
 
-| Concern | Mitigation |
-|---------|-----------|
-| MCP protocol complexity in NestJS | Encapsulate all JSON-RPC handling in a dedicated `McpModule` with its own controller and message router |
-| Scaling independently | The API service already scales horizontally; MCP requests are lightweight read-heavy operations |
-| Protocol evolution | The `McpModule` is self-contained — swap transport or upgrade protocol version without touching other modules |
+| Concern                           | Mitigation                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| MCP protocol complexity in NestJS | Encapsulate all JSON-RPC handling in a dedicated `McpModule` with its own controller and message router       |
+| Scaling independently             | The API service already scales horizontally; MCP requests are lightweight read-heavy operations               |
+| Protocol evolution                | The `McpModule` is self-contained — swap transport or upgrade protocol version without touching other modules |
 
 ## Architecture
 
@@ -205,16 +208,16 @@ Rather than building a full OAuth server from scratch, leverage the existing aut
 
 These are the tools Claude will be able to invoke on behalf of the user:
 
-| Tool | Description | Backing Service |
-|------|-------------|-----------------|
-| `list_workbooks` | List all workbooks the user has access to | `WorkbookService.findAll()` |
-| `get_workbook` | Get details about a specific workbook | `WorkbookService.findOne()` |
-| `list_folders` | List data folders in a workbook | `DataFolderService.findByWorkbook()` |
-| `get_folder_schema` | Get the schema/field definitions for a folder | `DataFolderService.getSchema()` |
-| `list_files` | List record files in a folder (paginated) | `FilesService.listByFolder()` |
-| `read_file` | Read the full content of a record file | `FilesService.readFile()` |
-| `search_files` | Search across files in a workbook by content | `FilesService` + git grep |
-| `resolve_references` | Follow foreign key references between records | `FilesService.resolveReferences()` |
+| Tool                 | Description                                   | Backing Service                      |
+| -------------------- | --------------------------------------------- | ------------------------------------ |
+| `list_workbooks`     | List all workbooks the user has access to     | `WorkbookService.findAll()`          |
+| `get_workbook`       | Get details about a specific workbook         | `WorkbookService.findOne()`          |
+| `list_folders`       | List data folders in a workbook               | `DataFolderService.findByWorkbook()` |
+| `get_folder_schema`  | Get the schema/field definitions for a folder | `DataFolderService.getSchema()`      |
+| `list_files`         | List record files in a folder (paginated)     | `FilesService.listByFolder()`        |
+| `read_file`          | Read the full content of a record file        | `FilesService.readFile()`            |
+| `search_files`       | Search across files in a workbook by content  | `FilesService` + git grep            |
+| `resolve_references` | Follow foreign key references between records | `FilesService.resolveReferences()`   |
 
 Example tool definition returned by `tools/list`:
 
@@ -228,8 +231,14 @@ Example tool definition returned by `tools/list`:
     "properties": {
       "workbookId": { "type": "string", "description": "The workbook ID" },
       "folderId": { "type": "string", "description": "The data folder ID" },
-      "cursor": { "type": "string", "description": "Pagination cursor from previous response" },
-      "limit": { "type": "number", "description": "Max files to return (default 50, max 200)" }
+      "cursor": {
+        "type": "string",
+        "description": "Pagination cursor from previous response"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max files to return (default 50, max 200)"
+      }
     },
     "required": ["workbookId", "folderId"]
   }

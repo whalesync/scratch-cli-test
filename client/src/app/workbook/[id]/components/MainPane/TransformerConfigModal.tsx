@@ -552,9 +552,7 @@ function TransformerStepForm({
             description="JSONPath to extract from source value (default: $ = whole value)"
             placeholder="$"
             value={config.options?.sourceExpression ?? ''}
-            onChange={(e) =>
-              updateOptions({ ...config.options, sourceExpression: e.currentTarget.value || undefined })
-            }
+            onChange={(e) => updateOptions({ ...config.options, sourceExpression: e.currentTarget.value || undefined })}
           />
           <TextInput
             size="xs"

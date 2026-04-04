@@ -9,7 +9,12 @@ router.put(
   (req, res) => {
     const { fromObjectType, fromId, toObjectType, toId } = req.params;
 
-    const success = store.addAssociation(fromObjectType, fromId, toObjectType, toId);
+    const success = store.addAssociation(
+      fromObjectType,
+      fromId,
+      toObjectType,
+      toId,
+    );
     if (!success) {
       res.status(404).json({
         status: "error",
@@ -36,7 +41,12 @@ router.delete(
   (req, res) => {
     const { fromObjectType, fromId, toObjectType, toId } = req.params;
 
-    const success = store.removeAssociation(fromObjectType, fromId, toObjectType, toId);
+    const success = store.removeAssociation(
+      fromObjectType,
+      fromId,
+      toObjectType,
+      toId,
+    );
     if (!success) {
       // HubSpot returns 204 even if association didn't exist
       res.status(204).send();

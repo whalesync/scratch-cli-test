@@ -249,7 +249,10 @@ class MutationsGenerator {
     ]);
 
     // Compute read-only fields (not in either input type)
-    const readOnlyFields = this.computeReadOnlyFields(entity, allInputFieldNames);
+    const readOnlyFields = this.computeReadOnlyFields(
+      entity,
+      allInputFieldNames,
+    );
 
     // Auto-compute strip-on-update fields: in create input but NOT in update input
     let stripOnUpdateFields = entity.mutations.stripOnUpdateFields;
@@ -521,11 +524,7 @@ class MutationsGenerator {
     const argInfo = this.getInputArgInfo(mutation);
     const argName = argInfo?.argName || "input";
     const inputTypeName = argInfo?.typeName || `${entity.graphqlType}Input`;
-    const responseBody = this.buildMutationResponseBody(
-      mutation,
-      entity,
-      true,
-    );
+    const responseBody = this.buildMutationResponseBody(mutation, entity, true);
 
     return `mutation ${toPascalCase(mutationName)}($${argName}: ${inputTypeName}!) {
   ${mutationName}(${argName}: $${argName}) {
@@ -542,11 +541,7 @@ ${responseBody}
     const argInfo = this.getInputArgInfo(mutation);
     const argName = argInfo?.argName || "input";
     const inputTypeName = argInfo?.typeName || `${entity.graphqlType}Input`;
-    const responseBody = this.buildMutationResponseBody(
-      mutation,
-      entity,
-      true,
-    );
+    const responseBody = this.buildMutationResponseBody(mutation, entity, true);
 
     // Check if mutation has a separate 'id' argument
     const hasIdArg = mutation.args.some((arg) => arg.name === "id");

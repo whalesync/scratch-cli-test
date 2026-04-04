@@ -275,9 +275,9 @@ After Clerk sign-in succeeds, the app must call the Scratch server to create or 
 **Implementation** (`src/renderer/src/hooks/useScratchUser.ts`):
 
 ```tsx
-import { useAuth } from '@clerk/clerk-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../lib/api';
+import { useAuth } from "@clerk/clerk-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../lib/api";
 
 interface ScratchUser {
   id: string;
@@ -301,7 +301,7 @@ export function useScratchUser() {
   const fetchUser = useCallback(async () => {
     const token = await getToken();
     if (!token) return null;
-    const res = await api.get('/users/current', {
+    const res = await api.get("/users/current", {
       headers: { Authorization: `Bearer ${token}` },
     });
     return res.data as ScratchUser;
@@ -331,8 +331,8 @@ export function useScratchUser() {
     const onFocus = () => {
       if (isSignedIn) fetchUser().then((u) => u && setUser(u));
     };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [isSignedIn, fetchUser]);
 
   return { user, isLoading, refetch: fetchUser };
@@ -355,14 +355,17 @@ The Scratch server can issue `USER`-type API tokens (6-month expiry) via `POST /
 **Writing CLI credentials from the main process** (`src/main/cli-auth.ts`):
 
 ```ts
-import { app } from 'electron';
-import fs from 'fs';
-import path from 'path';
-import yaml from 'js-yaml';
+import { app } from "electron";
+import fs from "fs";
+import path from "path";
+import yaml from "js-yaml";
 
 interface CliCredentials {
-  version: '2.0.0';
-  environments: Record<string, { apiToken: string; email: string; expiresAt?: string }>;
+  version: "2.0.0";
+  environments: Record<
+    string,
+    { apiToken: string; email: string; expiresAt?: string }
+  >;
 }
 
 export function writeCliCredentials(
@@ -371,15 +374,15 @@ export function writeCliCredentials(
   email: string,
   expiresAt?: string,
 ): void {
-  const credDir = path.join(app.getPath('home'), '.scratchmd');
-  const credPath = path.join(credDir, 'credentials.yaml');
+  const credDir = path.join(app.getPath("home"), ".scratchmd");
+  const credPath = path.join(credDir, "credentials.yaml");
 
   // Parse hostname from server URL for the environment key
   const hostname = new URL(serverUrl).hostname;
 
-  let existing: CliCredentials = { version: '2.0.0', environments: {} };
+  let existing: CliCredentials = { version: "2.0.0", environments: {} };
   if (fs.existsSync(credPath)) {
-    const raw = fs.readFileSync(credPath, 'utf-8');
+    const raw = fs.readFileSync(credPath, "utf-8");
     existing = yaml.load(raw) as CliCredentials;
   }
 
@@ -394,16 +397,19 @@ export function writeCliCredentials(
 
 ```ts
 // Preload exposes:
-contextBridge.exposeInMainWorld('scratchCli', {
+contextBridge.exposeInMainWorld("scratchCli", {
   writeCredentials: (serverUrl: string, apiToken: string, email: string) =>
-    ipcRenderer.invoke('cli:write-credentials', serverUrl, apiToken, email),
+    ipcRenderer.invoke("cli:write-credentials", serverUrl, apiToken, email),
   // ... other CLI methods
 });
 
 // Main process handler:
-ipcMain.handle('cli:write-credentials', async (_event, serverUrl, apiToken, email) => {
-  writeCliCredentials(serverUrl, apiToken, email);
-});
+ipcMain.handle(
+  "cli:write-credentials",
+  async (_event, serverUrl, apiToken, email) => {
+    writeCliCredentials(serverUrl, apiToken, email);
+  },
+);
 ```
 
 **Token refresh**: When `useScratchUser` refreshes the user and receives an updated `apiToken`, it should re-write the CLI credentials file. This keeps the CLI token in sync without requiring the user to re-authenticate.

@@ -103,6 +103,7 @@ The old layout scattered `.scratchmd` marker files into every connector director
 ```
 
 Problems with this layout:
+
 - `.scratchmd` files spread across every connector directory (hard to manage, easy to accidentally commit)
 - `.git/` directories give connector folders a "repo" identity that confuses tools and users
 - `.scratch/` mixed into the area the user edits
@@ -135,6 +136,7 @@ Problems with this layout:
 ```
 
 Key properties:
+
 - **No `.git` file or directory in `{CONNECTOR-NAME}/`** — see note below
 - **No `.scratchmd` in connector directories** — all metadata in the single workspace `.scratch/.scratchmd`
 - **`.scratch/` content is at `.scratch/connections/scratch/{CONNECTOR-NAME}/`** — outside the user's editing area
@@ -211,22 +213,22 @@ The same approach applies to the master checkout at `.scratch/connections/master
 
 The path abstraction that unifies CLI and service is two parameters:
 
-| Parameter | CLI value | Service value |
-|-----------|-----------|---------------|
-| `reposdir` | `.repos/` | `.` (workbook dir, same as today) |
-| `loculdir` | `.` (workspace root) | `.temp/` |
+| Parameter  | CLI value            | Service value                     |
+| ---------- | -------------------- | --------------------------------- |
+| `reposdir` | `.repos/`            | `.` (workbook dir, same as today) |
+| `loculdir` | `.` (workspace root) | `.temp/`                          |
 
 Derived paths (same formula on both sides):
 
-| Path | Formula |
-|------|---------|
-| Bare repo | `{reposdir}/{repo_basename}.git` |
-| Index DB | `{reposdir}/{repo_basename}.db` |
-| Dirty checkout | `{loculdir}/{connector_name}/` |
-| Connection scratch | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
-| Master worktree | `{loculdir}/.scratch/connections/master/{connector_name}/` |
-| Reviewed dirty snapshot | `{loculdir}/.scratch/connections/dirty/{connector_name}/` |
-| Workbook materialization | `{loculdir}/.scratch/workspace/` |
+| Path                     | Formula                                                     |
+| ------------------------ | ----------------------------------------------------------- |
+| Bare repo                | `{reposdir}/{repo_basename}.git`                            |
+| Index DB                 | `{reposdir}/{repo_basename}.db`                             |
+| Dirty checkout           | `{loculdir}/{connector_name}/`                              |
+| Connection scratch       | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
+| Master worktree          | `{loculdir}/.scratch/connections/master/{connector_name}/`  |
+| Reviewed dirty snapshot  | `{loculdir}/.scratch/connections/dirty/{connector_name}/`   |
+| Workbook materialization | `{loculdir}/.scratch/workspace/`                            |
 
 This is implemented as `WorkspaceLayout` in `src/shared/layout.rs`.
 

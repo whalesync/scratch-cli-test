@@ -38,7 +38,11 @@ function serializeRecord(
   };
 
   // Include associations if requested
-  if (requestedAssociations && requestedAssociations.length > 0 && record.associations) {
+  if (
+    requestedAssociations &&
+    requestedAssociations.length > 0 &&
+    record.associations
+  ) {
     const filteredAssoc: Record<string, unknown> = {};
     for (const assocType of requestedAssociations) {
       if (record.associations[assocType]) {
@@ -48,7 +52,10 @@ function serializeRecord(
     if (Object.keys(filteredAssoc).length > 0) {
       result.associations = filteredAssoc;
     }
-  } else if (record.associations && Object.keys(record.associations).length > 0) {
+  } else if (
+    record.associations &&
+    Object.keys(record.associations).length > 0
+  ) {
     result.associations = record.associations;
   }
 
@@ -57,7 +64,10 @@ function serializeRecord(
 
 function parseCommaSeparated(value: unknown): string[] {
   if (!value || typeof value !== "string") return [];
-  return value.split(",").map((s) => s.trim()).filter(Boolean);
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 // --- Properties API ---
@@ -83,7 +93,9 @@ router.get("/objects/:objectType", (req, res) => {
   const requestedProperties = parseCommaSeparated(req.query.properties);
   const requestedAssociations = parseCommaSeparated(req.query.associations);
 
-  const pageSize = limit ? Math.min(parseInt(String(limit), 10), PAGE_SIZE) : PAGE_SIZE;
+  const pageSize = limit
+    ? Math.min(parseInt(String(limit), 10), PAGE_SIZE)
+    : PAGE_SIZE;
   const allRecords = store.listRecords(objectType);
 
   // Find start index based on cursor
@@ -100,7 +112,9 @@ router.get("/objects/:objectType", (req, res) => {
   const hasMore = startIndex + pageSize < allRecords.length;
 
   const response: Record<string, unknown> = {
-    results: page.map((r) => serializeRecord(r, requestedProperties, requestedAssociations)),
+    results: page.map((r) =>
+      serializeRecord(r, requestedProperties, requestedAssociations),
+    ),
   };
 
   if (hasMore) {

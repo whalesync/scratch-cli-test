@@ -4,6 +4,7 @@
 target/
 dist/
 node_modules/
+scratch-desktop/out/
 
 # Experimental
 experimental/

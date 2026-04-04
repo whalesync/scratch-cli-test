@@ -48,9 +48,7 @@ const OUTPUT_DIR = path.resolve(
 
 // ============= Introspection =============
 
-async function fetchIntrospection(
-  apiKey: string,
-): Promise<IntrospectionQuery> {
+async function fetchIntrospection(apiKey: string): Promise<IntrospectionQuery> {
   console.log(`Fetching introspection from ${API_URL}...`);
 
   const response = await axios.post<{
@@ -145,7 +143,11 @@ function writeMutationFiles(
 
     const fileName = `${output.entityType.replace(/_/g, "-")}.mutations.ts`;
     const filePath = path.join(mutationsDir, fileName);
-    const content = generateMutationFile(output, queryFieldsConstName, serviceName);
+    const content = generateMutationFile(
+      output,
+      queryFieldsConstName,
+      serviceName,
+    );
     fs.writeFileSync(filePath, content, "utf8");
     console.log(`  Written: ${fileName}`);
     entityTypes.push(output.entityType);
@@ -284,9 +286,7 @@ async function main(): Promise<void> {
     console.error("Error: Missing required environment variable.");
     console.error("");
     console.error("Usage:");
-    console.error(
-      "  LINEAR_CODEGEN_API_KEY=lin_api_xxx yarn codegen:linear",
-    );
+    console.error("  LINEAR_CODEGEN_API_KEY=lin_api_xxx yarn codegen:linear");
     console.error("");
     console.error("Environment variables:");
     console.error(

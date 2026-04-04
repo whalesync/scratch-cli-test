@@ -46,7 +46,10 @@ router.get("/dump", (req, res) => {
   }
 
   // Dump everything
-  const result: Record<string, { records: ReturnType<typeof store.listRecords> }> = {};
+  const result: Record<
+    string,
+    { records: ReturnType<typeof store.listRecords> }
+  > = {};
   for (const [objType] of store.records) {
     result[objType] = { records: store.listRecords(objType) };
   }

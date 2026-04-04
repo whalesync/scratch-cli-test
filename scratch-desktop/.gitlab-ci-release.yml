@@ -27,7 +27,7 @@
 Release desktop Linux and Windows apps (patch version):
   extends: .release_desktop_prod_job
   variables:
-    RELEASE_TYPE: "patch"
+    RELEASE_TYPE: 'patch'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
@@ -43,7 +43,7 @@ Release desktop Linux and Windows apps (patch version):
 Release desktop Linux and Windows apps (minor version):
   extends: .release_desktop_prod_job
   variables:
-    RELEASE_TYPE: "minor"
+    RELEASE_TYPE: 'minor'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
@@ -59,7 +59,7 @@ Release desktop Linux and Windows apps (minor version):
 Release desktop Linux and Windows apps (major version):
   extends: .release_desktop_prod_job
   variables:
-    RELEASE_TYPE: "major"
+    RELEASE_TYPE: 'major'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
@@ -103,10 +103,10 @@ Release desktop Linux and Windows apps (major version):
       when: manual
       allow_failure: true
 
-"TEST: Release desktop Linux and Windows apps (patch version)":
+'TEST: Release desktop Linux and Windows apps (patch version)':
   extends: .release_desktop_test_job
   variables:
-    RELEASE_TYPE: "patch"
+    RELEASE_TYPE: 'patch'
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
@@ -117,10 +117,10 @@ Release desktop Linux and Windows apps (major version):
       when: manual
       allow_failure: true
 
-"TEST: Release desktop Linux and Windows apps (minor version)":
+'TEST: Release desktop Linux and Windows apps (minor version)':
   extends: .release_desktop_test_job
   variables:
-    RELEASE_TYPE: "minor"
+    RELEASE_TYPE: 'minor'
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
@@ -131,10 +131,10 @@ Release desktop Linux and Windows apps (major version):
       when: manual
       allow_failure: true
 
-"TEST: Release desktop Linux and Windows apps (major version)":
+'TEST: Release desktop Linux and Windows apps (major version)':
   extends: .release_desktop_test_job
   variables:
-    RELEASE_TYPE: "major"
+    RELEASE_TYPE: 'major'
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual

@@ -156,7 +156,11 @@ function writeMutationFiles(
 
     const fileName = `${output.entityType.replace(/_/g, "-")}.mutations.ts`;
     const filePath = path.join(mutationsDir, fileName);
-    const content = generateMutationFile(output, queryFieldsConstName, serviceName);
+    const content = generateMutationFile(
+      output,
+      queryFieldsConstName,
+      serviceName,
+    );
     fs.writeFileSync(filePath, content, "utf8");
     console.log(`  Written: ${fileName}`);
     entityTypes.push(output.entityType);

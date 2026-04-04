@@ -13,6 +13,7 @@ During pull, each fetched record is passed through the connector's `extractAsset
 Entries are batch-upserted into the `Asset` table keyed by `(workbookId, dataFolderId, remoteAssetId)`. The `lastSeenAt` timestamp is updated on every pull so stale assets can be detected later.
 
 **Key files:**
+
 - `server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts` (L391–418)
 - `server/src/asset/asset-extractor.service.ts`
 - `server/src/asset/asset-index.service.ts`
@@ -26,6 +27,7 @@ Many connectors (Airtable, Notion) serve assets from expiring URLs. Rehosting do
 Assets must be rehosted before they can be synced. If a source asset has no `rehostedUrl`, the sync transformer will fail with `ASSET_NOT_REHOSTED`.
 
 **Key files:**
+
 - `server/src/worker/jobs/job-definitions/rehost-assets.job.ts`
 - `server/src/asset/asset-download.service.ts`
 - `server/src/asset/object-storage.service.ts`
@@ -43,6 +45,7 @@ The `SourceAssetToDestAsset` transformer runs in the `FOREIGN_KEY_MAPPING` phase
 The transformer writes an `@asset/{destinationAssetId}` pseudo-reference into the destination record content. If the destination asset already has a real remote ID (from a prior publish), the raw ID is used instead.
 
 **Key files:**
+
 - `server/src/sync/transformers/implementations/source-asset-to-dest-asset.transformer.ts`
 - `server/src/sync/transformers/lookup-tools.ts`
 
@@ -67,6 +70,7 @@ For each `asset-upload` operation:
 During subsequent publish phases (edit, create), the `RefResolverService` replaces `@asset/{id}` pseudo-references in record content with the now-known real `remoteAssetId`. Unresolved refs are stripped by `RefCleanerService`.
 
 **Key files:**
+
 - `server/src/publish-plan/publish-plan-build.service.ts` (L334–356)
 - `server/src/publish-plan/publish-plan-run.service.ts` (L191–213, L562–609)
 - `server/src/publish-plan/ref-resolver.service.ts`
@@ -85,8 +89,8 @@ Source Pull          Rehost            Sync Transform         Publish
 
 ## Error Scenarios
 
-| Error | Cause | Resolution |
-|---|---|---|
-| `ASSET_NOT_FOUND` | Source asset not in the Asset table | Re-pull the source DataFolder |
-| `ASSET_NOT_REHOSTED` | Source asset has no `rehostedUrl` | Run "Pull Assets" on the source DataFolder |
-| Upload failure | Connector rejects the file | Check connector-specific limits (size, format); retry publish |
+| Error                | Cause                               | Resolution                                                    |
+| -------------------- | ----------------------------------- | ------------------------------------------------------------- |
+| `ASSET_NOT_FOUND`    | Source asset not in the Asset table | Re-pull the source DataFolder                                 |
+| `ASSET_NOT_REHOSTED` | Source asset has no `rehostedUrl`   | Run "Pull Assets" on the source DataFolder                    |
+| Upload failure       | Connector rejects the file          | Check connector-specific limits (size, format); retry publish |

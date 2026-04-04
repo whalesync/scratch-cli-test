@@ -18,17 +18,15 @@ subdirectory). The positional argument is not supported.
 
 ---
 
-
-
 ## Gaps that were fixed before the Rust CLI shipped as `scratchmd`
 
-| Feature | Status |
-|---------|--------|
-| `auth login/logout/status --server <url>` | Fixed — `--server` alias added to `auth` subcommand |
-| `workspaces list --sort-by / --sort-order` | Fixed — flags added, passed as query params |
-| `linked available --refresh` | Fixed — flag accepted (no-op, same as Go CLI internals) |
+| Feature                                                 | Status                                                             |
+| ------------------------------------------------------- | ------------------------------------------------------------------ |
+| `auth login/logout/status --server <url>`               | Fixed — `--server` alias added to `auth` subcommand                |
+| `workspaces list --sort-by / --sort-order`              | Fixed — flags added, passed as query params                        |
+| `linked available --refresh`                            | Fixed — flag accepted (no-op, same as Go CLI internals)            |
 | `--config <path>` global flag + `scratchmd.config.yaml` | Fixed — config file loaded with same format and priority as Go CLI |
-| `-v / --verbose` global flag | Fixed — flag accepted (Go CLI also declares it but never uses it) |
+| `-v / --verbose` global flag                            | Fixed — flag accepted (Go CLI also declares it but never uses it)  |
 
 ---
 
@@ -36,15 +34,15 @@ subdirectory). The positional argument is not supported.
 
 These are additions, not regressions.
 
-| Command | Purpose |
-|---------|---------|
-| `files force-upload` | Force-push dirty branch without three-way merge |
-| `syncs run-local` | Run a sync entirely against local files (no server) |
-| `syncs validate-local` | Validate local sync config files |
-| `plan-publish` | Build a publish plan by diffing dirty vs master |
-| `publish-from-git` | Trigger server-side publish from local plan |
-| `build-index` | Rebuild SQLite file index for the workspace |
-| `dump-index` | Print index contents (debugging) |
+| Command                | Purpose                                             |
+| ---------------------- | --------------------------------------------------- |
+| `files force-upload`   | Force-push dirty branch without three-way merge     |
+| `syncs run-local`      | Run a sync entirely against local files (no server) |
+| `syncs validate-local` | Validate local sync config files                    |
+| `plan-publish`         | Build a publish plan by diffing dirty vs master     |
+| `publish-from-git`     | Trigger server-side publish from local plan         |
+| `build-index`          | Rebuild SQLite file index for the workspace         |
+| `dump-index`           | Print index contents (debugging)                    |
 
 V2 `workspaces init` is also richer in Rust — it auto-creates master worktrees
 and rebuilds the file index after cloning, which the Go CLI does not do.

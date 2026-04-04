@@ -70,7 +70,10 @@ class Store {
 
     // Check for duplicate email
     if (this.emailIndex.has(data.email)) {
-      throw new MemberstackStoreError("A member with this email already exists", 400);
+      throw new MemberstackStoreError(
+        "A member with this email already exists",
+        400,
+      );
     }
 
     const planConnections: PlanConnection[] = (data.plans ?? []).map((p) => ({
@@ -141,7 +144,10 @@ class Store {
     if (data.email !== undefined && data.email !== member.auth.email) {
       // Check for duplicate email
       if (this.emailIndex.has(data.email)) {
-        throw new MemberstackStoreError("A member with this email already exists", 400);
+        throw new MemberstackStoreError(
+          "A member with this email already exists",
+          400,
+        );
       }
       this.emailIndex.delete(member.auth.email);
       member.auth.email = data.email;
