@@ -1,11 +1,9 @@
 # PROD RELEASE JOBS (prod branch)
 .release_rust_prod_job:
   stage: deploy
-  image: rust:latest
+  image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0
-    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-    ZIG_VERSION: "0.13.0"
   dependencies: []
   cache:
     - key:
@@ -15,40 +13,10 @@
         - scratch-git-2-cargo
       unprotect: true
       paths:
-        - .cargo/registry/cache
-        - .cargo/registry/index
+        - /usr/local/cargo/registry/cache
+        - /usr/local/cargo/registry/index
         - scratch-git-2/target
       policy: pull-push
-    - key: cargo-zigbuild-${ZIG_VERSION}
-      unprotect: true
-      paths:
-        - .cargo/bin/cargo-zigbuild
-        - .zig
-      policy: pull-push
-  before_script:
-    - apt-get update -qq && apt-get install -y zip
-    # Install zig from official release (skip if cached)
-    - |
-      if [ -d ".zig/zig-linux-x86_64-${ZIG_VERSION}" ]; then
-        echo "Using cached zig ${ZIG_VERSION}"
-      else
-        mkdir -p .zig
-        curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ -C .zig
-      fi
-    - export PATH="${CI_PROJECT_DIR}/.zig/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
-    # Install cargo-zigbuild (skip if cached)
-    - |
-      if [ -f "${CARGO_HOME}/bin/cargo-zigbuild" ]; then
-        echo "Using cached cargo-zigbuild"
-      else
-        cargo install cargo-zigbuild --quiet
-      fi
-    - export PATH="${CARGO_HOME}/bin:$PATH"
-    # If you update this list of target archs, also update the list in release_public.sh
-    - rustup target add
-      aarch64-apple-darwin
-      x86_64-unknown-linux-gnu
-      x86_64-pc-windows-gnu
   script:
     - chmod +x scratch-git-2/scripts/release_public.sh
     - scratch-git-2/scripts/release_public.sh $RELEASE_TYPE
@@ -84,11 +52,9 @@ release-rust-cli-major:
 # TEST RELEASE JOBS (master branch, excludes scheduled pipelines)
 .release_rust_test_job:
   stage: deploy
-  image: rust:latest
+  image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0
-    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-    ZIG_VERSION: "0.13.0"
   dependencies: []
   cache:
     - key:
@@ -98,40 +64,10 @@ release-rust-cli-major:
         - scratch-git-2-cargo
       unprotect: true
       paths:
-        - .cargo/registry/cache
-        - .cargo/registry/index
+        - /usr/local/cargo/registry/cache
+        - /usr/local/cargo/registry/index
         - scratch-git-2/target
       policy: pull-push
-    - key: cargo-zigbuild-${ZIG_VERSION}
-      unprotect: true
-      paths:
-        - .cargo/bin/cargo-zigbuild
-        - .zig
-      policy: pull-push
-  before_script:
-    - apt-get update -qq && apt-get install -y zip
-    # Install zig from official release (skip if cached)
-    - |
-      if [ -d ".zig/zig-linux-x86_64-${ZIG_VERSION}" ]; then
-        echo "Using cached zig ${ZIG_VERSION}"
-      else
-        mkdir -p .zig
-        curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ -C .zig
-      fi
-    - export PATH="${CI_PROJECT_DIR}/.zig/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
-    # Install cargo-zigbuild (skip if cached)
-    - |
-      if [ -f "${CARGO_HOME}/bin/cargo-zigbuild" ]; then
-        echo "Using cached cargo-zigbuild"
-      else
-        cargo install cargo-zigbuild --quiet
-      fi
-    - export PATH="${CARGO_HOME}/bin:$PATH"
-    # If you update this list of target archs, also update the list in release_test.sh
-    - rustup target add
-      aarch64-apple-darwin
-      x86_64-unknown-linux-gnu
-      x86_64-pc-windows-gnu
   script:
     - chmod +x scratch-git-2/scripts/release_test.sh
     - scratch-git-2/scripts/release_test.sh $RELEASE_TYPE
