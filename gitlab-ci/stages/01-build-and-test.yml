@@ -286,12 +286,11 @@ build and test scratch-git:
 # Release jobs (on prod) use this key when Cargo.lock-hash misses.
 warm-scratch-git-cargo-cache:
   stage: cleanup
-  image: rust:latest
+  image: unawareguitar/hasty-dolphin:latest
   interruptible: true
   allow_failure: true
   variables:
     CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-    ZIG_VERSION: "0.13.0"
   cache:
     - key: scratch-git-2-cargo
       unprotect: true
@@ -300,35 +299,6 @@ warm-scratch-git-cargo-cache:
         - .cargo/registry/index
         - scratch-git-2/target
       policy: pull-push
-    - key: cargo-zigbuild-${ZIG_VERSION}
-      unprotect: true
-      paths:
-        - .cargo/bin/cargo-zigbuild
-        - .zig
-      policy: pull-push
-  before_script:
-    - apt-get update -qq && apt-get install -y zip
-    # Install zig from official release (skip if cached)
-    - |
-      if [ -d ".zig/zig-linux-x86_64-${ZIG_VERSION}" ]; then
-        echo "Using cached zig ${ZIG_VERSION}"
-      else
-        mkdir -p .zig
-        curl -sL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ -C .zig
-      fi
-    - export PATH="${CI_PROJECT_DIR}/.zig/zig-linux-x86_64-${ZIG_VERSION}:$PATH"
-    # Install cargo-zigbuild (skip if cached)
-    - |
-      if [ -f "${CARGO_HOME}/bin/cargo-zigbuild" ]; then
-        echo "Using cached cargo-zigbuild"
-      else
-        cargo install cargo-zigbuild --quiet
-      fi
-    - export PATH="${CARGO_HOME}/bin:$PATH"
-    - rustup target add
-      aarch64-apple-darwin
-      x86_64-unknown-linux-gnu
-      x86_64-pc-windows-gnu
   script:
     - cd scratch-git-2
     - cargo zigbuild --release --bin scratchmd --target aarch64-apple-darwin
