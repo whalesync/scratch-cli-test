@@ -8,6 +8,36 @@ use crate::shared::layout::WorkspaceLayout;
 
 type FileMap = HashMap<String, Vec<u8>>;
 
+/// Cache for `read_git_tree` results keyed by commit/tree hash. Avoids redundant
+/// blob reads when the same tree is needed multiple times during an upload.
+struct TreeCache {
+    entries: HashMap<String, FileMap>,
+}
+
+impl TreeCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    fn get_or_read(&mut self, bare_repo: &Path, hash: &str) -> anyhow::Result<&FileMap> {
+        if !self.entries.contains_key(hash) {
+            let map = read_git_tree(bare_repo, hash)?;
+            self.entries.insert(hash.to_string(), map);
+        }
+        Ok(&self.entries[hash])
+    }
+}
+
+fn cached_read_git_tree<'c>(
+    cache: &'c mut TreeCache,
+    bare_repo: &Path,
+    hash: &str,
+) -> anyhow::Result<&'c FileMap> {
+    cache.get_or_read(bare_repo, hash)
+}
+
 #[derive(Subcommand)]
 pub enum FilesCommands {
     /// Download remote changes and three-way merge with local edits
@@ -145,12 +175,13 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    let verbose = !json;
     let mut results = Vec::new();
     for ctx in &contexts {
-        if contexts.len() > 1 && !json {
+        if contexts.len() > 1 && verbose {
             println!("Uploading {}...", ctx.conn_dir_name);
         }
-        results.push(upload_single_repo(ctx, &token)?);
+        results.push(upload_single_repo(ctx, &token, verbose)?);
     }
 
     let result = if results.len() == 1 {
@@ -492,18 +523,27 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
     Ok(result)
 }
 
-fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<UploadResult> {
+fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> anyhow::Result<UploadResult> {
+    let mut tree_cache = TreeCache::new();
+
+    if verbose { eprint!("  Reading local state..."); }
     let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
-    let base_map = read_git_tree(&ctx.bare_repo, &base_hash)?;
+    // Clone base_map out of the cache so we can continue mutating the cache for
+    // remote tree reads without holding a borrow.
+    let base_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &base_hash)?.clone();
     sync_schema_files_from_master(ctx)?;
-    let local_unreviewed = unreviewed_entries(ctx)?;
+    let local_unreviewed = unreviewed_entries_cached(&mut tree_cache, ctx)?;
     let local_plan_map = read_local_publish_plan_map(ctx)?;
+    if verbose { eprintln!(" done"); }
 
     if local_unreviewed.is_empty() && local_plan_map.is_empty() {
+        if verbose { eprint!("  Fetching remote changes..."); }
         crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
+        if verbose { eprintln!(" done"); }
+
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-        let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
-        if maps_equal(&base_map, &remote_map) {
+        let remote_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?;
+        if maps_equal(&base_map, remote_map) {
             return Ok(UploadResult {
                 status: "no_changes".to_string(),
                 ..Default::default()
@@ -513,11 +553,17 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
 
     const MAX_RETRIES: i32 = 5;
     for attempt in 0..MAX_RETRIES {
+        if verbose { eprint!("  Fetching remote changes..."); }
         crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
+        if verbose { eprintln!(" done"); }
+
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-        let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
+        let remote_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?.clone();
+
+        if verbose { eprint!("  Merging..."); }
         let (mut merged, mut result, mut messages) =
             prepare_upload_merge(&base_map, &base_map, &remote_map, attempt);
+        if verbose { eprintln!(" done"); }
 
         strip_publish_plan_files(&mut merged);
         for (path, value) in &local_plan_map {
@@ -548,13 +594,16 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<Up
             "Upload from Scratch CLI",
         )?;
 
+        if verbose { eprint!("  Pushing..."); }
         match crate::git_ops::push_origin_dirty(&ctx.bare_repo, token) {
             Ok(()) => {
+                if verbose { eprintln!(" done"); }
                 sync_schema_files_from_master(ctx)?;
                 result.messages = messages;
                 return Ok(result);
             }
             Err(err) => {
+                if verbose { eprintln!(" retrying"); }
                 if err.to_string().contains("non-fast-forward")
                     || err.to_string().contains("rejected")
                 {
@@ -612,6 +661,25 @@ fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedE
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(ctx)?;
+    let local_map = read_materialized_repo(ctx)?;
+    Ok(compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &base_map,
+        &local_map,
+    ))
+}
+
+/// Like `unreviewed_entries` but reuses a tree cache to avoid redundant blob reads.
+fn unreviewed_entries_cached(
+    cache: &mut TreeCache,
+    ctx: &ConnectionContext,
+) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map: FileMap = match base_hash.as_deref() {
+        Some(hash) => cached_read_git_tree(cache, &ctx.bare_repo, hash)?.clone(),
         None => HashMap::new(),
     };
     sync_schema_files_from_master(ctx)?;

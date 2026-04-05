@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::io::{BufRead, BufReader, Read as IoRead, Write as IoWrite};
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use anyhow::Context;
 
@@ -44,10 +46,113 @@ pub(crate) fn update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyho
 }
 
 pub(crate) fn read_tree_files(bare_repo: &Path, treeish: &str) -> anyhow::Result<FileMap> {
-    let repo = open_bare_repo(bare_repo)?;
-    let tree = resolve_tree(&repo, treeish)?;
+    read_tree_files_batched(bare_repo, treeish)
+}
+
+/// Read all blob contents for a tree using `git ls-tree` piped into
+/// `git cat-file --batch`. This is dramatically faster than per-blob
+/// lookups via gix for large repos (e.g. 0.5s vs 39s for 23k files).
+fn read_tree_files_batched(bare_repo: &Path, treeish: &str) -> anyhow::Result<FileMap> {
+    let git_dir = bare_repo.to_str().unwrap_or_default();
+
+    // Step 1: Get the list of (mode, hash, path) entries via ls-tree.
+    let ls_output = Command::new("git")
+        .args(["--git-dir", git_dir, "ls-tree", "-r", treeish])
+        .output()
+        .context("failed to run git ls-tree")?;
+    if !ls_output.status.success() {
+        let stderr = String::from_utf8_lossy(&ls_output.stderr);
+        anyhow::bail!("git ls-tree failed: {}", stderr.trim());
+    }
+
+    // Parse ls-tree output: "<mode> <type> <hash>\t<path>\n"
+    let mut entries: Vec<(String, String)> = Vec::new(); // (hash, path)
+    for line in ls_output.stdout.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let line_str = String::from_utf8_lossy(line);
+        // Format: "100644 blob <hash>\t<path>"
+        let Some(tab_pos) = line_str.find('\t') else { continue };
+        let meta = &line_str[..tab_pos];
+        let path = &line_str[tab_pos + 1..];
+
+        let parts: Vec<&str> = meta.split(' ').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let obj_type = parts[1];
+        if obj_type != "blob" {
+            continue;
+        }
+        let hash = parts[2];
+        entries.push((hash.to_string(), path.to_string()));
+    }
+
+    if entries.is_empty() {
+        return Ok(FileMap::new());
+    }
+
+    // Step 2: Feed all hashes into `git cat-file --batch` to read blob contents.
+    let mut cat_file = Command::new("git")
+        .args(["--git-dir", git_dir, "cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("failed to spawn git cat-file --batch")?;
+
+    let mut stdin = cat_file.stdin.take().context("failed to open cat-file stdin")?;
+    let stdout = cat_file.stdout.take().context("failed to open cat-file stdout")?;
+
+    // Write all hashes to stdin in a separate thread to avoid deadlock.
+    let hashes: Vec<String> = entries.iter().map(|(h, _)| h.clone()).collect();
+    let writer_thread = std::thread::spawn(move || -> anyhow::Result<()> {
+        for hash in &hashes {
+            writeln!(stdin, "{}", hash)?;
+        }
+        drop(stdin); // Close stdin to signal EOF
+        Ok(())
+    });
+
+    // Read responses from stdout.
+    let mut reader = BufReader::new(stdout);
     let mut out = FileMap::new();
-    collect_tree_files(&repo, tree.id().detach(), Path::new(""), &mut out)?;
+    let mut header_buf = String::new();
+
+    for (_hash, path) in &entries {
+        header_buf.clear();
+        reader
+            .read_line(&mut header_buf)
+            .context("failed to read cat-file header")?;
+        // Header format: "<hash> <type> <size>\n"
+        let header = header_buf.trim_end();
+        let size: usize = header
+            .rsplit(' ')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .with_context(|| format!("failed to parse cat-file header: {header}"))?;
+
+        let mut blob = vec![0u8; size];
+        reader
+            .read_exact(&mut blob)
+            .context("failed to read cat-file blob data")?;
+
+        // cat-file emits a trailing newline after each blob
+        let mut trailing = [0u8; 1];
+        reader.read_exact(&mut trailing).ok();
+
+        out.insert(path.replace('\\', "/"), normalize_crlf(blob));
+    }
+
+    writer_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("cat-file writer thread panicked"))??;
+
+    let status = cat_file.wait().context("failed to wait for cat-file")?;
+    if !status.success() {
+        anyhow::bail!("git cat-file --batch exited with status {}", status);
+    }
+
     Ok(out)
 }
 
@@ -125,46 +230,6 @@ fn resolve_tree<'repo>(
         .with_context(|| format!("failed to resolve tree {treeish}"))?;
     repo.find_tree(tree_id.detach())
         .with_context(|| format!("failed to open tree for {treeish}"))
-}
-
-fn collect_tree_files(
-    repo: &gix::Repository,
-    tree_id: gix::ObjectId,
-    prefix: &Path,
-    out: &mut FileMap,
-) -> anyhow::Result<()> {
-    let tree = repo
-        .find_tree(tree_id)
-        .with_context(|| format!("failed to open tree object {tree_id}"))?;
-
-    for entry in tree.iter() {
-        let entry = entry.context("failed to decode tree entry")?;
-        let name = String::from_utf8_lossy(entry.filename().as_ref()).into_owned();
-        let path = if prefix.as_os_str().is_empty() {
-            PathBuf::from(&name)
-        } else {
-            prefix.join(&name)
-        };
-
-        if entry.mode().is_tree() {
-            collect_tree_files(repo, entry.object_id(), &path, out)?;
-            continue;
-        }
-
-        if entry.mode().is_commit() {
-            continue;
-        }
-
-        let mut blob = repo
-            .find_blob(entry.object_id())
-            .with_context(|| format!("failed to read blob {}", entry.object_id()))?;
-        out.insert(
-            path.to_string_lossy().replace('\\', "/"),
-            normalize_crlf(blob.take_data()),
-        );
-    }
-
-    Ok(())
 }
 
 fn materialize_tree_entries(

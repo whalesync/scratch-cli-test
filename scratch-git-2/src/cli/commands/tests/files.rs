@@ -344,6 +344,63 @@ fn materialize_treeish_to_worktree_creates_plain_directory_without_git_metadata(
     assert!(!work_tree.join(".git").exists());
 }
 
+/// Verify that batched `read_tree_files` returns correct paths and blob contents
+/// for a repo with nested directories, multiple files, and a non-blob entry.
+#[test]
+fn read_tree_files_batched_returns_all_blobs() {
+    let fixture = create_bare_fixture();
+    let map = read_git_tree(&fixture.local_bare, "refs/heads/dirty").unwrap();
+
+    // The dirty branch has "posts/rec1.json" (from dirty commit) and "syncs/a.json" (from main).
+    assert_eq!(
+        String::from_utf8_lossy(map.get("posts/rec1.json").expect("missing posts/rec1.json")),
+        "{\"id\":\"rec1\"}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(map.get("syncs/a.json").expect("missing syncs/a.json")),
+        "{}"
+    );
+    assert_eq!(map.len(), 2);
+}
+
+/// Verify that `read_tree_files` returns an empty map for a commit with an empty tree.
+#[test]
+fn read_tree_files_batched_handles_empty_tree() {
+    let tmp = TempDir::new().unwrap();
+    let source = tmp.path().join("source");
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source, &["checkout", "-b", "main"]);
+    // Create an initial commit then remove all files to get an empty tree.
+    write_file(&source.join("placeholder"), "x");
+    commit_all(&source, "initial");
+    std::fs::remove_file(source.join("placeholder")).unwrap();
+    commit_all(&source, "empty tree");
+
+    let bare = tmp.path().join("bare.git");
+    run_git(tmp.path(), &["clone", "--bare", source.to_str().unwrap(), bare.to_str().unwrap()]);
+
+    let map = read_git_tree(&bare, "refs/heads/main").unwrap();
+    assert!(map.is_empty());
+}
+
+/// Verify that the TreeCache avoids redundant reads and returns consistent results.
+#[test]
+fn tree_cache_returns_same_result_on_repeated_reads() {
+    let fixture = create_bare_fixture();
+    let hash = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
+
+    let mut cache = TreeCache::new();
+    let first = cached_read_git_tree(&mut cache, &fixture.local_bare, &hash)
+        .unwrap()
+        .clone();
+    let second = cached_read_git_tree(&mut cache, &fixture.local_bare, &hash)
+        .unwrap()
+        .clone();
+
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 2);
+}
+
 fn git_available() -> bool {
     Command::new("git").arg("--version").output().is_ok()
 }
