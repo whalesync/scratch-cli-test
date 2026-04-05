@@ -120,6 +120,20 @@ enum Commands {
     },
 }
 
+fn require_git() -> anyhow::Result<()> {
+    match std::process::Command::new("git")
+        .arg("--version")
+        .output()
+    {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(_) => anyhow::bail!("git is installed but returned an error. Please check your git installation."),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("git is not installed. Please install git and try again.")
+        }
+        Err(e) => anyhow::bail!("failed to check for git: {e}"),
+    }
+}
+
 fn build_client(server_url: &str) -> anyhow::Result<ApiClient> {
     ApiClient::from_credentials(server_url)
         .with_context(|| "Not authenticated. Run `scratchmd auth login` first.")
@@ -133,6 +147,14 @@ async fn main() {
         .scratch_url
         .or_else(|| project_config::load_server_url(cli.config.as_deref()))
         .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string());
+
+    // All commands except Auth require git to be installed.
+    if !matches!(cli.command, Commands::Auth { .. }) {
+        if let Err(e) = require_git() {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
 
     let result = match cli.command {
         Commands::Auth { command, server } => {
