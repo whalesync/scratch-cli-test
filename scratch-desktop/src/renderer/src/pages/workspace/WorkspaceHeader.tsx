@@ -1,13 +1,12 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
-import { Text13Medium } from '@/components/base/text';
-import { Box, Group, Tooltip } from '@mantine/core';
+import { WorkspaceSwitcher } from '@/components/workspace-switcher';
+import { Group, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
 import {
-  ArrowLeft,
-  ChevronDown,
   Download,
   HardDriveDownload as DownloadIcon,
   FolderOpen,
+  HomeIcon,
   Terminal,
   Trash2,
   Upload,
@@ -57,12 +56,9 @@ export function WorkspaceHeader({
       {/* Back button + Workspace selector */}
       <Group gap="xs">
         <IconButtonGhost onClick={() => void navigate('/')}>
-          <ArrowLeft size={12} />
+          <HomeIcon size={12} />
         </IconButtonGhost>
-        <Box style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <Text13Medium>{workspace.name || 'Untitled Workspace'}</Text13Medium>
-          <ChevronDown size={14} color="var(--fg-muted)" />
-        </Box>
+        <WorkspaceSwitcher currentWorkspaceId={workspace.id} currentWorkspaceName={workspace.name} />
       </Group>
 
       {/* Action buttons */}
