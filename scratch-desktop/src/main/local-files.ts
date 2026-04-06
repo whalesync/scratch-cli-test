@@ -310,7 +310,9 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
           if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
             return null;
           }
-          return flattenObject(parsed as Record<string, unknown>);
+          const flat = flattenObject(parsed as Record<string, unknown>);
+          flat.__filename = name;
+          return flat;
         } catch {
           return null;
         }
@@ -327,6 +329,9 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
       allRows.push(row);
     }
   }
+
+  // Remove internal metadata from visible columns
+  columnSet.delete('__filename');
 
   // Filter rows by column values
   if (opts.filter) {

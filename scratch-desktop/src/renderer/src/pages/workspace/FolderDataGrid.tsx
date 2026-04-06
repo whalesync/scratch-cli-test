@@ -1,8 +1,14 @@
-import DataEditor, { GridCellKind, type GridColumn, type Item } from '@glideapps/glide-data-grid';
+import DataEditor, {
+  type DrawCellCallback,
+  GridCellKind,
+  type GridColumn,
+  type Item,
+} from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
 import { Box, Group, Loader, Stack } from '@mantine/core';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
+import { RecordDetailView } from './RecordDetailView';
 
 interface GridDataResult {
   rows: Array<Record<string, unknown>>;
@@ -18,54 +24,6 @@ interface FolderDataGridProps {
   workspacePath: string | null;
 }
 
-function toDisplayString(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
-}
-
-function inferCellKind(value: unknown): GridCellKind {
-  if (typeof value === 'boolean') return GridCellKind.Boolean;
-  if (typeof value === 'number') return GridCellKind.Number;
-  return GridCellKind.Text;
-}
-
-function FilterPill({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number | null;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Box
-      component="button"
-      onClick={onClick}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '2px 8px',
-        borderRadius: 10,
-        border: active ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
-        backgroundColor: active ? 'var(--mantine-color-blue-0)' : 'transparent',
-        cursor: 'pointer',
-        lineHeight: 1,
-      }}
-    >
-      <Text12Medium c={active ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
-        {label}
-        {count != null && ` (${count.toLocaleString()})`}
-      </Text12Medium>
-    </Box>
-  );
-}
-
 export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath, workspacePath }: FolderDataGridProps) {
   const [gridData, setGridData] = useState<GridDataResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -76,6 +34,8 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
   });
   const [filterStatus, setFilterStatus] = useState<FilterStatus | null>(null);
   const [filterCounts, setFilterCounts] = useState<{ unreviewed: number; unpublished: number } | null>(null);
+
+  const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -142,11 +102,12 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     };
   }, [selectedFolderPath, filterStatus, workspacePath]);
 
-  // Reset sort and filter when folder changes
+  // Reset sort, filter, and detail view when folder changes
   useEffect(() => {
     setSort({ column: null, direction: null });
     setFilterStatus(null);
     setFilterCounts(null);
+    setDetailRowIndex(null);
   }, [selectedFolderPath]);
 
   // Fetch filter counts when folder changes (requires workspacePath)
@@ -184,11 +145,15 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     };
   }, [selectedFolderPath, workspacePath]);
 
-  const columns: GridColumn[] = (gridData?.columns ?? []).map((name) => ({
-    id: name,
-    title: name,
-    width: Math.max(120, Math.min(250, name.length * 9 + 40)),
-  }));
+  const columns: GridColumn[] = useMemo(
+    () =>
+      (gridData?.columns ?? []).map((name) => ({
+        id: name,
+        title: name,
+        width: Math.max(120, Math.min(250, name.length * 9 + 40)),
+      })),
+    [gridData?.columns],
+  );
 
   // Sort rows in-memory
   const sortedRows = (() => {
@@ -233,6 +198,8 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
         data: display,
         displayData: display,
         allowOverlay: false as const,
+        hoverEffect: col === 0,
+        cursor: col === 0 ? ('pointer' as const) : undefined,
       };
     },
     [sortedRows, columns],
@@ -252,11 +219,52 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     [columns],
   );
 
+  // For column 0: draw text manually (skip built-in hover highlight), then overlay magnifying glass on hover
+  const drawCell: DrawCellCallback = useCallback((args, drawContent) => {
+    if (args.col !== 0) {
+      drawContent();
+      return;
+    }
+    const { ctx, rect, theme, cell, hoverAmount } = args;
+    // Draw text ourselves to avoid the built-in hoverEffect highlight + cursor override
+    if (cell.kind === GridCellKind.Text && cell.displayData) {
+      const padX = theme.cellHorizontalPadding;
+      ctx.save();
+      ctx.fillStyle = theme.textDark;
+      ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
+      ctx.textBaseline = 'middle';
+      ctx.beginPath();
+      ctx.rect(rect.x, rect.y, rect.width, rect.height);
+      ctx.clip();
+      ctx.fillText(cell.displayData, rect.x + padX, rect.y + rect.height / 2);
+      ctx.restore();
+    }
+    if (hoverAmount > 0) {
+      const size = 12;
+      const padding = 6;
+      drawInspectIcon(
+        ctx,
+        rect.x + rect.width - size - padding,
+        rect.y + (rect.height - size) / 2,
+        size,
+        theme.textMedium ?? '#888',
+        hoverAmount,
+      );
+    }
+    return true;
+  }, []);
+
+  const onCellClicked = useCallback(([col, row]: Item) => {
+    if (col === 0) {
+      setDetailRowIndex(row);
+    }
+  }, []);
+
   const handleFilterToggle = useCallback((status: FilterStatus) => {
     setFilterStatus((prev) => (prev === status ? null : status));
   }, []);
 
-  const showFilterBar = workspacePath && selectedFolderPath && !error;
+  const showFilterBar = workspacePath && selectedFolderPath && !error && detailRowIndex === null;
 
   return (
     <Stack
@@ -336,7 +344,19 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
                 smoothScrollX
                 smoothScrollY
                 onHeaderClicked={onHeaderClicked}
+                onCellClicked={onCellClicked}
+                drawCell={drawCell}
                 rowMarkers="number"
+              />
+            )}
+            {detailRowIndex !== null && selectedFolderPath && workspacePath && (
+              <RecordDetailView
+                rows={sortedRows}
+                selectedIndex={detailRowIndex}
+                folderPath={selectedFolderPath}
+                workspacePath={workspacePath}
+                onSelectIndex={setDetailRowIndex}
+                onClose={() => setDetailRowIndex(null)}
               />
             )}
           </Box>
@@ -364,3 +384,68 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     </Stack>
   );
 });
+
+function FilterPill({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number | null;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Box
+      component="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 8px',
+        borderRadius: 10,
+        border: active ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
+        backgroundColor: active ? 'var(--mantine-color-blue-0)' : 'transparent',
+        cursor: 'pointer',
+        lineHeight: 1,
+      }}
+    >
+      <Text12Medium c={active ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
+        {label}
+        {count != null && ` (${count.toLocaleString()})`}
+      </Text12Medium>
+    </Box>
+  );
+}
+
+function toDisplayString(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function drawInspectIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+  opacity = 1,
+) {
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = color;
+  ctx.font = `${size}px sans-serif`;
+  ctx.textBaseline = 'top';
+  ctx.fillText('\u{1F50D}', x, y);
+  ctx.restore();
+}
+
+function inferCellKind(value: unknown): GridCellKind {
+  if (typeof value === 'boolean') return GridCellKind.Boolean;
+  if (typeof value === 'number') return GridCellKind.Number;
+  return GridCellKind.Text;
+}

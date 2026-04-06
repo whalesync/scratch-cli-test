@@ -2,20 +2,6 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Debug scratchmd",
-      "program": "${workspaceFolder}/scratch-git-2/target/debug/scratchmd",
-      "args": [
-        "files",
-        "unpublished"
-      ],
-      "cwd": "/Users/rob/code/whalesync/scratch_data/example_workspace",
-      "sourceLanguages": [
-        "rust"
-      ]
-    },
-    {
       "type": "node",
       "request": "attach",
       "name": "Attach to scratch server",
@@ -27,7 +13,7 @@
       "showAsyncStacks": true
     },
     {
-      "name": "Debug electron app",
+      "name": "Debug scratch-desktop electron app",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/scratch-desktop",
@@ -41,6 +27,20 @@
       "outFiles": [
         "${workspaceFolder}/scratch-desktop/out/**/*.js"
       ]
-    }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug scratchmd CLI",
+      "program": "${workspaceFolder}/scratch-git-2/target/debug/scratchmd",
+      "args": [
+        "workspaces",
+        "list"
+      ],
+      "cwd": "${workspaceFolder}/scratch-local-data",
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
   ]
 }
