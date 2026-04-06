@@ -1,6 +1,7 @@
 import { ConnectorIcon } from '@/components/ConnectorIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
-import { Badge, Card, Group } from '@mantine/core';
+import { Card, Group, Tooltip } from '@mantine/core';
+import { HardDriveDownload as DownloadIcon } from 'lucide-react';
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Workspace } from '../types/workspace';
@@ -35,6 +36,8 @@ export function WorkspaceCard({
   isDownloaded: boolean;
   /** Present when the workspace is downloaded locally; total record files on disk. */
   localFileCount?: number;
+  /** Absolute path to the workspace folder on disk. */
+  localPath?: string;
   onClick?: () => void;
 }) {
   const navigate = useNavigate();
@@ -76,9 +79,11 @@ export function WorkspaceCard({
     >
       <Group justify="space-between" align="flex-start" gap="sm">
         <Text13Medium lineClamp={1}>{workspace.name || 'Untitled Workspace'}</Text13Medium>
-        <Badge color={isDownloaded ? 'green' : 'gray'} variant={isDownloaded ? 'light' : 'outline'}>
-          {isDownloaded ? 'Downloaded' : 'Not downloaded'}
-        </Badge>
+        {!isDownloaded && (
+          <Tooltip label="Download your workspace">
+            <DownloadIcon size={20} color="var(--fg-muted)" style={{ flexShrink: 0 }} />
+          </Tooltip>
+        )}
       </Group>
       <Group gap="xs" mt={4}>
         <Text12Regular c="dimmed">

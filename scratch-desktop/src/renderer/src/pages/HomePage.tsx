@@ -1,16 +1,33 @@
 import { Alert, Box, Center, Divider, Group, Loader, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
 import { Plus } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '../components/base/buttons';
+import { Text12Regular } from '../components/base/text';
 import { UserMenu } from '../components/user-menu';
 import { WorkspaceCard } from '../components/WorkspaceCard';
 import { useWorkspaces } from '../hooks/use-workspaces';
 
 export function HomePage() {
   const navigate = useNavigate();
-  const { localWorkspaces, remoteWorkspaces, localFileCountById, loading, error, handleDownloadAndOpen } =
-    useWorkspaces();
+  const {
+    localWorkspaces,
+    remoteWorkspaces,
+    localFileCountById,
+    localPathById,
+    loading,
+    error,
+    handleDownloadAndOpen,
+  } = useWorkspaces();
+
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    const fetchVersion = async (): Promise<void> => {
+      const version = await window.scratchDesktop.getAppVersion();
+      setAppVersion(version);
+    };
+    void fetchVersion();
+  }, []);
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
@@ -81,7 +98,13 @@ export function HomePage() {
           ) : (
             <>
               {localWorkspaces.map((ws) => (
-                <WorkspaceCard key={ws.id} workspace={ws} isDownloaded localFileCount={localFileCountById.get(ws.id)} />
+                <WorkspaceCard
+                  key={ws.id}
+                  workspace={ws}
+                  isDownloaded
+                  localFileCount={localFileCountById.get(ws.id)}
+                  localPath={localPathById.get(ws.id)}
+                />
               ))}
               {localWorkspaces.length > 0 && remoteWorkspaces.length > 0 && <Divider />}
               {remoteWorkspaces.map((ws) => (
@@ -100,10 +123,11 @@ export function HomePage() {
       <Group
         h={40}
         px="md"
-        justify="flex-start"
+        justify="space-between"
         style={{ flexShrink: 0, borderTop: '1px solid var(--mantine-color-default-border)' }}
       >
         <UserMenu />
+        {appVersion && <Text12Regular c="dimmed">v{appVersion}</Text12Regular>}
       </Group>
 
       <Modal

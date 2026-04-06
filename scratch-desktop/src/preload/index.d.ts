@@ -66,6 +66,7 @@ interface ScratchDesktopAPI {
   showInFolder: (folderPath: string) => Promise<void>;
   openInTerminal: (folderPath: string) => Promise<void>;
   toggleDevTools: () => Promise<void>;
+  getAppVersion: () => Promise<string>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
 }
 

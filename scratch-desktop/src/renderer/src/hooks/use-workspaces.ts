@@ -10,6 +10,7 @@ export interface UseWorkspacesResult {
   workspaces: Workspace[];
   downloadedWorkspaceIds: Set<string>;
   localFileCountById: Map<string, number>;
+  localPathById: Map<string, string>;
   localWorkspaces: Workspace[];
   remoteWorkspaces: Workspace[];
   loading: boolean;
@@ -23,6 +24,7 @@ export function useWorkspaces(): UseWorkspacesResult {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [downloadedWorkspaceIds, setDownloadedWorkspaceIds] = useState<Set<string>>(new Set());
   const [localFileCountById, setLocalFileCountById] = useState<Map<string, number>>(new Map());
+  const [localPathById, setLocalPathById] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +37,7 @@ export function useWorkspaces(): UseWorkspacesResult {
       setWorkspaces(data);
       setDownloadedWorkspaceIds(new Set(localWorkspaces.map((workspace) => workspace.id)));
       setLocalFileCountById(new Map(localWorkspaces.map((w) => [w.id, w.fileCount])));
+      setLocalPathById(new Map(localWorkspaces.map((w) => [w.id, w.path])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {
@@ -87,6 +90,7 @@ export function useWorkspaces(): UseWorkspacesResult {
     workspaces,
     downloadedWorkspaceIds,
     localFileCountById,
+    localPathById,
     localWorkspaces,
     remoteWorkspaces,
     loading,

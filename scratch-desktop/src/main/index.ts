@@ -313,6 +313,8 @@ ipcMain.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();
 });
 
+ipcMain.handle('scratch:get-app-version', () => app.getVersion());
+
 // Local file access IPC handlers
 ipcMain.handle('files:workspace-config', async (_, workspacePath: string) => readWorkspaceConfig(workspacePath));
 ipcMain.handle('files:list-folders', async (_, workspacePath: string) => listFolders(workspacePath));

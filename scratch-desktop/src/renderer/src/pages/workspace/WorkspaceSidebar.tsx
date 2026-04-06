@@ -3,6 +3,7 @@ import { Box, Group, Stack, UnstyledButton } from '@mantine/core';
 import { Bug, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
+import { useDevTools } from '../../hooks/use-dev-tools';
 import { Workspace } from '../../types/workspace';
 import { FolderTree } from './FolderTree';
 import { LocalFolder } from './WorkspaceContent';
@@ -27,6 +28,7 @@ export function WorkspaceSidebar({
   onSelectFolder,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
+  const { isDevToolsEnabled } = useDevTools();
 
   return (
     <Stack
@@ -81,19 +83,21 @@ export function WorkspaceSidebar({
           </Group>
         </UnstyledButton>
 
-        <UnstyledButton
-          px="sm"
-          py={8}
-          style={{
-            width: '100%',
-          }}
-          onClick={() => void navigate(`/workspace/${workspace.id}/debug`)}
-        >
-          <Group gap={8} wrap="nowrap">
-            <Bug size={14} color="var(--fg-secondary)" />
-            <Text13Regular c="var(--fg-secondary)">Debug</Text13Regular>
-          </Group>
-        </UnstyledButton>
+        {isDevToolsEnabled && (
+          <UnstyledButton
+            px="sm"
+            py={8}
+            style={{
+              width: '100%',
+            }}
+            onClick={() => void navigate(`/workspace/${workspace.id}/debug`)}
+          >
+            <Group gap={8} wrap="nowrap">
+              <Bug size={14} color="var(--mantine-color-devTool-9)" />
+              <Text13Regular c="var(--mantine-color-devTool-9)">Debug</Text13Regular>
+            </Group>
+          </UnstyledButton>
+        )}
 
         <UserMenu />
       </Box>

@@ -1,3 +1,13 @@
+/** User-scoped feature flag settings provided by the server */
+export interface UserExperimentFlags {
+  DEV_TOOLBOX: boolean;
+  ENABLE_CREATE_BUG_REPORT: boolean;
+}
+
+export function isExperimentEnabled(experiment: keyof UserExperimentFlags, user: User | null): boolean {
+  return user?.experimentalFlags?.[experiment] === true;
+}
+
 /** Mirrors the server's User entity returned by /users/current. */
 export interface User {
   id: string;
@@ -8,6 +18,7 @@ export interface User {
   apiToken?: string;
   isAdmin: boolean;
   subscription?: SubscriptionInfo;
+  experimentalFlags?: UserExperimentFlags;
   name?: string;
   email?: string;
   organization?: Organization;

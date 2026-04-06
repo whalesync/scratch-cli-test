@@ -82,6 +82,7 @@ const scratchDesktop = {
   showInFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('scratch:show-in-folder', folderPath),
   openInTerminal: (folderPath: string): Promise<void> => ipcRenderer.invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => ipcRenderer.invoke('scratch:toggle-devtools'),
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('scratch:get-app-version'),
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: ScratchCommandEvent): void => {
       callback(payload);
