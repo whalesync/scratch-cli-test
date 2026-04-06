@@ -165,6 +165,12 @@ pub fn find_nearest_workspace(start: &Path) -> Option<PathBuf> {
     loop {
         if let Some(candidate) = find_marker_in(&dir) {
             if let Ok(Marker::Workspace(_)) = read(&candidate) {
+                // Canonical marker path is `<workspace>/.scratch/.scratchmd`. `find_marker_in` also
+                // matches that file as `<workspace>/.scratch` + `.scratchmd` (the "direct" branch).
+                // In that case `dir` is the `.scratch` folder — the workspace root is its parent.
+                if dir.file_name().is_some_and(|n| n == ".scratch") {
+                    return dir.parent().map(|p| p.to_path_buf());
+                }
                 return Some(dir);
             }
         }

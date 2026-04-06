@@ -11,7 +11,7 @@ interface GridDataResult {
   offset: number;
 }
 
-type FilterStatus = 'unreviewed' | 'published';
+type FilterStatus = 'unreviewed' | 'unpublished';
 
 interface FolderDataGridProps {
   selectedFolderPath: string | null;
@@ -75,7 +75,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     direction: null,
   });
   const [filterStatus, setFilterStatus] = useState<FilterStatus | null>(null);
-  const [filterCounts, setFilterCounts] = useState<{ unreviewed: number; published: number } | null>(null);
+  const [filterCounts, setFilterCounts] = useState<{ unreviewed: number; unpublished: number } | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -165,14 +165,14 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
         limit: 0,
       }),
       window.scratchFiles.readGridData(selectedFolderPath, {
-        filterStatus: 'published',
+        filterStatus: 'unpublished',
         workspacePath,
         limit: 0,
       }),
     ])
-      .then(([unreviewed, published]) => {
+      .then(([unreviewed, unpublished]) => {
         if (!cancelled) {
-          setFilterCounts({ unreviewed: unreviewed.total, published: published.total });
+          setFilterCounts({ unreviewed: unreviewed.total, unpublished: unpublished.total });
         }
       })
       .catch(() => {
@@ -289,9 +289,9 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
             />
             <FilterPill
               label="Approved"
-              count={filterCounts?.published ?? null}
-              active={filterStatus === 'published'}
-              onClick={() => handleFilterToggle('published')}
+              count={filterCounts?.unpublished ?? null}
+              active={filterStatus === 'unpublished'}
+              onClick={() => handleFilterToggle('unpublished')}
             />
           </Group>
         </Box>

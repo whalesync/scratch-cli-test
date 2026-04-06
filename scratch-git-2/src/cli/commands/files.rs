@@ -47,6 +47,8 @@ pub enum FilesCommands {
     AcceptAll,
     /// List record changes that exist only in the working tree and have not been accepted locally
     Unreviewed,
+    /// List record changes between dirty and master branches (accepted but not yet published)
+    Unpublished,
     /// Upload local changes to the server
     Upload,
     /// Force-push local state to the server, skipping merge (fast)
@@ -110,6 +112,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Download => run_download(&cwd, server_url, json),
         FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
+        FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Upload => run_upload(&cwd, server_url, json),
         FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
     }
@@ -280,6 +283,49 @@ fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
     }
 
     println!("{} unreviewed local record change(s):", entries.len());
+    for entry in entries {
+        println!(
+            "  [{}] {} — {}",
+            entry.connection_name, entry.status, entry.path
+        );
+    }
+    Ok(())
+}
+
+fn run_unpublished(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut entries = Vec::new();
+    for ctx in &contexts {
+        entries.extend(unpublished_entries(ctx)?);
+    }
+    entries.sort_by(|left, right| {
+        left.connection_name
+            .cmp(&right.connection_name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "count": entries.len(),
+                "entries": entries,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No unpublished changes.");
+        return Ok(());
+    }
+
+    println!("{} unpublished change(s):", entries.len());
     for entry in entries {
         println!(
             "  [{}] {} — {}",
@@ -688,6 +734,25 @@ fn unreviewed_entries_cached(
         &ctx.conn_dir_name,
         &base_map,
         &local_map,
+    ))
+}
+
+fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let dirty_map = match dirty_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    let main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    let main_map = match main_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    // Reuse the same diff logic: main is the base, dirty is the "local" side
+    Ok(compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &main_map,
+        &dirty_map,
     ))
 }
 

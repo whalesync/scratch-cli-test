@@ -10,7 +10,7 @@
 import { readdir, readFile, stat } from 'fs/promises';
 import { basename, extname, join } from 'path';
 
-import { listUnreviewedChanges } from './scratchmd';
+import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
 
@@ -559,8 +559,15 @@ async function resolveFilterStatus(
     return names;
   }
 
-  // unpublished / published both need the dirty-vs-master comparison
-  const unpublishedNames = await computeUnpublishedNames(folderPath, workspacePath);
+  // unpublished / published both need the dirty-vs-master comparison via CLI
+  const entries = await listUnpublishedChanges(workspacePath);
+  const unpublishedNames = new Set<string>();
+  for (const entry of entries) {
+    const absolutePath = join(workspacePath, entry.connectionName, entry.path.replace(/^\//, ''));
+    if (absolutePath.startsWith(folderPath + '/') || absolutePath.startsWith(folderPath + '\\')) {
+      unpublishedNames.add(absolutePath.slice(folderPath.length + 1));
+    }
+  }
 
   if (filterStatus === 'unpublished') {
     return unpublishedNames;
@@ -574,58 +581,6 @@ async function resolveFilterStatus(
     }
   }
   return published;
-}
-
-/**
- * Derives the master directory that corresponds to the given dirty `folderPath`.
- *
- * Workspace layout (CLI):
- *   workspace/ConnectionName/sub/folder   → dirty checkout
- *   workspace/.scratch/connections/master/ConnectionName/sub/folder → master
- *
- * `folderPath` must be an absolute path inside the workspace's dirty checkout.
- */
-export function masterPathForFolder(folderPath: string, workspacePath: string): string {
-  // folderPath is e.g. /ws/ConnName/sub/folder, workspacePath is /ws
-  // Strip workspace prefix to get ConnName/sub/folder
-  const rel = folderPath.slice(workspacePath.length + 1); // ConnName/sub/folder
-  return join(workspacePath, '.scratch', 'connections', 'master', rel);
-}
-
-/**
- * Compares JSON files in `folderPath` (dirty) against the corresponding master directory.
- * Returns the set of filenames that differ from or are absent in master (i.e. unpublished).
- */
-export async function computeUnpublishedNames(folderPath: string, workspacePath: string): Promise<Set<string>> {
-  const masterDir = masterPathForFolder(folderPath, workspacePath);
-  const dirtyNames = await getCachedFileNames(folderPath);
-  const jsonNames = dirtyNames.filter((name) => extname(name).toLowerCase() === '.json');
-
-  const unpublished = new Set<string>();
-
-  for (let i = 0; i < jsonNames.length; i += BATCH_CONCURRENCY) {
-    const batch = jsonNames.slice(i, i + BATCH_CONCURRENCY);
-    await Promise.all(
-      batch.map(async (name) => {
-        const dirtyPath = join(folderPath, name);
-        const masterPath = join(masterDir, name);
-        try {
-          const [dirtyContent, masterContent] = await Promise.all([
-            readFile(dirtyPath, 'utf-8'),
-            readFile(masterPath, 'utf-8'),
-          ]);
-          if (dirtyContent !== masterContent) {
-            unpublished.add(name);
-          }
-        } catch {
-          // Master file doesn't exist → file is unpublished (new)
-          unpublished.add(name);
-        }
-      }),
-    );
-  }
-
-  return unpublished;
 }
 
 async function statFileEntry(folderPath: string, name: string): Promise<FileEntry> {

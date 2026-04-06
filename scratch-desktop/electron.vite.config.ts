@@ -5,6 +5,9 @@ import { resolve } from 'path';
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin({ exclude: ['electron-store'] })],
+    build: {
+      sourcemap: true,
+    },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

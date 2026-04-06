@@ -2,6 +2,20 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug scratchmd",
+      "program": "${workspaceFolder}/scratch-git-2/target/debug/scratchmd",
+      "args": [
+        "files",
+        "unpublished"
+      ],
+      "cwd": "/Users/rob/code/whalesync/scratch_data/example_workspace",
+      "sourceLanguages": [
+        "rust"
+      ]
+    },
+    {
       "type": "node",
       "request": "attach",
       "name": "Attach to scratch server",
@@ -11,6 +25,22 @@
       "outputCapture": "std",
       "restart": true,
       "showAsyncStacks": true
+    },
+    {
+      "name": "Debug electron app",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/scratch-desktop",
+      "runtimeExecutable": "${workspaceFolder}/scratch-desktop/node_modules/.bin/electron",
+      "args": [
+        "."
+      ],
+      "outputCapture": "std",
+      "showAsyncStacks": true,
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/scratch-desktop/out/**/*.js"
+      ]
     }
   ]
 }
