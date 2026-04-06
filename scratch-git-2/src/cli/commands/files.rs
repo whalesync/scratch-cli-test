@@ -45,10 +45,19 @@ pub enum FilesCommands {
     /// Commit all current working-tree record changes into the local dirty branch
     #[command(name = "accept-all")]
     AcceptAll,
+    /// Commit one or more working-tree changes into the local dirty branch in a single commit
+    Accept {
+        /// Paths to accept, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
+        /// Multiple paths are committed together in a single commit per connection.
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
     /// List record changes that exist only in the working tree and have not been accepted locally
     Unreviewed,
     /// List record changes between dirty and master branches (accepted but not yet published)
     Unpublished,
+    /// List record changes accepted locally but not yet published (dirty vs master)
+    Unpushed,
     /// Upload local changes to the server
     Upload,
     /// Force-push local state to the server, skipping merge (fast)
@@ -62,6 +71,7 @@ struct ConnectionContext {
     dirty_dir: PathBuf,
     scratch_dir: PathBuf,
     master_dir: PathBuf,
+    reviewed_dirty_dir: PathBuf,
     bare_repo: PathBuf,
     db_path: PathBuf,
 }
@@ -83,6 +93,7 @@ struct UploadResult {
     files_uploaded: i32,
     files_merged: i32,
     files_deleted: i32,
+    files_plan: i32,
     conflicts_auto_resolved: i32,
     retries: i32,
     messages: Vec<String>,
@@ -111,8 +122,10 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
     match cmd {
         FilesCommands::Download => run_download(&cwd, server_url, json),
         FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
+        FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
+        FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
         FilesCommands::Upload => run_upload(&cwd, server_url, json),
         FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
     }
@@ -249,6 +262,112 @@ fn run_accept_all(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
     Ok(())
 }
 
+fn run_accept(cwd: &Path, _server_url: &str, input_paths: &[String], json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    // Group input paths by connection. Each group produces one commit.
+    // Path format: "<conn-dir-name>/<repo-relative-path>"
+    let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new(); // ctx index → [(input_path, rel_path)]
+    for input_path in input_paths {
+        let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
+            let prefix = format!("{}/", ctx.conn_dir_name);
+            input_path.strip_prefix(&prefix).map(|rest| (i, rest.to_string()))
+        });
+        match found {
+            Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
+            None => anyhow::bail!(
+                "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
+                input_path
+            ),
+        }
+    }
+
+    let mut all_accepted: Vec<String> = Vec::new();
+
+    for (ctx_idx, path_pairs) in &by_conn {
+        let ctx = &contexts[*ctx_idx];
+
+        let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+        let base_map = match base_hash.as_deref() {
+            Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+            None => HashMap::new(),
+        };
+        sync_schema_files_from_master(ctx)?;
+        let local_map = read_materialized_repo(ctx)?;
+
+        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+        let changed_paths: std::collections::HashSet<&str> =
+            changes.iter().map(|e| e.path.as_str()).collect();
+
+        // Validate all requested paths have unreviewed changes
+        for (input_path, rel_path) in path_pairs {
+            if !changed_paths.contains(rel_path.as_str()) {
+                anyhow::bail!("No unreviewed local changes for '{}'.", input_path);
+            }
+        }
+
+        // Build accepted_map: start from dirty branch, apply all requested files in one go
+        let mut accepted_map = base_map.clone();
+        for (_, rel_path) in path_pairs {
+            match local_map.get(rel_path.as_str()) {
+                Some(content) => { accepted_map.insert(rel_path.clone(), content.clone()); }
+                None => { accepted_map.remove(rel_path.as_str()); }
+            }
+        }
+
+        let msg = if path_pairs.len() == 1 {
+            format!("Accept local change: {}", path_pairs[0].1)
+        } else {
+            format!("Accept {} local changes", path_pairs.len())
+        };
+
+        let new_dirty_hash = commit_file_map_to_dirty_ref(
+            &ctx.bare_repo,
+            base_hash.as_deref(),
+            &accepted_map,
+            &msg,
+        )?;
+        update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+        update_reviewed_dirty(ctx, &new_dirty_hash)?;
+
+        all_accepted.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
+    }
+
+    let total = all_accepted.len();
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "accepted",
+                "filesAccepted": total,
+                "paths": all_accepted,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Accepted {} local record change{}. ({})",
+        total,
+        if total == 1 { "" } else { "s" },
+        format_elapsed(elapsed_ms)
+    );
+    print_file_list(&all_accepted);
+    Ok(())
+}
+
 fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
 
@@ -333,6 +452,66 @@ fn run_unpublished(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<(
         );
     }
     Ok(())
+}
+
+fn run_unpushed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut entries = Vec::new();
+    for ctx in &contexts {
+        entries.extend(unpushed_entries(ctx)?);
+    }
+    entries.sort_by(|a, b| {
+        a.connection_name
+            .cmp(&b.connection_name)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "count": entries.len(),
+                "entries": entries,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No unpushed changes.");
+        return Ok(());
+    }
+
+    println!("{} unpushed change(s):", entries.len());
+    for entry in entries {
+        println!("  [{}] {} — {}", entry.connection_name, entry.status, entry.path);
+    }
+    Ok(())
+}
+
+fn unpushed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+
+    let (from, to) = match (master_hash.as_deref(), dirty_hash.as_deref()) {
+        (Some(m), Some(d)) => (m, d),
+        _ => return Ok(vec![]),
+    };
+
+    let diffs = crate::git_ops::diff_name_status(&ctx.bare_repo, from, to)?;
+    Ok(diffs
+        .into_iter()
+        .map(|(status, path)| UnreviewedEntry {
+            connection_name: ctx.conn_dir_name.clone(),
+            path,
+            status,
+        })
+        .collect())
 }
 
 fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
@@ -451,6 +630,7 @@ fn build_connection_contexts(
             dirty_dir: layout.dirty_checkout_path(&connection.dir_name),
             scratch_dir: layout.connection_scratch_path(&connection.dir_name),
             master_dir: layout.master_worktree_path(&connection.dir_name),
+            reviewed_dirty_dir: layout.reviewed_dirty_checkout_path(&connection.dir_name),
             bare_repo: layout.bare_repo_path(&connection.repo_path),
             db_path: layout.index_db_path(&connection.repo_path),
         })
@@ -493,6 +673,25 @@ fn detect_selected_connection(
         .iter()
         .find(|connection| connection.dir_name == candidate)
         .map(|connection| connection.dir_name.clone())
+}
+
+fn is_sparse_worktree(path: &Path) -> bool {
+    path.join(".git").is_file()
+}
+
+/// Update dirty_dir's git index to match the new dirty commit (leaves working tree unchanged).
+/// No-op if dirty_dir is not a sparse worktree (backward compat).
+fn update_dirty_worktree_index(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<()> {
+    if !is_sparse_worktree(&ctx.dirty_dir) {
+        return Ok(());
+    }
+    crate::git_ops::worktree_reset_mixed(&ctx.dirty_dir, hash)
+}
+
+/// Ensure reviewed_dirty_dir is set up as a sparse worktree and reset it to the given dirty hash.
+fn update_reviewed_dirty(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<()> {
+    crate::git_ops::ensure_sparse_worktree(&ctx.bare_repo, &ctx.reviewed_dirty_dir, "refs/heads/dirty")?;
+    crate::git_ops::worktree_reset_hard(&ctx.reviewed_dirty_dir, hash)
 }
 
 fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<DownloadResult> {
@@ -565,6 +764,8 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
 
     git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
     materialize_local_repo(ctx, &target_map)?;
+    update_dirty_worktree_index(ctx, &remote_hash)?;
+    update_reviewed_dirty(ctx, &remote_hash)?;
 
     Ok(result)
 }
@@ -612,6 +813,7 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
         if verbose { eprintln!(" done"); }
 
         strip_publish_plan_files(&mut merged);
+        let plan_file_count = local_plan_map.len() as i32;
         for (path, value) in &local_plan_map {
             merged.insert(path.clone(), value.clone());
         }
@@ -626,6 +828,9 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
         if maps_equal(&merged, &remote_map) {
             git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
             sync_schema_files_from_master(ctx)?;
+            apply_remote_changes_to_working_copy(ctx, &base_map, &remote_map, &local_unreviewed)?;
+            update_dirty_worktree_index(ctx, &remote_hash)?;
+            update_reviewed_dirty(ctx, &remote_hash)?;
             return Ok(UploadResult {
                 status: "up_to_date".to_string(),
                 messages,
@@ -633,7 +838,7 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
             });
         }
 
-        commit_file_map_to_dirty_ref(
+        let new_dirty_hash = commit_file_map_to_dirty_ref(
             &ctx.bare_repo,
             Some(remote_hash.as_str()),
             &merged,
@@ -645,6 +850,10 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
             Ok(()) => {
                 if verbose { eprintln!(" done"); }
                 sync_schema_files_from_master(ctx)?;
+                apply_remote_changes_to_working_copy(ctx, &base_map, &merged, &local_unreviewed)?;
+                update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+                update_reviewed_dirty(ctx, &new_dirty_hash)?;
+                result.files_plan = plan_file_count;
                 result.messages = messages;
                 return Ok(result);
             }
@@ -690,12 +899,14 @@ fn accept_all_single_repo(ctx: &ConnectionContext) -> anyhow::Result<AcceptAllRe
         }
     }
 
-    commit_file_map_to_dirty_ref(
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
         &ctx.bare_repo,
         base_hash.as_deref(),
         &accepted_map,
         "Accept all local changes",
     )?;
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(AcceptAllResult {
         files_accepted: changes.len() as i32,
@@ -704,6 +915,9 @@ fn accept_all_single_repo(ctx: &ConnectionContext) -> anyhow::Result<AcceptAllRe
 }
 
 fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    if is_sparse_worktree(&ctx.dirty_dir) {
+        return unreviewed_entries_from_status(ctx);
+    }
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
@@ -711,11 +925,32 @@ fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedE
     };
     sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
-    Ok(compute_unreviewed_entries(
-        &ctx.conn_dir_name,
-        &base_map,
-        &local_map,
-    ))
+    Ok(compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map))
+}
+
+fn unreviewed_entries_from_status(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let status_entries = crate::git_ops::worktree_status_entries(&ctx.dirty_dir)?;
+    let mut entries = Vec::new();
+    for entry in status_entries {
+        if entry.path.starts_with(".scratch/") {
+            continue;
+        }
+        let status = if entry.x == b'?' && entry.y == b'?' {
+            "added"
+        } else if entry.y == b'M' {
+            "modified"
+        } else if entry.y == b'D' {
+            "deleted"
+        } else {
+            continue;
+        };
+        entries.push(UnreviewedEntry {
+            connection_name: ctx.conn_dir_name.clone(),
+            path: entry.path,
+            status: status.to_string(),
+        });
+    }
+    Ok(entries)
 }
 
 /// Like `unreviewed_entries` but reuses a tree cache to avoid redundant blob reads.
@@ -723,6 +958,9 @@ fn unreviewed_entries_cached(
     cache: &mut TreeCache,
     ctx: &ConnectionContext,
 ) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    if is_sparse_worktree(&ctx.dirty_dir) {
+        return unreviewed_entries_from_status(ctx);
+    }
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map: FileMap = match base_hash.as_deref() {
         Some(hash) => cached_read_git_tree(cache, &ctx.bare_repo, hash)?.clone(),
@@ -760,19 +998,21 @@ pub(crate) fn has_unreviewed_record_changes(
     bare_repo: &Path,
     dirty_dir: &Path,
 ) -> anyhow::Result<bool> {
+    if dirty_dir.join(".git").is_file() {
+        let entries = crate::git_ops::worktree_status_entries(dirty_dir)?;
+        return Ok(entries.iter().any(|e| {
+            !e.path.starts_with(".scratch/")
+                && ((e.x == b'?' && e.y == b'?') || e.y == b'M' || e.y == b'D')
+        }));
+    }
     let base_hash = git_rev_parse_optional(bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
         Some(hash) => read_git_tree(bare_repo, hash)?,
         None => HashMap::new(),
     };
-
     let mut working_tree_map = FileMap::new();
     read_dirty_disk(dirty_dir, dirty_dir, &mut working_tree_map)?;
-
-    Ok(!maps_equal(
-        &data_only_map(&base_map),
-        &data_only_map(&working_tree_map),
-    ))
+    Ok(!maps_equal(&data_only_map(&base_map), &data_only_map(&working_tree_map)))
 }
 
 fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
@@ -838,6 +1078,7 @@ fn commit_file_map_to_dirty_ref(
 fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
     crate::git_ops::read_tree_files(bare_repo, hash)
 }
+
 
 fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
     let mut map = FileMap::new();
@@ -914,6 +1155,39 @@ fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Res
             write_file(&ctx.scratch_dir.join(scratch_rel), content)?;
         } else if !rel_path.starts_with(".scratch") {
             write_file(&ctx.dirty_dir.join(rel_path), content)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Apply only the files that changed between `old_map` and `new_map` to the working copy,
+/// skipping paths that have unreviewed local edits so user changes are preserved.
+fn apply_remote_changes_to_working_copy(
+    ctx: &ConnectionContext,
+    old_map: &FileMap,
+    new_map: &FileMap,
+    unreviewed: &[UnreviewedEntry],
+) -> anyhow::Result<()> {
+    let skip: std::collections::HashSet<&str> =
+        unreviewed.iter().map(|e| e.path.as_str()).collect();
+
+    let changed: std::collections::HashSet<&str> = old_map
+        .keys()
+        .chain(new_map.keys())
+        .map(|s| s.as_str())
+        .filter(|p| !p.starts_with(".scratch") && old_map.get(*p) != new_map.get(*p))
+        .collect();
+
+    for path in changed {
+        if skip.contains(path) {
+            continue;
+        }
+        match new_map.get(path) {
+            Some(content) => write_file(&ctx.dirty_dir.join(path), content)?,
+            None => {
+                let _ = std::fs::remove_file(ctx.dirty_dir.join(path));
+            }
         }
     }
 
@@ -1341,6 +1615,7 @@ fn aggregate_upload(results: &[UploadResult]) -> UploadResult {
         agg.files_uploaded += result.files_uploaded;
         agg.files_merged += result.files_merged;
         agg.files_deleted += result.files_deleted;
+        agg.files_plan += result.files_plan;
         agg.conflicts_auto_resolved += result.conflicts_auto_resolved;
         agg.retries += result.retries;
         agg.messages.extend(result.messages.iter().cloned());
@@ -1434,6 +1709,7 @@ fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> a
                 "filesUploaded": result.files_uploaded,
                 "filesMerged": result.files_merged,
                 "filesDeleted": result.files_deleted,
+                "filesPlan": result.files_plan,
                 "conflictsAutoResolved": result.conflicts_auto_resolved,
                 "retries": result.retries,
                 "messages": result.messages,
@@ -1460,7 +1736,7 @@ fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> a
     }
 
     let total = result.files_uploaded + result.files_merged + result.files_deleted;
-    if total == 0 {
+    if total == 0 && result.files_plan == 0 {
         println!("No changes. ({})", elapsed);
         return Ok(());
     }
@@ -1475,6 +1751,9 @@ fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> a
     }
     if result.files_deleted > 0 {
         parts.push(format!("{} deleted", result.files_deleted));
+    }
+    if result.files_plan > 0 {
+        parts.push(format!("{} plan files pushed", result.files_plan));
     }
     println!("{} ({})", parts.join(", "), elapsed);
     print_file_list(&result.uploaded_paths);
@@ -1524,7 +1803,10 @@ fn update_master_worktree(ctx: &ConnectionContext, token: &str) -> anyhow::Resul
     else {
         return Ok(());
     };
-    materialize_treeish_to_worktree(&ctx.bare_repo, &main_hash, &ctx.master_dir)
+    // Keep refs/heads/main pointing at the fetched tip
+    git_update_ref(&ctx.bare_repo, "refs/heads/main", &main_hash)?;
+    crate::git_ops::ensure_sparse_worktree(&ctx.bare_repo, &ctx.master_dir, "refs/heads/main")?;
+    crate::git_ops::worktree_reset_hard(&ctx.master_dir, &main_hash)
 }
 
 trait ToSlashLossy {

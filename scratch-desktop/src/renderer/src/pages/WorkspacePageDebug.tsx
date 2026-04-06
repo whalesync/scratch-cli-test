@@ -51,6 +51,10 @@ export function WorkspacePageDebug() {
   const [loadingUnreviewed, setLoadingUnreviewed] = useState(false);
   const [unreviewedEntries, setUnreviewedEntries] = useState<UnreviewedChangeEntry[]>([]);
   const [unreviewedError, setUnreviewedError] = useState<string | null>(null);
+  const [unpushedModalOpen, setUnpushedModalOpen] = useState(false);
+  const [loadingUnpushed, setLoadingUnpushed] = useState(false);
+  const [unpushedEntries, setUnpushedEntries] = useState<UnreviewedChangeEntry[]>([]);
+  const [unpushedError, setUnpushedError] = useState<string | null>(null);
   const [validateModalOpen, setValidateModalOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [publishPlanModalOpen, setPublishPlanModalOpen] = useState(false);
@@ -112,6 +116,30 @@ export function WorkspacePageDebug() {
     }
 
     return window.scratchDesktop.listUnreviewedChanges(localPath);
+  }, [localPath]);
+
+  const handleOpenUnpushedChanges = useCallback(async () => {
+    if (!localPath) {
+      return;
+    }
+
+    try {
+      setUnpushedModalOpen(true);
+      setLoadingUnpushed(true);
+      setUnpushedError(null);
+      const entries = await window.scratchDesktop.listUnpushedChanges(localPath);
+      setUnpushedEntries(entries);
+    } catch (err) {
+      setUnpushedEntries([]);
+      setUnpushedError(err instanceof Error ? err.message : 'Failed to load unpushed changes');
+      notifications.show({
+        title: 'Could not load unpushed changes',
+        message: err instanceof Error ? err.message : 'Failed to load unpushed changes',
+        color: 'red',
+      });
+    } finally {
+      setLoadingUnpushed(false);
+    }
   }, [localPath]);
 
   const handleDownloadRecords = useCallback(async () => {
@@ -720,6 +748,63 @@ export function WorkspacePageDebug() {
       </Modal>
 
       <Modal
+        opened={unpushedModalOpen}
+        onClose={() => {
+          if (!loadingUnpushed) {
+            setUnpushedModalOpen(false);
+          }
+        }}
+        title="Unpushed changes (dirty vs master)"
+        size="lg"
+      >
+        <Stack gap="md">
+          {unpushedError && (
+            <Alert color="red" title="Error">
+              {unpushedError}
+            </Alert>
+          )}
+
+          {loadingUnpushed ? (
+            <Center py="md">
+              <Loader size="sm" />
+            </Center>
+          ) : unpushedEntries.length === 0 ? (
+            <Text c="dimmed" size="sm">
+              No unpushed changes — dirty branch matches master.
+            </Text>
+          ) : (
+            <ScrollArea.Autosize mah={360}>
+              <Stack gap="xs">
+                {unpushedEntries.map((entry) => (
+                  <Box
+                    key={`${entry.connectionName}:${entry.path}:${entry.status}`}
+                    p="sm"
+                    style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 8 }}
+                  >
+                    <Group justify="space-between" align="flex-start">
+                      <Text fw={500} size="sm">
+                        {entry.connectionName}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {entry.status}
+                      </Text>
+                    </Group>
+                    <Code block mt="xs">
+                      {entry.path}
+                    </Code>
+                  </Box>
+                ))}
+              </Stack>
+            </ScrollArea.Autosize>
+          )}
+
+          <Text size="sm" c="dimmed">
+            {unpushedEntries.length} unpushed change{unpushedEntries.length === 1 ? '' : 's'}
+          </Text>
+        </Stack>
+      </Modal>
+
+      <Modal
         opened={validateModalOpen}
         onClose={() => {
           if (!validatingSyncs) {
@@ -1010,6 +1095,9 @@ export function WorkspacePageDebug() {
           <Group>
             <Button variant="light" onClick={() => void handleOpenUnreviewedChanges()}>
               View unreviewed changes
+            </Button>
+            <Button variant="light" onClick={() => void handleOpenUnpushedChanges()}>
+              View unpushed changes
             </Button>
             <Button variant="light" onClick={() => void handleAcceptAllChanges()} loading={acceptingAll}>
               Accept all changes

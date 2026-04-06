@@ -70,23 +70,6 @@ fn derive_workbook_org_id_prefers_workbook_field_then_repo_path_prefix() {
 }
 
 #[test]
-fn move_dirty_scratch_to_layout_extracts_scratch_from_user_dir() {
-    let tmp = TempDir::new().unwrap();
-    let dirty_dir = tmp.path().join("conn");
-    let scratch_dir = tmp.path().join(".scratch/connections/scratch/conn");
-
-    std::fs::create_dir_all(dirty_dir.join(".scratch/posts")).unwrap();
-    std::fs::write(dirty_dir.join(".scratch/posts/schema.json"), "{}").unwrap();
-    std::fs::write(dirty_dir.join("posts.json"), "{}").unwrap();
-
-    move_dirty_scratch_to_layout(&dirty_dir, &scratch_dir).unwrap();
-
-    assert!(dirty_dir.join("posts.json").exists());
-    assert!(!dirty_dir.join(".scratch").exists());
-    assert!(scratch_dir.join("posts/schema.json").exists());
-}
-
-#[test]
 fn sync_schema_files_from_master_checkout_copies_schema_into_connection_scratch() {
     let tmp = TempDir::new().unwrap();
     let master_dir = tmp.path().join(".scratch/connections/master/conn");
@@ -144,7 +127,13 @@ fn git_checkout_branch_from_bare_allows_empty_branch_tree() {
     git_checkout_branch_from_bare(&bare_dir, "dirty", &work_tree).unwrap();
 
     assert!(work_tree.exists());
-    assert!(std::fs::read_dir(&work_tree).unwrap().next().is_none());
+    // Sparse worktrees have a .git file; data files should be absent for an empty branch.
+    let non_git_entries: Vec<_> = std::fs::read_dir(&work_tree)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name() != ".git")
+        .collect();
+    assert!(non_git_entries.is_empty());
 }
 
 #[test]

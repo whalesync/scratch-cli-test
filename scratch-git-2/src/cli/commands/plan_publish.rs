@@ -54,20 +54,26 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
             continue;
         }
 
-        let reviewed_dirty_snapshot = if bare_repo.exists()
+        let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&conn_name);
+
+        // If reviewed_dirty_dir exists (sparse worktree system), use it directly —
+        // it is always kept in sync with refs/heads/dirty.
+        let _legacy_snapshot: Option<TempDirGuard>;
+        let dirty_source = if reviewed_dirty_dir.is_dir() {
+            _legacy_snapshot = None;
+            reviewed_dirty_dir.as_path()
+        } else if bare_repo.exists()
             && (!dirty_dir.exists() || has_unreviewed_record_changes(&bare_repo, &dirty_dir)?)
         {
-            Some(materialize_branch_from_bare(
-                &bare_repo,
-                &layout.reviewed_dirty_checkout_path(&conn_name),
-            )?)
+            // Legacy path: materialize to a temp location (TempDirGuard cleans up after).
+            let tmp_path = std::env::temp_dir()
+                .join(format!("scratchmd-plan-{}-{}", std::process::id(), &conn_name));
+            _legacy_snapshot = Some(materialize_branch_from_bare(&bare_repo, &tmp_path)?);
+            _legacy_snapshot.as_ref().unwrap().path.as_path()
         } else {
-            None
+            _legacy_snapshot = None;
+            dirty_dir.as_path()
         };
-        let dirty_source = reviewed_dirty_snapshot
-            .as_ref()
-            .map(|temp| temp.path.as_path())
-            .unwrap_or(dirty_dir.as_path());
 
         match plan_publish::build_publish_plan_with_scratch_dir(
             &conn_name,

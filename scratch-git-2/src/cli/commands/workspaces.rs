@@ -400,6 +400,10 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
         git_clone_bare(&ca.git_url, &bare_repo, token)?;
         materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
+        let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
+        if let Err(e) = crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH) {
+            eprintln!("  Warning: could not set up reviewed-dirty worktree for {}: {e}", dir_name);
+        }
 
         match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {
             Ok(()) => {
@@ -487,7 +491,7 @@ fn git_checkout_branch_from_bare(
     branch: &str,
     work_tree: &Path,
 ) -> anyhow::Result<()> {
-    crate::commands::files::materialize_treeish_to_worktree(bare_repo, branch, work_tree)
+    crate::git_ops::setup_sparse_worktree(bare_repo, work_tree, branch)
 }
 
 fn materialize_dirty_checkout(
@@ -495,28 +499,13 @@ fn materialize_dirty_checkout(
     dirty_dir: &Path,
     scratch_dir: &Path,
 ) -> anyhow::Result<()> {
-    git_checkout_branch_from_bare(bare_repo, DIRTY_BRANCH, dirty_dir)?;
-    move_dirty_scratch_to_layout(dirty_dir, scratch_dir)
-}
-
-fn move_dirty_scratch_to_layout(dirty_dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
-    let source = dirty_dir.join(".scratch");
-
-    if let Some(parent) = scratch_dir.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    if source.exists() {
-        if scratch_dir.exists() {
-            std::fs::remove_dir_all(scratch_dir)?;
-        }
-        std::fs::rename(&source, scratch_dir)?;
-    } else {
-        std::fs::create_dir_all(scratch_dir)?;
-    }
-
+    crate::git_ops::setup_sparse_worktree(bare_repo, dirty_dir, DIRTY_BRANCH)?;
+    // .scratch/ is excluded from the sparse checkout, so no need to move it.
+    // Just ensure the scratch_dir exists for subsequent writes.
+    std::fs::create_dir_all(scratch_dir)?;
     Ok(())
 }
+
 
 fn sync_schema_files_from_master_checkout(
     master_dir: &Path,

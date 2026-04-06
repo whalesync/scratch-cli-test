@@ -23,6 +23,9 @@ function parseArgs(argv) {
     stop: "nowhere",
     noCleanup: false,
     recordCount: undefined,
+    editCount: undefined,
+    acceptCount: undefined,
+    remoteDirtyRecord: undefined,
     serverUrl: undefined,
     binary: undefined,
     databaseUrl: undefined,
@@ -79,6 +82,22 @@ function parseArgs(argv) {
       args.workspaceRoot = argv[++i];
       continue;
     }
+    if (arg === "--edit-count") {
+      args.editCount = argv[++i];
+      continue;
+    }
+    if (arg === "--accept-count") {
+      args.acceptCount = argv[++i];
+      continue;
+    }
+    if (arg === "--change-remote-dirty") {
+      args.remoteDirtyRecord = argv[++i];
+      continue;
+    }
+    if (arg.startsWith("--change-remote-dirty=")) {
+      args.remoteDirtyRecord = arg.slice("--change-remote-dirty=".length);
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -108,6 +127,9 @@ Options:
   --no-cleanup             Keep the local workspace, remote workbook, and test DB
   --count <n>              Number of sample records to create (default: 3)
   --record-count <n>       Backward-compatible alias for --count
+  --edit-count <n>         Edit only the first N records (default: all). Must be <= --count.
+  --accept-count <m>       Accept only the first M edited records (default: all edited). Must be <= --edit-count.
+  --change-remote-dirty <n> Commit a remote dirty change to record N (simulates a concurrent external edit).
   --server-url <url>       Override SCRATCH_API_URL
   --binary <path-or-name>  Override SCRATCH_CLI_BINARY
   --database-url <url>     Override DATABASE_URL / DATABASE_URL_PREFIX
@@ -455,11 +477,19 @@ function listRecordFiles(workspaceDir) {
   return files;
 }
 
-function editLocalRecords(workspaceDir, runName) {
-  const files = listRecordFiles(workspaceDir);
+function sortRecordFiles(files) {
+  return [...files].sort((a, b) => {
+    const numA = parseInt(path.basename(a).match(/\d+/)?.[0] ?? "0", 10);
+    const numB = parseInt(path.basename(b).match(/\d+/)?.[0] ?? "0", 10);
+    return numA !== numB ? numA - numB : a.localeCompare(b);
+  });
+}
+
+function editLocalRecords(workspaceDir, runName, count = Infinity) {
+  const files = sortRecordFiles(listRecordFiles(workspaceDir));
   const touched = [];
 
-  for (const file of files) {
+  for (const file of files.slice(0, count)) {
     const record = JSON.parse(fs.readFileSync(file, "utf8"));
     if (record && typeof record === "object" && record.id != null) {
       record.name = `Edited Record ${record.id} (${runName})`;
@@ -469,6 +499,60 @@ function editLocalRecords(workspaceDir, runName) {
   }
 
   return touched;
+}
+
+function findBareRepo(workspaceDir) {
+  const reposDir = path.join(workspaceDir, ".repos");
+  if (!fs.existsSync(reposDir)) {
+    throw new Error(`No .repos directory found in ${workspaceDir}`);
+  }
+  const entries = fs.readdirSync(reposDir).filter((f) => f.endsWith(".git"));
+  if (entries.length === 0) {
+    throw new Error(`No .git repos found in ${reposDir}`);
+  }
+  return path.join(reposDir, entries[0]);
+}
+
+function changeRemoteDirty(workspaceDir, recordNumber, apiToken) {
+  const bareRepo = findBareRepo(workspaceDir);
+  const allFiles = sortRecordFiles(listRecordFiles(workspaceDir));
+  const targetFile = allFiles[recordNumber - 1];
+  if (!targetFile) {
+    throw new Error(
+      `--change-remote-dirty: record ${recordNumber} not found (only ${allFiles.length} records downloaded)`,
+    );
+  }
+
+  const relPath = path.relative(workspaceDir, targetFile);
+  // Strip the connection dir prefix — the bare repo stores files without it.
+  const repoRelPath = relPath.split(path.sep).slice(1).join(path.sep);
+
+  const remoteUrl = runCommand("git", ["--git-dir", bareRepo, "remote", "get-url", "origin"]).stdout.trim();
+  const tmpClone = fs.mkdtempSync(path.join(os.tmpdir(), "driver-remote-dirty-"));
+
+  try {
+    // Clone the remote dirty branch directly — nothing local is touched.
+    runCommand("git", ["-c", `http.extraHeader=Authorization: API-Token ${apiToken}`, "clone", "--branch", "dirty", "--single-branch", remoteUrl, tmpClone]);
+
+    const cloneFile = path.join(tmpClone, repoRelPath);
+    const record = JSON.parse(fs.readFileSync(cloneFile, "utf8"));
+    record.name = `Remote Edit ${record.id} (external)`;
+    fs.writeFileSync(cloneFile, `${JSON.stringify(record, null, 2)}\n`);
+
+    runCommand("git", ["-C", tmpClone, "add", repoRelPath]);
+    runCommand("git", [
+      "-C", tmpClone,
+      "-c", "user.name=External User",
+      "-c", "user.email=external@driver.test",
+      "commit", "-m", `External edit: record ${recordNumber}`,
+    ]);
+
+    runCommand("git", ["-C", tmpClone, "-c", `http.extraHeader=Authorization: API-Token ${apiToken}`, "push", "origin", "dirty"]);
+
+    console.log(`Remote dirty commit pushed to origin: record ${recordNumber} → "Remote Edit ${record.id} (external)"`);
+  } finally {
+    fs.rmSync(tmpClone, { recursive: true, force: true });
+  }
 }
 
 function findTable(tables) {
@@ -632,6 +716,9 @@ async function main() {
   const recordCount = Number(
     cliArgs.recordCount || process.env.DRIVER_RECORD_COUNT || "3",
   );
+  const editCount = cliArgs.editCount != null ? Number(cliArgs.editCount) : recordCount;
+  const acceptCount = cliArgs.acceptCount != null ? Number(cliArgs.acceptCount) : editCount;
+  const remoteDirtyRecord = cliArgs.remoteDirtyRecord != null ? Number(cliArgs.remoteDirtyRecord) : null;
   const binary = resolveBinary(
     cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
   );
@@ -647,6 +734,21 @@ async function main() {
   }
   if (!Number.isFinite(recordCount) || recordCount <= 0) {
     throw new Error(`Invalid record count: ${recordCount}`);
+  }
+  if (!Number.isFinite(editCount) || editCount < 0) {
+    throw new Error(`Invalid --edit-count: ${editCount}`);
+  }
+  if (!Number.isFinite(acceptCount) || acceptCount < 0) {
+    throw new Error(`Invalid --accept-count: ${acceptCount}`);
+  }
+  if (editCount > recordCount) {
+    throw new Error(`--edit-count (${editCount}) cannot exceed --count (${recordCount})`);
+  }
+  if (acceptCount > editCount) {
+    throw new Error(`--accept-count (${acceptCount}) cannot exceed --edit-count (${editCount})`);
+  }
+  if (remoteDirtyRecord !== null && (!Number.isFinite(remoteDirtyRecord) || remoteDirtyRecord < 1 || remoteDirtyRecord > recordCount)) {
+    throw new Error(`--change-remote-dirty must be a record number between 1 and ${recordCount}`);
   }
 
   const runName = makeRunName();
@@ -673,6 +775,9 @@ async function main() {
   console.log(`Database name:  ${dbName}`);
   console.log(`Database URL:   ${databaseUrl}`);
   console.log(`Record count:   ${recordCount}`);
+  console.log(`Edit count:     ${editCount}`);
+  console.log(`Accept count:   ${acceptCount}`);
+  if (remoteDirtyRecord !== null) console.log(`Remote dirty:   record ${remoteDirtyRecord}`);
   console.log(`Workspace root: ${workspaceRoot}`);
   console.log(`Cleanup:        ${cliArgs.noCleanup ? "disabled" : "enabled"}`);
 
@@ -802,8 +907,8 @@ async function main() {
     ]);
 
     printSection("Edit local records");
-    const editedFiles = editLocalRecords(state.workspaceDir, runName);
-    console.log(`Edited ${editedFiles.length} record files.`);
+    const editedFiles = editLocalRecords(state.workspaceDir, runName, editCount);
+    console.log(`Edited ${editedFiles.length} of ${downloadedFiles.length} record files.`);
 
     stopIfNeeded(cliArgs.stop, "records-edited", "Local records edited", [
       `Edited files: ${editedFiles.length}`,
@@ -813,10 +918,25 @@ async function main() {
     ]);
 
     printSection("Accept local changes");
-    runCli(binary, serverUrl, ["files", "accept-all"], {
-      cwd: state.workspaceDir,
-      noJson: true,
-    });
+    if (acceptCount === editedFiles.length) {
+      runCli(binary, serverUrl, ["files", "accept-all"], {
+        cwd: state.workspaceDir,
+        noJson: true,
+      });
+    } else {
+      const filesToAccept = editedFiles.slice(0, acceptCount);
+      const relPaths = filesToAccept.map((file) => path.relative(state.workspaceDir, file));
+      runCli(binary, serverUrl, ["files", "accept", ...relPaths], {
+        cwd: state.workspaceDir,
+        noJson: true,
+      });
+      console.log(`Accepted ${filesToAccept.length} of ${editedFiles.length} edited files (${editedFiles.length - filesToAccept.length} left unreviewed).`);
+    }
+
+    if (remoteDirtyRecord !== null) {
+      printSection("Inject remote dirty commit");
+      changeRemoteDirty(state.workspaceDir, remoteDirtyRecord, apiToken);
+    }
 
     printSection("Create publish plan");
     runCli(binary, serverUrl, ["plan-publish"], {
@@ -861,15 +981,27 @@ async function main() {
 
     printSection("Verify remote database state");
     const finalRows = await readRows(databaseUrl);
+    const acceptedIds = new Set(editedFiles.slice(0, acceptCount).map((f) => {
+      const record = JSON.parse(fs.readFileSync(f, "utf8"));
+      return record.id;
+    }));
+    let mismatches = 0;
     for (const row of finalRows) {
-      const expected = `Edited Record ${row.id} (${runName})`;
+      let expected;
+      if (acceptedIds.has(row.id)) {
+        expected = `Edited Record ${row.id} (${runName})`;
+      } else {
+        expected = `Record ${row.id}`;
+      }
       if (row.name !== expected) {
-        throw new Error(
-          `Row ${row.id} mismatch. Expected "${expected}" but found "${row.name}"`,
-        );
+        console.warn(`  Row ${row.id}: expected "${expected}", got "${row.name}"`);
+        mismatches += 1;
       }
     }
-    console.log(`Verified ${finalRows.length} published rows in Postgres.`);
+    if (mismatches > 0) {
+      throw new Error(`${mismatches} row(s) did not match expected state after publish.`);
+    }
+    console.log(`Verified ${finalRows.length} rows in Postgres (${acceptedIds.size} edited, ${finalRows.length - acceptedIds.size} unchanged).`);
 
     console.log("\nDriver completed successfully.");
     console.log(`Workbook ID: ${state.workbookId}`);

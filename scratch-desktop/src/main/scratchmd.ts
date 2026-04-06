@@ -301,6 +301,17 @@ export async function listUnreviewedChanges(workspacePath: string): Promise<Unre
   return result.entries;
 }
 
+export async function listUnpushedChanges(workspacePath: string): Promise<UnreviewedChangeEntry[]> {
+  const result = await runScratchmdJson<{ count: number; entries: UnreviewedChangeEntry[] }>(
+    ['--json', 'files', 'unpushed'],
+    workspacePath,
+  );
+  if (!Array.isArray(result.entries)) {
+    throw new Error('scratchmd files unpushed returned unexpected output — is your CLI up to date?');
+  }
+  return result.entries;
+}
+
 export async function listUnpublishedChanges(workspacePath: string): Promise<UnreviewedChangeEntry[]> {
   const result = await runScratchmdJson<{ count: number; entries: UnreviewedChangeEntry[] }>(
     ['--json', 'files', 'unpublished'],

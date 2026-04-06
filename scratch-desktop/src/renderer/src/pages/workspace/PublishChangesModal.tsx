@@ -454,6 +454,11 @@ export function PublishChangesModal({
 
           if (hydrated.every((job) => job.state === 'completed')) {
             setMode('complete');
+            if (localPath) {
+              window.scratchDesktop.pullWorkspaceChanges(localPath).catch((err) => {
+                console.debug('Post-publish pull failed:', err);
+              });
+            }
             return;
           }
 
@@ -482,7 +487,7 @@ export function PublishChangesModal({
         pollingIntervalRef.current = null;
       }
     };
-  }, [jobIds, mode]);
+  }, [jobIds, localPath, mode]);
 
   const totals = useMemo(
     () =>

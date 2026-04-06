@@ -44,6 +44,7 @@ function parseArgs(argv) {
     workspace: undefined,
     pause: "nowhere",
     stop: "nowhere",
+    noEdit: false,
     serverUrl: undefined,
     binary: undefined,
   };
@@ -72,6 +73,10 @@ function parseArgs(argv) {
     }
     if (arg === "--binary") {
       args.binary = argv[++i];
+      continue;
+    }
+    if (arg === "--no-edit") {
+      args.noEdit = true;
       continue;
     }
     if (arg === "--stop") {
@@ -107,6 +112,7 @@ Options:
                              publish-plan-created After plan-publish runs
                              publish-queued     After publish-from-git, job IDs known
   --stop=<mode>            Exit cleanly at a breakpoint (same step names as --pause)
+  --no-edit                Skip the re-edit step — use when you've edited files manually
   --server-url <url>       Override SCRATCH_API_URL
   --binary <path-or-name>  Override SCRATCH_CLI_BINARY
   --help, -h               Show this help
@@ -399,23 +405,28 @@ async function main() {
 
   runCommand(binary, ["--version"]);
 
-  printSection("Re-edit local records");
-  const editedFiles = editLocalRecords(workspaceDir, runName);
-  if (editedFiles.length === 0) {
-    throw new Error("No record files found in workspace. Is the workspace path correct?");
-  }
-  console.log(`Edited ${editedFiles.length} record files.`);
+  if (cliArgs.noEdit) {
+    printSection("Skipping re-edit (--no-edit)");
+    console.log("Using existing local file changes.");
+  } else {
+    printSection("Re-edit local records");
+    const editedFiles = editLocalRecords(workspaceDir, runName);
+    if (editedFiles.length === 0) {
+      throw new Error("No record files found in workspace. Is the workspace path correct?");
+    }
+    console.log(`Edited ${editedFiles.length} record files.`);
 
-  stopIfNeeded(cliArgs.stop, "records-edited", "Local records re-edited", [
-    `Workspace: ${workspaceDir}`,
-    `Edited files: ${editedFiles.length}`,
-    `Run name: ${runName}`,
-  ]);
-  await pauseIfNeeded(cliArgs.pause, "records-edited", "Local records re-edited", [
-    `Workspace: ${workspaceDir}`,
-    `Edited files: ${editedFiles.length}`,
-    `Run name: ${runName}`,
-  ]);
+    stopIfNeeded(cliArgs.stop, "records-edited", "Local records re-edited", [
+      `Workspace: ${workspaceDir}`,
+      `Edited files: ${editedFiles.length}`,
+      `Run name: ${runName}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "records-edited", "Local records re-edited", [
+      `Workspace: ${workspaceDir}`,
+      `Edited files: ${editedFiles.length}`,
+      `Run name: ${runName}`,
+    ]);
+  }
 
   printSection("Accept local changes");
   runCli(binary, serverUrl, ["files", "accept-all"], {

@@ -42,6 +42,9 @@ interface ScratchDesktopAPI {
   listUnreviewedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
+  listUnpushedChanges: (
+    workspacePath: string,
+  ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
   listLocalPublishPlans: (workspacePath: string) => Promise<
     Array<{
       planId: string;
@@ -53,6 +56,7 @@ interface ScratchDesktopAPI {
     }>
   >;
   pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
+  pullWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
   listLocalSyncs: (workspacePath: string) => Promise<string[]>;
   validateLocalSync: (
     workspacePath: string,

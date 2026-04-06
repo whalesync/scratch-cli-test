@@ -19,6 +19,7 @@ import {
 } from './local-files';
 import {
   listLocalPublishPlans,
+  listUnpushedChanges,
   listUnreviewedChanges,
   runScratchmd,
   runScratchmdCapture,
@@ -270,11 +271,15 @@ ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string) =>
 ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
 );
+ipcMain.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) => listUnpushedChanges(workspacePath));
 ipcMain.handle('scratch:list-local-publish-plans', async (_, workspacePath: string) =>
   listLocalPublishPlans(workspacePath),
 );
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
   runScratchmd(['files', 'upload'], workspacePath),
+);
+ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string) =>
+  runScratchmd(['files', 'download'], workspacePath),
 );
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>

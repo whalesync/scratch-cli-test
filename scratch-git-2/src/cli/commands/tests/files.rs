@@ -114,6 +114,7 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
     let ctx = ConnectionContext {
         conn_dir_name: "Conn".to_string(),
         dirty_dir: tmp.path().join("Conn"),
+        reviewed_dirty_dir: tmp.path().join(".scratch/connections/reviewed-dirty/Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         master_dir: tmp.path().join(".scratch/connections/master/Conn"),
         bare_repo: tmp.path().join(".repos/conn.git"),
@@ -188,6 +189,7 @@ fn sync_schema_files_from_master_restores_missing_schema() {
     let ctx = ConnectionContext {
         conn_dir_name: "Conn".to_string(),
         dirty_dir: tmp.path().join("Conn"),
+        reviewed_dirty_dir: tmp.path().join(".scratch/connections/reviewed-dirty/Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         master_dir: tmp.path().join(".scratch/connections/master/Conn"),
         bare_repo: tmp.path().join(".repos/conn.git"),

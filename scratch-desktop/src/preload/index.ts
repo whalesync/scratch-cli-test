@@ -48,6 +48,10 @@ const scratchDesktop = {
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
     ipcRenderer.invoke('scratch:list-unreviewed-changes', workspacePath),
+  listUnpushedChanges: (
+    workspacePath: string,
+  ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
+    ipcRenderer.invoke('scratch:list-unpushed-changes', workspacePath),
   listLocalPublishPlans: (
     workspacePath: string,
   ): Promise<
@@ -62,6 +66,8 @@ const scratchDesktop = {
   > => ipcRenderer.invoke('scratch:list-local-publish-plans', workspacePath),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
     ipcRenderer.invoke('scratch:push-workspace-changes', workspacePath),
+  pullWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
+    ipcRenderer.invoke('scratch:pull-workspace-changes', workspacePath),
   listLocalSyncs: (workspacePath: string): Promise<string[]> =>
     ipcRenderer.invoke('scratch:list-local-syncs', workspacePath),
   validateLocalSync: (

@@ -423,6 +423,262 @@ fn write_symlink_or_fallback(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     write_blob_file(path, data, false)
 }
 
+/// Returns `(status, path)` pairs for files that differ between `from_treeish` and `to_treeish`.
+/// Status is one of: `"added"`, `"deleted"`, `"modified"`, `"renamed"`.
+/// Paths starting with `.scratch/` are excluded.
+pub(crate) fn diff_name_status(
+    bare_repo: &Path,
+    from_treeish: &str,
+    to_treeish: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let git_dir = bare_repo.to_str().unwrap_or_default();
+    let output = Command::new("git")
+        .args([
+            "--git-dir",
+            git_dir,
+            "diff",
+            "--name-status",
+            from_treeish,
+            to_treeish,
+        ])
+        .output()
+        .context("failed to spawn git diff --name-status")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git diff --name-status failed: {}", stderr.trim());
+    }
+
+    let mut entries = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(3, '\t');
+        let Some(status_code) = parts.next() else { continue };
+        let Some(path) = parts.next() else { continue };
+
+        if path.starts_with(".scratch/") {
+            continue;
+        }
+
+        // Renames look like "R100\told_path\tnew_path" — use the new path
+        let path = if status_code.starts_with('R') || status_code.starts_with('C') {
+            match parts.next() {
+                Some(new_path) => new_path,
+                None => path,
+            }
+        } else {
+            path
+        };
+
+        let status = match status_code.chars().next() {
+            Some('A') => "added",
+            Some('D') => "deleted",
+            Some('M') => "modified",
+            Some('R') => "renamed",
+            Some('C') => "modified",
+            _ => continue,
+        };
+
+        entries.push((status.to_string(), path.to_string()));
+    }
+
+    Ok(entries)
+}
+
+/// Create a sparse git worktree at `worktree_path` tracking `refname`.
+/// Excludes `.scratch/**` from checkout (data files only).
+/// Removes and recreates the directory if it already exists.
+pub(crate) fn setup_sparse_worktree(
+    bare_repo: &Path,
+    worktree_path: &Path,
+    refname: &str,
+) -> anyhow::Result<()> {
+    let git_dir = bare_repo.to_str().unwrap_or_default();
+
+    // Prune stale entries first so the path can be reused
+    let _ = Command::new("git")
+        .args(["--git-dir", git_dir, "worktree", "prune"])
+        .output();
+
+    if worktree_path.exists() {
+        std::fs::remove_dir_all(worktree_path)
+            .with_context(|| format!("failed to remove {}", worktree_path.display()))?;
+    }
+
+    let output = Command::new("git")
+        .args([
+            "--git-dir",
+            git_dir,
+            "worktree",
+            "add",
+            "--no-checkout",
+            "--force",
+            worktree_path.to_str().unwrap_or_default(),
+            refname,
+        ])
+        .output()
+        .context("failed to spawn git worktree add")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git worktree add failed: {}", stderr.trim());
+    }
+
+    // Configure sparse checkout (no-cone): include everything except .scratch/
+    let output = Command::new("git")
+        .args([
+            "-C",
+            worktree_path.to_str().unwrap_or_default(),
+            "sparse-checkout",
+            "init",
+            "--no-cone",
+        ])
+        .output()
+        .context("failed to spawn git sparse-checkout init")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git sparse-checkout init failed: {}", stderr.trim());
+    }
+
+    let output = Command::new("git")
+        .args([
+            "-C",
+            worktree_path.to_str().unwrap_or_default(),
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!.scratch",
+        ])
+        .output()
+        .context("failed to spawn git sparse-checkout set")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git sparse-checkout set failed: {}", stderr.trim());
+    }
+
+    // Initial checkout
+    let output = Command::new("git")
+        .args(["-C", worktree_path.to_str().unwrap_or_default(), "checkout"])
+        .output()
+        .context("failed to spawn git checkout")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git checkout failed: {}", stderr.trim());
+    }
+
+    Ok(())
+}
+
+/// Set up a sparse worktree only if one does not already exist at `worktree_path`.
+pub(crate) fn ensure_sparse_worktree(
+    bare_repo: &Path,
+    worktree_path: &Path,
+    refname: &str,
+) -> anyhow::Result<()> {
+    if worktree_path.join(".git").is_file() {
+        return Ok(());
+    }
+    setup_sparse_worktree(bare_repo, worktree_path, refname)
+}
+
+/// `git reset --hard <hash>` in a worktree (updates HEAD, index, and working tree).
+pub(crate) fn worktree_reset_hard(worktree_path: &Path, hash: &str) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            worktree_path.to_str().unwrap_or_default(),
+            "reset",
+            "--hard",
+            hash,
+        ])
+        .output()
+        .context("failed to spawn git reset --hard")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git reset --hard failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+/// `git reset --mixed <hash>` in a worktree (updates HEAD and index; leaves working tree intact).
+pub(crate) fn worktree_reset_mixed(worktree_path: &Path, hash: &str) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            worktree_path.to_str().unwrap_or_default(),
+            "reset",
+            "--mixed",
+            hash,
+        ])
+        .output()
+        .context("failed to spawn git reset --mixed")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git reset --mixed failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+pub(crate) struct WorktreeStatusEntry {
+    pub(crate) x: u8,
+    pub(crate) y: u8,
+    pub(crate) path: String,
+}
+
+/// Returns git status entries for the worktree using `--porcelain=v1 -z`.
+/// Returns an empty list if `worktree_path` is not a git worktree.
+pub(crate) fn worktree_status_entries(worktree_path: &Path) -> anyhow::Result<Vec<WorktreeStatusEntry>> {
+    if !worktree_path.join(".git").is_file() {
+        return Ok(vec![]);
+    }
+
+    let output = Command::new("git")
+        .args([
+            "-C",
+            worktree_path.to_str().unwrap_or_default(),
+            "status",
+            "--porcelain=v1",
+            "-z",
+        ])
+        .output()
+        .context("failed to spawn git status")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git status failed: {}", stderr.trim());
+    }
+
+    let mut entries = Vec::new();
+    let bytes = &output.stdout;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if i + 3 > bytes.len() {
+            break;
+        }
+        let x = bytes[i];
+        let y = bytes[i + 1];
+        // bytes[i+2] is a space separator
+        let path_start = i + 3;
+        let Some(nul_offset) = bytes[path_start..].iter().position(|&b| b == 0) else {
+            break;
+        };
+        let path = String::from_utf8_lossy(&bytes[path_start..path_start + nul_offset]).into_owned();
+        i = path_start + nul_offset + 1;
+
+        // Renames / copies have a second NUL-terminated original path — consume it
+        if x == b'R' || x == b'C' {
+            if let Some(nul2) = bytes[i..].iter().position(|&b| b == 0) {
+                i += nul2 + 1;
+            }
+        }
+
+        entries.push(WorktreeStatusEntry { x, y, path });
+    }
+
+    Ok(entries)
+}
+
 fn normalize_crlf(mut bytes: Vec<u8>) -> Vec<u8> {
     if bytes.windows(2).any(|window| window == b"\r\n") {
         let mut normalized = Vec::with_capacity(bytes.len());
