@@ -81,6 +81,21 @@ export const getJobDescription = (job: JobEntity): string => {
       return 'Sync';
     }
     case 'publish': {
+      if (progress?.processedCount !== undefined && progress?.totalCount !== undefined) {
+        const processed = Number(progress.processedCount) || 0;
+        const total = Number(progress.totalCount) || 0;
+        const tableCount = Number(progress.tableCount) || 0;
+        const connectionName = progress.connectionName as string | undefined;
+        const tableName = progress.tableName as string | undefined;
+        const connectionSuffix = connectionName ? ` in ${connectionName}` : '';
+        if (tableName) {
+          return `Publish ${processed} / ${total} ${pluralize('change', total)} for ${tableName}${connectionSuffix}`;
+        }
+        if (tableCount > 1) {
+          return `Publish ${processed} / ${total} ${pluralize('change', total)} across ${tableCount} tables${connectionSuffix}`;
+        }
+        return `Publish ${processed} / ${total} ${pluralize('change', total)}${connectionSuffix}`;
+      }
       if (progress?.totalFiles !== undefined) {
         const count = Number(progress.totalFiles) || 0;
         return `Publish ${count} ${pluralize('change', count)}`;

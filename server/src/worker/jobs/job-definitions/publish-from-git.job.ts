@@ -8,8 +8,20 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 export type PublishFromGitPublicProgress = {
   status: 'running' | 'completed' | 'failed';
   planId: string;
+  connectionName: string;
+  tableName: string;
+  currentTableName: string;
+  tableCount: number;
+  currentPhase: string;
+  processedCount: number;
+  totalCount: number;
   successCount: number;
   failedCount: number;
+  editsPlanned: number;
+  createsPlanned: number;
+  deletesPlanned: number;
+  backfillsPlanned: number;
+  renameFilesPlanned: number;
 };
 
 // ── Job Definition ─────────────────────────────────────────────────────────
@@ -50,6 +62,24 @@ export class PublishFromGitJobHandler implements JobHandlerBuilder<PublishFromGi
     ) => Promise<void>;
   }) {
     const { jobId, data, checkpoint } = params;
+    const emptyProgress = {
+      planId: '',
+      connectionName: '',
+      tableName: '',
+      currentTableName: '',
+      tableCount: 0,
+      currentPhase: '',
+      processedCount: 0,
+      totalCount: 0,
+      successCount: 0,
+      failedCount: 0,
+      editsPlanned: 0,
+      createsPlanned: 0,
+      deletesPlanned: 0,
+      backfillsPlanned: 0,
+      renameFilesPlanned: 0,
+    } satisfies Omit<PublishFromGitPublicProgress, 'status'>;
+    let latestProgress = emptyProgress;
 
     WSLogger.info({
       source: 'PublishFromGitJobHandler',
@@ -60,24 +90,34 @@ export class PublishFromGitJobHandler implements JobHandlerBuilder<PublishFromGi
     });
 
     await checkpoint({
-      publicProgress: { status: 'running', planId: '', successCount: 0, failedCount: 0 },
+      publicProgress: { status: 'running', ...latestProgress },
       jobProgress: {},
       connectorProgress: {},
     });
 
     try {
+      const onProgress = async (progress: Omit<PublishFromGitPublicProgress, 'status'>) => {
+        latestProgress = progress;
+        await checkpoint({
+          publicProgress: { status: 'running', ...progress },
+          jobProgress: {},
+          connectorProgress: {},
+        });
+      };
+
       const result = await this.publishFromGitService.runFromGit(
         data.workbookId,
         data.connectorAccountId,
         data.planPath,
+        onProgress,
       );
+
+      latestProgress = result;
 
       await checkpoint({
         publicProgress: {
           status: 'completed',
-          planId: result.planId,
-          successCount: result.successCount,
-          failedCount: result.failedCount,
+          ...result,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -92,7 +132,7 @@ export class PublishFromGitJobHandler implements JobHandlerBuilder<PublishFromGi
       });
     } catch (err) {
       await checkpoint({
-        publicProgress: { status: 'failed', planId: '', successCount: 0, failedCount: 0 },
+        publicProgress: { status: 'failed', ...latestProgress },
         jobProgress: {},
         connectorProgress: {},
       });

@@ -7,6 +7,7 @@ import { DbService } from '../db/db.service';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
+import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { pickByShape } from './diff-utils';
@@ -51,9 +52,23 @@ type PhaseOperation = {
 
 export interface PublishFromGitResult {
   planId: string;
+  connectionName: string;
+  tableName: string;
+  currentTableName: string;
+  tableCount: number;
+  currentPhase: string;
+  processedCount: number;
+  totalCount: number;
   successCount: number;
   failedCount: number;
+  editsPlanned: number;
+  createsPlanned: number;
+  deletesPlanned: number;
+  backfillsPlanned: number;
+  renameFilesPlanned: number;
 }
+
+export type PublishFromGitProgressUpdate = PublishFromGitResult;
 
 @Injectable()
 export class PublishFromGitService {
@@ -79,6 +94,7 @@ export class PublishFromGitService {
     workbookId: WorkbookId,
     connectorAccountId: string,
     planPath: string,
+    onProgress?: (progress: PublishFromGitProgressUpdate) => Promise<void>,
   ): Promise<PublishFromGitResult> {
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
 
@@ -108,109 +124,186 @@ export class PublishFromGitService {
     // Build hasLaterPhase by scanning backfill and delete directories
     const hasLaterPhase = await this.buildHasLaterPhase(repoId, plan.tablePaths);
 
+    const editsPlanned = plan.summary.edit ?? 0;
+    const createsPlanned = plan.summary.create ?? 0;
+    const deletesPlanned = plan.summary.delete ?? 0;
+    const backfillsPlanned = plan.summary.backfill ?? 0;
+    const renameFilesPlanned = plan.summary.rename ?? 0;
+    const totalCount = editsPlanned + createsPlanned + deletesPlanned + backfillsPlanned + renameFilesPlanned;
+    const tableCount = plan.tablePaths.length;
+    const tableName = tableCount === 1 ? describeTablePath(plan.tablePaths[0]) : '';
+
     let successCount = 0;
     let failedCount = 0;
+    let processedCount = 0;
+    let currentPhase = '';
+    let currentTableName = '';
+
+    const emitProgress = async () => {
+      if (!onProgress) {
+        return;
+      }
+
+      await onProgress({
+        planId: plan.planId,
+        connectionName: plan.connectionName,
+        tableName,
+        currentTableName,
+        tableCount,
+        currentPhase,
+        processedCount,
+        totalCount,
+        successCount,
+        failedCount,
+        editsPlanned,
+        createsPlanned,
+        deletesPlanned,
+        backfillsPlanned,
+        renameFilesPlanned,
+      });
+    };
+
+    await emitProgress();
 
     const phases: PlanPhase[] = ['edit', 'create', 'delete', 'backfill', 'rename'];
 
     for (const phase of phases) {
-      const operations = await this.loadPhaseOperations(repoId, plan.tablePaths, phase);
-      if (operations.length === 0) continue;
+      currentPhase = phase;
+      await emitProgress();
+
+      const phaseFolders = await this.listPhaseFolders(repoId, plan.tablePaths, phase);
+      if (phaseFolders.length === 0) continue;
+
+      const plannedForPhase = getPlannedCountForPhase(
+        phase,
+        editsPlanned,
+        createsPlanned,
+        deletesPlanned,
+        backfillsPlanned,
+        renameFilesPlanned,
+      );
 
       WSLogger.info({
         source: 'PublishFromGitService.runFromGit',
-        message: `Executing ${phase} phase (${operations.length} entries)`,
+        message: `Executing ${phase} phase`,
         workbookId,
-        data: { planId: plan.planId, phase },
+        data: { planId: plan.planId, phase, plannedForPhase, folderCount: phaseFolders.length },
       });
 
       if (phase === 'rename') {
-        // Group by folder, execute renames
-        const byFolder = groupByFolder(operations);
-        for (const [folderPath, folderOps] of byFolder) {
-          try {
-            await this.dispatchRenameBatch(folderPath, folderOps, workbookId, repoId);
-            successCount += folderOps.length;
-          } catch (err) {
-            failedCount += folderOps.length;
-            WSLogger.error({
-              source: 'PublishFromGitService.runFromGit',
-              message: `Rename batch failed for folder ${folderPath}`,
-              error: err,
-              workbookId,
-              data: { planId: plan.planId },
-            });
-          }
-        }
-      } else if (phase === 'delete') {
-        const byFolder = groupByFolder(operations);
-        for (const [folderPath, folderOps] of byFolder) {
-          const tableSpec = await this.schemaService.getTableSpec(workbookId, folderPath, tableSpecCache);
-          if (!tableSpec) {
-            WSLogger.warn({
-              source: 'PublishFromGitService.runFromGit',
-              message: `No tableSpec for folder ${folderPath}, skipping delete`,
-              workbookId,
-            });
-            failedCount += folderOps.length;
-            continue;
-          }
-          try {
-            await this.dispatchDeleteBatch(folderOps, connector, tableSpec, workbookId, repoId);
-            successCount += folderOps.length;
-          } catch (err) {
-            failedCount += folderOps.length;
-            WSLogger.error({
-              source: 'PublishFromGitService.runFromGit',
-              message: `Delete batch failed for folder ${folderPath}`,
-              error: err,
-              workbookId,
-              data: { planId: plan.planId },
-            });
-          }
-        }
-      } else {
-        // edit, create, backfill
-        const byFolder = groupByFolder(operations);
-        for (const [folderPath, folderOps] of byFolder) {
-          const tableSpec = await this.schemaService.getTableSpec(workbookId, folderPath, tableSpecCache);
-          if (!tableSpec) {
-            WSLogger.warn({
-              source: 'PublishFromGitService.runFromGit',
-              message: `No tableSpec for folder ${folderPath}, skipping ${phase}`,
-              workbookId,
-            });
-            failedCount += folderOps.length;
-            continue;
-          }
+        for (const { tablePath, phaseDir } of phaseFolders) {
+          currentTableName = describeTablePath(tablePath);
+          await emitProgress();
 
-          const batchSize = connector.getBatchSize(phase === 'create' ? 'create' : 'update');
+          let cursor: string | undefined;
+          do {
+            const page = await this.readPhaseFilesPage(repoId, phaseDir, 100, cursor);
+            const folderOps = page.files.map((file) =>
+              this.parsePhaseOperation(tablePath, phaseDir, phase, file.name, file.content),
+            );
+            if (folderOps.length === 0) {
+              cursor = page.nextCursor;
+              continue;
+            }
 
-          for (let i = 0; i < folderOps.length; i += batchSize) {
-            const batch = folderOps.slice(i, i + batchSize);
             try {
-              if (phase === 'create') {
-                await this.dispatchCreateBatch(batch, connector, tableSpec, workbookId, repoId, hasLaterPhase);
-              } else {
-                await this.dispatchUpdateBatch(phase, batch, connector, tableSpec, workbookId, repoId, hasLaterPhase);
-              }
-              successCount += batch.length;
+              await this.dispatchRenameBatch(tablePath, folderOps, workbookId, repoId);
+              successCount += folderOps.length;
             } catch (err) {
-              failedCount += batch.length;
+              failedCount += folderOps.length;
               WSLogger.error({
                 source: 'PublishFromGitService.runFromGit',
-                message: `${phase} batch failed (folder=${folderPath}, size=${batch.length})`,
+                message: `Rename batch failed for folder ${tablePath}`,
                 error: err,
                 workbookId,
                 data: { planId: plan.planId },
               });
             }
-          }
+
+            processedCount += folderOps.length;
+            await emitProgress();
+            cursor = page.nextCursor;
+          } while (cursor);
+        }
+      } else {
+        const batchSize =
+          phase === 'create'
+            ? connector.getBatchSize('create')
+            : phase === 'delete'
+              ? connector.getBatchSize('delete')
+              : connector.getBatchSize('update');
+
+        for (const { tablePath, phaseDir } of phaseFolders) {
+          currentTableName = describeTablePath(tablePath);
+          await emitProgress();
+
+          const tableSpec = await this.schemaService.getTableSpec(workbookId, tablePath, tableSpecCache);
+          let cursor: string | undefined;
+
+          do {
+            const page = await this.readPhaseFilesPage(repoId, phaseDir, batchSize, cursor);
+            const folderOps = page.files.map((file) =>
+              this.parsePhaseOperation(tablePath, phaseDir, phase, file.name, file.content),
+            );
+            if (folderOps.length === 0) {
+              cursor = page.nextCursor;
+              continue;
+            }
+
+            if (!tableSpec) {
+              WSLogger.warn({
+                source: 'PublishFromGitService.runFromGit',
+                message: `No tableSpec for folder ${tablePath}, skipping ${phase}`,
+                workbookId,
+              });
+              failedCount += folderOps.length;
+              processedCount += folderOps.length;
+              await emitProgress();
+              cursor = page.nextCursor;
+              continue;
+            }
+
+            try {
+              if (phase === 'delete') {
+                await this.dispatchDeleteBatch(folderOps, connector, tableSpec, workbookId, repoId);
+              } else if (phase === 'create') {
+                await this.dispatchCreateBatch(folderOps, connector, tableSpec, workbookId, repoId, hasLaterPhase);
+              } else {
+                await this.dispatchUpdateBatch(
+                  phase,
+                  folderOps,
+                  connector,
+                  tableSpec,
+                  workbookId,
+                  repoId,
+                  hasLaterPhase,
+                );
+              }
+              successCount += folderOps.length;
+            } catch (err) {
+              failedCount += folderOps.length;
+              WSLogger.error({
+                source: 'PublishFromGitService.runFromGit',
+                message: `${phase} batch failed (folder=${tablePath}, size=${folderOps.length})`,
+                error: err,
+                workbookId,
+                data: { planId: plan.planId },
+              });
+            }
+
+            processedCount += folderOps.length;
+            await emitProgress();
+            cursor = page.nextCursor;
+          } while (cursor);
         }
       }
     }
 
     // Rebase dirty on main so published changes are reflected
+    currentPhase = 'rebase';
+    currentTableName = '';
+    await emitProgress();
+
     WSLogger.info({
       source: 'PublishFromGitService.runFromGit',
       message: 'Rebasing dirty on main',
@@ -226,30 +319,37 @@ export class PublishFromGitService {
       data: { planId: plan.planId },
     });
 
-    return { planId: plan.planId, successCount, failedCount };
+    return {
+      planId: plan.planId,
+      connectionName: plan.connectionName,
+      tableName,
+      currentTableName: '',
+      tableCount,
+      currentPhase,
+      processedCount,
+      totalCount,
+      successCount,
+      failedCount,
+      editsPlanned,
+      createsPlanned,
+      deletesPlanned,
+      backfillsPlanned,
+      renameFilesPlanned,
+    };
   }
 
   // ---------------------------------------------------------------------------
   // Phase file loading
   // ---------------------------------------------------------------------------
 
-  /**
-   * Lists all { relPath, gitPath } pairs for a given phase.
-   *
-   * Phase files live at: .scratch/{tablePath}/publish-plan-{ts}/{phase}/{filename}
-   * relPath is the data-file path: {tablePath}/{filename}
-   *
-   * The timestamp dir is found by scanning .scratch/{tablePath}/ for a `publish-plan-*` entry.
-   */
-  private async listPhaseFiles(
+  private async listPhaseFolders(
     repoId: string,
     tablePaths: string[],
     phase: PlanPhase,
-  ): Promise<{ relPath: string; gitPath: string }[]> {
-    const results: { relPath: string; gitPath: string }[] = [];
+  ): Promise<Array<{ tablePath: string; phaseDir: string }>> {
+    const results: Array<{ tablePath: string; phaseDir: string }> = [];
 
     for (const tablePath of tablePaths) {
-      // Phase files are under .scratch/{tablePath}/publish-plan-{ts}/{phase}/
       const scratchTableDir = `.scratch/${tablePath}`;
       const scratchEntries = await this.scratchGitService
         .listRepoFiles(repoId, 'dirty', scratchTableDir)
@@ -257,16 +357,41 @@ export class PublishFromGitService {
       const planDir = scratchEntries.find((e) => e.type === 'directory' && e.name.startsWith('publish-plan-'));
       if (!planDir) continue;
 
-      const phaseDir = `${scratchTableDir}/${planDir.name}/${phase}`;
-      const files = await this.scratchGitService.listRepoFiles(repoId, 'dirty', phaseDir).catch(() => []);
-      for (const f of files) {
-        if (f.type === 'file') {
+      results.push({
+        tablePath,
+        phaseDir: `${scratchTableDir}/${planDir.name}/${phase}`,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Lists all { relPath, gitPath } pairs for a given phase.
+   *
+   * Used by the "has later phase" pre-scan. This stays metadata-only and
+   * paginated so we avoid one file-read request per plan entry.
+   */
+  private async listPhaseFiles(
+    repoId: string,
+    tablePaths: string[],
+    phase: PlanPhase,
+  ): Promise<{ relPath: string; gitPath: string }[]> {
+    const results: { relPath: string; gitPath: string }[] = [];
+    const phaseFolders = await this.listPhaseFolders(repoId, tablePaths, phase);
+
+    for (const { tablePath, phaseDir } of phaseFolders) {
+      let cursor: string | undefined;
+      do {
+        const page = await this.listPhaseFilesPage(repoId, phaseDir, 500, cursor);
+        for (const file of page.files) {
           results.push({
-            relPath: `${tablePath}/${f.name}`,
-            gitPath: `${phaseDir}/${f.name}`,
+            relPath: `${tablePath}/${file.name}`,
+            gitPath: `${phaseDir}/${file.name}`,
           });
         }
-      }
+        cursor = page.nextCursor;
+      } while (cursor);
     }
 
     return results;
@@ -281,40 +406,71 @@ export class PublishFromGitService {
     return new Set([...backfill.map((f) => f.relPath), ...del.map((f) => f.relPath)]);
   }
 
-  private async loadPhaseOperations(repoId: string, tablePaths: string[], phase: PlanPhase): Promise<PhaseOperation[]> {
-    const files = await this.listPhaseFiles(repoId, tablePaths, phase);
-    const ops: PhaseOperation[] = [];
-
-    for (const { relPath, gitPath } of files) {
-      const file = await this.scratchGitService.getRepoFile(repoId, 'dirty', gitPath);
-      if (!file) continue;
-
-      let content: ParsedContent | null = null;
-      let remoteRecordId: string | null = null;
-      let changedFields: Record<string, unknown> | null = null;
-
-      try {
-        const parsed = JSON.parse(file.content) as unknown;
-        if (phase === 'edit' || phase === 'backfill') {
-          const envelope = parsed as PhaseFileEnvelope;
-          content = envelope.content;
-          changedFields = envelope.changedFields;
-        } else if (phase === 'delete') {
-          remoteRecordId = (parsed as DeletePhaseFile).remoteId ?? null;
-        } else {
-          content = parsed as ParsedContent;
-        }
-      } catch {
-        WSLogger.warn({
-          source: 'PublishFromGitService.loadPhaseOperations',
-          message: `Failed to parse ${gitPath}`,
-        });
+  private async listPhaseFilesPage(
+    repoId: string,
+    phaseDir: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<{ files: Array<{ name: string; path: string }>; nextCursor?: string }> {
+    try {
+      return await this.scratchGitService.listRepoFilesPaginated(repoId, 'dirty', phaseDir, limit, cursor);
+    } catch (err) {
+      if (err instanceof ScratchGitNotFoundError) {
+        return { files: [] };
       }
+      throw err;
+    }
+  }
 
-      ops.push({ relPath, gitPath, content, remoteRecordId, changedFields });
+  private async readPhaseFilesPage(
+    repoId: string,
+    phaseDir: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<{ files: Array<{ name: string; content: string }>; nextCursor?: string }> {
+    try {
+      return await this.scratchGitService.getRepoFilesPaginated(repoId, 'dirty', phaseDir, limit, cursor);
+    } catch (err) {
+      if (err instanceof ScratchGitNotFoundError) {
+        return { files: [] };
+      }
+      throw err;
+    }
+  }
+
+  private parsePhaseOperation(
+    tablePath: string,
+    phaseDir: string,
+    phase: PlanPhase,
+    fileName: string,
+    fileContent: string,
+  ): PhaseOperation {
+    const relPath = `${tablePath}/${fileName}`;
+    const gitPath = `${phaseDir}/${fileName}`;
+
+    let content: ParsedContent | null = null;
+    let remoteRecordId: string | null = null;
+    let changedFields: Record<string, unknown> | null = null;
+
+    try {
+      const parsed = JSON.parse(fileContent) as unknown;
+      if (phase === 'edit' || phase === 'backfill') {
+        const envelope = parsed as PhaseFileEnvelope;
+        content = envelope.content;
+        changedFields = envelope.changedFields;
+      } else if (phase === 'delete') {
+        remoteRecordId = (parsed as DeletePhaseFile).remoteId ?? null;
+      } else {
+        content = parsed as ParsedContent;
+      }
+    } catch {
+      WSLogger.warn({
+        source: 'PublishFromGitService.parsePhaseOperation',
+        message: `Failed to parse ${gitPath}`,
+      });
     }
 
-    return ops;
+    return { relPath, gitPath, content, remoteRecordId, changedFields };
   }
 
   // ---------------------------------------------------------------------------
@@ -626,17 +782,31 @@ export class PublishFromGitService {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
+function describeTablePath(tablePath: string): string {
+  const segments = tablePath.split('/').filter(Boolean);
+  return segments.at(-1) ?? tablePath;
+}
 
-function groupByFolder(ops: PhaseOperation[]): Map<string, PhaseOperation[]> {
-  const map = new Map<string, PhaseOperation[]>();
-  for (const op of ops) {
-    const { folderPath } = parsePath(op.relPath);
-    const list = map.get(folderPath) ?? [];
-    list.push(op);
-    map.set(folderPath, list);
+function getPlannedCountForPhase(
+  phase: PlanPhase,
+  editsPlanned: number,
+  createsPlanned: number,
+  deletesPlanned: number,
+  backfillsPlanned: number,
+  renameFilesPlanned: number,
+): number {
+  switch (phase) {
+    case 'edit':
+      return editsPlanned;
+    case 'create':
+      return createsPlanned;
+    case 'delete':
+      return deletesPlanned;
+    case 'backfill':
+      return backfillsPlanned;
+    case 'rename':
+      return renameFilesPlanned;
+    default:
+      return 0;
   }
-  return map;
 }

@@ -1094,7 +1094,55 @@ function SyncWarningsTable({
 }
 
 function PublishProgressTable({ progress }: { progress: Record<string, unknown> }) {
-  if (!progress.folders || !Array.isArray(progress.folders)) return null;
+  if (!progress.folders || !Array.isArray(progress.folders)) {
+    const connectionName = progress.connectionName as string | undefined;
+    const tableName = progress.tableName as string | undefined;
+    const currentTableName = progress.currentTableName as string | undefined;
+    const tableCount = progress.tableCount as number | undefined;
+    const currentPhase = progress.currentPhase as string | undefined;
+    const processedCount = progress.processedCount as number | undefined;
+    const totalCount = progress.totalCount as number | undefined;
+    const successCount = progress.successCount as number | undefined;
+    const failedCount = progress.failedCount as number | undefined;
+    const status = progress.status as string | undefined;
+
+    if (totalCount === undefined) return null;
+
+    return (
+      <>
+        <Table striped highlightOnHover withColumnBorders>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Connection</Table.Th>
+              <Table.Th>Scope</Table.Th>
+              <Table.Th>Current Phase</Table.Th>
+              <Table.Th>Processed</Table.Th>
+              <Table.Th>Succeeded</Table.Th>
+              <Table.Th>Failed</Table.Th>
+              <Table.Th>Status</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            <Table.Tr>
+              <Table.Td>{connectionName || '-'}</Table.Td>
+              <Table.Td>{tableName || currentTableName || (tableCount ? `${tableCount} tables` : '-')}</Table.Td>
+              <Table.Td>{currentPhase || '-'}</Table.Td>
+              <Table.Td>
+                {processedCount ?? 0} / {totalCount}
+              </Table.Td>
+              <Table.Td>{successCount ?? 0}</Table.Td>
+              <Table.Td>
+                <Text13Regular c={failedCount ? 'var(--mantine-color-red-6)' : undefined}>
+                  {failedCount ?? 0}
+                </Text13Regular>
+              </Table.Td>
+              <Table.Td>{status ?? '-'}</Table.Td>
+            </Table.Tr>
+          </Table.Tbody>
+        </Table>
+      </>
+    );
+  }
   const folders = progress.folders as Array<{
     name?: string;
     connector?: string;

@@ -14,6 +14,7 @@ dotenv.config({ path: path.resolve(__dirname, "../smoke.env"), quiet: true });
 const TABLE_NAME = "smoke_records";
 const JOB_POLL_INTERVAL_MS = 1_000;
 const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1_000;
+const JOB_POLL_NETWORK_RETRY_LIMIT = 10;
 
 function parseArgs(argv) {
   const args = {
@@ -465,11 +466,12 @@ function tableIdArgs(tableId) {
 async function waitForJobs(serverUrl, apiToken, jobIds) {
   const start = Date.now();
   let lastSummary = "";
+  let consecutiveNetworkFailures = 0;
 
   while (Date.now() - start < JOB_POLL_TIMEOUT_MS) {
-    const response = await fetch(
-      `${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`,
-      {
+    let response;
+    try {
+      response = await fetch(`${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -477,8 +479,25 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
           "User-Agent": "Scratch-cli/1.0",
         },
         body: JSON.stringify({ jobIds }),
-      },
-    );
+      });
+      consecutiveNetworkFailures = 0;
+    } catch (error) {
+      consecutiveNetworkFailures += 1;
+      const message =
+        error instanceof Error
+          ? `${error.message}${error.cause ? ` (cause: ${String(error.cause)})` : ""}`
+          : String(error);
+      console.warn(
+        `[jobs] bulk-status poll failed (${consecutiveNetworkFailures}/${JOB_POLL_NETWORK_RETRY_LIMIT}): ${message}`,
+      );
+
+      if (consecutiveNetworkFailures >= JOB_POLL_NETWORK_RETRY_LIMIT) {
+        throw new Error(`Job polling failed repeatedly: ${message}`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+      continue;
+    }
 
     if (!response.ok) {
       throw new Error(`Job polling failed with HTTP ${response.status}`);
