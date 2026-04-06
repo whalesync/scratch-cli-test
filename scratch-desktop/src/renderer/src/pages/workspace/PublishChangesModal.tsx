@@ -1,4 +1,19 @@
-import { Alert, Badge, Box, Button, Center, Code, Group, Loader, Modal, ScrollArea, Stack, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Center,
+  Code,
+  Group,
+  Loader,
+  Modal,
+  Progress,
+  ScrollArea,
+  Stack,
+  Table,
+  Text,
+} from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LiveCommandOutput } from '../../components/LiveCommandOutput';
@@ -52,6 +67,165 @@ function statusColor(state: JobStatus['state']): string {
     default:
       return 'gray';
   }
+}
+
+type PublishFromGitProgress = {
+  status?: string;
+  processedCount?: number;
+  totalCount?: number;
+  currentPhase?: string;
+  currentTableName?: string;
+  successCount?: number;
+  failedCount?: number;
+  editsPlanned?: number;
+  createsPlanned?: number;
+  deletesPlanned?: number;
+  backfillsPlanned?: number;
+  renameFilesPlanned?: number;
+};
+
+const PHASE_ORDER = ['edit', 'create', 'delete', 'backfill', 'rename'] as const;
+type Phase = (typeof PHASE_ORDER)[number];
+
+const PHASE_LABELS: Record<Phase, string> = {
+  edit: 'Edits',
+  create: 'Creates',
+  delete: 'Deletes',
+  backfill: 'Backfills',
+  rename: 'Renames',
+};
+
+const PHASE_PLANNED_KEY: Record<Phase, keyof PublishFromGitProgress> = {
+  edit: 'editsPlanned',
+  create: 'createsPlanned',
+  delete: 'deletesPlanned',
+  backfill: 'backfillsPlanned',
+  rename: 'renameFilesPlanned',
+};
+
+function computePhaseRows(progress: PublishFromGitProgress) {
+  const currentPhaseIdx = PHASE_ORDER.indexOf((progress.currentPhase ?? '') as Phase);
+  let remaining = progress.processedCount ?? 0;
+
+  return PHASE_ORDER.map((phase, idx) => {
+    const planned = (progress[PHASE_PLANNED_KEY[phase]] as number | undefined) ?? 0;
+    let done: number;
+
+    if (idx < currentPhaseIdx) {
+      // Phase is complete
+      done = planned;
+      remaining -= planned;
+    } else if (idx === currentPhaseIdx) {
+      // Current phase — consume remaining processedCount
+      done = Math.min(remaining, planned);
+      remaining = 0;
+    } else {
+      done = 0;
+    }
+
+    return { phase, label: PHASE_LABELS[phase], planned, done };
+  });
+}
+
+function PublishingProgress({ jobIds, jobs }: { jobIds: string[]; jobs: JobStatus[] }) {
+  const waiting = jobIds.length === 0;
+
+  if (waiting) {
+    return (
+      <Stack gap="sm" align="center" py="md">
+        <Loader size="sm" />
+        <Text size="sm" c="dimmed">
+          Uploading reviewed files and starting the publish job…
+        </Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="md">
+      {jobIds.map((jobId) => {
+        const job = jobs.find((j) => j.bullJobId === jobId);
+        const progress = job?.publicProgress as PublishFromGitProgress | undefined;
+        const total = progress?.totalCount ?? 0;
+        const processed = progress?.processedCount ?? 0;
+        const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+        const hasProgress = total > 0;
+        const rows = progress ? computePhaseRows(progress) : null;
+        const currentTable = progress?.currentTableName;
+
+        return (
+          <Box key={jobId}>
+            <Group justify="space-between" mb={4}>
+              <Group gap="xs">
+                {!hasProgress && <Loader size={12} />}
+                <Text size="sm" fw={500}>
+                  {job?.state === 'active' ? 'Publishing…' : (job?.state ?? 'waiting')}
+                </Text>
+                {currentTable && (
+                  <Text size="xs" c="dimmed">
+                    {currentTable}
+                  </Text>
+                )}
+              </Group>
+              <Badge color={statusColor(job?.state ?? 'created')} size="sm">
+                {hasProgress ? `${processed} / ${total}` : (job?.state ?? 'waiting')}
+              </Badge>
+            </Group>
+
+            {hasProgress && (
+              <>
+                <Progress value={pct} size="sm" mb="sm" animated={job?.state === 'active'} />
+
+                <Table withColumnBorders fz="xs">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Operation</Table.Th>
+                      <Table.Th>Planned</Table.Th>
+                      <Table.Th>Done</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {rows!.map(({ phase, label, planned, done }) => {
+                      const isActive = phase === progress?.currentPhase;
+                      const isComplete = done > 0 && done >= planned && planned > 0;
+                      return (
+                        <Table.Tr key={phase} bg={isActive ? 'var(--mantine-color-blue-light)' : undefined}>
+                          <Table.Td>
+                            <Group gap={4}>
+                              {isActive && <Loader size={10} />}
+                              <Text size="xs" fw={isActive ? 600 : 400} c={planned === 0 ? 'dimmed' : undefined}>
+                                {label}
+                              </Text>
+                            </Group>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c={planned === 0 ? 'dimmed' : undefined}>
+                              {planned === 0 ? '—' : planned.toLocaleString()}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c={isComplete ? 'green' : isActive ? 'blue' : 'dimmed'}>
+                              {planned === 0 ? '—' : done.toLocaleString()}
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </>
+            )}
+
+            {!hasProgress && (
+              <Text size="xs" c="dimmed">
+                Waiting for job to start…
+              </Text>
+            )}
+          </Box>
+        );
+      })}
+    </Stack>
+  );
 }
 
 export function PublishChangesModal({
@@ -445,29 +619,7 @@ export function PublishChangesModal({
               </>
             )}
 
-            {mode === 'publishing' && (
-              <>
-                <Text size="sm" c="dimmed">
-                  {jobIds.length === 0
-                    ? 'Uploading reviewed files and starting the server publish job.'
-                    : `Waiting for the server publish job${jobIds.length === 1 ? '' : 's'} to finish.`}
-                </Text>
-                <Center py="md">
-                  <Loader size="sm" />
-                </Center>
-                <Stack gap="sm">
-                  {jobIds.map((jobId) => {
-                    const job = jobs.find((entry) => entry.bullJobId === jobId);
-                    return (
-                      <Group key={jobId} justify="space-between">
-                        <Code>{jobId}</Code>
-                        <Badge color={statusColor(job?.state ?? 'created')}>{job?.state ?? 'created'}</Badge>
-                      </Group>
-                    );
-                  })}
-                </Stack>
-              </>
-            )}
+            {mode === 'publishing' && <PublishingProgress jobIds={jobIds} jobs={jobs} />}
 
             {mode === 'complete' && (
               <>

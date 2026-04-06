@@ -9,7 +9,7 @@ const readline = require("node:readline/promises");
 const dotenv = require("dotenv");
 const { Client } = require("pg");
 
-dotenv.config({ path: path.resolve(__dirname, "../smoke.env"), quiet: true });
+dotenv.config({ path: path.resolve(__dirname, "../driver.env"), quiet: true });
 
 const DEFAULT_PATTERN = "^TEST-\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}$";
 
@@ -68,10 +68,10 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`
-Usage: node scripts/smoke-cleanup.js [options]
+Usage: node scripts/driver-cleanup.js [options]
 
 Fetches workbooks from the target Scratch server, finds names matching the
-smoke-test naming pattern, and removes:
+driver naming pattern, and removes:
   - remote workbooks
   - matching Postgres databases
   - matching local workspace folders
@@ -256,8 +256,8 @@ async function main() {
     cliArgs.databaseUrl || process.env.DATABASE_URL || process.env.DATABASE_URL_PREFIX;
   const workspaceRoot =
     cliArgs.workspaceRoot ||
-    process.env.SMOKE_WORKSPACE_ROOT ||
-    path.join(os.tmpdir(), "scratchmd-cli-smoke");
+    process.env.DRIVER_WORKSPACE_ROOT ||
+    path.join(os.tmpdir(), "scratchmd-cli-driver");
   const binary = resolveBinary(cliArgs.binary || process.env.SCRATCH_CLI_BINARY);
   const namePattern = new RegExp(cliArgs.pattern);
 
@@ -269,7 +269,7 @@ async function main() {
 
   const adminDbUrl = buildAdminDbUrl(databasePrefix);
 
-  console.log("\n=== Smoke cleanup configuration ===");
+  console.log("\n=== Driver cleanup configuration ===");
   console.log(`CLI binary:     ${binary}`);
   console.log(`Server URL:     ${serverUrl}`);
   console.log(`Pattern:        ${cliArgs.pattern}`);
@@ -350,6 +350,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`\nSmoke cleanup failed: ${error.message}`);
+  console.error(`\nDriver cleanup failed: ${error.message}`);
   process.exitCode = 1;
 });

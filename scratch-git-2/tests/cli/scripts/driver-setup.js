@@ -9,7 +9,7 @@ const readline = require("node:readline/promises");
 const dotenv = require("dotenv");
 const { Client } = require("pg");
 
-dotenv.config({ path: path.resolve(__dirname, "../smoke.env"), quiet: true });
+dotenv.config({ path: path.resolve(__dirname, "../driver.env"), quiet: true });
 
 const TABLE_NAME = "smoke_records";
 const JOB_POLL_INTERVAL_MS = 1_000;
@@ -19,7 +19,8 @@ const JOB_POLL_NETWORK_RETRY_LIMIT = 10;
 function parseArgs(argv) {
   const args = {
     help: false,
-    pause: false,
+    pause: "nowhere",
+    stop: "nowhere",
     noCleanup: false,
     recordCount: undefined,
     serverUrl: undefined,
@@ -35,7 +36,19 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--pause") {
-      args.pause = true;
+      args.pause = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
+      continue;
+    }
+    if (arg.startsWith("--pause=")) {
+      args.pause = arg.slice("--pause=".length);
+      continue;
+    }
+    if (arg === "--stop") {
+      args.stop = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
+      continue;
+    }
+    if (arg.startsWith("--stop=")) {
+      args.stop = arg.slice("--stop=".length);
       continue;
     }
     if (arg === "--no-cleanup") {
@@ -75,14 +88,23 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`
-Usage: node scripts/smoke-publish.js [options]
+Usage: node scripts/driver-setup.js [options]
 
 Creates a fresh workbook and a fresh Postgres database, pulls records locally,
 edits them, accepts the changes, uploads them, triggers publish-from-git, and
 waits for the publish job to complete.
 
 Options:
-  --pause                  Pause after each major step for manual inspection
+  --pause=<mode>           Pause interactively at a breakpoint (waits for Enter then continues). Modes:
+                             nowhere          Never pause (default)
+                             everywhere       Pause after every step
+                             database-created After DB is seeded
+                             workbook-created After workbook + connection added
+                             records-downloaded After pull + file download
+                             records-edited   After local JSON files mutated
+                             publish-plan-created After plan-publish runs
+                             publish-queued   After publish-from-git, job IDs known
+  --stop=<mode>            Exit cleanly at a breakpoint (same step names as --pause)
   --no-cleanup             Keep the local workspace, remote workbook, and test DB
   --count <n>              Number of sample records to create (default: 3)
   --record-count <n>       Backward-compatible alias for --count
@@ -307,8 +329,24 @@ function runCli(binary, serverUrl, args, options = {}) {
   return runCommand(binary, fullArgs, options);
 }
 
-async function pauseIfNeeded(enabled, label, details = []) {
-  if (!enabled) {
+// pause/stop: "nowhere" | "everywhere" | step-name (e.g. "database-created")
+// step: one of the named breakpoints (see --help for the full list)
+function stopIfNeeded(stop, step, label, details = []) {
+  if (stop === "nowhere") return;
+  if (stop !== "everywhere" && stop !== step) return;
+
+  console.log(`\n[stop] ${label}`);
+  for (const detail of details) {
+    console.log(`  ${detail}`);
+  }
+  process.exit(0);
+}
+
+async function pauseIfNeeded(pause, step, label, details = []) {
+  if (pause === "nowhere") {
+    return;
+  }
+  if (pause !== "everywhere" && pause !== step) {
     return;
   }
 
@@ -554,11 +592,34 @@ function extractJobIds(stdout) {
   return Array.from(new Set(matches));
 }
 
+const VALID_BREAKPOINTS = new Set([
+  "nowhere",
+  "everywhere",
+  "database-created",
+  "workbook-created",
+  "records-downloaded",
+  "records-edited",
+  "publish-plan-created",
+  "publish-queued",
+]);
+
 async function main() {
   const cliArgs = parseArgs(process.argv.slice(2));
   if (cliArgs.help) {
     printHelp();
     return;
+  }
+
+  if (!VALID_BREAKPOINTS.has(cliArgs.pause)) {
+    throw new Error(
+      `Invalid --pause value: "${cliArgs.pause}". Valid values: ${[...VALID_BREAKPOINTS].join(", ")}`,
+    );
+  }
+
+  if (!VALID_BREAKPOINTS.has(cliArgs.stop)) {
+    throw new Error(
+      `Invalid --stop value: "${cliArgs.stop}". Valid values: ${[...VALID_BREAKPOINTS].join(", ")}`,
+    );
   }
 
   const serverUrl =
@@ -569,15 +630,15 @@ async function main() {
     process.env.DATABASE_URL_PREFIX;
   const schema = process.env.DB_SCHEMA || "public";
   const recordCount = Number(
-    cliArgs.recordCount || process.env.SMOKE_RECORD_COUNT || "3",
+    cliArgs.recordCount || process.env.DRIVER_RECORD_COUNT || "3",
   );
   const binary = resolveBinary(
     cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
   );
   const workspaceRoot =
     cliArgs.workspaceRoot ||
-    process.env.SMOKE_WORKSPACE_ROOT ||
-    path.join(os.tmpdir(), "scratchmd-cli-smoke");
+    process.env.DRIVER_WORKSPACE_ROOT ||
+    path.join(os.tmpdir(), "scratchmd-cli-driver");
 
   if (!databasePrefix) {
     throw new Error(
@@ -605,7 +666,7 @@ async function main() {
 
   fs.mkdirSync(workspaceRoot, { recursive: true });
 
-  printSection("Smoke test configuration");
+  printSection("Driver configuration");
   console.log(`CLI binary:     ${binary}`);
   console.log(`Server URL:     ${serverUrl}`);
   console.log(`Workbook name:  ${workbookName}`);
@@ -628,7 +689,11 @@ async function main() {
     const seededRows = await readRows(databaseUrl);
     console.log(`Seeded ${seededRows.length} rows into ${TABLE_NAME}.`);
 
-    await pauseIfNeeded(cliArgs.pause, "Database created", [
+    stopIfNeeded(cliArgs.stop, "database-created", "Database created", [
+      `Database: ${dbName}`,
+      `Rows: ${seededRows.length}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "database-created", "Database created", [
       `Database: ${dbName}`,
       `Rows: ${seededRows.length}`,
     ]);
@@ -657,7 +722,11 @@ async function main() {
     );
     console.log(`Connection ID: ${connection.id}`);
 
-    await pauseIfNeeded(cliArgs.pause, "Workbook and connection created", [
+    stopIfNeeded(cliArgs.stop, "workbook-created", "Workbook and connection created", [
+      `Workbook ID: ${state.workbookId}`,
+      `Connection ID: ${connection.id}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "workbook-created", "Workbook and connection created", [
       `Workbook ID: ${state.workbookId}`,
       `Connection ID: ${connection.id}`,
     ]);
@@ -723,7 +792,11 @@ async function main() {
     const downloadedFiles = listRecordFiles(state.workspaceDir);
     console.log(`Downloaded ${downloadedFiles.length} local record files.`);
 
-    await pauseIfNeeded(cliArgs.pause, "Records downloaded locally", [
+    stopIfNeeded(cliArgs.stop, "records-downloaded", "Records downloaded locally", [
+      `Workspace: ${state.workspaceDir}`,
+      `Files: ${downloadedFiles.length}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "records-downloaded", "Records downloaded locally", [
       `Workspace: ${state.workspaceDir}`,
       `Files: ${downloadedFiles.length}`,
     ]);
@@ -732,7 +805,10 @@ async function main() {
     const editedFiles = editLocalRecords(state.workspaceDir, runName);
     console.log(`Edited ${editedFiles.length} record files.`);
 
-    await pauseIfNeeded(cliArgs.pause, "Local records edited", [
+    stopIfNeeded(cliArgs.stop, "records-edited", "Local records edited", [
+      `Edited files: ${editedFiles.length}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "records-edited", "Local records edited", [
       `Edited files: ${editedFiles.length}`,
     ]);
 
@@ -748,7 +824,10 @@ async function main() {
       noJson: true,
     });
 
-    await pauseIfNeeded(cliArgs.pause, "Publish plan created", [
+    stopIfNeeded(cliArgs.stop, "publish-plan-created", "Publish plan created", [
+      `Workspace: ${state.workspaceDir}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "publish-plan-created", "Publish plan created", [
       `Workspace: ${state.workspaceDir}`,
     ]);
 
@@ -769,7 +848,10 @@ async function main() {
     }
     console.log(`Queued job IDs: ${jobIds.join(", ")}`);
 
-    await pauseIfNeeded(cliArgs.pause, "Publish job queued", [
+    stopIfNeeded(cliArgs.stop, "publish-queued", "Publish job queued", [
+      `Job IDs: ${jobIds.join(", ")}`,
+    ]);
+    await pauseIfNeeded(cliArgs.pause, "publish-queued", "Publish job queued", [
       `Job IDs: ${jobIds.join(", ")}`,
     ]);
 
@@ -789,7 +871,7 @@ async function main() {
     }
     console.log(`Verified ${finalRows.length} published rows in Postgres.`);
 
-    console.log("\nSmoke test completed successfully.");
+    console.log("\nDriver completed successfully.");
     console.log(`Workbook ID: ${state.workbookId}`);
     console.log(`Workspace dir: ${state.workspaceDir}`);
     console.log(`Database name: ${dbName}`);
@@ -847,6 +929,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`\nSmoke test failed: ${error.message}`);
+  console.error(`\nDriver failed: ${error.message}`);
   process.exitCode = 1;
 });

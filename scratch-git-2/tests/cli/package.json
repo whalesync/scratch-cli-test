@@ -7,8 +7,9 @@
   "scripts": {
     "test:integration": "jest --runInBand --forceExit",
     "test:watch": "jest --runInBand --watch --forceExit",
-    "smoke:publish": "node scripts/smoke-publish.js",
-    "smoke:cleanup": "node scripts/smoke-cleanup.js"
+    "driver:setup": "node scripts/driver-setup.js",
+    "driver:push": "node scripts/driver-push.js",
+    "driver:cleanup": "node scripts/driver-cleanup.js"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

@@ -688,9 +688,11 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
   const { isAdmin } = useScratchPadUser();
   const params = useParams<{ id: string }>();
   const workbookId = params.id as WorkbookId;
+  const isJobActive = ACTIVE_STATES.has(job.state);
   const { data: publishPlan, isLoading: loading } = useSWR(
     job.bullJobId ? ['publish-plan', workbookId, job.bullJobId] : null,
     () => workbookApi.getPublishPlanByJobId(workbookId, job.bullJobId!),
+    { refreshInterval: isJobActive ? 2000 : 0 },
   );
   const [operationsModalPublishPlanId, setOperationsModalPublishPlanId] = useState<string | null>(null);
   const [operationsModalHasErrorFilter, setOperationsModalHasErrorFilter] = useState(false);
@@ -711,9 +713,30 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
   }
 
   const p = publishPlan;
+  const liveProgress = isJobActive
+    ? (job.publicProgress as {
+        processedCount?: number;
+        totalCount?: number;
+        currentPhase?: string;
+        currentTableName?: string;
+      } | null)
+    : null;
 
   return (
     <Box px="md" py="sm" style={{ background: 'var(--bg-panel)' }}>
+      {liveProgress && liveProgress.totalCount !== undefined && liveProgress.totalCount > 0 && (
+        <Group gap="md" mb="sm">
+          <Text12Regular c="var(--fg-secondary)">
+            {liveProgress.processedCount ?? 0} / {liveProgress.totalCount} records
+          </Text12Regular>
+          {liveProgress.currentPhase && (
+            <Text12Regular c="var(--fg-secondary)">Phase: {liveProgress.currentPhase}</Text12Regular>
+          )}
+          {liveProgress.currentTableName && (
+            <Text12Regular c="var(--fg-secondary)">Table: {liveProgress.currentTableName}</Text12Regular>
+          )}
+        </Group>
+      )}
       <Table withColumnBorders>
         <Table.Thead>
           <Table.Tr>
