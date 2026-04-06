@@ -126,6 +126,12 @@ export async function listFolders(workspacePath: string): Promise<FolderEntry[]>
   return folders;
 }
 
+/** Total record files across all data leaf folders (same definition as per-folder counts in listFolders). */
+export async function countWorkspaceFiles(workspacePath: string): Promise<number> {
+  const folders = await listFolders(workspacePath);
+  return folders.reduce((sum, f) => sum + f.fileCount, 0);
+}
+
 export async function getFolderMetadata(folderPath: string, workspacePath: string): Promise<FolderMetadata> {
   const folderName = basename(folderPath);
   const meta = await computeFolderStats(folderPath);

@@ -1,4 +1,7 @@
+import { ConnectorIcon } from '@/components/ConnectorIcon';
+import { getConnectorLogoUrl, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Badge, Card, Group } from '@mantine/core';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Workspace } from '../types/workspace';
 import { Text12Regular, Text13Medium } from './base/text';
@@ -25,14 +28,32 @@ function formatRelativeTime(dateStr: string): string {
 export function WorkspaceCard({
   workspace,
   isDownloaded,
+  localFileCount,
   onClick,
 }: {
   workspace: Workspace;
   isDownloaded: boolean;
+  /** Present when the workspace is downloaded locally; total record files on disk. */
+  localFileCount?: number;
   onClick?: () => void;
 }) {
   const navigate = useNavigate();
+  const { data: connectorsMetadata } = useConnectorsMetadata();
   const folderCount = workspace.dataFolders?.length ?? 0;
+
+  const uniqueConnectorServices = useMemo(() => {
+    const folders = workspace.dataFolders ?? [];
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const f of folders) {
+      const s = f.connectorService;
+      if (s && !seen.has(s)) {
+        seen.add(s);
+        ordered.push(s);
+      }
+    }
+    return ordered;
+  }, [workspace.dataFolders]);
 
   return (
     <Card
@@ -42,16 +63,14 @@ export function WorkspaceCard({
       withBorder
       style={{
         cursor: 'pointer',
-        transition: 'border-width 0.15s ease, padding 0.15s ease',
         borderWidth: 1,
+        position: 'relative',
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderWidth = '2px';
-        e.currentTarget.style.padding = 'calc(var(--mantine-spacing-md) - 1px)';
+        e.currentTarget.style.borderColor = 'var(--mantine-color-green-6)';
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderWidth = '1px';
-        e.currentTarget.style.padding = 'var(--mantine-spacing-md)';
+        e.currentTarget.style.borderColor = '';
       }}
       onClick={onClick ?? (() => void navigate(`/workspace/${workspace.id}`))}
     >
@@ -65,10 +84,50 @@ export function WorkspaceCard({
         <Text12Regular c="dimmed">
           {folderCount} {folderCount === 1 ? 'folder' : 'folders'}
         </Text12Regular>
+        {isDownloaded && localFileCount !== undefined ? <Text12Regular c="dimmed">·</Text12Regular> : null}
+        {isDownloaded && localFileCount !== undefined ? (
+          <Text12Regular c="dimmed">
+            {localFileCount.toLocaleString()} {localFileCount === 1 ? 'file' : 'files'}
+          </Text12Regular>
+        ) : null}
       </Group>
-      <Text12Regular c="dimmed" mt={2}>
-        Updated {formatRelativeTime(workspace.updatedAt)}
-      </Text12Regular>
+      <Group justify="space-between">
+        <Text12Regular
+          c="dimmed"
+          mt={8}
+          lineClamp={2}
+          style={{
+            paddingRight:
+              uniqueConnectorServices.length > 0 ? Math.min(uniqueConnectorServices.length * 30 + 8, 160) : undefined,
+          }}
+        >
+          Updated {formatRelativeTime(workspace.updatedAt)}
+        </Text12Regular>
+        {uniqueConnectorServices.length > 0 ? (
+          <>
+            <div style={{ height: 32 }} aria-hidden />
+            <Group
+              gap={6}
+              justify="flex-end"
+              wrap="wrap"
+              style={{
+                position: 'absolute',
+                right: 'var(--mantine-spacing-md)',
+                bottom: 'var(--mantine-spacing-md)',
+                maxWidth: 168,
+              }}
+            >
+              {uniqueConnectorServices.map((service) => (
+                <ConnectorIcon
+                  key={service}
+                  connector={service}
+                  src={getConnectorLogoUrl(connectorsMetadata, service)}
+                />
+              ))}
+            </Group>
+          </>
+        ) : null}
+      </Group>
     </Card>
   );
 }

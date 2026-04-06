@@ -34,7 +34,7 @@ const scratchAuth = {
 };
 
 const scratchDesktop = {
-  getWorkspacesRegistry: (): Promise<Array<{ id: string; path: string }>> =>
+  getWorkspacesRegistry: (): Promise<Array<{ id: string; path: string; fileCount: number }>> =>
     ipcRenderer.invoke('scratch:get-workspaces-registry'),
   createWorkspace: (name: string): Promise<{ id: string; name: string }> =>
     ipcRenderer.invoke('scratch:create-workspace', name),

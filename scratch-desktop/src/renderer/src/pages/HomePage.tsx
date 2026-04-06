@@ -3,7 +3,7 @@ import { notifications } from '@mantine/notifications';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ButtonCompactPrimary, ButtonPrimaryLight, ButtonSecondaryOutline } from '../components/base/buttons';
+import { ButtonPrimaryLight, ButtonSecondaryOutline } from '../components/base/buttons';
 import { UserMenu } from '../components/user-menu';
 import { WorkspaceCard } from '../components/WorkspaceCard';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
@@ -15,6 +15,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [downloadedWorkspaceIds, setDownloadedWorkspaceIds] = useState<Set<string>>(new Set());
+  const [localFileCountById, setLocalFileCountById] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +32,7 @@ export function HomePage() {
       const [data, localWorkspaces] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
       setWorkspaces(data);
       setDownloadedWorkspaceIds(new Set(localWorkspaces.map((workspace) => workspace.id)));
+      setLocalFileCountById(new Map(localWorkspaces.map((w) => [w.id, w.fileCount])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {
@@ -119,28 +121,28 @@ export function HomePage() {
 
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      <Group px="xl" pt="xl" pb="md" justify="space-between" style={{ flexShrink: 0 }}>
-        <Title order={2}>Your Workspaces</Title>
-        <ButtonCompactPrimary
-          leftSection={<Plus size={12} />}
-          onClick={() => {
-            setNewWorkspaceName('');
-            setCreateError(null);
-            setCreateModalOpen(true);
-          }}
-        >
-          New Workspace
-        </ButtonCompactPrimary>
-      </Group>
-
       <Box style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         <Stack px="xl" pb="xl" gap="md" w="100%" maw={{ base: '100%', md: '60%' }} mx="auto">
+          <Group pt="xl" pb="md" justify="space-between" style={{ flexShrink: 0 }}>
+            <Title order={2}>Your Workspaces</Title>
+            <ButtonPrimaryLight
+              leftSection={<Plus size={12} />}
+              size="xs"
+              onClick={() => {
+                setNewWorkspaceName('');
+                setCreateError(null);
+                setCreateModalOpen(true);
+              }}
+            >
+              New Workspace
+            </ButtonPrimaryLight>
+          </Group>
           {workspaces.length === 0 ? (
             <Text c="dimmed">No workspaces found.</Text>
           ) : (
             <>
               {localWorkspaces.map((ws) => (
-                <WorkspaceCard key={ws.id} workspace={ws} isDownloaded />
+                <WorkspaceCard key={ws.id} workspace={ws} isDownloaded localFileCount={localFileCountById.get(ws.id)} />
               ))}
               {localWorkspaces.length > 0 && remoteWorkspaces.length > 0 && <Divider />}
               {remoteWorkspaces.map((ws) => (

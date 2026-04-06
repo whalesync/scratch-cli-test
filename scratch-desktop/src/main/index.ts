@@ -7,6 +7,7 @@ import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
   type FilterStatus,
+  countWorkspaceFiles,
   getFolderMetadata,
   listFiles,
   listFolders,
@@ -228,7 +229,18 @@ ipcMain.handle('auth:is-token-expired', () => {
 ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url));
 ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
-  const result = await readWorkspaceRegistry();
+  const entries = await readWorkspaceRegistry();
+  const result = await Promise.all(
+    entries.map(async (entry) => {
+      try {
+        const fileCount = await countWorkspaceFiles(entry.path);
+        return { ...entry, fileCount };
+      } catch (error) {
+        console.debug('[scratch] countWorkspaceFiles failed:', entry.path, error);
+        return { ...entry, fileCount: 0 };
+      }
+    }),
+  );
   logPerf('main ipc getWorkspacesRegistry', performance.now() - start);
   return result;
 });
@@ -354,7 +366,8 @@ void app.whenReady().then(() => {
   electronApp.setAppUserModelId('md.scratch.desktop');
 
   app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window);
+    // Default toolkit behavior blocks Cmd/Ctrl+Minus and Cmd/Ctrl+Shift+Equal; allow OS zoom shortcuts.
+    optimizer.watchWindowShortcuts(window, { zoom: true });
   });
 
   createWindow();
