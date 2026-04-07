@@ -299,6 +299,9 @@ ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: st
 ipcMain.handle('scratch:trigger-publish-from-git', async (_, workspacePath: string) =>
   triggerPublishFromGit(workspacePath),
 );
+ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string) =>
+  runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),
+);
 ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string) =>
   startScratchmdLiveSequence(
     event.sender,

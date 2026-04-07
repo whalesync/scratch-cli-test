@@ -6,6 +6,7 @@ import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
+import { PullAllModal } from './workspace/PullAllModal';
 import { WorkspaceContent } from './workspace/WorkspaceContent';
 import { WorkspaceHeader } from './workspace/WorkspaceHeader';
 
@@ -18,6 +19,7 @@ export function WorkspacePage() {
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,6 +125,12 @@ export function WorkspacePage() {
         workspaceName={workspace.name}
         localPath={localPath}
       />
+      <PullAllModal
+        opened={pullAllModalOpen}
+        onClose={() => setPullAllModalOpen(false)}
+        workspaceName={workspace.name}
+        localPath={localPath}
+      />
       <WorkspaceHeader
         workspace={workspace}
         localPath={localPath}
@@ -133,6 +141,7 @@ export function WorkspacePage() {
         deleting={deleting}
         onDelete={() => void handleDelete()}
         onPublishAll={() => setPublishModalOpen(true)}
+        onPullAll={() => setPullAllModalOpen(true)}
       />
       <WorkspaceContent
         workspace={workspace}

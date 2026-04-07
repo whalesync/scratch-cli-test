@@ -85,6 +85,8 @@ const scratchDesktop = {
     ipcRenderer.invoke('scratch:trigger-publish-from-git', workspacePath),
   startPublishAll: (workspacePath: string): Promise<{ sessionId: string }> =>
     ipcRenderer.invoke('scratch:start-publish-all', workspacePath),
+  pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
+    ipcRenderer.invoke('scratch:pull-all-linked-tables', workspacePath),
   showInFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('scratch:show-in-folder', folderPath),
   openInTerminal: (folderPath: string): Promise<void> => ipcRenderer.invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => ipcRenderer.invoke('scratch:toggle-devtools'),

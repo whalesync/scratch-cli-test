@@ -25,6 +25,7 @@ interface WorkspaceHeaderProps {
   deleting: boolean;
   onDelete: () => void;
   onPublishAll: () => void;
+  onPullAll: () => void;
 }
 
 export function WorkspaceHeader({
@@ -37,6 +38,7 @@ export function WorkspaceHeader({
   deleting,
   onDelete,
   onPublishAll,
+  onPullAll,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
   const { width } = useViewportSize();
@@ -128,12 +130,17 @@ export function WorkspaceHeader({
         )}
         {compact ? (
           <Tooltip label="Pull All">
-            <IconButtonGhost size="compact-xs">
+            <IconButtonGhost size="compact-xs" disabled={!isDownloaded} onClick={() => void onPullAll()}>
               <Download size={12} />
             </IconButtonGhost>
           </Tooltip>
         ) : (
-          <ButtonSecondaryGhost size="compact-xs" leftSection={<Download size={12} />}>
+          <ButtonSecondaryGhost
+            size="compact-xs"
+            leftSection={<Download size={12} />}
+            disabled={!isDownloaded}
+            onClick={() => void onPullAll()}
+          >
             Pull All
           </ButtonSecondaryGhost>
         )}

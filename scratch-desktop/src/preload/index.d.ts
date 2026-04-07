@@ -67,6 +67,7 @@ interface ScratchDesktopAPI {
   startPublishFromGit: (workspacePath: string) => Promise<{ sessionId: string }>;
   triggerPublishFromGit: (workspacePath: string) => Promise<{ stdout: string; stderr: string; jobIds: string[] }>;
   startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;
+  pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
   showInFolder: (folderPath: string) => Promise<void>;
   openInTerminal: (folderPath: string) => Promise<void>;
   toggleDevTools: () => Promise<void>;
