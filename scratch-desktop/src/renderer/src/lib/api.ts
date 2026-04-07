@@ -1,9 +1,10 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, isAxiosError } from 'axios';
 
 class ApiConfig {
   private apiUrl: string;
   private staticToken: string | null = null;
   private axiosInstance: AxiosInstance | null = null;
+  private unauthorizedHandler: (() => void) | null = null;
 
   constructor() {
     this.apiUrl = (import.meta.env.VITE_SCRATCH_API_URL as string) || 'http://localhost:3010';
@@ -15,6 +16,10 @@ class ApiConfig {
 
   public setStaticToken(token: string | null) {
     this.staticToken = token;
+  }
+
+  public setUnauthorizedHandler(handler: (() => void) | null) {
+    this.unauthorizedHandler = handler;
   }
 
   public getAxiosInstance(): AxiosInstance {
@@ -32,6 +37,16 @@ class ApiConfig {
         }
         return config;
       });
+
+      this.axiosInstance.interceptors.response.use(
+        (response) => response,
+        (error: unknown) => {
+          if (isAxiosError(error) && error.response?.status === 401 && this.staticToken) {
+            this.unauthorizedHandler?.();
+          }
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
     }
     return this.axiosInstance;
   }

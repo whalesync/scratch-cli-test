@@ -61,6 +61,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const pollAbortRef = useRef<AbortController | null>(null);
 
+  // On any 401 from authenticated requests, clear creds and bounce to LoginPage
+  useEffect(() => {
+    API_CONFIG.setUnauthorizedHandler(() => {
+      void (async () => {
+        try {
+          await window.scratchAuth.clearCredentials();
+        } catch (e) {
+          console.debug('Failed to clear credentials after 401', e);
+        }
+        API_CONFIG.setStaticToken(null);
+        setIsAuthenticated(false);
+        setEmail(null);
+        setExpiringSoon(false);
+      })();
+    });
+    return () => API_CONFIG.setUnauthorizedHandler(null);
+  }, []);
+
   // Check for existing credentials on mount
   useEffect(() => {
     void (async () => {
