@@ -134,7 +134,7 @@ Update the hard-coded tag for the `unawareguitar/leaning-basket` image in [commo
 ```YAML
 # default image used by all jobs unless overridden
 image:
-  name: unawareguitar/leaning-basket:91d4003e
+  name: unawareguitar/leaning-basket:e54db988
   #pull_policy: if-not-present
 ```
 

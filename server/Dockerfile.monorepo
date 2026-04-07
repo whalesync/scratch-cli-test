@@ -2,7 +2,7 @@
 # Build from root directory: docker build -f server/Dockerfile.monorepo -t server .
 
 # Stage 1: Install dependencies
-FROM node:22.22.0-alpine AS deps
+FROM node:22.22.2-alpine3.23 AS deps
 
 # Install build dependencies (including git for some npm packages)
 RUN apk add --no-cache libc6-compat g++ make py3-pip git
@@ -32,7 +32,7 @@ WORKDIR /app/packages/shared-types/
 RUN yarn build
 
 # Stage 2: Build the application
-FROM node:22.22.0-alpine AS builder
+FROM node:22.22.2-alpine3.23 AS builder
 
 ARG BUILD_VERSION=0.0.0-local
 
@@ -57,7 +57,7 @@ RUN sed -i "s/0.0.0-local/${BUILD_VERSION}/g" /app/server/src/version.ts && \
     yarn run prisma generate && yarn run build
 
 # Stage 3: Production runtime
-FROM node:22.22.0-alpine AS runner
+FROM node:22.22.2-alpine3.23 AS runner
 
 # Install dumb-init for proper signal handling
 # https://engineeringblog.yelp.com/2016/01/dumb-init-an-init-for-docker.html
