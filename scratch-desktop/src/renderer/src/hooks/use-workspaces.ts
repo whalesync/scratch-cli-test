@@ -1,6 +1,7 @@
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { logPerf } from '../lib/perf';
 import { workspacesApi } from '../lib/workspaces-api';
@@ -15,6 +16,8 @@ export interface UseWorkspacesResult {
   remoteWorkspaces: Workspace[];
   loading: boolean;
   error: string | null;
+  /** True when the remote workspace list could not be reached (network / gateway). */
+  isConnectionError: boolean;
   fetchWorkspaces: () => Promise<void>;
   handleDownloadAndOpen: (workspace: Workspace) => Promise<void>;
 }
@@ -27,18 +30,21 @@ export function useWorkspaces(): UseWorkspacesResult {
   const [localPathById, setLocalPathById] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isConnectionError, setIsConnectionError] = useState(false);
 
   const fetchWorkspaces = useCallback(async () => {
     const start = performance.now();
     try {
       setLoading(true);
       setError(null);
+      setIsConnectionError(false);
       const [data, localWorkspaces] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
       setWorkspaces(data);
       setDownloadedWorkspaceIds(new Set(localWorkspaces.map((workspace) => workspace.id)));
       setLocalFileCountById(new Map(localWorkspaces.map((w) => [w.id, w.fileCount])));
       setLocalPathById(new Map(localWorkspaces.map((w) => [w.id, w.path])));
     } catch (err) {
+      setIsConnectionError(isServerConnectionError(err));
       setError(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {
       logPerf('useWorkspaces fetchWorkspaces', performance.now() - start);
@@ -95,6 +101,7 @@ export function useWorkspaces(): UseWorkspacesResult {
     remoteWorkspaces,
     loading,
     error,
+    isConnectionError,
     fetchWorkspaces,
     handleDownloadAndOpen,
   };

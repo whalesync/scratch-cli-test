@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '../components/base/buttons';
 import { Text12Regular } from '../components/base/text';
+import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { UserMenu } from '../components/user-menu';
 import { WorkspaceCard } from '../components/WorkspaceCard';
 import { useWorkspaces } from '../hooks/use-workspaces';
@@ -17,6 +18,7 @@ export function HomePage() {
     localPathById,
     loading,
     error,
+    isConnectionError,
     handleDownloadAndOpen,
   } = useWorkspaces();
 
@@ -63,6 +65,10 @@ export function HomePage() {
         <Loader size="sm" />
       </Center>
     );
+  }
+
+  if (isConnectionError) {
+    return <ServerConnectionSplash />;
   }
 
   if (error) {

@@ -2,10 +2,15 @@ import { Box, Code, Loader, Paper, Stack } from '@mantine/core';
 import logoColor from '../assets/logo-color.svg';
 import { ButtonPrimaryLight, ButtonSecondaryGhost } from '../components/base/buttons';
 import { Text13Regular, TextTitle3 } from '../components/base/text';
+import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { useAuth } from '../providers/AuthProvider';
 
 export function LoginPage() {
   const { login, cancelLogin, authFlow } = useAuth();
+
+  if (authFlow.connectionUnavailable) {
+    return <ServerConnectionSplash />;
+  }
 
   return (
     <Box

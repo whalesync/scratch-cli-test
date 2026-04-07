@@ -1,5 +1,6 @@
 import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { API_CONFIG } from '../lib/api';
+import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { logPerf } from '../lib/perf';
 
 const TOKEN_EXPIRY_WARNING_DAYS = 7;
@@ -9,6 +10,8 @@ interface AuthFlowState {
   userCode: string | null;
   verificationUrl: string | null;
   error: string | null;
+  /** Set when login cannot reach the Scratch API (network / gateway). */
+  connectionUnavailable: boolean;
 }
 
 interface AuthContextValue {
@@ -58,6 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     userCode: null,
     verificationUrl: null,
     error: null,
+    connectionUnavailable: false,
   });
   const pollAbortRef = useRef<AbortController | null>(null);
 
@@ -139,11 +143,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const cancelLogin = useCallback(() => {
     pollAbortRef.current?.abort();
     pollAbortRef.current = null;
-    setAuthFlow({ active: false, userCode: null, verificationUrl: null, error: null });
+    setAuthFlow({
+      active: false,
+      userCode: null,
+      verificationUrl: null,
+      error: null,
+      connectionUnavailable: false,
+    });
   }, []);
 
   const login = useCallback(async () => {
-    setAuthFlow({ active: true, userCode: null, verificationUrl: null, error: null });
+    setAuthFlow({
+      active: true,
+      userCode: null,
+      verificationUrl: null,
+      error: null,
+      connectionUnavailable: false,
+    });
 
     try {
       const apiUrl = API_CONFIG.getApiUrl();
@@ -153,7 +169,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: initResp } = await unauthAxios.post<InitiateResponse>('/cli/v1/auth/initiate');
 
       if (initResp.error || !initResp.userCode || !initResp.pollingCode || !initResp.verificationUrl) {
-        setAuthFlow((prev) => ({ ...prev, error: initResp.error ?? 'Failed to initiate authentication' }));
+        setAuthFlow((prev) => ({
+          ...prev,
+          error: initResp.error ?? 'Failed to initiate authentication',
+          connectionUnavailable: false,
+        }));
         return;
       }
 
@@ -186,7 +206,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           switch (pollResp.status) {
             case 'approved': {
               if (!pollResp.apiToken) {
-                setAuthFlow((prev) => ({ ...prev, error: 'No token received' }));
+                setAuthFlow((prev) => ({ ...prev, error: 'No token received', connectionUnavailable: false }));
                 return;
               }
 
@@ -200,17 +220,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               API_CONFIG.setStaticToken(pollResp.apiToken);
               setEmail(pollResp.userEmail ?? null);
               setIsAuthenticated(true);
-              setAuthFlow({ active: false, userCode: null, verificationUrl: null, error: null });
+              setAuthFlow({
+                active: false,
+                userCode: null,
+                verificationUrl: null,
+                error: null,
+                connectionUnavailable: false,
+              });
               return;
             }
             case 'denied':
-              setAuthFlow((prev) => ({ ...prev, active: false, error: pollResp.error ?? 'Authorization denied' }));
+              setAuthFlow((prev) => ({
+                ...prev,
+                active: false,
+                error: pollResp.error ?? 'Authorization denied',
+                connectionUnavailable: false,
+              }));
               return;
             case 'expired':
               setAuthFlow((prev) => ({
                 ...prev,
                 active: false,
                 error: 'Authorization code expired. Please try again.',
+                connectionUnavailable: false,
               }));
               return;
             case 'pending':
@@ -222,11 +254,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!abortController.signal.aborted) {
-        setAuthFlow((prev) => ({ ...prev, active: false, error: 'Authorization timed out. Please try again.' }));
+        setAuthFlow((prev) => ({
+          ...prev,
+          active: false,
+          error: 'Authorization timed out. Please try again.',
+          connectionUnavailable: false,
+        }));
       }
     } catch (e) {
+      if (isServerConnectionError(e)) {
+        setAuthFlow({
+          active: false,
+          userCode: null,
+          verificationUrl: null,
+          error: null,
+          connectionUnavailable: true,
+        });
+        return;
+      }
       const message = e instanceof Error ? e.message : 'Failed to start authentication';
-      setAuthFlow((prev) => ({ ...prev, active: false, error: message }));
+      setAuthFlow((prev) => ({ ...prev, active: false, error: message, connectionUnavailable: false }));
     }
   }, []);
 

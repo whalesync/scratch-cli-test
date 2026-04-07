@@ -1,10 +1,13 @@
-import { Center, Loader } from '@mantine/core';
+import { Alert, Center, Loader, Stack } from '@mantine/core';
 import React, { Suspense } from 'react';
 import { HashRouter, Route, Routes, useParams } from 'react-router-dom';
 import { SWRConfig } from 'swr';
+import { ButtonPrimaryLight } from './components/base/buttons';
 import { DeepLinkBridge } from './components/DeepLinkBridge';
 import { Layout } from './components/Layout';
+import { ServerConnectionSplash } from './components/ServerConnectionSplash';
 import { useCurrentUser } from './hooks/use-current-user';
+import { isServerConnectionError } from './lib/is-server-connection-error';
 import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { AppMantineProvider } from './providers/MantineProvider';
@@ -54,7 +57,30 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { user } = useCurrentUser();
+  const { user, isLoading, error, refreshUser } = useCurrentUser();
+
+  if (isLoading) {
+    return (
+      <Center h="100vh">
+        <Loader size="sm" />
+      </Center>
+    );
+  }
+
+  if (error && isServerConnectionError(error)) {
+    return <ServerConnectionSplash />;
+  }
+
+  if (error) {
+    return (
+      <Stack p="xl" gap="md" maw={480} mx="auto" mt="xl">
+        <Alert color="red" title="Couldn't load your account">
+          {error.message}
+        </Alert>
+        <ButtonPrimaryLight onClick={() => void refreshUser()}>Try again</ButtonPrimaryLight>
+      </Stack>
+    );
+  }
 
   return (
     <PostHogProvider user={user}>

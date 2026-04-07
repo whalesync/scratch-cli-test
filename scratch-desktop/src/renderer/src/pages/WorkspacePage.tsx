@@ -2,6 +2,8 @@ import { Alert, Box, Center, Loader, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
+import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
@@ -22,18 +24,26 @@ export function WorkspacePage() {
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
 
   const fetchWorkspace = useCallback(async () => {
     if (!id) return;
     try {
       setLoading(true);
       setError(null);
+      setConnectionError(false);
       const [data, localWorkspaces] = await Promise.all([workspacesApi.detail(id), listLocalWorkspaces()]);
       const localWorkspace = localWorkspaces.find((entry) => entry.id === id) ?? null;
       setWorkspace(data);
       setLocalPath(localWorkspace?.path ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load workspace');
+      if (isServerConnectionError(err)) {
+        setConnectionError(true);
+        setError(null);
+      } else {
+        setConnectionError(false);
+        setError(err instanceof Error ? err.message : 'Failed to load workspace');
+      }
     } finally {
       setLoading(false);
     }
@@ -105,6 +115,10 @@ export function WorkspacePage() {
         <Loader size="sm" />
       </Center>
     );
+  }
+
+  if (connectionError) {
+    return <ServerConnectionSplash />;
   }
 
   if (error || !workspace) {
