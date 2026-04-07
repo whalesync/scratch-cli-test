@@ -288,20 +288,29 @@ function TransformerStepForm({
         onChange={(value) => value && onChange(defaultConfigForType(value as TransformerType))}
       />
       {config.type === TransformerTypes.AutoConvert && config.options && (
-        <Select
-          size="xs"
-          label="Target Type"
-          description="The data type to convert the source value to"
-          data={[
-            { value: 'string', label: 'String' },
-            { value: 'number', label: 'Number' },
-            { value: 'integer', label: 'Integer' },
-            { value: 'boolean', label: 'Boolean' },
-            { value: 'array', label: 'Array' },
-          ]}
-          value={config.options.targetType}
-          onChange={(v) => v && updateOptions({ ...config.options, targetType: v })}
-        />
+        <>
+          <Select
+            size="xs"
+            label="Target Type"
+            description="The data type to convert the source value to"
+            data={[
+              { value: 'string', label: 'String' },
+              { value: 'number', label: 'Number' },
+              { value: 'integer', label: 'Integer' },
+              { value: 'boolean', label: 'Boolean' },
+              { value: 'array', label: 'Array' },
+            ]}
+            value={config.options.targetType}
+            onChange={(v) => v && updateOptions({ ...config.options, targetType: v })}
+          />
+          <Checkbox
+            size="xs"
+            label="Preserve null values"
+            description="When enabled, null values pass through as null instead of being converted (e.g. to empty string)"
+            checked={config.options.preserveNull ?? false}
+            onChange={(e) => updateOptions({ ...config.options, preserveNull: e.currentTarget.checked || undefined })}
+          />
+        </>
       )}
       {config.type === TransformerTypes.ArrayAutoConvert && config.options && (
         <Select

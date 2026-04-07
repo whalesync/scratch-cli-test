@@ -123,6 +123,8 @@ export function getTransformerLabel(type: TransformerType): string {
 export interface AutoConvertOptions {
   /** The target type to convert the source value to */
   targetType: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+  /** When true, null/undefined values pass through as null instead of being converted (e.g. null stays null for string instead of becoming '') */
+  preserveNull?: boolean;
 }
 
 /** Options for the array_auto_convert transformer */

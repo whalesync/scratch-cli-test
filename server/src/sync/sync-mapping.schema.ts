@@ -12,6 +12,7 @@ const arrayAutoConvertOptionsSchema = z
 const autoConvertOptionsSchema = z
   .object({
     targetType: z.enum(['string', 'number', 'integer', 'boolean', 'array']),
+    preserveNull: z.boolean().optional(),
   })
   .strict();
 

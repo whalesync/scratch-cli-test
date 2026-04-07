@@ -27,13 +27,59 @@ describe('autoConvertTransformer', () => {
   });
 
   describe('general behavior', () => {
-    it('should return null for null input', async () => {
+    it('should return empty string for null input when target is string', async () => {
       const result = await autoConvertTransformer.transform(createContext(null, { targetType: 'string' }));
+      expect(result).toEqual({ success: true, value: '' });
+    });
+
+    it('should return empty string for undefined input when target is string', async () => {
+      const result = await autoConvertTransformer.transform(createContext(undefined, { targetType: 'string' }));
+      expect(result).toEqual({ success: true, value: '' });
+    });
+
+    it('should return 0 for null input when target is number', async () => {
+      const result = await autoConvertTransformer.transform(createContext(null, { targetType: 'number' }));
+      expect(result).toEqual({ success: true, value: 0 });
+    });
+
+    it('should return 0 for undefined input when target is number', async () => {
+      const result = await autoConvertTransformer.transform(createContext(undefined, { targetType: 'number' }));
+      expect(result).toEqual({ success: true, value: 0 });
+    });
+
+    it('should return 0 for null input when target is integer', async () => {
+      const result = await autoConvertTransformer.transform(createContext(null, { targetType: 'integer' }));
+      expect(result).toEqual({ success: true, value: 0 });
+    });
+
+    it('should return false for null input when target is boolean', async () => {
+      const result = await autoConvertTransformer.transform(createContext(null, { targetType: 'boolean' }));
+      expect(result).toEqual({ success: true, value: false });
+    });
+
+    it('should return empty array for null input when target is array', async () => {
+      const result = await autoConvertTransformer.transform(createContext(null, { targetType: 'array' }));
+      expect(result).toEqual({ success: true, value: [] });
+    });
+
+    it('should preserve null when preserveNull is true (string target)', async () => {
+      const result = await autoConvertTransformer.transform(
+        createContext(null, { targetType: 'string', preserveNull: true }),
+      );
       expect(result).toEqual({ success: true, value: null });
     });
 
-    it('should return null for undefined input', async () => {
-      const result = await autoConvertTransformer.transform(createContext(undefined, { targetType: 'number' }));
+    it('should preserve null when preserveNull is true (boolean target)', async () => {
+      const result = await autoConvertTransformer.transform(
+        createContext(null, { targetType: 'boolean', preserveNull: true }),
+      );
+      expect(result).toEqual({ success: true, value: null });
+    });
+
+    it('should preserve null when preserveNull is true (number target)', async () => {
+      const result = await autoConvertTransformer.transform(
+        createContext(null, { targetType: 'number', preserveNull: true }),
+      );
       expect(result).toEqual({ success: true, value: null });
     });
   });
