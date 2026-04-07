@@ -23,6 +23,10 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
+  protocols:
+    - name: Scratch
+      schemes:
+        - scratch
   artifactName: '${productName}-${version}-${arch}.${ext}'
   target:
     - target: dmg
@@ -44,6 +48,8 @@ linux:
     - deb
   maintainer: Whalesync
   category: Office
+  mimeTypes:
+    - x-scheme-handler/scratch
 
 publish:
   provider: github

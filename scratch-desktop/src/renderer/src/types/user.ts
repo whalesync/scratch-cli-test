@@ -2,6 +2,8 @@
 export interface UserExperimentFlags {
   DEV_TOOLBOX: boolean;
   ENABLE_CREATE_BUG_REPORT: boolean;
+  SHOW_DESKTOP_FOCUSED_UI: boolean;
+  SHOW_OPEN_IN_DESKTOP: boolean;
 }
 
 export function isExperimentEnabled(experiment: keyof UserExperimentFlags, user: User | null): boolean {

@@ -16,6 +16,8 @@ export enum UserFlag {
   DEV_TOOLBOX = 'DEV_TOOLBOX',
   SAMPLE_USER_FLAG = 'sample_user_flag',
   ENABLE_CREATE_BUG_REPORT = 'ENABLE_CREATE_BUG_REPORT',
+  SHOW_DESKTOP_FOCUSED_UI = 'SHOW_DESKTOP_FOCUSED_UI',
+  SHOW_OPEN_IN_DESKTOP = 'SHOW_OPEN_IN_DESKTOP',
 }
 
 /**
@@ -36,4 +38,6 @@ export const ClientUserFlags: Record<UserFlag, FlagDataType> = {
   // User-scoped feature flags
   [UserFlag.SAMPLE_USER_FLAG]: 'boolean',
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: 'boolean',
+  [UserFlag.SHOW_DESKTOP_FOCUSED_UI]: 'boolean',
+  [UserFlag.SHOW_OPEN_IN_DESKTOP]: 'boolean',
 };

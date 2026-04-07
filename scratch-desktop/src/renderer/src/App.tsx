@@ -1,7 +1,8 @@
 import { Center, Loader } from '@mantine/core';
 import React, { Suspense } from 'react';
-import { HashRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, Route, Routes, useParams } from 'react-router-dom';
 import { SWRConfig } from 'swr';
+import { DeepLinkBridge } from './components/DeepLinkBridge';
 import { Layout } from './components/Layout';
 import { useCurrentUser } from './hooks/use-current-user';
 import { LoginPage } from './pages/LoginPage';
@@ -21,6 +22,17 @@ function PageLoader() {
       <Loader size="sm" />
     </Center>
   );
+}
+
+/** Remount when :id changes so workspace UI state (grid, selection) cannot leak between workbooks. */
+function WorkspacePageRoute() {
+  const { id } = useParams<{ id: string }>();
+  return <WorkspacePage key={id} />;
+}
+
+function WorkspacePageDebugRoute() {
+  const { id } = useParams<{ id: string }>();
+  return <WorkspacePageDebug key={id} />;
 }
 
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -50,8 +62,8 @@ function AppRoutes() {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<HomePage />} />
-            <Route path="/workspace/:id" element={<WorkspacePage />} />
-            <Route path="/workspace/:id/debug" element={<WorkspacePageDebug />} />
+            <Route path="/workspace/:id" element={<WorkspacePageRoute />} />
+            <Route path="/workspace/:id/debug" element={<WorkspacePageDebugRoute />} />
           </Route>
         </Routes>
       </Suspense>
@@ -64,11 +76,12 @@ function App() {
     <SWRConfig value={{ revalidateOnFocus: false }}>
       <AppMantineProvider>
         <AuthProvider>
-          <AuthGate>
-            <HashRouter>
+          <HashRouter>
+            <DeepLinkBridge />
+            <AuthGate>
               <AppRoutes />
-            </HashRouter>
-          </AuthGate>
+            </AuthGate>
+          </HashRouter>
         </AuthProvider>
       </AppMantineProvider>
     </SWRConfig>

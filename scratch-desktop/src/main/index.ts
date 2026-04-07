@@ -2,7 +2,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { readdir, readFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
@@ -32,6 +32,85 @@ import {
 } from './scratchmd';
 
 const appStartTime = performance.now();
+
+const PROTOCOL = 'scratch';
+
+let mainWindow: BrowserWindow | null = null;
+let pendingDeepLink: { route: string; query: string } | null = null;
+
+function parseScratchDeepLink(url: string): { route: string; query: string } | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'scratch:') {
+      return null;
+    }
+    const route = `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, '');
+    if (!route.startsWith('workbook/')) {
+      return null;
+    }
+    if (route.includes('..')) {
+      return null;
+    }
+    return { route, query: parsed.search };
+  } catch {
+    return null;
+  }
+}
+
+function flushPendingDeepLink(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !pendingDeepLink) {
+    return;
+  }
+  mainWindow.webContents.send('deep-link', pendingDeepLink.route, pendingDeepLink.query);
+  pendingDeepLink = null;
+}
+
+function handleDeepLink(url: string): void {
+  const parsed = parseScratchDeepLink(url);
+  if (!parsed) {
+    console.debug('[deep-link] ignored (invalid URL):', url);
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('deep-link', parsed.route, parsed.query);
+  } else {
+    pendingDeepLink = parsed;
+  }
+}
+
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (gotTheLock) {
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [resolve(process.argv[1])]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient(PROTOCOL);
+  }
+
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+
+  app.on('second-instance', (_event, argv) => {
+    const deepLinkArg = argv.find((arg) => typeof arg === 'string' && arg.startsWith(`${PROTOCOL}://`));
+    if (deepLinkArg) {
+      handleDeepLink(deepLinkArg);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      void mainWindow.focus();
+    }
+  });
+}
+
+if (!gotTheLock) {
+  app.quit();
+}
 
 function logPerf(message: string, elapsedMs: number): void {
   console.debug(`[perf] ${message}: ${elapsedMs.toFixed(1)}ms`);
@@ -151,7 +230,7 @@ function windowIconPath(): string {
 
 function createWindow(): void {
   const windowStart = performance.now();
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
@@ -163,6 +242,14 @@ function createWindow(): void {
     },
   });
   logPerf('main createBrowserWindow', performance.now() - windowStart);
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    flushPendingDeepLink();
+  });
 
   mainWindow.on('ready-to-show', () => {
     logPerf('main windowReadyToShow (from app start)', performance.now() - appStartTime);
@@ -382,6 +469,10 @@ ipcMain.handle('files:read-diff-grid-data', async (_, folderPath: string, worksp
 );
 
 void app.whenReady().then(() => {
+  if (!gotTheLock) {
+    return;
+  }
+
   logPerf('main appReady (from app start)', performance.now() - appStartTime);
   electronApp.setAppUserModelId('md.scratch.desktop');
 
@@ -391,6 +482,11 @@ void app.whenReady().then(() => {
   });
 
   createWindow();
+
+  const deepLinkArg = process.argv.find((arg) => typeof arg === 'string' && arg.startsWith(`${PROTOCOL}://`));
+  if (deepLinkArg) {
+    handleDeepLink(deepLinkArg);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

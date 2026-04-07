@@ -10,7 +10,7 @@ import { ChevronDownIcon, SettingsIcon, UserIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-export function SidebarFooter() {
+export function SidebarFooter({ hideBorder }: { hideBorder?: boolean }) {
   const pathname = usePathname();
   const { user, clerkUser } = useScratchPadUser();
 
@@ -24,7 +24,7 @@ export function SidebarFooter() {
       gap={0}
       py="xs"
       style={{
-        borderTop: '1px solid var(--fg-divider)',
+        borderTop: hideBorder ? 'none' : '1px solid var(--fg-divider)',
         flexShrink: 0,
       }}
     >

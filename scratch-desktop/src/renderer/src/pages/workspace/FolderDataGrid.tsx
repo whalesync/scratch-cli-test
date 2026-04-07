@@ -31,6 +31,8 @@ interface DiffGridResult {
 }
 
 interface FolderDataGridProps {
+  /** Included so memo() invalidates when switching workbooks even if folder path + local path match. */
+  workspaceId: string;
   selectedFolderPath: string | null;
   workspacePath: string | null;
 }
@@ -193,7 +195,8 @@ const DOT_COLOR: Record<RowStatus, string | null> = {
 
 // ── Component ──
 
-export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath, workspacePath }: FolderDataGridProps) {
+export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
+  const { selectedFolderPath, workspacePath } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

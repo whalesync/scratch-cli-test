@@ -14,6 +14,8 @@ export enum PostHogEvents {
   PULL_FILES_FROM_SOURCE = 'pull_files_from_source',
   WHALESYNC_IMPORT = 'whalesync_import',
   DELETE_WORKBOOK = 'delete_workbook',
+  CLICK_OPEN_IN_DESKTOP = 'click_open_in_desktop',
+  OPEN_IN_DESKTOP_INTERSTITIAL_FALLBACK = 'open_in_desktop_interstitial_fallback',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -109,4 +111,12 @@ export function trackWhalesyncImport(workbookId: string, syncCount: number): voi
 
 export function trackDeleteWorkbook(workbookId: string): void {
   captureEvent(PostHogEvents.DELETE_WORKBOOK, { workbookId });
+}
+
+export function trackClickOpenInDesktop(context: { section: 'toolbar' | 'workspace_connections' }): void {
+  captureEvent(PostHogEvents.CLICK_OPEN_IN_DESKTOP, context);
+}
+
+export function trackOpenInDesktopInterstitialFallback(context: { reason: 'timeout' | 'invalid_path' }): void {
+  captureEvent(PostHogEvents.OPEN_IN_DESKTOP_INTERSTITIAL_FALLBACK, context);
 }

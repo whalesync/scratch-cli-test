@@ -14,6 +14,10 @@ type ScratchCommandEvent =
       error?: string;
     };
 
+interface ScratchDeepLinkAPI {
+  onDeepLink: (callback: (route: string, query: string) => void) => () => void;
+}
+
 interface ScratchAuthAPI {
   getCredentials: () => Promise<{
     apiToken: string | null;
@@ -184,6 +188,7 @@ interface ScratchFilesAPI {
 declare global {
   interface Window {
     electron: ElectronAPI;
+    scratchDeepLink?: ScratchDeepLinkAPI;
     scratchAuth: ScratchAuthAPI;
     scratchDesktop: ScratchDesktopAPI;
     scratchFiles: ScratchFilesAPI;

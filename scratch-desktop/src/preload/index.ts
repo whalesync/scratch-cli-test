@@ -15,6 +15,18 @@ type ScratchCommandEvent =
       error?: string;
     };
 
+const scratchDeepLink = {
+  onDeepLink: (callback: (route: string, query: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, route: string, query: string): void => {
+      callback(route, query);
+    };
+    ipcRenderer.on('deep-link', listener);
+    return () => {
+      ipcRenderer.removeListener('deep-link', listener);
+    };
+  },
+};
+
 const scratchAuth = {
   getCredentials: (): Promise<{
     apiToken: string | null;
@@ -217,6 +229,7 @@ const scratchFiles = {
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI);
+    contextBridge.exposeInMainWorld('scratchDeepLink', scratchDeepLink);
     contextBridge.exposeInMainWorld('scratchAuth', scratchAuth);
     contextBridge.exposeInMainWorld('scratchDesktop', scratchDesktop);
     contextBridge.exposeInMainWorld('scratchFiles', scratchFiles);
@@ -226,6 +239,8 @@ if (process.contextIsolated) {
 } else {
   // @ts-expect-error -- fallback for non-isolated contexts
   window.electron = electronAPI;
+  // @ts-expect-error -- fallback for non-isolated contexts
+  window.scratchDeepLink = scratchDeepLink;
   // @ts-expect-error -- fallback for non-isolated contexts
   window.scratchAuth = scratchAuth;
   // @ts-expect-error -- fallback for non-isolated contexts

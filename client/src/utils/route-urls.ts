@@ -1,7 +1,26 @@
+/**
+ * Maps a Scratch web path to scratch:// for the desktop app.
+ * Supports /workbook/... and /workspace/{workbookId}/... (workspace URLs open that workbook in desktop).
+ */
+export function desktopDeepLinkFromWebPath(webPath: string): string | null {
+  const trimmed = webPath.replace(/^\/+/, '');
+  if (trimmed.startsWith('workbook/')) {
+    return `scratch://${trimmed}`;
+  }
+  const workspaceMatch = /^workspace\/([^/]+)/.exec(trimmed);
+  if (workspaceMatch) {
+    return `scratch://workbook/${workspaceMatch[1]}`;
+  }
+  return null;
+}
+
 export class RouteUrls {
   // Public routes
   static healthEndpoint = '/api/health';
   static pricingPageUrl = '/pricing';
+
+  /** macOS desktop installer landing page (see also home page desktop CTA). */
+  static desktopDownloadUrl = 'https://scratch.app/download/mac';
 
   // Not implemented yet, just placeholder for future use
   static signInPageUrl = '/sign-in';
@@ -32,6 +51,7 @@ export class RouteUrls {
       .join('/');
     return `/workbook/${id}/review/${encoded}`;
   };
+  static workbookConnectionsPageUrl = (id: string) => `/workbook/${id}/connections`;
   static workbookSyncsPageUrl = (id: string) => `/workbook/${id}/syncs`;
   static workbookScheduledRunsPageUrl = (id: string) => `/workbook/${id}/runs/scheduled`;
   static workbookRunsPageUrl = (id: string, params?: Record<string, string>) => {
@@ -51,6 +71,33 @@ export class RouteUrls {
 
   // Waitlist
   static waitlistPageUrl = '/waitlist';
+
+  /**
+   * scratch:// URL that opens this workbook in Scratch Desktop (in-app route /workspace/{id}).
+   * Desktop maps web-style workbook/* paths via mapWebWorkbookPathToDesktopRoute.
+   */
+  static desktopDeepLinkForWorkbook(workbookId: string): string {
+    return `scratch://workbook/${workbookId}`;
+  }
+
+  /** @see desktopDeepLinkFromWebPath */
+  static readonly desktopDeepLinkFromWebPath = desktopDeepLinkFromWebPath;
+
+  /**
+   * Builds a scratch:// deep link for a workbook-related web pathname (e.g. /workbook/{id}/files).
+   * Returns null when the path is not under /workbook/ or /workspace/{id}/.
+   */
+  static desktopDeepLinkForWebPathname(pathname: string): string | null {
+    return desktopDeepLinkFromWebPath(pathname);
+  }
+
+  /**
+   * Web URL that attempts to open the desktop app first, then offers a browser fallback (see /open/[...path]).
+   */
+  static openInDesktopIntermediaryUrl(webPath: string): string {
+    const trimmed = webPath.replace(/^\/+/, '');
+    return `/open/${trimmed}`;
+  }
 
   // Dev Tools routes (under settings)
   static devToolsPageUrl = '/settings/dev/user-info';

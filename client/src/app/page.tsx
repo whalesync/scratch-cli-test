@@ -1,28 +1,134 @@
 'use client';
 
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
-import { Text13Medium, Text13Regular, TextTitle2 } from '@/app/components/base/text';
+import { Text13Medium, Text13Regular, Text16Regular, TextTitle2 } from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
+import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbooks } from '@/hooks/use-workbooks';
 import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
+import { isExperimentEnabled } from '@/types/server-entities/users';
+import { RouteUrls } from '@/utils/route-urls';
+import { UserButton } from '@clerk/nextjs';
 import { Box, Center, Divider, Group, Stack, TextInput, UnstyledButton } from '@mantine/core';
 import type { Workbook } from '@spinner/shared-types';
-import { ChevronRightIcon, PlusIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronRightIcon, DownloadIcon, PlusIcon, SettingsIcon, UserIcon } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+
+function DesktopLandingPage({ displayName, lastWorkbookId }: { displayName: string; lastWorkbookId?: string }) {
+  return (
+    <Box
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-base)',
+        position: 'relative',
+      }}
+    >
+      <Center>
+        <Stack align="center" gap="xl" maw={400} px="md">
+          <Box
+            style={{
+              width: 80,
+              height: 80,
+              backgroundColor: '#9BF9EB',
+              borderRadius: 16,
+              backgroundImage: 'url(/logo-color.svg)',
+              backgroundSize: 90,
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'center',
+            }}
+          />
+          <Stack align="center" gap="xs">
+            <TextTitle2>Scratch</TextTitle2>
+            <Text16Regular c="dimmed" ta="center">
+              Download Scratch Desktop for the best experience managing your content.
+            </Text16Regular>
+          </Stack>
+          <ButtonPrimaryLight
+            leftSection={<StyledLucideIcon Icon={DownloadIcon} size="sm" />}
+            fullWidth
+            onClick={() => window.open(RouteUrls.desktopDownloadUrl, '_blank')}
+          >
+            Download for macOS
+          </ButtonPrimaryLight>
+        </Stack>
+      </Center>
+
+      {/* Bottom-right "Switch to Scratch Web" */}
+      {lastWorkbookId && (
+        <Box style={{ position: 'fixed', bottom: 0, right: 0 }} p="sm">
+          <Link href={RouteUrls.workbookFilesPageUrl(lastWorkbookId)} style={{ textDecoration: 'none' }}>
+            <ButtonSecondaryOutline size="xs">Switch to Scratch Web</ButtonSecondaryOutline>
+          </Link>
+        </Box>
+      )}
+
+      {/* Bottom-left user menu */}
+      <Stack
+        gap={0}
+        style={{ position: 'fixed', bottom: 0, left: 0, width: 220 }}
+        py="xs"
+      >
+        <Link href={RouteUrls.settingsPageUrl} style={{ textDecoration: 'none' }}>
+          <UnstyledButton px="sm" py={8} style={{ width: '100%' }}>
+            <Group gap={8} wrap="nowrap">
+              <StyledLucideIcon Icon={SettingsIcon} size="sm" c="var(--fg-secondary)" />
+              <Text13Regular c="var(--fg-secondary)">Settings</Text13Regular>
+            </Group>
+          </UnstyledButton>
+        </Link>
+        <Box pos="relative">
+          <UnstyledButton px="sm" py={8} style={{ width: '100%' }}>
+            <Group gap={8} wrap="nowrap" justify="space-between">
+              <Group gap={8} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                <StyledLucideIcon Icon={UserIcon} size="sm" c="var(--fg-secondary)" />
+                <Text13Regular c="var(--fg-secondary)" truncate style={{ flex: 1 }}>
+                  {displayName}
+                </Text13Regular>
+              </Group>
+              <ChevronDownIcon size={12} color="var(--fg-secondary)" style={{ flexShrink: 0 }} />
+            </Group>
+          </UnstyledButton>
+          <Box pos="absolute" top={0} left={0} w="100%" h="100%" style={{ zIndex: 10, opacity: 0, overflow: 'hidden' }}>
+            <UserButton
+              appearance={{
+                elements: {
+                  rootBox: { width: '100%', height: '100%' },
+                  userButtonTrigger: { width: '100%', height: '100%', cursor: 'pointer' },
+                },
+              }}
+            />
+          </Box>
+        </Box>
+      </Stack>
+    </Box>
+  );
+}
 
 /**
  * Home page - shows welcome/picker screen.
  * Auto-redirect to lastWorkbookId is handled by ScratchPadUserProvider,
  * so this page only renders when the user has no lastWorkbookId.
+ * When SHOW_DESKTOP_FOCUSED_UI is enabled, shows a desktop download landing page instead.
  */
 export default function HomePage() {
+  const { user } = useScratchPadUser();
   const router = useRouter();
   const { workbooks, isLoading: isWorkbooksLoading } = useWorkbooks();
   const [projectName, setProjectName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+
+  if (isExperimentEnabled('SHOW_DESKTOP_FOCUSED_UI', user)) {
+    const displayName = user?.name || user?.email || 'User';
+    return <DesktopLandingPage displayName={displayName} lastWorkbookId={user?.lastWorkbookId} />;
+  }
 
   const hasWorkbooks = workbooks && workbooks.length > 0;
 

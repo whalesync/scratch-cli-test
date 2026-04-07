@@ -1,6 +1,7 @@
 'use client';
 
 import { IconButtonToolbar } from '@/app/components/base/buttons';
+import { OpenInDesktopButton } from '@/app/components/open-in-desktop-button';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
@@ -135,6 +136,7 @@ export function Toolbar({ workbookId }: ToolbarProps) {
 
       {/* Right: Utility buttons */}
       <Group gap="xs">
+        <OpenInDesktopButton />
         <Tooltip label="Connect to CLI" position="bottom">
           <IconButtonToolbar onClick={openCLIModal} aria-label="Connect to CLI">
             <StyledLucideIcon Icon={TerminalIcon} size="sm" />
