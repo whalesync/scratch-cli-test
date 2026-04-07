@@ -279,7 +279,7 @@ export function WorkspacePageDebug() {
       const unreviewed = await fetchUnreviewedChanges();
       if (unreviewed.length > 0) {
         const confirmed = window.confirm(
-          `${unreviewed.length} records with unpublished changes will not be published. Continue?`,
+          `${unreviewed.length} records with unreviewed changes will not be published. Continue?`,
         );
         if (!confirmed) {
           return;
@@ -514,7 +514,7 @@ export function WorkspacePageDebug() {
       const unreviewed = await fetchUnreviewedChanges();
       if (unreviewed.length > 0) {
         const confirmed = window.confirm(
-          `${unreviewed.length} records with unpublished changes will not be published. Continue?`,
+          `${unreviewed.length} records with unreviewed changes will not be published. Continue?`,
         );
         if (!confirmed) {
           return;

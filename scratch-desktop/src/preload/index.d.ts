@@ -173,15 +173,17 @@ interface ScratchFilesAPI {
   ) => Promise<{
     rows: Array<
       Record<string, unknown> & {
-        __rowStatus: 'added' | 'modified' | 'deleted' | 'unchanged';
+        __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
         __changedFields: string[];
         __fromFields: Record<string, unknown>;
+        __unpublishedFields: string[];
+        __masterFields: Record<string, unknown>;
         __filename: string;
       }
     >;
     columns: string[];
     total: number;
-    summary: { total: number; added: number; modified: number; deleted: number };
+    summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
   }>;
   acceptCellChange: (
     folderPath: string,

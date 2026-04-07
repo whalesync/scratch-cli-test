@@ -12,17 +12,19 @@ import { Box, Group, Loader, Modal, Stack, Textarea } from '@mantine/core';
 import { diffWordsWithSpace } from 'diff';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonDangerLight, ButtonPrimaryLight, ButtonSecondaryOutline } from '../../components/base/buttons';
-import { Text12Regular, Text13Regular } from '../../components/base/text';
+import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
 import { RecordDetailView } from './RecordDetailView';
 
 // ── Types ──
 
-type RowStatus = 'added' | 'modified' | 'deleted' | 'unchanged';
+type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
 
 interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
   __changedFields: string[];
   __fromFields: Record<string, unknown>;
+  __unpublishedFields: string[];
+  __masterFields: Record<string, unknown>;
   __filename: string;
 }
 
@@ -30,8 +32,10 @@ interface DiffGridResult {
   rows: DiffRow[];
   columns: string[];
   total: number;
-  summary: { total: number; added: number; modified: number; deleted: number };
+  summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
 }
+
+type FilterStatus = 'unreviewed' | 'unpublished';
 
 interface FolderDataGridProps {
   /** Included so memo() invalidates when switching workbooks even if folder path + local path match. */
@@ -40,10 +44,16 @@ interface FolderDataGridProps {
   workspacePath: string | null;
 }
 
-// ── Diff colours (working vs dirty) ──
+// ── Constants ──
 
-const DIFF_WORKING_BG = '#dbeafe'; // blue-100
+const PAGE_SIZE = 100;
+
+// ── Diff colours ──
+
+const DIFF_WORKING_BG = '#dbeafe'; // blue-100  — unreviewed (w != d)
 const DIFF_WORKING_BORDER = '#60a5fa'; // blue-400
+const DIFF_UNPUBLISHED_BG = '#eff6ff'; // blue-50   — unpublished (d != m, w == d)
+const DIFF_UNPUBLISHED_BORDER = '#93c5fd'; // blue-300
 
 // ── Helpers ──
 
@@ -125,11 +135,12 @@ const statusDotRenderer: CustomRenderer<StatusDotCell> = {
   },
 };
 
-// ── Custom cell: changed field (light blue bg + left border, current value only) ──
+// ── Custom cell: changed field (blue bg + left border, current value only) ──
 
 interface DiffCellData {
   kind: 'diff-cell';
   displayText: string;
+  diffKind: 'unreviewed' | 'unpublished';
   isIdCol?: boolean;
 }
 
@@ -142,7 +153,8 @@ const diffCellRenderer: CustomRenderer<DiffCell> = {
     typeof c.data === 'object' && c.data !== null && (c.data as DiffCellData).kind === 'diff-cell',
   draw: ({ ctx, rect, cell, theme, hoverAmount }) => {
     const { x, y, width, height } = rect;
-    const { displayText, isIdCol } = cell.data;
+    const { displayText, diffKind, isIdCol } = cell.data;
+    const border = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER : DIFF_UNPUBLISHED_BORDER;
     const BORDER_W = 3;
     const PADDING = 8;
     const iconSize = 12;
@@ -152,7 +164,7 @@ const diffCellRenderer: CustomRenderer<DiffCell> = {
     ctx.save();
 
     // Left border
-    ctx.fillStyle = DIFF_WORKING_BORDER;
+    ctx.fillStyle = border;
     ctx.fillRect(x, y, BORDER_W, height);
 
     // Text clipped to remaining width
@@ -185,10 +197,48 @@ const diffCellRenderer: CustomRenderer<DiffCell> = {
 
 const ROW_TINT: Record<RowStatus, string | undefined> = {
   added: '#f0fdf4',
-  modified: undefined, // cell-level blue only
+  modified: undefined,
+  unpublished: undefined,
   deleted: '#fef2f2',
   unchanged: undefined,
 };
+
+// ── Filter pill ──
+
+function FilterPill({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Box
+      component="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 8px',
+        borderRadius: 10,
+        border: active ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
+        backgroundColor: active ? 'var(--mantine-color-blue-0)' : 'transparent',
+        cursor: 'pointer',
+        lineHeight: 1,
+      }}
+    >
+      <Text12Medium c={active ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
+        {label}
+        {` (${count.toLocaleString()})`}
+      </Text12Medium>
+    </Box>
+  );
+}
 
 // ── Component ──
 
@@ -201,17 +251,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     column: null,
     direction: null,
   });
+  const [filterStatus, setFilterStatus] = useState<FilterStatus | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
+  const [page, setPage] = useState(1);
   const [cellModal, setCellModal] = useState<{
     col: number;
     row: number;
     filename: string;
     fieldName: string;
     value: string;
-    dirtyValue: string;
-    isDiff: boolean;
+    fromValue: string;
+    diffKind: 'unreviewed' | 'unpublished' | null;
   } | null>(null);
   const [cellModalEditing, setCellModalEditing] = useState(false);
   const [cellModalEditValue, setCellModalEditValue] = useState('');
@@ -238,7 +290,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // Load data
   useEffect(() => {
-    if (!selectedFolderPath) {
+    if (!selectedFolderPath || !workspacePath) {
       setDiffData(null);
       return;
     }
@@ -247,26 +299,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setLoading(true);
     setError(null);
 
-    const load = workspacePath
-      ? window.scratchFiles.readDiffGridData(selectedFolderPath, workspacePath)
-      : window.scratchFiles.readGridData(selectedFolderPath).then((r) => ({
-          rows: r.rows.map((row) => ({
-            ...row,
-            __rowStatus: 'unchanged' as RowStatus,
-            __changedFields: [] as string[],
-            __fromFields: {} as Record<string, unknown>,
-            __filename: (row['__filename'] as string) ?? '',
-          })),
-          columns: r.columns,
-          total: r.total,
-          summary: { total: r.total, added: 0, modified: 0, deleted: 0 },
-        }));
-
-    load
+    window.scratchFiles
+      .readDiffGridData(selectedFolderPath, workspacePath)
       .then((result) => {
         if (!cancelled) setDiffData(result as DiffGridResult);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load grid data');
           setDiffData(null);
@@ -284,15 +322,22 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Reset state when folder changes
   useEffect(() => {
     setSort({ column: null, direction: null });
+    setFilterStatus(null);
     setColumnWidths({});
     setDetailRowIndex(null);
     setSchema(null);
     setCellModal(null);
     setCellModalEditing(false);
+    setPage(1);
     setReloadKey(0);
   }, [selectedFolderPath]);
 
-  // Load folder metadata (schema) when folder changes
+  // Reset to page 1 when filter or sort changes
+  useEffect(() => {
+    setPage(1);
+  }, [filterStatus, sort]);
+
+  // Load schema when folder changes
   useEffect(() => {
     if (!selectedFolderPath || !workspacePath) {
       setSchema(null);
@@ -309,10 +354,36 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // ── Derived ──
 
-  const rows = diffData?.rows ?? [];
+  const filteredRows = useMemo(() => {
+    const allRows = diffData?.rows ?? [];
+    if (!filterStatus) return allRows;
+    if (filterStatus === 'unreviewed') {
+      return allRows.filter(
+        (r) => r.__rowStatus === 'modified' || r.__rowStatus === 'added' || r.__rowStatus === 'deleted',
+      );
+    }
+    // unpublished
+    return allRows.filter((r) => r.__rowStatus === 'unpublished');
+  }, [diffData?.rows, filterStatus]);
 
-  // Extract titleColumnRemoteId from schema — it's a path array like ['properties', 'email']
-  // which maps to the flattened column key 'properties.email'
+  const sortedRows = useMemo(() => {
+    if (!filteredRows.length || !sort.column || !sort.direction) return filteredRows;
+    const col = sort.column;
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    return [...filteredRows].sort((a, b) => {
+      const aVal = a[col];
+      const bVal = b[col];
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return dir;
+      if (bVal == null) return -dir;
+      if (typeof aVal === 'number' && typeof bVal === 'number') return (aVal - bVal) * dir;
+      return toDisplayString(aVal).localeCompare(toDisplayString(bVal)) * dir;
+    });
+  }, [filteredRows, sort]);
+
+  const totalPages = Math.ceil(sortedRows.length / PAGE_SIZE);
+  const pagedRows = useMemo(() => sortedRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [sortedRows, page]);
+
   const titleColumnId = useMemo(() => {
     const raw = schema?.titleColumnRemoteId;
     if (Array.isArray(raw) && raw.length > 0 && raw.every((s) => typeof s === 'string')) {
@@ -334,26 +405,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }));
   }, [columnWidths, diffData?.columns, titleColumnId]);
 
-  const sortedRows = (() => {
-    if (!rows.length || !sort.column || !sort.direction) return rows;
-    const col = sort.column;
-    const dir = sort.direction === 'asc' ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      const aVal = a[col];
-      const bVal = b[col];
-      if (aVal == null && bVal == null) return 0;
-      if (aVal == null) return dir;
-      if (bVal == null) return -dir;
-      if (typeof aVal === 'number' && typeof bVal === 'number') return (aVal - bVal) * dir;
-      return toDisplayString(aVal).localeCompare(toDisplayString(bVal)) * dir;
-    });
-  })();
+  // Filter counts derived from summary — no extra IPC calls needed
+  const filterCounts = diffData
+    ? {
+        unreviewed: diffData.summary.modified + diffData.summary.added + diffData.summary.deleted,
+        unpublished: diffData.summary.unpublished,
+      }
+    : null;
 
   // ── Cell content ──
 
   const getCellContent = useCallback(
     ([col, row]: Item) => {
-      const r = sortedRows[row] as DiffRow | undefined;
+      const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
 
       if (!r || colId === undefined) {
@@ -363,10 +427,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const status = r.__rowStatus;
       const rowBg = ROW_TINT[status];
       const rowTheme = rowBg ? { bgCell: rowBg } : undefined;
-
       const val = r[colId];
 
-      // Changed cell in a modified row: blue bg + left border via DiffCell renderer
+      // Unreviewed change (w != d): darker blue
       if (status === 'modified' && r.__changedFields.includes(colId)) {
         return {
           kind: GridCellKind.Custom as const,
@@ -377,12 +440,30 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           data: {
             kind: 'diff-cell' as const,
             displayText: toDisplayString(val),
+            diffKind: 'unreviewed',
             isIdCol: col === 0,
           } satisfies DiffCellData,
         };
       }
 
-      // First column (not a diff): ID cell with inspect-on-hover magnifying glass
+      // Unpublished change (w == d but d != m): lighter blue
+      if (status === 'unpublished' && r.__unpublishedFields.includes(colId)) {
+        return {
+          kind: GridCellKind.Custom as const,
+          allowOverlay: false as const,
+          ...(col === 0 ? { cursor: 'pointer' } : {}),
+          copyData: toDisplayString(val),
+          themeOverride: { bgCell: DIFF_UNPUBLISHED_BG },
+          data: {
+            kind: 'diff-cell' as const,
+            displayText: toDisplayString(val),
+            diffKind: 'unpublished',
+            isIdCol: col === 0,
+          } satisfies DiffCellData,
+        };
+      }
+
+      // First column: inspect-on-hover
       if (col === 0) {
         return {
           kind: GridCellKind.Custom as const,
@@ -397,9 +478,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         };
       }
 
-      // All other cells: standard rendering with optional row tint
+      // Standard cells
       const kind = inferCellKind(val);
-
       if (kind === GridCellKind.Boolean) {
         return { kind, data: Boolean(val), allowOverlay: false as const, themeOverride: rowTheme };
       }
@@ -421,7 +501,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         themeOverride: rowTheme,
       };
     },
-    [sortedRows, columns],
+    [pagedRows, columns],
   );
 
   const onHeaderClicked = useCallback(
@@ -440,13 +520,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     drawContent();
     if (args.col !== 0 || args.hoverAmount === 0) return;
     const { ctx, rect, theme, hoverAmount } = args;
-    const size = 12;
-    const padding = 6;
     drawInspectIcon(
       ctx,
-      rect.x + rect.width - size - padding,
-      rect.y + (rect.height - size) / 2,
-      size,
+      rect.x + rect.width - 12 - 6,
+      rect.y + (rect.height - 12) / 2,
+      12,
       theme.textMedium ?? '#888',
       hoverAmount,
     );
@@ -454,43 +532,40 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onCellClicked = useCallback(([col, row]: Item, event: CellClickedEventArgs) => {
     if (col !== 0) return;
-    // Only open record detail when the click lands on the inspect icon (right edge of cell)
-    const iconSize = 12;
-    const iconPad = 6;
-    const iconZoneWidth = iconSize + iconPad * 2;
+    const iconZoneWidth = 12 + 6 * 2;
     if (event.localEventX >= event.bounds.width - iconZoneWidth) {
       setDetailRowIndex(row);
     }
   }, []);
 
-  // Double-click or Enter opens the cell modal.
-  // Diff cells (modified + changed field) open in view mode; all others go straight to edit mode.
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
-      const r = sortedRows[row] as DiffRow | undefined;
+      const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
-      // Skip deleted rows — no working copy file to edit
       if (r.__rowStatus === 'deleted') return;
-      const isDiff = r.__rowStatus === 'modified' && r.__changedFields.includes(colId);
       const value = toDisplayString(r[colId]);
-      setCellModal({
-        col,
-        row,
-        filename: r.__filename,
-        fieldName: colId,
-        value,
-        dirtyValue: toDisplayString(r.__fromFields[colId]),
-        isDiff,
-      });
-      if (!isDiff) {
+      const isUnreviewed = r.__rowStatus === 'modified' && r.__changedFields.includes(colId);
+      const isUnpublished = r.__rowStatus === 'unpublished' && r.__unpublishedFields.includes(colId);
+      const diffKind: 'unreviewed' | 'unpublished' | null = isUnreviewed
+        ? 'unreviewed'
+        : isUnpublished
+          ? 'unpublished'
+          : null;
+      const fromValue = isUnreviewed
+        ? toDisplayString(r.__fromFields[colId])
+        : isUnpublished
+          ? toDisplayString(r.__masterFields[colId])
+          : '';
+      setCellModal({ col, row, filename: r.__filename, fieldName: colId, value, fromValue, diffKind });
+      if (diffKind !== null) {
+        setCellModalEditing(false);
+      } else {
         setCellModalEditValue(value);
         setCellModalEditing(true);
-      } else {
-        setCellModalEditing(false);
       }
     },
-    [sortedRows, columns],
+    [pagedRows, columns],
   );
 
   const onColumnResize = useCallback(
@@ -502,10 +577,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [columns],
   );
 
+  const handleFilterToggle = useCallback((status: FilterStatus) => {
+    setFilterStatus((prev) => (prev === status ? null : status));
+  }, []);
+
   // ── Render ──
 
   const summary = diffData?.summary;
-  const hasChanges = summary && (summary.added > 0 || summary.modified > 0 || summary.deleted > 0);
+  const hasChanges =
+    summary && (summary.added > 0 || summary.modified > 0 || summary.unpublished > 0 || summary.deleted > 0);
+  const showFilterBar = workspacePath && selectedFolderPath && !error;
 
   return (
     <Stack
@@ -519,6 +600,28 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         overflow: 'hidden',
       }}
     >
+      {showFilterBar && (
+        <Box style={{ padding: '6px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
+          <Group gap={6} align="center">
+            <Text12Medium c="var(--fg-muted)" style={{ marginRight: 4 }}>
+              Filter
+            </Text12Medium>
+            <FilterPill
+              label="Needs review"
+              count={filterCounts?.unreviewed ?? 0}
+              active={filterStatus === 'unreviewed'}
+              onClick={() => handleFilterToggle('unreviewed')}
+            />
+            <FilterPill
+              label="Approved"
+              count={filterCounts?.unpublished ?? 0}
+              active={filterStatus === 'unpublished'}
+              onClick={() => handleFilterToggle('unpublished')}
+            />
+          </Group>
+        </Box>
+      )}
+
       {!selectedFolderPath && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text13Regular c="dimmed">Select a folder to view data</Text13Regular>
@@ -537,19 +640,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         </Box>
       )}
 
-      {selectedFolderPath && !loading && !error && rows.length === 0 && (
+      {selectedFolderPath && !loading && !error && pagedRows.length === 0 && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Text13Regular c="dimmed">No data in this folder</Text13Regular>
+          <Text13Regular c="dimmed">
+            {filterStatus ? 'No rows match the current filter' : 'No data in this folder'}
+          </Text13Regular>
         </Box>
       )}
 
-      {selectedFolderPath && !loading && !error && rows.length > 0 && (
+      {selectedFolderPath && !loading && !error && pagedRows.length > 0 && (
         <>
           <Box ref={wrapperRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
             {gridSize && (
               <DataEditor
                 columns={columns}
-                rows={sortedRows.length}
+                rows={pagedRows.length}
                 getCellContent={getCellContent}
                 width={gridSize.width}
                 height={gridSize.height}
@@ -568,7 +673,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             )}
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
               <RecordDetailView
-                rows={sortedRows}
+                rows={pagedRows}
                 selectedIndex={detailRowIndex}
                 folderPath={selectedFolderPath}
                 workspacePath={workspacePath}
@@ -589,7 +694,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             }}
           >
             <Text12Regular c="var(--fg-muted)">
-              {(summary?.total ?? rows.length).toLocaleString()} records &middot; {columns.length} columns
+              {sortedRows.length.toLocaleString()} rows &middot; {columns.length} columns
               {sort.column && (
                 <span style={{ marginLeft: 8 }}>
                   &middot; Sorted by {sort.column} {sort.direction === 'desc' ? '\u2193' : '\u2191'}
@@ -597,190 +702,211 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               )}
             </Text12Regular>
 
-            {hasChanges && (
-              <Group gap={10}>
-                {summary.added > 0 && (
-                  <Group gap={4}>
-                    <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#22c55e' }} />
-                    <Text12Regular c="var(--fg-muted)">{summary.added} added</Text12Regular>
-                  </Group>
-                )}
-                {summary.modified > 0 && (
-                  <Group gap={4}>
-                    <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: DIFF_WORKING_BORDER }} />
-                    <Text12Regular c="var(--fg-muted)">{summary.modified} modified</Text12Regular>
-                  </Group>
-                )}
-                {summary.deleted > 0 && (
-                  <Group gap={4}>
-                    <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ef4444' }} />
-                    <Text12Regular c="var(--fg-muted)">{summary.deleted} deleted</Text12Regular>
-                  </Group>
-                )}
-              </Group>
-            )}
+            <Group gap={8} align="center">
+              {hasChanges && (
+                <Group gap={10}>
+                  {summary.added > 0 && (
+                    <Group gap={4}>
+                      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#22c55e' }} />
+                      <Text12Regular c="var(--fg-muted)">{summary.added} added</Text12Regular>
+                    </Group>
+                  )}
+                  {summary.modified > 0 && (
+                    <Group gap={4}>
+                      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: DIFF_WORKING_BORDER }} />
+                      <Text12Regular c="var(--fg-muted)">{summary.modified} modified</Text12Regular>
+                    </Group>
+                  )}
+                  {summary.unpublished > 0 && (
+                    <Group gap={4}>
+                      <Box
+                        style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: DIFF_UNPUBLISHED_BORDER }}
+                      />
+                      <Text12Regular c="var(--fg-muted)">{summary.unpublished} unpublished</Text12Regular>
+                    </Group>
+                  )}
+                  {summary.deleted > 0 && (
+                    <Group gap={4}>
+                      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                      <Text12Regular c="var(--fg-muted)">{summary.deleted} deleted</Text12Regular>
+                    </Group>
+                  )}
+                </Group>
+              )}
+
+              {totalPages > 1 && (
+                <Group gap={4} align="center">
+                  <Box
+                    component="button"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    style={{
+                      padding: '1px 6px',
+                      border: '1px solid var(--fg-divider)',
+                      borderRadius: 4,
+                      backgroundColor: 'transparent',
+                      cursor: page <= 1 ? 'default' : 'pointer',
+                      opacity: page <= 1 ? 0.4 : 1,
+                    }}
+                  >
+                    <Text12Regular>&#8592;</Text12Regular>
+                  </Box>
+                  <Text12Regular c="var(--fg-muted)">
+                    {page} / {totalPages}
+                  </Text12Regular>
+                  <Box
+                    component="button"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    style={{
+                      padding: '1px 6px',
+                      border: '1px solid var(--fg-divider)',
+                      borderRadius: 4,
+                      backgroundColor: 'transparent',
+                      cursor: page >= totalPages ? 'default' : 'pointer',
+                      opacity: page >= totalPages ? 0.4 : 1,
+                    }}
+                  >
+                    <Text12Regular>&#8594;</Text12Regular>
+                  </Box>
+                </Group>
+              )}
+            </Group>
           </Box>
         </>
       )}
 
       <Modal opened={cellModal !== null} onClose={() => setCellModal(null)} title={cellModal?.fieldName} size="lg">
-        {cellModal && selectedFolderPath && workspacePath && (
-          <Group align="flex-start" gap="md" wrap="nowrap">
-            <Box style={{ flex: 1, minWidth: 0 }}>
-              {cellModalEditing ? (
-                <Textarea
-                  autoFocus
-                  autosize
-                  minRows={4}
-                  value={cellModalEditValue}
-                  onChange={(e) => setCellModalEditValue(e.currentTarget.value)}
-                  styles={
-                    cellModal.isDiff
-                      ? {
-                          input: {
-                            backgroundColor: DIFF_WORKING_BG,
-                            borderLeft: `4px solid ${DIFF_WORKING_BORDER}`,
-                            borderRadius: 4,
-                            fontFamily: 'monospace',
-                            fontSize: 13,
-                          },
-                        }
-                      : { input: { fontFamily: 'monospace', fontSize: 13 } }
-                  }
-                />
-              ) : (
-                <Box
-                  style={{
-                    backgroundColor: DIFF_WORKING_BG,
-                    borderLeft: `4px solid ${DIFF_WORKING_BORDER}`,
-                    borderRadius: 4,
-                    padding: '12px 16px',
-                    fontFamily: 'monospace',
-                    fontSize: 13,
-                    lineHeight: 1.6,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
-                  }}
-                >
-                  {diffWordsWithSpace(cellModal.dirtyValue, cellModal.value).map((part, i) => {
-                    if (part.removed) {
-                      return (
-                        <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
-                          {part.value}
-                        </span>
-                      );
-                    }
-                    if (part.added) {
-                      return (
-                        <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
-                          {part.value}
-                        </span>
-                      );
-                    }
-                    return <span key={i}>{part.value}</span>;
-                  })}
-                </Box>
-              )}
-            </Box>
+        {cellModal &&
+          selectedFolderPath &&
+          workspacePath &&
+          (() => {
+            const { diffKind, value, fromValue, filename, fieldName } = cellModal;
+            const bg = diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG;
+            const border = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER : DIFF_UNPUBLISHED_BORDER;
+            const saveAndClose = (saveValue: string, logLabel: string) => {
+              void window.scratchFiles
+                .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, saveValue)
+                .then(() => {
+                  setCellModal(null);
+                  setReloadKey((k) => k + 1);
+                })
+                .catch((err: unknown) => {
+                  console.error(`[acceptCellChange] ${logLabel} failed:`, err);
+                });
+            };
 
-            <Stack gap="xs" style={{ flexShrink: 0, width: 100 }}>
-              {cellModalEditing ? (
-                <>
-                  <ButtonPrimaryLight
-                    fullWidth
-                    onClick={() => {
-                      void window.scratchFiles
-                        .acceptCellChange(
-                          selectedFolderPath,
-                          workspacePath,
-                          cellModal.filename,
-                          cellModal.fieldName,
-                          cellModalEditValue,
-                        )
-                        .then(() => {
-                          setCellModal(null);
-                          setReloadKey((k) => k + 1);
-                        })
-                        .catch((err: unknown) => {
-                          console.error('[acceptCellChange] save failed:', err);
-                        });
-                    }}
-                  >
-                    Save
-                  </ButtonPrimaryLight>
-                  <ButtonSecondaryOutline
-                    fullWidth
-                    onClick={() => {
-                      if (cellModal.isDiff) {
-                        setCellModalEditing(false);
-                      } else {
-                        setCellModal(null);
+            return (
+              <Group align="flex-start" gap="md" wrap="nowrap">
+                <Box style={{ flex: 1, minWidth: 0 }}>
+                  {cellModalEditing ? (
+                    <Textarea
+                      autoFocus
+                      autosize
+                      minRows={4}
+                      value={cellModalEditValue}
+                      onChange={(e) => setCellModalEditValue(e.currentTarget.value)}
+                      styles={
+                        diffKind !== null
+                          ? {
+                              input: {
+                                backgroundColor: bg,
+                                borderLeft: `4px solid ${border}`,
+                                borderRadius: 4,
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                              },
+                            }
+                          : { input: { fontFamily: 'monospace', fontSize: 13 } }
                       }
-                    }}
-                  >
-                    Cancel
-                  </ButtonSecondaryOutline>
-                </>
-              ) : (
-                <>
-                  <ButtonPrimaryLight
-                    fullWidth
-                    onClick={() => {
-                      void window.scratchFiles
-                        .acceptCellChange(
-                          selectedFolderPath,
-                          workspacePath,
-                          cellModal.filename,
-                          cellModal.fieldName,
-                          cellModal.value,
-                        )
-                        .then(() => {
-                          setCellModal(null);
-                          setReloadKey((k) => k + 1);
-                        })
-                        .catch((err: unknown) => {
-                          console.error('[acceptCellChange] approve failed:', err);
-                        });
-                    }}
-                  >
-                    Approve
-                  </ButtonPrimaryLight>
-                  <ButtonDangerLight
-                    fullWidth
-                    onClick={() => {
-                      void window.scratchFiles
-                        .acceptCellChange(
-                          selectedFolderPath,
-                          workspacePath,
-                          cellModal.filename,
-                          cellModal.fieldName,
-                          cellModal.dirtyValue,
-                        )
-                        .then(() => {
-                          setCellModal(null);
-                          setReloadKey((k) => k + 1);
-                        })
-                        .catch((err: unknown) => {
-                          console.error('[acceptCellChange] undo failed:', err);
-                        });
-                    }}
-                  >
-                    Undo
-                  </ButtonDangerLight>
-                  <ButtonSecondaryOutline
-                    fullWidth
-                    onClick={() => {
-                      setCellModalEditValue(cellModal.value);
-                      setCellModalEditing(true);
-                    }}
-                  >
-                    Edit
-                  </ButtonSecondaryOutline>
-                </>
-              )}
-            </Stack>
-          </Group>
-        )}
+                    />
+                  ) : (
+                    <Box
+                      style={{
+                        backgroundColor: bg,
+                        borderLeft: `4px solid ${border}`,
+                        borderRadius: 4,
+                        padding: '12px 16px',
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        lineHeight: 1.6,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      {diffWordsWithSpace(fromValue, value).map((part, i) => {
+                        if (part.removed) {
+                          return (
+                            <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
+                              {part.value}
+                            </span>
+                          );
+                        }
+                        if (part.added) {
+                          return (
+                            <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
+                              {part.value}
+                            </span>
+                          );
+                        }
+                        return <span key={i}>{part.value}</span>;
+                      })}
+                    </Box>
+                  )}
+                </Box>
+
+                <Stack gap="xs" style={{ flexShrink: 0, width: 100 }}>
+                  {cellModalEditing ? (
+                    <>
+                      <ButtonPrimaryLight fullWidth onClick={() => saveAndClose(cellModalEditValue, 'save')}>
+                        Save
+                      </ButtonPrimaryLight>
+                      <ButtonSecondaryOutline
+                        fullWidth
+                        onClick={() => {
+                          if (diffKind !== null) {
+                            setCellModalEditing(false);
+                          } else {
+                            setCellModal(null);
+                          }
+                        }}
+                      >
+                        Cancel
+                      </ButtonSecondaryOutline>
+                    </>
+                  ) : diffKind === 'unreviewed' ? (
+                    <>
+                      <ButtonPrimaryLight fullWidth onClick={() => saveAndClose(value, 'approve')}>
+                        Approve
+                      </ButtonPrimaryLight>
+                      <ButtonDangerLight fullWidth onClick={() => saveAndClose(fromValue, 'undo')}>
+                        Undo
+                      </ButtonDangerLight>
+                      <ButtonSecondaryOutline
+                        fullWidth
+                        onClick={() => {
+                          setCellModalEditValue(value);
+                          setCellModalEditing(true);
+                        }}
+                      >
+                        Edit
+                      </ButtonSecondaryOutline>
+                    </>
+                  ) : (
+                    <ButtonSecondaryOutline
+                      fullWidth
+                      onClick={() => {
+                        setCellModalEditValue(value);
+                        setCellModalEditing(true);
+                      }}
+                    >
+                      Edit
+                    </ButtonSecondaryOutline>
+                  )}
+                </Stack>
+              </Group>
+            );
+          })()}
       </Modal>
     </Stack>
   );

@@ -7,6 +7,7 @@
  * Target format: Rust CLI / .scratch workspace layout.
  */
 
+import { execFile } from 'child_process';
 import { readdir, readFile, stat, writeFile } from 'fs/promises';
 import { basename, extname, join, relative, sep } from 'path';
 
@@ -106,6 +107,12 @@ interface CachedDirListing {
 }
 
 const dirCache = new Map<string, CachedDirListing>();
+
+interface ConnectionPaths {
+  subPath: string;
+  workingConnPath: string;
+  reviewedDirtyConnPath: string;
+}
 
 // ── Public functions ──
 
@@ -242,12 +249,18 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 
 export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
 export type GridVersion = 'working' | 'dirty' | 'main';
-export type RowStatus = 'added' | 'modified' | 'deleted' | 'unchanged';
+export type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
 
 export interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
+  /** Fields where working != dirty (unreviewed changes). */
   __changedFields: string[];
+  /** Dirty-branch values for unreviewed fields (the "from" side when w != d). */
   __fromFields: Record<string, unknown>;
+  /** Fields where working == dirty but dirty != master (reviewed but not yet published). */
+  __unpublishedFields: string[];
+  /** Master-branch values for unpublished fields (the "from" side when d != m). */
+  __masterFields: Record<string, unknown>;
   __filename: string;
 }
 
@@ -638,6 +651,84 @@ function getVersionFolderPath(folderPath: string, workspacePath: string, version
   return subPath ? join(workspacePath, prefix, connName, subPath) : join(workspacePath, prefix, connName);
 }
 
+function getConnectionPaths(folderPath: string, workspacePath: string): ConnectionPaths {
+  const rel = relative(workspacePath, folderPath);
+  const parts = rel.split(sep).filter(Boolean);
+  const connName = parts[0];
+  if (!connName || connName.startsWith('.')) {
+    throw new Error(`Folder path ${folderPath} is not inside a workspace connection.`);
+  }
+  const subPath = parts.slice(1).join(sep);
+  return {
+    subPath,
+    workingConnPath: join(workspacePath, connName),
+    reviewedDirtyConnPath: join(workspacePath, '.scratch', 'connections', 'dirty', connName),
+  };
+}
+
+function toGitPath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runGit(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr.trim() || stdout.trim() || error.message));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function commitReviewedDirtyFile(folderPath: string, workspacePath: string, filename: string): Promise<void> {
+  const { subPath, workingConnPath, reviewedDirtyConnPath } = getConnectionPaths(folderPath, workspacePath);
+  const reviewedDirtyGitPath = join(reviewedDirtyConnPath, '.git');
+  const workingGitPath = join(workingConnPath, '.git');
+
+  if (!(await pathExists(reviewedDirtyGitPath))) {
+    console.debug('[acceptCellChange] reviewed dirty checkout is not a git worktree; skipping dirty ref update');
+    return;
+  }
+
+  const repoRelativePath = toGitPath(subPath ? join(subPath, filename) : filename);
+  await runGit(reviewedDirtyConnPath, ['add', '--', repoRelativePath]);
+
+  const { stdout: status } = await runGit(reviewedDirtyConnPath, ['status', '--porcelain', '--', repoRelativePath]);
+  if (status.trim() === '') {
+    console.debug('[acceptCellChange] dirty ref already matches approved value');
+    return;
+  }
+
+  await runGit(reviewedDirtyConnPath, [
+    '-c',
+    'user.name=Scratch',
+    '-c',
+    'user.email=scratch@example.com',
+    'commit',
+    '-m',
+    `Accept local cell change: ${repoRelativePath}`,
+    '--',
+    repoRelativePath,
+  ]);
+
+  const { stdout } = await runGit(reviewedDirtyConnPath, ['rev-parse', 'HEAD']);
+  const newDirtyHash = stdout.trim();
+  if (newDirtyHash && (await pathExists(workingGitPath))) {
+    await runGit(workingConnPath, ['reset', '--mixed', newDirtyHash]);
+  }
+}
+
 async function readFolderFiles(folderPath: string): Promise<Map<string, Record<string, unknown>>> {
   const result = new Map<string, Record<string, unknown>>();
   let names: string[];
@@ -681,71 +772,121 @@ export interface DiffGridSummary {
   total: number;
   added: number;
   modified: number;
+  unpublished: number;
   deleted: number;
 }
 
 /**
- * Compares working tree against the dirty branch and returns a unified row list.
- * All records are included (added, modified, unchanged, deleted).
+ * Compares working tree against dirty and master branches, returning a unified row list.
  *
- * - added:     file in working tree only (new, not yet accepted)
- * - modified:  file in both, fields differ
- * - unchanged: file in both, identical
- * - deleted:   file in dirty only (deleted from working tree, not yet accepted)
+ * Row status priority:
+ * - added:       file in working only (unreviewed new file)
+ * - deleted:     file in dirty only, not in working (unreviewed deletion)
+ * - modified:    w != d for at least one field (unreviewed changes; d vs m is ignored)
+ * - unpublished: w == d but d != m for at least one field (reviewed, not yet published)
+ * - unchanged:   w == d == m for all fields
  *
- * Deleted rows carry field values from the dirty branch so they can be displayed.
+ * For modified rows, __changedFields lists fields where w != d, and __fromFields holds the
+ * dirty-branch values (the "from" side for the unreviewed diff display).
+ *
+ * For unpublished rows, __unpublishedFields lists fields where d != m (and w == d), and
+ * __masterFields holds the master-branch values (the "from" side for the unpublished diff display).
  */
 export async function readDiffGridData(folderPath: string, workspacePath: string): Promise<DiffGridResult> {
   const workingPath = folderPath;
   const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
 
-  const [workingFiles, dirtyFiles] = await Promise.all([readFolderFiles(workingPath), readFolderFiles(dirtyPath)]);
+  const [workingFiles, dirtyFiles, masterFiles] = await Promise.all([
+    readFolderFiles(workingPath),
+    readFolderFiles(dirtyPath),
+    readFolderFiles(masterPath),
+  ]);
 
+  // Include master-only files so approved deletions (dirty removed, master still has it) remain visible.
   const allNamesArr: string[] = Array.from(
-    new Set<string>(Array.from(workingFiles.keys()).concat(Array.from(dirtyFiles.keys()))),
+    new Set<string>(
+      Array.from(workingFiles.keys()).concat(Array.from(dirtyFiles.keys())).concat(Array.from(masterFiles.keys())),
+    ),
   );
   const columnSet = new Set<string>();
   const rows: DiffRow[] = [];
 
   function makeDiffRow(
     base: Record<string, unknown>,
-    status: RowStatus | 'unchanged',
+    status: RowStatus,
     changedFields: string[],
-    dirtyFields: Record<string, unknown>,
+    fromFields: Record<string, unknown>,
+    unpublishedFields: string[],
+    masterFields: Record<string, unknown>,
     filename: string,
   ): DiffRow {
     const row: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(base)) row[k] = v;
     row['__rowStatus'] = status;
     row['__changedFields'] = changedFields;
-    row['__fromFields'] = dirtyFields;
+    row['__fromFields'] = fromFields;
+    row['__unpublishedFields'] = unpublishedFields;
+    row['__masterFields'] = masterFields;
     row['__filename'] = filename;
     return row as DiffRow;
   }
 
   for (const name of allNamesArr) {
-    const workingRow: Record<string, unknown> | undefined = workingFiles.get(name);
-    const dirtyRow: Record<string, unknown> | undefined = dirtyFiles.get(name);
+    const workingRow = workingFiles.get(name);
+    const dirtyRow = dirtyFiles.get(name);
+    const masterRow = masterFiles.get(name);
 
     if (workingRow && !dirtyRow) {
-      // New file in working tree, not yet accepted
+      // Unreviewed new file — not yet accepted to dirty
       for (const k of Object.keys(workingRow)) columnSet.add(k);
-      rows.push(makeDiffRow(workingRow, 'added', [], {}, name));
+      rows.push(makeDiffRow(workingRow, 'added', [], {}, [], {}, name));
     } else if (!workingRow && dirtyRow) {
-      // Deleted from working tree, not yet accepted
+      // Unreviewed deletion — removed from working tree but still in dirty
       for (const k of Object.keys(dirtyRow)) columnSet.add(k);
-      rows.push(makeDiffRow(dirtyRow, 'deleted', [], dirtyRow, name));
+      rows.push(makeDiffRow(dirtyRow, 'deleted', [], dirtyRow, [], {}, name));
+    } else if (!workingRow && !dirtyRow && masterRow) {
+      // Reviewed deletion — accepted in dirty, not yet published to master.
+      const unpublishedFields = Object.keys(masterRow);
+      for (const k of unpublishedFields) columnSet.add(k);
+      rows.push(makeDiffRow({}, 'unpublished', [], {}, unpublishedFields, masterRow, name));
     } else if (workingRow && dirtyRow) {
-      const allKeysArr: string[] = Array.from(new Set<string>(Object.keys(workingRow).concat(Object.keys(dirtyRow))));
+      // File exists in both working and dirty — compare all three versions field by field.
+      // If master file is absent (never published), masterRow is {}, so all dirty fields
+      // with values will differ from master and count as unpublished.
+      const comparableMasterRow = masterRow ?? {};
+
+      const allKeysArr: string[] = Array.from(
+        new Set<string>(Object.keys(workingRow).concat(Object.keys(dirtyRow)).concat(Object.keys(comparableMasterRow))),
+      );
+
       const changedFields: string[] = [];
+      const fromFields: Record<string, unknown> = {};
+      const unpublishedFields: string[] = [];
+      const masterFields: Record<string, unknown> = {};
+
       for (const k of allKeysArr) {
         columnSet.add(k);
-        if (JSON.stringify(workingRow[k] as object) !== JSON.stringify(dirtyRow[k] as object)) {
+        const wStr = JSON.stringify(workingRow[k] as object);
+        const dStr = JSON.stringify(dirtyRow[k] as object);
+        const mStr = JSON.stringify(comparableMasterRow[k] as object);
+
+        if (wStr !== dStr) {
+          // Unreviewed: working differs from dirty. Per the priority rule, w != d takes
+          // precedence — we do NOT additionally mark this field as unpublished even if d != m.
           changedFields.push(k);
+          fromFields[k] = dirtyRow[k];
+        } else if (dStr !== mStr) {
+          // Reviewed but unpublished: working matches dirty, but dirty differs from master.
+          unpublishedFields.push(k);
+          masterFields[k] = comparableMasterRow[k];
         }
       }
-      const status = changedFields.length > 0 ? 'modified' : 'unchanged';
-      rows.push(makeDiffRow(workingRow, status, changedFields, dirtyRow, name));
+
+      const status: RowStatus =
+        changedFields.length > 0 ? 'modified' : unpublishedFields.length > 0 ? 'unpublished' : 'unchanged';
+
+      rows.push(makeDiffRow(workingRow, status, changedFields, fromFields, unpublishedFields, masterFields, name));
     }
   }
 
@@ -753,6 +894,7 @@ export async function readDiffGridData(folderPath: string, workspacePath: string
     total: rows.length,
     added: rows.filter((r) => r.__rowStatus === 'added').length,
     modified: rows.filter((r) => r.__rowStatus === 'modified').length,
+    unpublished: rows.filter((r) => r.__rowStatus === 'unpublished').length,
     deleted: rows.filter((r) => r.__rowStatus === 'deleted').length,
   };
 
@@ -786,6 +928,9 @@ export async function acceptCellChange(
 
   await patchJsonField(dirtyFile, fieldName, parsed);
   console.debug('[acceptCellChange] dirty file patched');
+
+  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
+  console.debug('[acceptCellChange] dirty ref updated');
 }
 
 async function patchJsonField(filePath: string, fieldName: string, value: unknown): Promise<void> {
