@@ -377,5 +377,6 @@ describeIfKey(
       });
     });
   },
-  60_000,
-); // 60s timeout for live API calls
+  60_000, // TODO: This timeout argument is silently ignored — describe() doesn't accept a timeout.
+  // Use jest.setTimeout() at the top of the file instead (see stripe-connector.spec.ts).
+);

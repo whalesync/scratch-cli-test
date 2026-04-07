@@ -14,6 +14,7 @@ import './pipedrive/pipedrive-connector';
 import './postgres/postgres-connector';
 import './quickbooks/quickbooks-connector';
 import './shopify/shopify-connector';
+import './stripe/stripe-connector';
 import './supabase/supabase-connector';
 import './webflow/webflow-connector';
 import './wix/wix-blog/wix-blog-connector';

@@ -26,4 +26,5 @@ export const Service = {
   LINEAR: 'LINEAR',
   BREVO: 'BREVO',
   INTERCOM: 'INTERCOM',
+  STRIPE: 'STRIPE',
 } as const;
