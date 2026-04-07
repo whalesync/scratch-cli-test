@@ -441,7 +441,7 @@ export function PublishChangesModal({
 
         const byId = new Map(statuses.map((job) => [job.bullJobId ?? '', job]));
         const hydrated = jobIds.map(
-          (jobId) => byId.get(jobId) ?? { bullJobId: jobId, state: 'created', type: 'publish-from-git' },
+          (jobId) => byId.get(jobId) ?? { bullJobId: jobId, state: 'created' as const, type: 'publish-from-git' },
         );
         setJobs(hydrated);
 

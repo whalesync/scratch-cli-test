@@ -12,7 +12,9 @@ import {
   listFiles,
   listFolders,
   readBatch,
+  readDiffGridData,
   readFileContent,
+  readFolderStatuses,
   readGridData,
   readSchema,
   readWorkspaceConfig,
@@ -366,6 +368,14 @@ ipcMain.handle(
       workspacePath?: string;
     },
   ) => readGridData(folderPath, { ...opts }),
+);
+
+ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, workspacePath: string) =>
+  readFolderStatuses(folderPath, workspacePath),
+);
+
+ipcMain.handle('files:read-diff-grid-data', async (_, folderPath: string, workspacePath: string) =>
+  readDiffGridData(folderPath, workspacePath),
 );
 
 void app.whenReady().then(() => {

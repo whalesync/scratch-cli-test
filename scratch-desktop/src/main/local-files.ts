@@ -8,7 +8,7 @@
  */
 
 import { readdir, readFile, stat } from 'fs/promises';
-import { basename, extname, join, relative } from 'path';
+import { basename, extname, join, relative, sep } from 'path';
 
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
@@ -240,6 +240,27 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 // ── Grid data ──
 
 export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
+export type GridVersion = 'working' | 'dirty' | 'main';
+export type RowStatus = 'added' | 'modified' | 'deleted' | 'unchanged';
+
+export interface DiffRow extends Record<string, unknown> {
+  __rowStatus: RowStatus;
+  __changedFields: string[];
+  __fromFields: Record<string, unknown>;
+  __filename: string;
+}
+
+export interface DiffGridResult {
+  rows: DiffRow[];
+  columns: string[];
+  total: number;
+  summary: DiffGridSummary;
+}
+
+export interface FolderStatuses {
+  unreviewedFilenames: string[];
+  unpublishedFilenames: string[];
+}
 
 interface ReadGridDataOptions {
   offset?: number;
@@ -326,7 +347,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
         continue;
       }
       for (const key of Object.keys(row)) {
-        columnSet.add(key);
+        if (!key.startsWith('__')) columnSet.add(key);
       }
       allRows.push(row);
     }
@@ -361,7 +382,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
   if (opts.columns && opts.columns.length > 0) {
     columns = opts.columns.filter((c) => columnSet.has(c));
     rows = rows.map((row) => {
-      const filtered: Record<string, unknown> = {};
+      const filtered: Record<string, unknown> = { __filename: row['__filename'] };
       for (const col of columns) {
         if (col in row) {
           filtered[col] = row[col];
@@ -609,6 +630,140 @@ async function resolveFilterStatus(
     }
   }
   return published;
+}
+
+// ── Versioned / diff grid data ──
+
+function getVersionFolderPath(folderPath: string, workspacePath: string, version: GridVersion): string {
+  if (version === 'working') return folderPath;
+  const rel = relative(workspacePath, folderPath);
+  const parts = rel.split(sep);
+  const connName = parts[0];
+  const subPath = parts.slice(1).join(sep);
+  const prefix =
+    version === 'dirty' ? join('.scratch', 'connections', 'dirty') : join('.scratch', 'connections', 'master');
+  return subPath ? join(workspacePath, prefix, connName, subPath) : join(workspacePath, prefix, connName);
+}
+
+async function readFolderFiles(folderPath: string): Promise<Map<string, Record<string, unknown>>> {
+  const result = new Map<string, Record<string, unknown>>();
+  let names: string[];
+  try {
+    names = (await getCachedFileNames(folderPath)).filter((n) => extname(n).toLowerCase() === '.json');
+  } catch {
+    return result;
+  }
+  for (let i = 0; i < names.length; i += BATCH_CONCURRENCY) {
+    const batch = names.slice(i, i + BATCH_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (name) => {
+        try {
+          const content = await readFile(join(folderPath, name), 'utf-8');
+          const parsed: unknown = JSON.parse(content);
+          if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+            result.set(name, flattenObject(parsed as Record<string, unknown>));
+          }
+        } catch {
+          // skip unreadable files
+        }
+      }),
+    );
+  }
+  return result;
+}
+
+export async function readFolderStatuses(folderPath: string, workspacePath: string): Promise<FolderStatuses> {
+  const allNames = (await getCachedFileNames(folderPath)).filter((n) => extname(n).toLowerCase() === '.json');
+  const [unreviewed, unpublished] = await Promise.all([
+    resolveFilterStatus('unreviewed', folderPath, workspacePath, allNames),
+    resolveFilterStatus('unpublished', folderPath, workspacePath, allNames),
+  ]);
+  return {
+    unreviewedFilenames: Array.from(unreviewed),
+    unpublishedFilenames: Array.from(unpublished),
+  };
+}
+
+export interface DiffGridSummary {
+  total: number;
+  added: number;
+  modified: number;
+  deleted: number;
+}
+
+/**
+ * Compares working tree against the dirty branch and returns a unified row list.
+ * All records are included (added, modified, unchanged, deleted).
+ *
+ * - added:     file in working tree only (new, not yet accepted)
+ * - modified:  file in both, fields differ
+ * - unchanged: file in both, identical
+ * - deleted:   file in dirty only (deleted from working tree, not yet accepted)
+ *
+ * Deleted rows carry field values from the dirty branch so they can be displayed.
+ */
+export async function readDiffGridData(folderPath: string, workspacePath: string): Promise<DiffGridResult> {
+  const workingPath = folderPath;
+  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+
+  const [workingFiles, dirtyFiles] = await Promise.all([readFolderFiles(workingPath), readFolderFiles(dirtyPath)]);
+
+  const allNamesArr: string[] = Array.from(
+    new Set<string>(Array.from(workingFiles.keys()).concat(Array.from(dirtyFiles.keys()))),
+  );
+  const columnSet = new Set<string>();
+  const rows: DiffRow[] = [];
+
+  function makeDiffRow(
+    base: Record<string, unknown>,
+    status: RowStatus | 'unchanged',
+    changedFields: string[],
+    dirtyFields: Record<string, unknown>,
+    filename: string,
+  ): DiffRow {
+    const row: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(base)) row[k] = v;
+    row['__rowStatus'] = status;
+    row['__changedFields'] = changedFields;
+    row['__fromFields'] = dirtyFields;
+    row['__filename'] = filename;
+    return row as DiffRow;
+  }
+
+  for (const name of allNamesArr) {
+    const workingRow: Record<string, unknown> | undefined = workingFiles.get(name);
+    const dirtyRow: Record<string, unknown> | undefined = dirtyFiles.get(name);
+
+    if (workingRow && !dirtyRow) {
+      // New file in working tree, not yet accepted
+      for (const k of Object.keys(workingRow)) columnSet.add(k);
+      rows.push(makeDiffRow(workingRow, 'added', [], {}, name));
+    } else if (!workingRow && dirtyRow) {
+      // Deleted from working tree, not yet accepted
+      for (const k of Object.keys(dirtyRow)) columnSet.add(k);
+      rows.push(makeDiffRow(dirtyRow, 'deleted', [], dirtyRow, name));
+    } else if (workingRow && dirtyRow) {
+      const allKeysArr: string[] = Array.from(new Set<string>(Object.keys(workingRow).concat(Object.keys(dirtyRow))));
+      const changedFields: string[] = [];
+      for (const k of allKeysArr) {
+        columnSet.add(k);
+        if (JSON.stringify(workingRow[k] as object) !== JSON.stringify(dirtyRow[k] as object)) {
+          changedFields.push(k);
+        }
+      }
+      const status = changedFields.length > 0 ? 'modified' : 'unchanged';
+      rows.push(makeDiffRow(workingRow, status, changedFields, dirtyRow, name));
+    }
+  }
+
+  const summary: DiffGridSummary = {
+    total: rows.length,
+    added: rows.filter((r) => r.__rowStatus === 'added').length,
+    modified: rows.filter((r) => r.__rowStatus === 'modified').length,
+    deleted: rows.filter((r) => r.__rowStatus === 'deleted').length,
+  };
+
+  return { rows, columns: Array.from(columnSet), total: rows.length, summary };
 }
 
 async function statFileEntry(folderPath: string, name: string): Promise<FileEntry> {

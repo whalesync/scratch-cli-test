@@ -159,6 +159,26 @@ interface ScratchFilesAPI {
     offset: number;
     schema: Record<string, unknown> | null;
   }>;
+  readFolderStatuses: (
+    folderPath: string,
+    workspacePath: string,
+  ) => Promise<{ unreviewedFilenames: string[]; unpublishedFilenames: string[] }>;
+  readDiffGridData: (
+    folderPath: string,
+    workspacePath: string,
+  ) => Promise<{
+    rows: Array<
+      Record<string, unknown> & {
+        __rowStatus: 'added' | 'modified' | 'deleted' | 'unchanged';
+        __changedFields: string[];
+        __fromFields: Record<string, unknown>;
+        __filename: string;
+      }
+    >;
+    columns: string[];
+    total: number;
+    summary: { total: number; added: number; modified: number; deleted: number };
+  }>;
 }
 
 declare global {

@@ -189,6 +189,27 @@ const scratchFiles = {
     total: number;
     offset: number;
   }> => ipcRenderer.invoke('files:read-grid-data', folderPath, opts ?? {}),
+  readFolderStatuses: (
+    folderPath: string,
+    workspacePath: string,
+  ): Promise<{ unreviewedFilenames: string[]; unpublishedFilenames: string[] }> =>
+    ipcRenderer.invoke('files:read-folder-statuses', folderPath, workspacePath),
+  readDiffGridData: (
+    folderPath: string,
+    workspacePath: string,
+  ): Promise<{
+    rows: Array<
+      Record<string, unknown> & {
+        __rowStatus: 'added' | 'modified' | 'deleted' | 'unchanged';
+        __changedFields: string[];
+        __fromFields: Record<string, unknown>;
+        __filename: string;
+      }
+    >;
+    columns: string[];
+    total: number;
+    summary: { total: number; added: number; modified: number; deleted: number };
+  }> => ipcRenderer.invoke('files:read-diff-grid-data', folderPath, workspacePath),
 };
 
 if (process.contextIsolated) {
