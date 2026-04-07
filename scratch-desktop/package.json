@@ -28,6 +28,7 @@
     "@mantine/hooks": "^8.3.5",
     "@mantine/notifications": "^8.3.5",
     "axios": "1.14.0",
+    "diff": "^8.0.2",
     "electron-store": "^11.0.2",
     "lodash": "^4.18.1",
     "lucide-react": "^0.544.0",

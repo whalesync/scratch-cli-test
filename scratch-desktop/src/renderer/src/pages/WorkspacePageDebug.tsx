@@ -23,6 +23,7 @@ import { LiveCommandOutput } from '../components/LiveCommandOutput';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
+import { AdminPlaygroundGrid } from './workspace/AdminPlaygroundGrid';
 
 interface SyncValidationResult {
   syncName: string;
@@ -1138,6 +1139,11 @@ export function WorkspacePageDebug() {
           Folders: {folderCount}
         </Text>
       </Box>
+
+      <Stack gap="xs">
+        <Title order={4}>Admin Playground</Title>
+        <AdminPlaygroundGrid />
+      </Stack>
 
       {folderCount > 0 && (
         <Stack gap="xs">

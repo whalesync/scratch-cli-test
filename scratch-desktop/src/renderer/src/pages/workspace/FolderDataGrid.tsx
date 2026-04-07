@@ -201,6 +201,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     column: null,
     direction: null,
   });
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
@@ -270,6 +271,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
   // Reset sort and detail view when folder changes
   useEffect(() => {
     setSort({ column: null, direction: null });
+    setColumnWidths({});
     setDetailRowIndex(null);
   }, [selectedFolderPath]);
 
@@ -282,9 +284,9 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
       (diffData?.columns ?? []).map((name) => ({
         id: name,
         title: name,
-        width: Math.max(120, Math.min(250, name.length * 9 + 40)),
+        width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
       })),
-    [diffData?.columns],
+    [columnWidths, diffData?.columns],
   );
 
   const sortedRows = (() => {
@@ -414,6 +416,15 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     if (col === 0) setDetailRowIndex(row);
   }, []);
 
+  const onColumnResize = useCallback(
+    (column: GridColumn, newSize: number, colIndex: number) => {
+      const columnId = columns[colIndex]?.id ?? column.id;
+      if (columnId === undefined) return;
+      setColumnWidths((current) => ({ ...current, [String(columnId)]: newSize }));
+    },
+    [columns],
+  );
+
   // ── Render ──
 
   const summary = diffData?.summary;
@@ -469,6 +480,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
                 smoothScrollY
                 onHeaderClicked={onHeaderClicked}
                 onCellClicked={onCellClicked}
+                onColumnResize={onColumnResize}
                 drawCell={drawCell}
                 rowMarkers="number"
                 freezeColumns={1}
