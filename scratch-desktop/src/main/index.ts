@@ -7,6 +7,7 @@ import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
   type FilterStatus,
+  acceptCellChange,
   countWorkspaceFiles,
   getFolderMetadata,
   listFiles,
@@ -466,6 +467,11 @@ ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, works
 
 ipcMain.handle('files:read-diff-grid-data', async (_, folderPath: string, workspacePath: string) =>
   readDiffGridData(folderPath, workspacePath),
+);
+ipcMain.handle(
+  'files:accept-cell-change',
+  async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
+    acceptCellChange(folderPath, workspacePath, filename, fieldName, value),
 );
 
 void app.whenReady().then(() => {

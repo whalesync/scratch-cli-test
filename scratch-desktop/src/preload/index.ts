@@ -224,6 +224,14 @@ const scratchFiles = {
     total: number;
     summary: { total: number; added: number; modified: number; deleted: number };
   }> => ipcRenderer.invoke('files:read-diff-grid-data', folderPath, workspacePath),
+  acceptCellChange: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+    value: string,
+  ): Promise<void> =>
+    ipcRenderer.invoke('files:accept-cell-change', folderPath, workspacePath, filename, fieldName, value),
 };
 
 if (process.contextIsolated) {

@@ -1,5 +1,6 @@
 import DataEditor, {
   GridCellKind,
+  type CellClickedEventArgs,
   type CustomCell,
   type CustomRenderer,
   type DrawCellCallback,
@@ -7,8 +8,10 @@ import DataEditor, {
   type Item,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Stack } from '@mantine/core';
+import { Box, Group, Loader, Modal, Stack, Textarea } from '@mantine/core';
+import { diffWordsWithSpace } from 'diff';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ButtonDangerLight, ButtonPrimaryLight, ButtonSecondaryOutline } from '../../components/base/buttons';
 import { Text12Regular, Text13Regular } from '../../components/base/text';
 import { RecordDetailView } from './RecordDetailView';
 
@@ -36,6 +39,11 @@ interface FolderDataGridProps {
   selectedFolderPath: string | null;
   workspacePath: string | null;
 }
+
+// ── Diff colours (working vs dirty) ──
+
+const DIFF_WORKING_BG = '#dbeafe'; // blue-100
+const DIFF_WORKING_BORDER = '#60a5fa'; // blue-400
 
 // ── Helpers ──
 
@@ -74,7 +82,6 @@ function drawInspectIcon(
 interface StatusDotCellData {
   kind: 'status-dot-cell';
   displayText: string;
-  dotColor: string | null;
 }
 
 type StatusDotCell = CustomCell<StatusDotCellData>;
@@ -86,14 +93,12 @@ const statusDotRenderer: CustomRenderer<StatusDotCell> = {
     typeof c.data === 'object' && c.data !== null && (c.data as StatusDotCellData).kind === 'status-dot-cell',
   draw: ({ ctx, rect, cell, theme, hoverAmount }) => {
     const { x, y, width, height } = rect;
-    const { displayText, dotColor } = cell.data;
-    const DOT_R = 4;
+    const { displayText } = cell.data;
     const PADDING = 8;
     const iconSize = 12;
     const iconPad = 6;
-    const dotsWidth = dotColor ? DOT_R * 2 + 8 : 0;
     const hoverReserve = hoverAmount > 0 ? iconSize + iconPad : 0;
-    const textMaxWidth = width - PADDING * 2 - dotsWidth - hoverReserve;
+    const textMaxWidth = width - PADDING * 2 - hoverReserve;
 
     ctx.save();
     ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
@@ -104,13 +109,6 @@ const statusDotRenderer: CustomRenderer<StatusDotCell> = {
     ctx.clip();
     ctx.fillText(displayText, x + PADDING, y + height / 2);
     ctx.restore();
-
-    if (dotColor) {
-      ctx.beginPath();
-      ctx.arc(x + width - PADDING - DOT_R - hoverReserve, y + height / 2, DOT_R, 0, Math.PI * 2);
-      ctx.fillStyle = dotColor;
-      ctx.fill();
-    }
 
     if (hoverAmount > 0) {
       drawInspectIcon(
@@ -127,70 +125,69 @@ const statusDotRenderer: CustomRenderer<StatusDotCell> = {
   },
 };
 
-// ── Custom cell: diff value (old struck through + new value) ──
+// ── Custom cell: changed field (light blue bg + left border, current value only) ──
 
-interface DiffValueCellData {
-  kind: 'diff-value-cell';
-  oldText: string;
-  newText: string;
+interface DiffCellData {
+  kind: 'diff-cell';
+  displayText: string;
+  isIdCol?: boolean;
 }
 
-type DiffValueCell = CustomCell<DiffValueCellData>;
+type DiffCell = CustomCell<DiffCellData>;
 
-const diffValueRenderer: CustomRenderer<DiffValueCell> = {
+const diffCellRenderer: CustomRenderer<DiffCell> = {
   kind: GridCellKind.Custom,
-  isMatch: (c): c is DiffValueCell =>
-    typeof c.data === 'object' && c.data !== null && (c.data as DiffValueCellData).kind === 'diff-value-cell',
-  draw: ({ ctx, rect, cell, theme }) => {
+  needsHover: true,
+  isMatch: (c): c is DiffCell =>
+    typeof c.data === 'object' && c.data !== null && (c.data as DiffCellData).kind === 'diff-cell',
+  draw: ({ ctx, rect, cell, theme, hoverAmount }) => {
     const { x, y, width, height } = rect;
-    const { oldText, newText } = cell.data;
+    const { displayText, isIdCol } = cell.data;
+    const BORDER_W = 3;
     const PADDING = 8;
-    const maxW = width - PADDING * 2;
-    const midY = y + height / 2;
+    const iconSize = 12;
+    const iconPad = 6;
+    const hoverReserve = isIdCol && hoverAmount > 0 ? iconSize + iconPad : 0;
 
     ctx.save();
+
+    // Left border
+    ctx.fillStyle = DIFF_WORKING_BORDER;
+    ctx.fillRect(x, y, BORDER_W, height);
+
+    // Text clipped to remaining width
     ctx.beginPath();
-    ctx.rect(x + PADDING, y + 1, maxW, height - 2);
+    ctx.rect(x + BORDER_W + PADDING, y, width - BORDER_W - PADDING * 2 - hoverReserve, height);
     ctx.clip();
-
-    // Old value — small, gray, struck through — above centre
-    const oldY = midY - 7;
-    ctx.font = `11px ${theme.fontFamily}`;
-    ctx.fillStyle = '#9ca3af';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(oldText, x + PADDING, oldY);
-    const oldW = Math.min(ctx.measureText(oldText).width, maxW);
-    ctx.strokeStyle = '#9ca3af';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + PADDING, oldY);
-    ctx.lineTo(x + PADDING + oldW, oldY);
-    ctx.stroke();
-
-    // New value — normal, dark — below centre
     ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
     ctx.fillStyle = theme.textDark;
-    ctx.fillText(newText, x + PADDING, midY + 7);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(displayText, x + BORDER_W + PADDING, y + height / 2);
 
     ctx.restore();
+
+    if (isIdCol && hoverAmount > 0) {
+      drawInspectIcon(
+        ctx,
+        x + width - iconSize - iconPad,
+        y + (height - iconSize) / 2,
+        iconSize,
+        theme.textMedium ?? '#888',
+        hoverAmount,
+      );
+    }
+
     return true;
   },
 };
 
-// ── Tint colours ──
+// ── Row colours ──
 
-const TINT: Record<RowStatus, string | undefined> = {
+const ROW_TINT: Record<RowStatus, string | undefined> = {
   added: '#f0fdf4',
-  modified: '#fffbeb',
+  modified: undefined, // cell-level blue only
   deleted: '#fef2f2',
   unchanged: undefined,
-};
-
-const DOT_COLOR: Record<RowStatus, string | null> = {
-  added: '#22c55e',
-  modified: '#f59e0b',
-  deleted: '#ef4444',
-  unchanged: null,
 };
 
 // ── Component ──
@@ -207,6 +204,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
+  const [cellModal, setCellModal] = useState<{
+    col: number;
+    row: number;
+    filename: string;
+    fieldName: string;
+    value: string;
+    dirtyValue: string;
+    isDiff: boolean;
+  } | null>(null);
+  const [cellModalEditing, setCellModalEditing] = useState(false);
+  const [cellModalEditValue, setCellModalEditValue] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -270,14 +279,17 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return () => {
       cancelled = true;
     };
-  }, [selectedFolderPath, workspacePath]);
+  }, [selectedFolderPath, workspacePath, reloadKey]);
 
-  // Reset sort and detail view when folder changes
+  // Reset state when folder changes
   useEffect(() => {
     setSort({ column: null, direction: null });
     setColumnWidths({});
     setDetailRowIndex(null);
     setSchema(null);
+    setCellModal(null);
+    setCellModalEditing(false);
+    setReloadKey(0);
   }, [selectedFolderPath]);
 
   // Load folder metadata (schema) when folder changes
@@ -311,7 +323,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const columns: GridColumn[] = useMemo(() => {
     const cols = diffData?.columns ?? [];
-    // If a title column is defined in the schema, move it to the front
     let ordered = cols;
     if (titleColumnId && cols.includes(titleColumnId)) {
       ordered = [titleColumnId, ...cols.filter((c) => c !== titleColumnId)];
@@ -350,51 +361,47 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       const status = r.__rowStatus;
-      const bgCell = TINT[status];
-      const themeOverride = bgCell ? { bgCell } : undefined;
+      const rowBg = ROW_TINT[status];
+      const rowTheme = rowBg ? { bgCell: rowBg } : undefined;
 
-      // For modified rows, only tint changed cells (not the whole row)
-      const cellBg = status === 'modified' ? (r.__changedFields.includes(colId) ? TINT.modified : undefined) : bgCell;
-      const cellTheme = cellBg ? { bgCell: cellBg } : undefined;
+      const val = r[colId];
 
-      // First column: status dot (custom renderer handles hover icon via hoverAmount)
+      // Changed cell in a modified row: blue bg + left border via DiffCell renderer
+      if (status === 'modified' && r.__changedFields.includes(colId)) {
+        return {
+          kind: GridCellKind.Custom as const,
+          allowOverlay: false as const,
+          ...(col === 0 ? { cursor: 'pointer' } : {}),
+          copyData: toDisplayString(val),
+          themeOverride: { bgCell: DIFF_WORKING_BG },
+          data: {
+            kind: 'diff-cell' as const,
+            displayText: toDisplayString(val),
+            isIdCol: col === 0,
+          } satisfies DiffCellData,
+        };
+      }
+
+      // First column (not a diff): ID cell with inspect-on-hover magnifying glass
       if (col === 0) {
         return {
           kind: GridCellKind.Custom as const,
           allowOverlay: false as const,
           cursor: 'pointer',
-          copyData: toDisplayString(r[colId]),
-          themeOverride,
+          copyData: toDisplayString(val),
+          themeOverride: rowTheme,
           data: {
             kind: 'status-dot-cell' as const,
-            displayText: toDisplayString(r[colId]),
-            dotColor: DOT_COLOR[status],
+            displayText: toDisplayString(val),
           } satisfies StatusDotCellData,
         };
       }
 
-      const val = r[colId];
-
-      // Modified changed cells: show old (struck through) + new value
-      if (status === 'modified' && r.__changedFields.includes(colId)) {
-        const oldVal = r.__fromFields[colId];
-        return {
-          kind: GridCellKind.Custom as const,
-          allowOverlay: false as const,
-          copyData: toDisplayString(val),
-          themeOverride: cellTheme,
-          data: {
-            kind: 'diff-value-cell' as const,
-            oldText: toDisplayString(oldVal),
-            newText: toDisplayString(val),
-          } satisfies DiffValueCellData,
-        };
-      }
-
+      // All other cells: standard rendering with optional row tint
       const kind = inferCellKind(val);
 
       if (kind === GridCellKind.Boolean) {
-        return { kind, data: Boolean(val), allowOverlay: false as const, themeOverride: cellTheme };
+        return { kind, data: Boolean(val), allowOverlay: false as const, themeOverride: rowTheme };
       }
       if (kind === GridCellKind.Number) {
         return {
@@ -402,7 +409,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           data: val == null ? undefined : Number(val),
           displayData: toDisplayString(val),
           allowOverlay: false as const,
-          themeOverride: cellTheme,
+          themeOverride: rowTheme,
         };
       }
       const display = toDisplayString(val);
@@ -411,7 +418,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         data: display,
         displayData: display,
         allowOverlay: false as const,
-        themeOverride: cellTheme,
+        themeOverride: rowTheme,
       };
     },
     [sortedRows, columns],
@@ -429,7 +436,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [columns],
   );
 
-  // Draw magnifying glass hover icon for non-custom cells on col 0 (custom cells handle it themselves)
   const drawCell: DrawCellCallback = useCallback((args, drawContent) => {
     drawContent();
     if (args.col !== 0 || args.hoverAmount === 0) return;
@@ -446,9 +452,46 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     );
   }, []);
 
-  const onCellClicked = useCallback(([col, row]: Item) => {
-    if (col === 0) setDetailRowIndex(row);
+  const onCellClicked = useCallback(([col, row]: Item, event: CellClickedEventArgs) => {
+    if (col !== 0) return;
+    // Only open record detail when the click lands on the inspect icon (right edge of cell)
+    const iconSize = 12;
+    const iconPad = 6;
+    const iconZoneWidth = iconSize + iconPad * 2;
+    if (event.localEventX >= event.bounds.width - iconZoneWidth) {
+      setDetailRowIndex(row);
+    }
   }, []);
+
+  // Double-click or Enter opens the cell modal.
+  // Diff cells (modified + changed field) open in view mode; all others go straight to edit mode.
+  const onCellActivated = useCallback(
+    ([col, row]: Item) => {
+      const r = sortedRows[row] as DiffRow | undefined;
+      const colId = columns[col]?.id;
+      if (!r || !colId) return;
+      // Skip deleted rows — no working copy file to edit
+      if (r.__rowStatus === 'deleted') return;
+      const isDiff = r.__rowStatus === 'modified' && r.__changedFields.includes(colId);
+      const value = toDisplayString(r[colId]);
+      setCellModal({
+        col,
+        row,
+        filename: r.__filename,
+        fieldName: colId,
+        value,
+        dirtyValue: toDisplayString(r.__fromFields[colId]),
+        isDiff,
+      });
+      if (!isDiff) {
+        setCellModalEditValue(value);
+        setCellModalEditing(true);
+      } else {
+        setCellModalEditing(false);
+      }
+    },
+    [sortedRows, columns],
+  );
 
   const onColumnResize = useCallback(
     (column: GridColumn, newSize: number, colIndex: number) => {
@@ -514,11 +557,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 smoothScrollY
                 onHeaderClicked={onHeaderClicked}
                 onCellClicked={onCellClicked}
+                onCellActivated={onCellActivated}
+                cellActivationBehavior="double-click"
                 onColumnResize={onColumnResize}
                 drawCell={drawCell}
                 rowMarkers="number"
                 freezeColumns={1}
-                customRenderers={[statusDotRenderer, diffValueRenderer]}
+                customRenderers={[statusDotRenderer, diffCellRenderer]}
               />
             )}
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
@@ -562,7 +607,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 )}
                 {summary.modified > 0 && (
                   <Group gap={4}>
-                    <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#f59e0b' }} />
+                    <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: DIFF_WORKING_BORDER }} />
                     <Text12Regular c="var(--fg-muted)">{summary.modified} modified</Text12Regular>
                   </Group>
                 )}
@@ -577,6 +622,166 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           </Box>
         </>
       )}
+
+      <Modal opened={cellModal !== null} onClose={() => setCellModal(null)} title={cellModal?.fieldName} size="lg">
+        {cellModal && selectedFolderPath && workspacePath && (
+          <Group align="flex-start" gap="md" wrap="nowrap">
+            <Box style={{ flex: 1, minWidth: 0 }}>
+              {cellModalEditing ? (
+                <Textarea
+                  autoFocus
+                  autosize
+                  minRows={4}
+                  value={cellModalEditValue}
+                  onChange={(e) => setCellModalEditValue(e.currentTarget.value)}
+                  styles={
+                    cellModal.isDiff
+                      ? {
+                          input: {
+                            backgroundColor: DIFF_WORKING_BG,
+                            borderLeft: `4px solid ${DIFF_WORKING_BORDER}`,
+                            borderRadius: 4,
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                          },
+                        }
+                      : { input: { fontFamily: 'monospace', fontSize: 13 } }
+                  }
+                />
+              ) : (
+                <Box
+                  style={{
+                    backgroundColor: DIFF_WORKING_BG,
+                    borderLeft: `4px solid ${DIFF_WORKING_BORDER}`,
+                    borderRadius: 4,
+                    padding: '12px 16px',
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  {diffWordsWithSpace(cellModal.dirtyValue, cellModal.value).map((part, i) => {
+                    if (part.removed) {
+                      return (
+                        <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
+                          {part.value}
+                        </span>
+                      );
+                    }
+                    if (part.added) {
+                      return (
+                        <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
+                          {part.value}
+                        </span>
+                      );
+                    }
+                    return <span key={i}>{part.value}</span>;
+                  })}
+                </Box>
+              )}
+            </Box>
+
+            <Stack gap="xs" style={{ flexShrink: 0, width: 100 }}>
+              {cellModalEditing ? (
+                <>
+                  <ButtonPrimaryLight
+                    fullWidth
+                    onClick={() => {
+                      void window.scratchFiles
+                        .acceptCellChange(
+                          selectedFolderPath,
+                          workspacePath,
+                          cellModal.filename,
+                          cellModal.fieldName,
+                          cellModalEditValue,
+                        )
+                        .then(() => {
+                          setCellModal(null);
+                          setReloadKey((k) => k + 1);
+                        })
+                        .catch((err: unknown) => {
+                          console.error('[acceptCellChange] save failed:', err);
+                        });
+                    }}
+                  >
+                    Save
+                  </ButtonPrimaryLight>
+                  <ButtonSecondaryOutline
+                    fullWidth
+                    onClick={() => {
+                      if (cellModal.isDiff) {
+                        setCellModalEditing(false);
+                      } else {
+                        setCellModal(null);
+                      }
+                    }}
+                  >
+                    Cancel
+                  </ButtonSecondaryOutline>
+                </>
+              ) : (
+                <>
+                  <ButtonPrimaryLight
+                    fullWidth
+                    onClick={() => {
+                      void window.scratchFiles
+                        .acceptCellChange(
+                          selectedFolderPath,
+                          workspacePath,
+                          cellModal.filename,
+                          cellModal.fieldName,
+                          cellModal.value,
+                        )
+                        .then(() => {
+                          setCellModal(null);
+                          setReloadKey((k) => k + 1);
+                        })
+                        .catch((err: unknown) => {
+                          console.error('[acceptCellChange] approve failed:', err);
+                        });
+                    }}
+                  >
+                    Approve
+                  </ButtonPrimaryLight>
+                  <ButtonDangerLight
+                    fullWidth
+                    onClick={() => {
+                      void window.scratchFiles
+                        .acceptCellChange(
+                          selectedFolderPath,
+                          workspacePath,
+                          cellModal.filename,
+                          cellModal.fieldName,
+                          cellModal.dirtyValue,
+                        )
+                        .then(() => {
+                          setCellModal(null);
+                          setReloadKey((k) => k + 1);
+                        })
+                        .catch((err: unknown) => {
+                          console.error('[acceptCellChange] undo failed:', err);
+                        });
+                    }}
+                  >
+                    Undo
+                  </ButtonDangerLight>
+                  <ButtonSecondaryOutline
+                    fullWidth
+                    onClick={() => {
+                      setCellModalEditValue(cellModal.value);
+                      setCellModalEditing(true);
+                    }}
+                  >
+                    Edit
+                  </ButtonSecondaryOutline>
+                </>
+              )}
+            </Stack>
+          </Group>
+        )}
+      </Modal>
     </Stack>
   );
 });

@@ -7,7 +7,7 @@
  * Target format: Rust CLI / .scratch workspace layout.
  */
 
-import { readdir, readFile, stat } from 'fs/promises';
+import { readdir, readFile, stat, writeFile } from 'fs/promises';
 import { basename, extname, join, relative, sep } from 'path';
 
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
@@ -757,6 +757,65 @@ export async function readDiffGridData(folderPath: string, workspacePath: string
   };
 
   return { rows, columns: Array.from(columnSet), total: rows.length, summary };
+}
+
+/**
+ * Applies a single field value to both the working copy and dirty branch file.
+ * The value string is parsed as JSON if possible (restoring numbers, booleans, etc.),
+ * otherwise kept as a plain string. Dot-separated fieldName paths address nested fields.
+ */
+export async function acceptCellChange(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+  fieldName: string,
+  value: string,
+): Promise<void> {
+  const parsed = parseFieldValue(value);
+
+  const workingFile = join(folderPath, filename);
+  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+  const dirtyFile = join(dirtyPath, filename);
+
+  console.debug('[acceptCellChange] working:', workingFile);
+  console.debug('[acceptCellChange] dirty:  ', dirtyFile);
+  console.debug('[acceptCellChange] field:', fieldName, '→', JSON.stringify(parsed));
+
+  await patchJsonField(workingFile, fieldName, parsed);
+  console.debug('[acceptCellChange] working file patched');
+
+  await patchJsonField(dirtyFile, fieldName, parsed);
+  console.debug('[acceptCellChange] dirty file patched');
+}
+
+async function patchJsonField(filePath: string, fieldName: string, value: unknown): Promise<void> {
+  const content = await readFile(filePath, 'utf-8');
+  const obj = JSON.parse(content) as Record<string, unknown>;
+  setNestedValue(obj, fieldName, value);
+  await writeFile(filePath, JSON.stringify(obj, null, 2));
+}
+
+function setNestedValue(obj: Record<string, unknown>, dotPath: string, value: unknown): void {
+  const parts = dotPath.split('.');
+  let current: Record<string, unknown> = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (typeof current[part] !== 'object' || current[part] === null) {
+      current[part] = {};
+    }
+    current = current[part] as Record<string, unknown>;
+  }
+  const lastPart = parts[parts.length - 1];
+  current[lastPart] = value;
+}
+
+function parseFieldValue(str: string): unknown {
+  const trimmed = str.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return str;
+  }
 }
 
 async function statFileEntry(folderPath: string, name: string): Promise<FileEntry> {

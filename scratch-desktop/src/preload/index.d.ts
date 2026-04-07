@@ -183,6 +183,13 @@ interface ScratchFilesAPI {
     total: number;
     summary: { total: number; added: number; modified: number; deleted: number };
   }>;
+  acceptCellChange: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+    value: string,
+  ) => Promise<void>;
 }
 
 declare global {
