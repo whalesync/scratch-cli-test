@@ -203,6 +203,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
   });
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
+  const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -273,21 +274,51 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     setSort({ column: null, direction: null });
     setColumnWidths({});
     setDetailRowIndex(null);
+    setSchema(null);
   }, [selectedFolderPath]);
+
+  // Load folder metadata (schema) when folder changes
+  useEffect(() => {
+    if (!selectedFolderPath || !workspacePath) {
+      setSchema(null);
+      return;
+    }
+    let cancelled = false;
+    void window.scratchFiles.getFolderMetadata(selectedFolderPath, workspacePath).then((meta) => {
+      if (!cancelled) setSchema(meta.schema);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFolderPath, workspacePath]);
 
   // ── Derived ──
 
   const rows = diffData?.rows ?? [];
 
-  const columns: GridColumn[] = useMemo(
-    () =>
-      (diffData?.columns ?? []).map((name) => ({
-        id: name,
-        title: name,
-        width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
-      })),
-    [columnWidths, diffData?.columns],
-  );
+  // Extract titleColumnRemoteId from schema — it's a path array like ['properties', 'email']
+  // which maps to the flattened column key 'properties.email'
+  const titleColumnId = useMemo(() => {
+    const raw = schema?.titleColumnRemoteId;
+    if (Array.isArray(raw) && raw.length > 0 && raw.every((s) => typeof s === 'string')) {
+      return raw.join('.');
+    }
+    return null;
+  }, [schema]);
+
+  const columns: GridColumn[] = useMemo(() => {
+    const cols = diffData?.columns ?? [];
+    // If a title column is defined in the schema, move it to the front
+    let ordered = cols;
+    if (titleColumnId && cols.includes(titleColumnId)) {
+      ordered = [titleColumnId, ...cols.filter((c) => c !== titleColumnId)];
+    }
+    return ordered.map((name) => ({
+      id: name,
+      title: name,
+      width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
+    }));
+  }, [columnWidths, diffData?.columns, titleColumnId]);
 
   const sortedRows = (() => {
     if (!rows.length || !sort.column || !sort.direction) return rows;
@@ -493,6 +524,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
                 selectedIndex={detailRowIndex}
                 folderPath={selectedFolderPath}
                 workspacePath={workspacePath}
+                titleColumnId={titleColumnId}
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
               />

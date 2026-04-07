@@ -136,7 +136,8 @@ export async function countWorkspaceFiles(workspacePath: string): Promise<number
 export async function getFolderMetadata(folderPath: string, workspacePath: string): Promise<FolderMetadata> {
   const folderName = basename(folderPath);
   const meta = await computeFolderStats(folderPath);
-  const schema = await readSchema(workspacePath, folderName);
+  const relPath = relative(workspacePath, folderPath);
+  const schema = await readFolderSchema(workspacePath, relPath);
 
   return {
     name: folderName,
@@ -278,7 +279,6 @@ interface GridDataResult {
   columns: string[];
   total: number;
   offset: number;
-  schema: Record<string, unknown> | null;
 }
 
 /**
@@ -392,14 +392,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
     });
   }
 
-  // Load schema if workspacePath is available
-  let schema: Record<string, unknown> | null = null;
-  if (opts.workspacePath) {
-    const relPath = relative(opts.workspacePath, folderPath);
-    schema = await readFolderSchema(opts.workspacePath, relPath);
-  }
-
-  return { rows, columns, total, offset, schema };
+  return { rows, columns, total, offset };
 }
 
 /**
