@@ -11,13 +11,18 @@ interface RecordDetailViewProps {
   selectedIndex: number;
   folderPath: string;
   workspacePath: string;
+  titleColumnId: string | null;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
 }
 
-function getRecordName(row: Record<string, unknown>): string {
-  // TODO: For now, we're assuming scratchmd will have created each record file with a relatively readable filename.
-  // But we should be returning the column from the schema referenced in titleColumnRemoteId instead.
+function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
+  if (titleColumnId) {
+    const val = row[titleColumnId];
+    if (typeof val === 'string' && val !== '') return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  }
+  // Fallback to filename
   const filename = row.__filename;
   if (typeof filename === 'string') return filename.replace(/\.json$/, '');
   return '';
@@ -28,6 +33,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   selectedIndex,
   folderPath,
   workspacePath,
+  titleColumnId,
   onSelectIndex,
   onClose,
 }: RecordDetailViewProps) {
@@ -37,7 +43,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
 
   const currentRow = rows[selectedIndex];
-  const recordName = currentRow ? getRecordName(currentRow) : '';
+  const recordName = currentRow ? getRecordName(currentRow, titleColumnId) : '';
 
   // Load raw file data when selection changes
   useEffect(() => {
@@ -150,7 +156,7 @@ export const RecordDetailView = memo(function RecordDetailView({
               }}
             >
               <Text12Regular c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'} lineClamp={1}>
-                {getRecordName(row)}
+                {getRecordName(row, titleColumnId)}
               </Text12Regular>
             </Box>
           ))}

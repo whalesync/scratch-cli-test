@@ -83,15 +83,16 @@ function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: 
       >
         {/* Chevron for expandable nodes */}
         {hasChildren ? (
-          <UnstyledButton
+          <Box
+            component="span"
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               setExpanded((prev) => !prev);
             }}
-            style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}
+            style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}
           >
             <StyledLucideIcon Icon={expanded ? ChevronDown : ChevronRight} size="sm" c="var(--fg-muted)" />
-          </UnstyledButton>
+          </Box>
         ) : (
           <Box style={{ width: 12, flexShrink: 0 }} />
         )}

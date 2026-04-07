@@ -15,6 +15,7 @@ interface GridDataResult {
   columns: string[];
   total: number;
   offset: number;
+  schema: Record<string, unknown> | null;
 }
 
 type FilterStatus = 'unreviewed' | 'unpublished';
@@ -73,9 +74,11 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
       filterStatus?: 'unreviewed' | 'unpublished' | 'published';
       workspacePath?: string;
     } = {};
-    if (filterStatus && workspacePath) {
-      opts.filterStatus = filterStatus;
+    if (workspacePath) {
       opts.workspacePath = workspacePath;
+    }
+    if (filterStatus) {
+      opts.filterStatus = filterStatus;
     }
 
     window.scratchFiles
@@ -145,15 +148,29 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
     };
   }, [selectedFolderPath, workspacePath]);
 
-  const columns: GridColumn[] = useMemo(
-    () =>
-      (gridData?.columns ?? []).map((name) => ({
-        id: name,
-        title: name,
-        width: Math.max(120, Math.min(250, name.length * 9 + 40)),
-      })),
-    [gridData?.columns],
-  );
+  // Extract titleColumnRemoteId from schema — it's a path array like ['properties', 'email']
+  // which maps to the flattened column key 'properties.email'
+  const titleColumnId = useMemo(() => {
+    const raw = gridData?.schema?.titleColumnRemoteId;
+    if (Array.isArray(raw) && raw.length > 0 && raw.every((s) => typeof s === 'string')) {
+      return raw.join('.');
+    }
+    return null;
+  }, [gridData?.schema]);
+
+  const columns: GridColumn[] = useMemo(() => {
+    const cols = gridData?.columns ?? [];
+    // If a title column is defined in the schema, move it to the front
+    let ordered = cols;
+    if (titleColumnId && cols.includes(titleColumnId)) {
+      ordered = [titleColumnId, ...cols.filter((c) => c !== titleColumnId)];
+    }
+    return ordered.map((name) => ({
+      id: name,
+      title: name,
+      width: Math.max(120, Math.min(250, name.length * 9 + 40)),
+    }));
+  }, [gridData?.columns, titleColumnId]);
 
   // Sort rows in-memory
   const sortedRows = (() => {
@@ -347,6 +364,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
                 onCellClicked={onCellClicked}
                 drawCell={drawCell}
                 rowMarkers="number"
+                freezeColumns={1}
               />
             )}
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
@@ -355,6 +373,7 @@ export const FolderDataGrid = memo(function FolderDataGrid({ selectedFolderPath,
                 selectedIndex={detailRowIndex}
                 folderPath={selectedFolderPath}
                 workspacePath={workspacePath}
+                titleColumnId={titleColumnId}
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
               />

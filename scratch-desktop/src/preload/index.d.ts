@@ -157,6 +157,7 @@ interface ScratchFilesAPI {
     columns: string[];
     total: number;
     offset: number;
+    schema: Record<string, unknown> | null;
   }>;
 }
 

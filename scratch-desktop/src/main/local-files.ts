@@ -8,7 +8,7 @@
  */
 
 import { readdir, readFile, stat } from 'fs/promises';
-import { basename, extname, join } from 'path';
+import { basename, extname, join, relative } from 'path';
 
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
@@ -69,6 +69,7 @@ type FileContent =
 const SCRATCH_DIR = '.scratch';
 const CONFIG_FILE = 'config.json';
 const SCHEMAS_DIR = 'schemas';
+const CONNECTIONS_DIR = 'connections/scratch';
 const HIDDEN_PREFIX = '.';
 
 /** Max binary file size (5 MB) to inline as base64 */
@@ -256,6 +257,7 @@ interface GridDataResult {
   columns: string[];
   total: number;
   offset: number;
+  schema: Record<string, unknown> | null;
 }
 
 /**
@@ -369,7 +371,28 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
     });
   }
 
-  return { rows, columns, total, offset };
+  // Load schema if workspacePath is available
+  let schema: Record<string, unknown> | null = null;
+  if (opts.workspacePath) {
+    const relPath = relative(opts.workspacePath, folderPath);
+    schema = await readFolderSchema(opts.workspacePath, relPath);
+  }
+
+  return { rows, columns, total, offset, schema };
+}
+
+/**
+ * Reads the schema for a data folder from its connection-relative path.
+ * Schema lives at: <workspace>/.scratch/connections/scratch/<relPath>/schema.json
+ */
+async function readFolderSchema(workspacePath: string, relPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const schemaPath = join(workspacePath, SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json');
+    const content = await readFile(schemaPath, 'utf-8');
+    return JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 export async function readSchema(workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> {
