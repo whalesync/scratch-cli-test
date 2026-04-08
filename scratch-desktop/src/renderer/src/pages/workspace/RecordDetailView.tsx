@@ -1,6 +1,6 @@
 import { Box, Group, Loader, ScrollArea, Stack } from '@mantine/core';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Medium, Text12Regular, TextMono12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -14,6 +14,7 @@ interface RecordDetailViewProps {
   titleColumnId: string | null;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
+  onRecordChanged?: () => void;
 }
 
 function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
@@ -36,6 +37,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   titleColumnId,
   onSelectIndex,
   onClose,
+  onRecordChanged,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
   const [rawData, setRawData] = useState<Record<string, unknown> | null>(null);
@@ -44,6 +46,14 @@ export const RecordDetailView = memo(function RecordDetailView({
 
   const currentRow = rows[selectedIndex];
   const recordName = currentRow ? getRecordName(currentRow, titleColumnId) : '';
+  const hasUnreviewedChanges = currentRow?.__rowStatus != null && currentRow.__rowStatus !== 'unchanged';
+
+  const currentRecordCliPath = useMemo(() => {
+    const filename = currentRow?.__filename as string | undefined;
+    if (!filename || !folderPath.startsWith(workspacePath)) return null;
+    const relativeFolderPath = folderPath.slice(workspacePath.length).replace(/^\//, '');
+    return `${relativeFolderPath}/${filename}`;
+  }, [currentRow, folderPath, workspacePath]);
 
   // Load raw file data when selection changes
   useEffect(() => {
@@ -98,17 +108,29 @@ export const RecordDetailView = memo(function RecordDetailView({
     if (selectedIndex < rows.length - 1) onSelectIndex(selectedIndex + 1);
   }, [selectedIndex, rows.length, onSelectIndex]);
 
-  const handleAcceptAll = useCallback(() => {
-    void window.scratchDesktop.acceptAllChanges(workspacePath).catch((err: unknown) => {
-      console.debug('acceptAllChanges failed', err);
-    });
-  }, [workspacePath]);
+  const handleAccept = useCallback(() => {
+    if (!currentRecordCliPath) return;
+    void window.scratchDesktop
+      .acceptRecord(workspacePath, currentRecordCliPath)
+      .then((result) => {
+        if (result.exitCode === 0) onRecordChanged?.();
+      })
+      .catch((err: unknown) => {
+        console.debug('acceptRecord failed', err);
+      });
+  }, [workspacePath, currentRecordCliPath, onRecordChanged]);
 
-  const handlePublish = useCallback(() => {
-    void window.scratchDesktop.pushWorkspaceChanges(workspacePath).catch((err: unknown) => {
-      console.debug('pushWorkspaceChanges failed', err);
-    });
-  }, [workspacePath]);
+  const handleReject = useCallback(() => {
+    if (!currentRecordCliPath) return;
+    void window.scratchDesktop
+      .rejectRecord(workspacePath, currentRecordCliPath)
+      .then((result) => {
+        if (result.exitCode === 0) onRecordChanged?.();
+      })
+      .catch((err: unknown) => {
+        console.debug('rejectRecord failed', err);
+      });
+  }, [workspacePath, currentRecordCliPath, onRecordChanged]);
 
   return (
     <Box
@@ -194,11 +216,19 @@ export const RecordDetailView = memo(function RecordDetailView({
             </TextTitle2>
 
             <Group gap={6} align="center" wrap="nowrap">
-              <ButtonSecondaryOutline size="compact-xs" onClick={handleAcceptAll}>
-                Accept all
+              <ButtonSecondaryOutline
+                size="compact-xs"
+                onClick={handleAccept}
+                disabled={!currentRecordCliPath || !hasUnreviewedChanges}
+              >
+                Accept
               </ButtonSecondaryOutline>
-              <ButtonSecondaryOutline size="compact-xs" onClick={handlePublish}>
-                Reject all
+              <ButtonSecondaryOutline
+                size="compact-xs"
+                onClick={handleReject}
+                disabled={!currentRecordCliPath || !hasUnreviewedChanges}
+              >
+                Reject
               </ButtonSecondaryOutline>
               <ButtonSecondaryOutline
                 size="compact-xs"

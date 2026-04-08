@@ -70,33 +70,182 @@ fn derive_workbook_org_id_prefers_workbook_field_then_repo_path_prefix() {
 }
 
 #[test]
-fn sync_schema_files_from_master_checkout_copies_schema_into_connection_scratch() {
+fn include_schemas_then_sync_copies_schema_into_scratch_dir() {
     let tmp = TempDir::new().unwrap();
-    let master_dir = tmp.path().join(".scratch/connections/master/conn");
-    let scratch_dir = tmp.path().join(".scratch/connections/scratch/conn");
+    let source_dir = tmp.path().join("source");
+    let bare_dir = tmp.path().join("repo.git");
+    let master_dir = tmp.path().join("master");
+    let scratch_dir = tmp.path().join("scratch");
 
-    std::fs::create_dir_all(master_dir.join(".scratch/posts")).unwrap();
-    std::fs::write(
-        master_dir.join(".scratch/posts/schema.json"),
-        "{\"schema\":{}}",
-    )
-    .unwrap();
+    // Create a source repo with data + schema on the main branch.
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source_dir, &["checkout", "-b", "main"]);
+    write_file(
+        &source_dir.join(".scratch/Posts/schema.json"),
+        r#"{"type":"object","properties":{"title":{"type":"string"}}}"#,
+    );
+    write_file(&source_dir.join("Posts/rec1.json"), r#"{"id":"rec1"}"#);
+    commit_all(&source_dir, "initial with schema");
 
+    // Push to a bare repo.
+    run_git(tmp.path(), &["init", "--bare", "repo.git"]);
+    run_git(
+        &source_dir,
+        &["remote", "add", "origin", bare_dir.to_str().unwrap()],
+    );
+    run_git(&source_dir, &["push", "origin", "main:main"]);
+
+    // Create a sparse master worktree (excludes .scratch/ by default).
+    git_checkout_branch_from_bare(&bare_dir, "main", &master_dir).unwrap();
+    assert!(
+        !master_dir.join(".scratch").exists(),
+        ".scratch/ should be excluded before include_schemas_in_sparse_checkout"
+    );
+
+    // Include schemas and sync them.
+    include_schemas_in_sparse_checkout(&master_dir).unwrap();
     sync_schema_files_from_master_checkout(&master_dir, &scratch_dir).unwrap();
 
+    let schema_path = scratch_dir.join("Posts/schema.json");
+    assert!(schema_path.exists(), "schema.json should exist at {}", schema_path.display());
     assert_eq!(
-        std::fs::read_to_string(scratch_dir.join("posts/schema.json")).unwrap(),
-        "{\"schema\":{}}"
+        std::fs::read_to_string(&schema_path).unwrap(),
+        r#"{"type":"object","properties":{"title":{"type":"string"}}}"#
+    );
+}
+
+/// Full integration test for `init_v2`: creates a fake remote git repo with data files and
+/// schemas, then runs init and verifies the workspace directory structure matches what the
+/// desktop app expects.
+#[test]
+fn init_v2_produces_workspace_structure_expected_by_desktop() {
+    let tmp = TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let remote_bare = tmp.path().join("remote.git");
+    let workspace_dir = tmp.path().join("workspace");
+
+    // ── Build a source repo with main + dirty branches ──
+
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source_dir, &["checkout", "-b", "main"]);
+
+    // Data files (these live on main)
+    write_file(&source_dir.join("Posts/hello-world.json"), r#"{"id":"1","title":"Hello World"}"#);
+    write_file(&source_dir.join("Posts/second-post.json"), r#"{"id":"2","title":"Second Post"}"#);
+
+    // Schema files under .scratch/ (committed to main, excluded by sparse checkout)
+    let schema_content = r#"{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}}}"#;
+    write_file(&source_dir.join(".scratch/Posts/schema.json"), schema_content);
+
+    commit_all(&source_dir, "main: data + schema");
+
+    // Create dirty branch (same tree as main — just needs the ref to exist)
+    run_git(&source_dir, &["checkout", "-b", "dirty"]);
+
+    // Push both branches to a bare remote
+    run_git(tmp.path(), &["init", "--bare", "remote.git"]);
+    run_git(
+        &source_dir,
+        &["remote", "add", "origin", remote_bare.to_str().unwrap()],
+    );
+    run_git(&source_dir, &["push", "origin", "main:main"]);
+    run_git(&source_dir, &["push", "origin", "dirty:dirty"]);
+
+    // ── Build Workbook struct (mocking the API response) ──
+
+    let wb = Workbook {
+        id: "wkb_test123".to_string(),
+        name: "Test Workspace".to_string(),
+        org_id: "org_test".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        table_count: 1,
+        version: 2,
+        connector_accounts: vec![ConnectorAccount {
+            id: "ca_conn1".to_string(),
+            display_name: "My CMS".to_string(),
+            service: "WORDPRESS".to_string(),
+            repo_path: "org_test/wkb_test123/ca_conn1".to_string(),
+            git_url: remote_bare.to_str().unwrap().to_string(),
+            data_folders: vec![],
+        }],
+        git_url: String::new(), // no workbook config repo — init_workbook_repo will skip
+    };
+
+    // ── Run init ──
+
+    init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token").unwrap();
+
+    let conn_dir_name = "WORDPRESS - My CMS";
+
+    // ── Assert: data files appear in the dirty checkout ──
+    let dirty_dir = workspace_dir.join(conn_dir_name);
+    assert!(
+        dirty_dir.join("Posts/hello-world.json").exists(),
+        "data file should exist in dirty checkout"
+    );
+    assert!(
+        dirty_dir.join("Posts/second-post.json").exists(),
+        "data file should exist in dirty checkout"
+    );
+
+    // ── Assert: .scratch/ is NOT in the dirty checkout (sparse checkout excludes it) ──
+    assert!(
+        !dirty_dir.join(".scratch").exists(),
+        ".scratch/ should be excluded from sparse dirty checkout"
+    );
+
+    // ── Assert: schema lands in connections/scratch/ (read by desktop app) ──
+    let schema_path = workspace_dir
+        .join(".scratch/connections/scratch")
+        .join(conn_dir_name)
+        .join("Posts/schema.json");
+    assert!(
+        schema_path.exists(),
+        "schema.json should exist at {}",
+        schema_path.display()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&schema_path).unwrap(),
+        schema_content,
+    );
+
+    // ── Assert: master worktree exists with data ──
+    let master_dir = workspace_dir
+        .join(".scratch/connections/master")
+        .join(conn_dir_name);
+    assert!(
+        master_dir.join("Posts/hello-world.json").exists(),
+        "data file should exist in master worktree"
+    );
+    // .scratch/ in master contains only schema files (included via sparse-checkout add)
+    assert!(
+        master_dir.join(".scratch/Posts/schema.json").exists(),
+        "schema.json should be included in master worktree via sparse checkout"
+    );
+
+    // ── Assert: reviewed-dirty worktree exists ──
+    let reviewed_dirty_dir = workspace_dir
+        .join(".scratch/connections/dirty")
+        .join(conn_dir_name);
+    assert!(
+        reviewed_dirty_dir.exists(),
+        "reviewed-dirty worktree should exist"
+    );
+
+    // ── Assert: bare repo exists in .repos/ ──
+    let bare_repo = workspace_dir.join(".repos/ca_conn1.git");
+    assert!(bare_repo.exists(), "bare repo should exist in .repos/");
+
+    // ── Assert: .scratch/workspace/ directory exists ──
+    assert!(
+        workspace_dir.join(".scratch/workspace").exists(),
+        ".scratch/workspace/ should exist"
     );
 }
 
 #[test]
 fn git_checkout_branch_from_bare_allows_empty_branch_tree() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
     let tmp = TempDir::new().unwrap();
     let repo_dir = tmp.path().join("repo");
     let bare_dir = tmp.path().join("repo.git");
@@ -138,11 +287,6 @@ fn git_checkout_branch_from_bare_allows_empty_branch_tree() {
 
 #[test]
 fn materialize_workbook_checkout_prefers_main_when_dirty_is_empty() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
     let tmp = TempDir::new().unwrap();
     let repo_dir = tmp.path().join("repo");
     let bare_dir = tmp.path().join("repo.git");
@@ -196,11 +340,6 @@ fn materialize_workbook_checkout_prefers_main_when_dirty_is_empty() {
 
 #[test]
 fn git_clone_bare_clones_remote_refs_and_origin() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
     let tmp = TempDir::new().unwrap();
     let source_dir = tmp.path().join("source");
     let remote_bare = tmp.path().join("remote.git");
@@ -287,12 +426,4 @@ fn run_git(cwd: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-fn git_available() -> bool {
-    Command::new("git")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
 }

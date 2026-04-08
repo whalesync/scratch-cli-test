@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use clap::Subcommand;
 
 use crate::api::{ApiClient, ConnectorAccount, Workbook, WorkbookListResponse};
@@ -407,6 +408,8 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
         match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {
             Ok(()) => {
+                // Include schema files that are normally excluded by the sparse checkout.
+                include_schemas_in_sparse_checkout(&master_dir)?;
                 sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
                 if let Some(parent) = db_path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -506,6 +509,23 @@ fn materialize_dirty_checkout(
     Ok(())
 }
 
+
+/// Adds `.scratch/**/schema.json` to the sparse-checkout rules for a worktree so that
+/// schema files are materialized on disk despite the blanket `!.scratch` exclusion.
+fn include_schemas_in_sparse_checkout(worktree: &Path) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    let wt = worktree.to_str().unwrap_or_default();
+    let output = Command::new("git")
+        .args(["-C", wt, "sparse-checkout", "add", ".scratch/**/schema.json"])
+        .output()
+        .context("failed to run git sparse-checkout add")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git sparse-checkout add failed: {}", stderr.trim());
+    }
+    Ok(())
+}
 
 fn sync_schema_files_from_master_checkout(
     master_dir: &Path,

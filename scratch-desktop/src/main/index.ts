@@ -358,6 +358,12 @@ ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) =>
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string) =>
   runScratchmdCapture(['files', 'accept-all'], workspacePath),
 );
+ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
+  runScratchmdCapture(['files', 'accept', recordPath], workspacePath),
+);
+ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
+  runScratchmdCapture(['files', 'reject', recordPath], workspacePath),
+);
 ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
 );

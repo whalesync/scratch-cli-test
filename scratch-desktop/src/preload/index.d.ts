@@ -43,6 +43,14 @@ interface ScratchDesktopAPI {
   initWorkspace: (workbookId: string, cwd: string) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
   acceptAllChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  acceptRecord: (
+    workspacePath: string,
+    recordPath: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  rejectRecord: (
+    workspacePath: string,
+    recordPath: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   listUnreviewedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
@@ -104,7 +112,7 @@ interface ScratchFilesAPI {
     fileCount: number;
     lastModified: number;
     totalSize: number;
-    schema: Record<string, unknown> | null;
+    schema: Record<string, unknown>;
   }>;
   listFiles: (
     folderPath: string,

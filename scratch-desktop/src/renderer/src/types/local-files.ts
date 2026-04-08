@@ -19,8 +19,8 @@ export interface FolderEntry {
 }
 
 export interface FolderMetadata extends FolderEntry {
-  /** Parsed .scratch/schemas/<name>.json, or null if no schema exists */
-  schema: Record<string, unknown> | null;
+  /** Parsed .scratch/schemas/<name>.json — throws if schema is missing */
+  schema: Record<string, unknown>;
 }
 
 export interface ListFilesOptions {

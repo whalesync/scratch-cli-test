@@ -52,6 +52,12 @@ pub enum FilesCommands {
         #[arg(required = true)]
         paths: Vec<String>,
     },
+    /// Discard working-tree changes for one or more files, restoring the dirty-branch version
+    Reject {
+        /// Paths to reject, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
     /// List record changes that exist only in the working tree and have not been accepted locally
     Unreviewed,
     /// List record changes between dirty and master branches (accepted but not yet published)
@@ -123,6 +129,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Download => run_download(&cwd, server_url, json),
         FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
+        FilesCommands::Reject { paths } => run_reject(&cwd, &paths, json),
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
@@ -365,6 +372,104 @@ fn run_accept(cwd: &Path, _server_url: &str, input_paths: &[String], json: bool)
         format_elapsed(elapsed_ms)
     );
     print_file_list(&all_accepted);
+    Ok(())
+}
+
+fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    // Group input paths by connection (same pattern as run_accept)
+    let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
+    for input_path in input_paths {
+        let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
+            let prefix = format!("{}/", ctx.conn_dir_name);
+            input_path.strip_prefix(&prefix).map(|rest| (i, rest.to_string()))
+        });
+        match found {
+            Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
+            None => anyhow::bail!(
+                "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
+                input_path
+            ),
+        }
+    }
+
+    let mut all_rejected: Vec<String> = Vec::new();
+
+    for (ctx_idx, path_pairs) in &by_conn {
+        let ctx = &contexts[*ctx_idx];
+
+        let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+        let base_map = match base_hash.as_deref() {
+            Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+            None => HashMap::new(),
+        };
+        sync_schema_files_from_master(ctx)?;
+        let local_map = read_materialized_repo(ctx)?;
+
+        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+        let changed_paths: std::collections::HashSet<&str> =
+            changes.iter().map(|e| e.path.as_str()).collect();
+
+        // Validate all requested paths have unreviewed changes
+        for (input_path, rel_path) in path_pairs {
+            if !changed_paths.contains(rel_path.as_str()) {
+                anyhow::bail!("No unreviewed local changes for '{}'.", input_path);
+            }
+        }
+
+        // Restore dirty-branch version to working tree
+        for (_, rel_path) in path_pairs {
+            let disk_path = ctx.dirty_dir.join(rel_path);
+            match base_map.get(rel_path.as_str()) {
+                Some(content) => {
+                    // File exists on dirty branch — restore it
+                    write_file(&disk_path, content)?;
+                }
+                None => {
+                    // File does not exist on dirty branch (added locally) — delete it
+                    if disk_path.exists() {
+                        std::fs::remove_file(&disk_path)?;
+                    }
+                }
+            }
+        }
+
+        all_rejected.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
+    }
+
+    let total = all_rejected.len();
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "rejected",
+                "filesRejected": total,
+                "paths": all_rejected,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Rejected {} local record change{}. ({})",
+        total,
+        if total == 1 { "" } else { "s" },
+        format_elapsed(elapsed_ms)
+    );
+    print_file_list(&all_rejected);
     Ok(())
 }
 

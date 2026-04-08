@@ -144,7 +144,12 @@ export async function getFolderMetadata(folderPath: string, workspacePath: strin
   const folderName = basename(folderPath);
   const meta = await computeFolderStats(folderPath);
   const relPath = relative(workspacePath, folderPath);
-  const schema = await readFolderSchema(workspacePath, relPath);
+  const schema = await readConnectionSchema(workspacePath, relPath);
+  if (!schema) {
+    throw new Error(
+      `Schema not found for folder "${folderName}" at ${join(SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json')}`,
+    );
+  }
 
   return {
     name: folderName,
@@ -412,7 +417,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
  * Reads the schema for a data folder from its connection-relative path.
  * Schema lives at: <workspace>/.scratch/connections/scratch/<relPath>/schema.json
  */
-async function readFolderSchema(workspacePath: string, relPath: string): Promise<Record<string, unknown> | null> {
+async function readConnectionSchema(workspacePath: string, relPath: string): Promise<Record<string, unknown> | null> {
   try {
     const schemaPath = join(workspacePath, SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json');
     const content = await readFile(schemaPath, 'utf-8');

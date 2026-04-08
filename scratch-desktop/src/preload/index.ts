@@ -1,6 +1,12 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function invoke(channel: string, ...args: unknown[]): Promise<any> {
+  console.log('[ipc:invoke]', channel, args);
+  return ipcRenderer.invoke(channel, ...args);
+}
+
 type ScratchCommandEvent =
   | {
       sessionId: string;
@@ -33,37 +39,46 @@ const scratchAuth = {
     email: string | null;
     tokenExpiresAt: string | null;
     serverUrl: string | null;
-  }> => ipcRenderer.invoke('auth:get-credentials'),
+  }> => invoke('auth:get-credentials'),
   saveCredentials: (creds: {
     apiToken: string;
     email?: string;
     tokenExpiresAt?: string;
     serverUrl: string;
-  }): Promise<void> => ipcRenderer.invoke('auth:save-credentials', creds),
-  clearCredentials: (): Promise<void> => ipcRenderer.invoke('auth:clear-credentials'),
-  isTokenExpired: (): Promise<boolean> => ipcRenderer.invoke('auth:is-token-expired'),
-  openExternal: (url: string): Promise<void> => ipcRenderer.invoke('auth:open-external', url),
+  }): Promise<void> => invoke('auth:save-credentials', creds),
+  clearCredentials: (): Promise<void> => invoke('auth:clear-credentials'),
+  isTokenExpired: (): Promise<boolean> => invoke('auth:is-token-expired'),
+  openExternal: (url: string): Promise<void> => invoke('auth:open-external', url),
 };
 
 const scratchDesktop = {
   getWorkspacesRegistry: (): Promise<Array<{ id: string; path: string; fileCount: number }>> =>
-    ipcRenderer.invoke('scratch:get-workspaces-registry'),
-  createWorkspace: (name: string): Promise<{ id: string; name: string }> =>
-    ipcRenderer.invoke('scratch:create-workspace', name),
-  pickParentFolder: (): Promise<string | null> => ipcRenderer.invoke('scratch:pick-parent-folder'),
+    invoke('scratch:get-workspaces-registry'),
+  createWorkspace: (name: string): Promise<{ id: string; name: string }> => invoke('scratch:create-workspace', name),
+  pickParentFolder: (): Promise<string | null> => invoke('scratch:pick-parent-folder'),
   initWorkspace: (workbookId: string, cwd: string): Promise<{ stdout: string; stderr: string }> =>
-    ipcRenderer.invoke('scratch:init-workspace', workbookId, cwd),
-  removeWorkspace: (workbookId: string): Promise<void> => ipcRenderer.invoke('scratch:remove-workspace', workbookId),
+    invoke('scratch:init-workspace', workbookId, cwd),
+  removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
   acceptAllChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-    ipcRenderer.invoke('scratch:accept-all-changes', workspacePath),
+    invoke('scratch:accept-all-changes', workspacePath),
+  acceptRecord: (
+    workspacePath: string,
+    recordPath: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:accept-record', workspacePath, recordPath),
+  rejectRecord: (
+    workspacePath: string,
+    recordPath: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:reject-record', workspacePath, recordPath),
   listUnreviewedChanges: (
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
-    ipcRenderer.invoke('scratch:list-unreviewed-changes', workspacePath),
+    invoke('scratch:list-unreviewed-changes', workspacePath),
   listUnpushedChanges: (
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
-    ipcRenderer.invoke('scratch:list-unpushed-changes', workspacePath),
+    invoke('scratch:list-unpushed-changes', workspacePath),
   listLocalPublishPlans: (
     workspacePath: string,
   ): Promise<
@@ -75,34 +90,33 @@ const scratchDesktop = {
       summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
       tablePaths: string[];
     }>
-  > => ipcRenderer.invoke('scratch:list-local-publish-plans', workspacePath),
+  > => invoke('scratch:list-local-publish-plans', workspacePath),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
-    ipcRenderer.invoke('scratch:push-workspace-changes', workspacePath),
+    invoke('scratch:push-workspace-changes', workspacePath),
   pullWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
-    ipcRenderer.invoke('scratch:pull-workspace-changes', workspacePath),
-  listLocalSyncs: (workspacePath: string): Promise<string[]> =>
-    ipcRenderer.invoke('scratch:list-local-syncs', workspacePath),
+    invoke('scratch:pull-workspace-changes', workspacePath),
+  listLocalSyncs: (workspacePath: string): Promise<string[]> => invoke('scratch:list-local-syncs', workspacePath),
   validateLocalSync: (
     workspacePath: string,
     syncName: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-    ipcRenderer.invoke('scratch:validate-local-sync', workspacePath, syncName),
+    invoke('scratch:validate-local-sync', workspacePath, syncName),
   startRunLocalSync: (workspacePath: string, syncName: string): Promise<{ sessionId: string }> =>
-    ipcRenderer.invoke('scratch:start-run-local-sync', workspacePath, syncName),
+    invoke('scratch:start-run-local-sync', workspacePath, syncName),
   startPlanPublish: (workspacePath: string): Promise<{ sessionId: string }> =>
-    ipcRenderer.invoke('scratch:start-plan-publish', workspacePath),
+    invoke('scratch:start-plan-publish', workspacePath),
   startPublishFromGit: (workspacePath: string): Promise<{ sessionId: string }> =>
-    ipcRenderer.invoke('scratch:start-publish-from-git', workspacePath),
+    invoke('scratch:start-publish-from-git', workspacePath),
   triggerPublishFromGit: (workspacePath: string): Promise<{ stdout: string; stderr: string; jobIds: string[] }> =>
-    ipcRenderer.invoke('scratch:trigger-publish-from-git', workspacePath),
+    invoke('scratch:trigger-publish-from-git', workspacePath),
   startPublishAll: (workspacePath: string): Promise<{ sessionId: string }> =>
-    ipcRenderer.invoke('scratch:start-publish-all', workspacePath),
+    invoke('scratch:start-publish-all', workspacePath),
   pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
-    ipcRenderer.invoke('scratch:pull-all-linked-tables', workspacePath),
-  showInFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke('scratch:show-in-folder', folderPath),
-  openInTerminal: (folderPath: string): Promise<void> => ipcRenderer.invoke('scratch:open-in-terminal', folderPath),
-  toggleDevTools: (): Promise<void> => ipcRenderer.invoke('scratch:toggle-devtools'),
-  getAppVersion: (): Promise<string> => ipcRenderer.invoke('scratch:get-app-version'),
+    invoke('scratch:pull-all-linked-tables', workspacePath),
+  showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),
+  openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
+  toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
+  getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: ScratchCommandEvent): void => {
       callback(payload);
@@ -122,7 +136,7 @@ const scratchFiles = {
     workbookId: string;
     orgId: string;
     authToken?: string;
-  }> => ipcRenderer.invoke('files:workspace-config', workspacePath),
+  }> => invoke('files:workspace-config', workspacePath),
   listFolders: (
     workspacePath: string,
   ): Promise<
@@ -133,7 +147,7 @@ const scratchFiles = {
       lastModified: number;
       totalSize: number;
     }>
-  > => ipcRenderer.invoke('files:list-folders', workspacePath),
+  > => invoke('files:list-folders', workspacePath),
   getFolderMetadata: (
     folderPath: string,
     workspacePath: string,
@@ -143,8 +157,8 @@ const scratchFiles = {
     fileCount: number;
     lastModified: number;
     totalSize: number;
-    schema: Record<string, unknown> | null;
-  }> => ipcRenderer.invoke('files:folder-metadata', folderPath, workspacePath),
+    schema: Record<string, unknown>;
+  }> => invoke('files:folder-metadata', folderPath, workspacePath),
   listFiles: (
     folderPath: string,
     opts: {
@@ -165,14 +179,14 @@ const scratchFiles = {
     }>;
     total: number;
     offset: number;
-  }> => ipcRenderer.invoke('files:list-files', folderPath, opts),
+  }> => invoke('files:list-files', folderPath, opts),
   readFile: (
     filePath: string,
   ): Promise<
     | { type: 'json'; path: string; data: Record<string, unknown>; size: number }
     | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
     | { type: 'error'; path: string; error: string }
-  > => ipcRenderer.invoke('files:read-file', filePath),
+  > => invoke('files:read-file', filePath),
   readBatch: (
     filePaths: string[],
     opts?: { maxSize?: number },
@@ -182,9 +196,9 @@ const scratchFiles = {
       | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
       | { type: 'error'; path: string; error: string }
     >
-  > => ipcRenderer.invoke('files:read-batch', filePaths, opts),
+  > => invoke('files:read-batch', filePaths, opts),
   readSchema: (workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> =>
-    ipcRenderer.invoke('files:read-schema', workspacePath, folderName),
+    invoke('files:read-schema', workspacePath, folderName),
   readGridData: (
     folderPath: string,
     opts?: {
@@ -202,12 +216,12 @@ const scratchFiles = {
     columns: string[];
     total: number;
     offset: number;
-  }> => ipcRenderer.invoke('files:read-grid-data', folderPath, opts ?? {}),
+  }> => invoke('files:read-grid-data', folderPath, opts ?? {}),
   readFolderStatuses: (
     folderPath: string,
     workspacePath: string,
   ): Promise<{ unreviewedFilenames: string[]; unpublishedFilenames: string[] }> =>
-    ipcRenderer.invoke('files:read-folder-statuses', folderPath, workspacePath),
+    invoke('files:read-folder-statuses', folderPath, workspacePath),
   readDiffGridData: (
     folderPath: string,
     workspacePath: string,
@@ -225,15 +239,14 @@ const scratchFiles = {
     columns: string[];
     total: number;
     summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
-  }> => ipcRenderer.invoke('files:read-diff-grid-data', folderPath, workspacePath),
+  }> => invoke('files:read-diff-grid-data', folderPath, workspacePath),
   acceptCellChange: (
     folderPath: string,
     workspacePath: string,
     filename: string,
     fieldName: string,
     value: string,
-  ): Promise<void> =>
-    ipcRenderer.invoke('files:accept-cell-change', folderPath, workspacePath, filename, fieldName, value),
+  ): Promise<void> => invoke('files:accept-cell-change', folderPath, workspacePath, filename, fieldName, value),
 };
 
 if (process.contextIsolated) {

@@ -344,9 +344,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       return;
     }
     let cancelled = false;
-    void window.scratchFiles.getFolderMetadata(selectedFolderPath, workspacePath).then((meta) => {
-      if (!cancelled) setSchema(meta.schema);
-    });
+    void window.scratchFiles
+      .getFolderMetadata(selectedFolderPath, workspacePath)
+      .then((meta) => {
+        console.debug('Retrieved folder metadata', meta);
+        if (!cancelled) setSchema(meta.schema);
+      })
+      .catch((err) => {
+        console.error('Failed to load folder metadata:', err);
+        if (!cancelled) setSchema(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -680,6 +687,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 titleColumnId={titleColumnId}
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
+                onRecordChanged={() => setReloadKey((k) => k + 1)}
               />
             )}
           </Box>
