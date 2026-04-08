@@ -48,9 +48,9 @@ export class ScheduleService {
     return new ScheduleEntity(schedule);
   }
 
-  async findAllForWorkbook(workbookId: WorkbookId, actor: Actor): Promise<ScheduleEntity[]> {
+  async findAllForWorkbook(workbookId: WorkbookId): Promise<ScheduleEntity[]> {
     const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId, organizationId: actor.organizationId },
+      where: { id: workbookId },
     });
     if (!workbook) {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
@@ -63,14 +63,9 @@ export class ScheduleService {
     return schedules.map((s) => new ScheduleEntity(s));
   }
 
-  async findByEntity(
-    workbookId: WorkbookId,
-    action: ScheduleAction,
-    entityId: string,
-    actor: Actor,
-  ): Promise<ScheduleEntity | null> {
+  async findByEntity(workbookId: WorkbookId, action: ScheduleAction, entityId: string): Promise<ScheduleEntity | null> {
     const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId, organizationId: actor.organizationId },
+      where: { id: workbookId },
     });
     if (!workbook) {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
@@ -82,7 +77,7 @@ export class ScheduleService {
     return schedule ? new ScheduleEntity(schedule) : null;
   }
 
-  async findOne(workbookId: WorkbookId, scheduleId: string, actor: Actor): Promise<ScheduleEntity> {
+  async findOne(workbookId: WorkbookId, scheduleId: string): Promise<ScheduleEntity> {
     const schedule = await this.db.client.schedule.findFirst({
       where: { id: scheduleId, workbookId },
     });
@@ -91,7 +86,7 @@ export class ScheduleService {
     }
 
     const workbook = await this.db.client.workbook.findFirst({
-      where: { id: workbookId, organizationId: actor.organizationId },
+      where: { id: workbookId },
     });
     if (!workbook) {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
@@ -100,13 +95,8 @@ export class ScheduleService {
     return new ScheduleEntity(schedule);
   }
 
-  async update(
-    workbookId: WorkbookId,
-    scheduleId: string,
-    dto: ValidatedUpdateScheduleDto,
-    actor: Actor,
-  ): Promise<ScheduleEntity> {
-    const existing = await this.findOne(workbookId, scheduleId, actor);
+  async update(workbookId: WorkbookId, scheduleId: string, dto: ValidatedUpdateScheduleDto): Promise<ScheduleEntity> {
+    const existing = await this.findOne(workbookId, scheduleId);
 
     if (dto.cronExpression) {
       this.validateCronExpression(dto.cronExpression);
@@ -136,8 +126,8 @@ export class ScheduleService {
     return new ScheduleEntity(schedule);
   }
 
-  async delete(workbookId: WorkbookId, scheduleId: string, actor: Actor): Promise<void> {
-    await this.findOne(workbookId, scheduleId, actor);
+  async delete(workbookId: WorkbookId, scheduleId: string): Promise<void> {
+    await this.findOne(workbookId, scheduleId);
     await this.db.client.schedule.delete({ where: { id: scheduleId } });
   }
 

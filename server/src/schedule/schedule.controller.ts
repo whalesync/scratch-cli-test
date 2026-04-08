@@ -48,7 +48,7 @@ export class ScheduleController {
   async list(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<Schedule[]> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.scheduleService.findAllForWorkbook(workbookId, actor);
+    return this.scheduleService.findAllForWorkbook(workbookId);
   }
 
   @Get('by-entity')
@@ -60,7 +60,7 @@ export class ScheduleController {
   ): Promise<Schedule | null> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.scheduleService.findByEntity(workbookId, action, entityId, actor);
+    return this.scheduleService.findByEntity(workbookId, action, entityId);
   }
 
   @Get(':scheduleId')
@@ -71,7 +71,7 @@ export class ScheduleController {
   ): Promise<Schedule> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.scheduleService.findOne(workbookId, scheduleId, actor);
+    return this.scheduleService.findOne(workbookId, scheduleId);
   }
 
   @Patch(':scheduleId')
@@ -83,7 +83,7 @@ export class ScheduleController {
   ): Promise<Schedule> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.scheduleService.update(workbookId, scheduleId, dto, actor);
+    return this.scheduleService.update(workbookId, scheduleId, dto);
   }
 
   @Delete(':scheduleId')
@@ -94,6 +94,6 @@ export class ScheduleController {
   ): Promise<void> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    return this.scheduleService.delete(workbookId, scheduleId, actor);
+    return this.scheduleService.delete(workbookId, scheduleId);
   }
 }

@@ -596,12 +596,9 @@ describe('SyncService', () => {
       await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
 
       expect(scheduleService.update).toHaveBeenCalledTimes(1);
-      expect(scheduleService.update).toHaveBeenCalledWith(
-        WORKBOOK_ID,
-        existingSchedule.id,
-        { cronExpression: CRON_EVERY_TWO_HOURS },
-        ACTOR,
-      );
+      expect(scheduleService.update).toHaveBeenCalledWith(WORKBOOK_ID, existingSchedule.id, {
+        cronExpression: CRON_EVERY_TWO_HOURS,
+      });
       expect(scheduleService.create).not.toHaveBeenCalled();
       expect(scheduleService.delete).not.toHaveBeenCalled();
     });
@@ -618,7 +615,7 @@ describe('SyncService', () => {
       await service.updateSync(WORKBOOK_ID, SYNC_ID, body, ACTOR);
 
       expect(scheduleService.delete).toHaveBeenCalledTimes(1);
-      expect(scheduleService.delete).toHaveBeenCalledWith(WORKBOOK_ID, existingSchedule.id, ACTOR);
+      expect(scheduleService.delete).toHaveBeenCalledWith(WORKBOOK_ID, existingSchedule.id);
       expect(scheduleService.create).not.toHaveBeenCalled();
       expect(scheduleService.update).not.toHaveBeenCalled();
     });
@@ -726,7 +723,7 @@ describe('SyncService', () => {
       expect(dbService.client.schedule.findMany).toHaveBeenCalledWith({
         where: { workbookId: WORKBOOK_ID, action: 'SYNC', entityId: SYNC_ID },
       });
-      expect(scheduleService.delete).toHaveBeenCalledWith(WORKBOOK_ID, 'schedule-1', ACTOR);
+      expect(scheduleService.delete).toHaveBeenCalledWith(WORKBOOK_ID, 'schedule-1');
     });
 
     it('handles no associated schedules gracefully', async () => {

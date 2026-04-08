@@ -1,12 +1,13 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DbJob, Prisma } from '@prisma/client';
-import { createJobId, JobType, RunId } from '@spinner/shared-types';
+import { createJobId, JobType, RunId, WorkbookId } from '@spinner/shared-types';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { Progress } from 'src/types/progress';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { DbService } from '../db/db.service';
+import { hasWorkspacePermissions } from '../users/permissions';
 import { Actor } from '../users/types';
 import { DbJobStatus, dbJobToJobEntity, JobEntity } from './entities/job.entity';
 
@@ -121,6 +122,30 @@ export class JobService {
       where: {
         userId,
         ...(workbookId && { workbookId }),
+        ...(typeFilter && { type: typeFilter }),
+        ...(filter?.syncId && { syncId: filter.syncId }),
+        ...(filter?.dataFolderId && { dataFolderId: filter.dataFolderId }),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
+
+    return jobs;
+  }
+
+  /** Jobs for a workbook (all users). Caller must enforce workspace access. */
+  async getJobsForWorkbook(
+    workbookId: string,
+    limit = 50,
+    offset = 0,
+    filter?: { type?: string; syncId?: string; dataFolderId?: string },
+  ): Promise<DbJob[]> {
+    const typeFilter = filter?.type ? JobService.JOB_TYPE_MAP[filter.type] : undefined;
+
+    const jobs = await this.db.client.dbJob.findMany({
+      where: {
+        workbookId,
         ...(typeFilter && { type: typeFilter }),
         ...(filter?.syncId && { syncId: filter.syncId }),
         ...(filter?.dataFolderId && { dataFolderId: filter.dataFolderId }),
@@ -295,16 +320,15 @@ export class JobService {
     return dbJob;
   }
 
-  private async verifyJobAccess(dbJob: DbJob, actor: Actor): Promise<void> {
+  private verifyJobAccess(dbJob: DbJob, actor: Actor): void {
     if (actor.isAdmin) return;
     if (!dbJob.workbookId) return;
 
-    const workbook = await this.db.client.workbook.findFirst({
-      where: { id: dbJob.workbookId, organizationId: actor.organizationId },
-    });
-    if (!workbook) {
-      throw new ForbiddenException('You do not have access to this job');
+    if (hasWorkspacePermissions(actor, dbJob.workbookId as WorkbookId)) {
+      return;
     }
+
+    throw new ForbiddenException('You do not have access to this job');
   }
 
   async cancelJob(jobId: string, actor: Actor): Promise<{ success: boolean; message: string }> {
@@ -317,7 +341,7 @@ export class JobService {
       throw new NotFoundException(`Job with id ${jobId} not found`);
     }
 
-    await this.verifyJobAccess(dbJob, actor);
+    this.verifyJobAccess(dbJob, actor);
 
     // If the DB already shows the job as terminal, no need to cancel
     if (['completed', 'failed', 'canceled'].includes(dbJob.status)) {

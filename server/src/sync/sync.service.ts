@@ -315,11 +315,11 @@ export class SyncService {
       if (body.schedule === '') {
         // Empty string means "no schedule" — delete if one exists
         if (existingSchedule) {
-          await this.scheduleService.delete(workbookId, existingSchedule.id, actor);
+          await this.scheduleService.delete(workbookId, existingSchedule.id);
         }
       } else if (existingSchedule) {
         // Update existing schedule's cron expression
-        await this.scheduleService.update(workbookId, existingSchedule.id, { cronExpression: body.schedule }, actor);
+        await this.scheduleService.update(workbookId, existingSchedule.id, { cronExpression: body.schedule });
       } else {
         // Create a new schedule
         await this.scheduleService.create(
@@ -743,7 +743,7 @@ export class SyncService {
       where: { workbookId, action: 'SYNC', entityId: syncId },
     });
     for (const schedule of schedules) {
-      await this.scheduleService.delete(workbookId, schedule.id, actor);
+      await this.scheduleService.delete(workbookId, schedule.id);
     }
 
     await this.db.client.sync.delete({

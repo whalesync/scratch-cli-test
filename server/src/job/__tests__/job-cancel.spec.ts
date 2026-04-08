@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import type { WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { Actor } from 'src/users/types';
@@ -25,7 +26,11 @@ jest.mock('ioredis', () =>
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-const ACTOR: Actor = { userId: 'usr_1', organizationId: 'org_1' };
+const ACTOR: Actor = {
+  userId: 'usr_1',
+  organizationId: 'org_1',
+  workspacePermissions: [{ id: 'wp_1' as WorkspacePermissionId, workbookId: 'wkb_1' as WorkbookId, role: 'editor' }],
+};
 const BULL_JOB_ID = 'publish-run-usr_1-wkb_1-abc';
 
 function makeDbJob(overrides?: Record<string, unknown>) {
@@ -54,19 +59,16 @@ describe('JobService.cancelJob', () => {
   let service: JobService;
   let mockFindFirst: jest.Mock;
   let mockUpdate: jest.Mock;
-  let mockFindFirstWorkbook: jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
     mockFindFirst = jest.fn();
     mockUpdate = jest.fn();
-    mockFindFirstWorkbook = jest.fn().mockResolvedValue({ id: 'wkb_1' });
 
     const db = {
       client: {
         dbJob: { findFirst: mockFindFirst, update: mockUpdate },
-        workbook: { findFirst: mockFindFirstWorkbook },
       },
     } as unknown as DbService;
 
@@ -83,6 +85,13 @@ describe('JobService.cancelJob', () => {
     mockFindFirst.mockResolvedValue(null);
 
     await expect(service.cancelJob(BULL_JOB_ID, ACTOR)).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws ForbiddenException when actor lacks workspace permission', async () => {
+    const actorWithoutAccess: Actor = { userId: 'usr_2', organizationId: 'org_1' };
+    mockFindFirst.mockResolvedValue(makeDbJob());
+
+    await expect(service.cancelJob(BULL_JOB_ID, actorWithoutAccess)).rejects.toThrow(ForbiddenException);
   });
 
   it('returns success=false when DB status is already terminal', async () => {

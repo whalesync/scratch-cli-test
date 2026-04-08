@@ -44,7 +44,9 @@ export class JobController {
     const offsetNum = offset ? parseInt(offset, 10) : 0;
     const filter = type || syncId || dataFolderId ? { type, syncId, dataFolderId } : undefined;
 
-    const dbJobs = await this.jobService.getJobsByUserId(userId, limitNum, offsetNum, workbookId, filter);
+    const dbJobs = workbookId
+      ? await this.jobService.getJobsForWorkbook(workbookId, limitNum, offsetNum, filter)
+      : await this.jobService.getJobsByUserId(userId, limitNum, offsetNum, undefined, filter);
     return dbJobs.map(dbJobToJobEntity);
   }
 
