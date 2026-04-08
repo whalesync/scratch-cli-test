@@ -1,18 +1,22 @@
 import DataEditor, {
   GridCellKind,
+  GridColumnMenuIcon,
   type CellClickedEventArgs,
   type DataEditorRef,
   type DrawCellCallback,
   type EditableGridCell,
   type GridColumn,
   type GridMouseEventArgs,
+  type HeaderClickedEventArgs,
   type Item,
+  type Rectangle,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
 import { Box, Group, Loader, Portal, Stack } from '@mantine/core';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
+import { FolderGridHeaderMenu } from './FolderGridHeaderMenu';
 import { RecordDetailView } from './RecordDetailView';
 
 // ── Types ──
@@ -37,6 +41,12 @@ interface DiffGridResult {
 
 type FilterStatus = 'unreviewed' | 'unpublished';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
+
+interface HeaderMenuState {
+  columnId: string;
+  columnTitle: string;
+  bounds: Rectangle;
+}
 
 interface CellPopoverState {
   col: number;
@@ -208,6 +218,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(1);
+  const [headerMenu, setHeaderMenu] = useState<HeaderMenuState | null>(null);
   const [activeEditorDiffKind, setActiveEditorDiffKind] = useState<EditorOverlayDiffKind | null>(null);
   const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -272,6 +283,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setColumnWidths({});
     setDetailRowIndex(null);
     hoveredCellRef.current = null;
+    setHeaderMenu(null);
     setActiveEditorDiffKind(null);
     setSchema(null);
     setCellPopover(null);
@@ -415,6 +427,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       id: name,
       title: name,
       width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
+      hasMenu: true,
+      menuIcon: GridColumnMenuIcon.Dots,
     }));
   }, [columnWidths, diffData?.columns, titleColumnId]);
 
@@ -575,6 +589,38 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [columns],
   );
 
+  const openHeaderMenu = useCallback(
+    (colIndex: number, bounds: Rectangle) => {
+      const column = columns[colIndex];
+      if (!column) {
+        return;
+      }
+
+      closeGridEditorChrome();
+      setHeaderMenu({
+        columnId: String(column.id),
+        columnTitle: column.title,
+        bounds,
+      });
+    },
+    [closeGridEditorChrome, columns],
+  );
+
+  const onHeaderMenuClick = useCallback(
+    (colIndex: number, bounds: Rectangle) => {
+      openHeaderMenu(colIndex, bounds);
+    },
+    [openHeaderMenu],
+  );
+
+  const onHeaderContextMenu = useCallback(
+    (colIndex: number, event: HeaderClickedEventArgs) => {
+      event.preventDefault();
+      openHeaderMenu(colIndex, event.bounds);
+    },
+    [openHeaderMenu],
+  );
+
   const drawCell: DrawCellCallback = useCallback(
     (args, drawContent) => {
       drawContent();
@@ -610,6 +656,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   );
 
   const onCellClicked = useCallback(([col, row]: Item, event: CellClickedEventArgs) => {
+    setHeaderMenu(null);
     if (col !== 0) return;
     const iconZoneWidth = 12 + 6 * 2;
     if (event.localEventX >= event.bounds.width - iconZoneWidth) {
@@ -651,6 +698,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
+      setHeaderMenu(null);
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
@@ -793,6 +841,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 smoothScrollX
                 smoothScrollY
                 onHeaderClicked={onHeaderClicked}
+                onHeaderContextMenu={onHeaderContextMenu}
+                onHeaderMenuClick={onHeaderMenuClick}
                 onCellClicked={onCellClicked}
                 onMouseMove={onMouseMove}
                 onCellActivated={onCellActivated}
@@ -806,6 +856,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 freezeColumns={1}
               />
             )}
+            <FolderGridHeaderMenu
+              columnTitle={headerMenu?.columnTitle ?? ''}
+              bounds={headerMenu?.bounds ?? null}
+              onClose={() => setHeaderMenu(null)}
+            />
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
               <RecordDetailView
                 rows={pagedRows}

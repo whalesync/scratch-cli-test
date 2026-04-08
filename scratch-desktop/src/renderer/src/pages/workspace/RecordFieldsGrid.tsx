@@ -69,7 +69,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                   <Textarea
                     autoFocus
                     autosize
-                    minRows={2}
+                    minRows={1}
                     value={row.editValue ?? row.value}
                     onChange={(e) => row.onEditValueChange?.(e.currentTarget.value)}
                     onBlur={() => row.onEditCommit?.()}
@@ -100,8 +100,10 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                               : 'transparent'
                         }`,
                         borderRadius: 0,
+                        padding: '12px 16px',
                         fontFamily: 'monospace',
                         fontSize: 13,
+                        lineHeight: 1.6,
                       },
                     }}
                   />
