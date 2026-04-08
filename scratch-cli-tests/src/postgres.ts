@@ -78,6 +78,60 @@ export async function teardownTestTable(): Promise<void> {
   }
 }
 
+const PRODUCTS_TABLE = "integration_products";
+
+/**
+ * Drop and recreate the integration_products table, then load test data.
+ */
+export async function setupProductsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${PRODUCTS_TABLE} CASCADE`);
+
+    const sqlPath = path.resolve(__dirname, "../test_table_products.sql");
+    const createSql = fs.readFileSync(sqlPath, "utf-8");
+    await client.query(createSql);
+
+    // Insert test data directly
+    const rows = [
+      ["Widget A", 19.99, "widgets"],
+      ["Widget B", 29.99, "widgets"],
+      ["Gadget X", 49.99, "gadgets"],
+    ];
+    for (const [name, price, category] of rows) {
+      await client.query(
+        `INSERT INTO ${PRODUCTS_TABLE} (name, price, category) VALUES ($1, $2, $3)`,
+        [name, price, category],
+      );
+    }
+
+    const count = await client.query(
+      `SELECT COUNT(*) AS cnt FROM ${PRODUCTS_TABLE}`,
+    );
+    console.log(
+      `[postgres] ${PRODUCTS_TABLE}: ${count.rows[0].cnt} rows loaded`,
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Drop the integration_products table.
+ */
+export async function teardownProductsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${PRODUCTS_TABLE} CASCADE`);
+  } finally {
+    await client.end();
+  }
+}
+
 interface BlogPostRow {
   post_id: string;
   title: string;

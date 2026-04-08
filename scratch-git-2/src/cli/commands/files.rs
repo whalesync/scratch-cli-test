@@ -191,7 +191,11 @@ async fn run_download(cwd: &Path, server_url: &str, json: bool, on_delete: OnDel
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, Some(cwd))?;
 
-    if contexts.is_empty() {
+    let has_sync_changes = !sync_result.connections_added.is_empty()
+        || !sync_result.connections_removed.is_empty()
+        || !sync_result.connections_detached.is_empty();
+
+    if contexts.is_empty() && !has_sync_changes {
         anyhow::bail!(
             "No connections found in {}. Run `scratchmd workspaces init` first.",
             workspace_dir.display()
@@ -285,11 +289,10 @@ async fn sync_workspace_structure(
 
     // Handle removed connections
     for entry in &removed {
-        let action = if json {
-            // In JSON mode, default to keep (no interactive prompts)
-            OnDeleteAction::Keep
-        } else {
-            on_delete
+        let action = match on_delete {
+            // In JSON mode, prompt isn't possible — default to keep
+            OnDeleteAction::Prompt if json => OnDeleteAction::Keep,
+            other => other,
         };
 
         match action {

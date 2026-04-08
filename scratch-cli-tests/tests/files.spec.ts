@@ -55,7 +55,6 @@ describeIfPostgres("Files", () => {
     const ws = cli.json<{ id: string }>([
       "workspaces",
       "create",
-      "--name",
       uniqueName("files"),
     ]);
     workspaceId = ws.id;
@@ -63,9 +62,9 @@ describeIfPostgres("Files", () => {
     // 2. Add database connection
     const conn = cli.json<{ id: string }>([
       "connections",
-      "add",
       "--workspace",
       workspaceId,
+      "add",
       "--service",
       TEST_CONNECTOR_SERVICE,
       "--param",
@@ -86,25 +85,27 @@ describeIfPostgres("Files", () => {
     // 4. Link the integration_blog_posts table (must run from workspace dir)
     const tables = cli.json<Array<{ id: string; displayName: string }>>([
       "linked",
-      "available",
-      connectionId,
       "--workspace",
       workspaceId,
+      "available",
+      connectionId,
     ]);
     const blogPostsTable = tables.find(
       (t) => t.displayName === "integration_blog_posts",
     )!;
 
+    // Table ID from `available` is comma-joined (e.g. "public,integration_blog_posts").
+    // The `add` endpoint expects each part as a separate --table-id arg.
+    const tableIdParts = blogPostsTable.id.split(",");
     const linked = cli.json<{ id: string }>(
       [
         "linked",
-        "add",
         "--workspace",
         workspaceId,
+        "add",
         "--connection-id",
         connectionId,
-        "--table-id",
-        blogPostsTable.id,
+        ...tableIdParts.flatMap((part: string) => ["--table-id", part]),
         "--name",
         blogPostsTable.displayName,
       ],
@@ -113,7 +114,7 @@ describeIfPostgres("Files", () => {
     linkedFolderId = linked.id;
 
     // 5. Pull data and download files
-    cli.run(["linked", "pull", linkedFolderId, "--workspace", workspaceId], {
+    cli.run(["linked", "--workspace", workspaceId, "pull", linkedFolderId], {
       cwd: workspaceDir,
     });
     cli.run(["files", "download"], { cwd: workspaceDir });

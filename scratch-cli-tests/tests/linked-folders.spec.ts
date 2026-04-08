@@ -27,7 +27,6 @@ describeIfPostgres("Linked Folders", () => {
     const ws = cli.json<{ id: string }>([
       "workspaces",
       "create",
-      "--name",
       uniqueName("linked"),
     ]);
     workspaceId = ws.id;
@@ -44,9 +43,9 @@ describeIfPostgres("Linked Folders", () => {
     // Add database connection
     const conn = cli.json<{ id: string }>([
       "connections",
-      "add",
       "--workspace",
       workspaceId,
+      "add",
       "--service",
       TEST_CONNECTOR_SERVICE,
       "--param",
@@ -71,10 +70,10 @@ describeIfPostgres("Linked Folders", () => {
     it("should list available tables from the connection", () => {
       const result = cli.json<Array<{ id: string; displayName: string }>>([
         "linked",
-        "available",
-        connectionId,
         "--workspace",
         workspaceId,
+        "available",
+        connectionId,
       ]);
       expect(result.length).toBeGreaterThan(0);
       expect(
@@ -87,26 +86,28 @@ describeIfPostgres("Linked Folders", () => {
     it("should link the integration_blog_posts table to the workspace", () => {
       const tables = cli.json<Array<{ id: string; displayName: string }>>([
         "linked",
-        "available",
-        connectionId,
         "--workspace",
         workspaceId,
+        "available",
+        connectionId,
       ]);
       const blogPostsTable = tables.find(
         (t) => t.displayName === "integration_blog_posts",
       )!;
       expect(blogPostsTable).toBeDefined();
 
+      // Table ID from `available` is comma-joined (e.g. "public,table_name").
+      // The `add` endpoint expects each part as a separate --table-id arg.
+      const tableIdParts = blogPostsTable.id.split(",");
       const result = cli.json<{ id: string; name: string }>(
         [
           "linked",
-          "add",
           "--workspace",
           workspaceId,
+          "add",
           "--connection-id",
           connectionId,
-          "--table-id",
-          blogPostsTable.id,
+          ...tableIdParts.flatMap((part: string) => ["--table-id", part]),
           "--name",
           blogPostsTable.displayName,
         ],
@@ -121,9 +122,9 @@ describeIfPostgres("Linked Folders", () => {
     it("should list linked folders grouped by connector", () => {
       const result = cli.json<Array<{ dataFolders: Array<{ id: string }> }>>([
         "linked",
-        "list",
         "--workspace",
         workspaceId,
+        "list",
       ]);
       const allFolders = result.flatMap((g) => g.dataFolders);
       expect(allFolders.some((f) => f.id === linkedFolderId)).toBe(true);
@@ -137,7 +138,7 @@ describeIfPostgres("Linked Folders", () => {
         creates: number;
         updates: number;
         deletes: number;
-      }>(["linked", "show", linkedFolderId, "--workspace", workspaceId]);
+      }>(["linked", "--workspace", workspaceId, "show", linkedFolderId]);
       expect(result.id).toBe(linkedFolderId);
       expect(typeof result.creates).toBe("number");
     });
@@ -146,7 +147,7 @@ describeIfPostgres("Linked Folders", () => {
   describe("pull", () => {
     it("should pull data from the remote and complete successfully", () => {
       const result = cli.run(
-        ["linked", "pull", linkedFolderId, "--workspace", workspaceId],
+        ["linked", "--workspace", workspaceId, "pull", linkedFolderId],
         { cwd: workspaceDir },
       );
       expect(result.exitCode).toBe(0);
@@ -158,10 +159,10 @@ describeIfPostgres("Linked Folders", () => {
       cli.run(
         [
           "linked",
-          "remove",
-          linkedFolderId,
           "--workspace",
           workspaceId,
+          "remove",
+          linkedFolderId,
           "--yes",
         ],
         {
@@ -172,9 +173,9 @@ describeIfPostgres("Linked Folders", () => {
 
       const list = cli.json<Array<{ dataFolders: Array<{ id: string }> }>>([
         "linked",
-        "list",
         "--workspace",
         workspaceId,
+        "list",
       ]);
       const allFolders = list.flatMap((g) => g.dataFolders);
       expect(allFolders.some((f) => f.id === linkedFolderId)).toBe(false);

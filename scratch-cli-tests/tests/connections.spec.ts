@@ -20,7 +20,6 @@ describeIfPostgres("Connections", () => {
     const ws = cli.json<{ id: string }>([
       "workspaces",
       "create",
-      "--name",
       uniqueName("conn"),
     ]);
     workspaceId = ws.id;
@@ -35,9 +34,9 @@ describeIfPostgres("Connections", () => {
     it("should create a connection", () => {
       const result = cli.json<{ id: string; service: string }>([
         "connections",
-        "add",
         "--workspace",
         workspaceId,
+        "add",
         "--service",
         TEST_CONNECTOR_SERVICE,
         "--param",
@@ -55,9 +54,9 @@ describeIfPostgres("Connections", () => {
     it("should list connections for the workspace", () => {
       const result = cli.json<Array<{ id: string }>>([
         "connections",
-        "list",
         "--workspace",
         workspaceId,
+        "list",
       ]);
       expect(result.length).toBeGreaterThanOrEqual(1);
       expect(result.some((c) => c.id === connectionId)).toBe(true);
@@ -68,10 +67,10 @@ describeIfPostgres("Connections", () => {
     it("should show connection details", () => {
       const result = cli.json<{ id: string; service: string }>([
         "connections",
-        "show",
-        connectionId,
         "--workspace",
         workspaceId,
+        "show",
+        connectionId,
       ]);
       expect(result.id).toBe(connectionId);
       expect(result.service).toBe(TEST_CONNECTOR_SERVICE);
@@ -83,10 +82,10 @@ describeIfPostgres("Connections", () => {
       cli.run(
         [
           "connections",
-          "remove",
-          connectionId,
           "--workspace",
           workspaceId,
+          "remove",
+          connectionId,
           "--yes",
         ],
         { noJson: true },
@@ -94,9 +93,9 @@ describeIfPostgres("Connections", () => {
 
       const list = cli.json<Array<{ id: string }>>([
         "connections",
-        "list",
         "--workspace",
         workspaceId,
+        "list",
       ]);
       expect(list.some((c) => c.id === connectionId)).toBe(false);
     });

@@ -19,7 +19,6 @@ describe("Workspaces", () => {
       const result = cli.json<{ id: string; name: string }>([
         "workspaces",
         "create",
-        "--name",
         name,
       ]);
       workspaceId = result.id;
@@ -34,7 +33,6 @@ describe("Workspaces", () => {
       const created = cli.json<{ id: string }>([
         "workspaces",
         "create",
-        "--name",
         name,
       ]);
       workspaceId = created.id;
@@ -63,7 +61,6 @@ describe("Workspaces", () => {
       const created = cli.json<{ id: string }>([
         "workspaces",
         "create",
-        "--name",
         name,
       ]);
       workspaceId = created.id;
@@ -81,12 +78,11 @@ describe("Workspaces", () => {
       const created = cli.json<{ id: string }>([
         "workspaces",
         "create",
-        "--name",
         name,
       ]);
       const id = created.id;
 
-      cli.run(["workspaces", "delete", id, "--yes"], { noJson: true });
+      cli.run(["workspaces", "delete", id], { noJson: true });
 
       const result = cli.run(["workspaces", "show", id], { expectError: true });
       expect(result.exitCode).not.toBe(0);

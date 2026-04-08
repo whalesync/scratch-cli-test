@@ -20,13 +20,13 @@ export default async function globalSetup() {
   // 1. Resolve or build the CLI binary
   let binaryPath = process.env.SCRATCH_CLI_BINARY;
   if (!binaryPath) {
-    const cliDir = path.resolve(__dirname, "../../scratch-cli");
-    console.log("Building scratchmd binary...");
-    execSync("go build -o ./scratchmd ./cmd/scratchmd", {
-      cwd: cliDir,
+    const crateDir = path.resolve(__dirname, "../../scratch-git-2");
+    console.log("Building scratchmd binary (Rust)...");
+    execSync("cargo build --bin scratchmd --release", {
+      cwd: crateDir,
       stdio: "inherit",
     });
-    binaryPath = path.join(cliDir, "scratchmd");
+    binaryPath = path.join(crateDir, "target", "release", "scratchmd");
   }
 
   // Verify binary exists and is executable

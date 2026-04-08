@@ -20,7 +20,7 @@ export function uniqueName(prefix = "cli-test"): string {
  */
 export function deleteWorkspace(cli: ScratchCli, workspaceId: string): void {
   try {
-    const result = cli.run(["workspaces", "delete", workspaceId, "--yes"], {
+    const result = cli.run(["workspaces", "delete", workspaceId], {
       noJson: true,
       expectError: true,
     });
