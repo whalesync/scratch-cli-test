@@ -1,14 +1,15 @@
 import DataEditor, {
   GridCellKind,
   type CellClickedEventArgs,
-  type CustomCell,
-  type CustomRenderer,
+  type DataEditorRef,
   type DrawCellCallback,
+  type EditableGridCell,
   type GridColumn,
+  type GridMouseEventArgs,
   type Item,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Modal, Stack } from '@mantine/core';
+import { Box, Group, Loader, Portal, Stack } from '@mantine/core';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
@@ -35,6 +36,18 @@ interface DiffGridResult {
 }
 
 type FilterStatus = 'unreviewed' | 'unpublished';
+type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
+
+interface CellPopoverState {
+  col: number;
+  row: number;
+  filename: string;
+  fieldName: string;
+  value: string;
+  fromValue: string;
+  diffKind: FieldValueDiffKind;
+  bounds: { x: number; y: number; width: number; height: number };
+}
 
 interface FolderDataGridProps {
   /** Included so memo() invalidates when switching workbooks even if folder path + local path match. */
@@ -72,10 +85,43 @@ function rowHasUnpublishedChanges(row: DiffRow): boolean {
   return row.__unpublishedFields.length > 0;
 }
 
+function getCellDiffState(row: DiffRow, fieldName: string): { diffKind: FieldValueDiffKind; fromValue: string } {
+  const isUnreviewed = row.__changedFields.includes(fieldName);
+  const isUnpublished = !isUnreviewed && row.__unpublishedFields.includes(fieldName);
+  if (isUnreviewed) {
+    return {
+      diffKind: 'unreviewed',
+      fromValue: toDisplayString(row.__fromFields[fieldName]),
+    };
+  }
+  if (isUnpublished) {
+    return {
+      diffKind: 'unpublished',
+      fromValue: toDisplayString(row.__masterFields[fieldName]),
+    };
+  }
+  return { diffKind: null, fromValue: '' };
+}
+
 function inferCellKind(value: unknown): GridCellKind {
   if (typeof value === 'boolean') return GridCellKind.Boolean;
   if (typeof value === 'number') return GridCellKind.Number;
   return GridCellKind.Text;
+}
+
+function editableCellToString(cell: EditableGridCell): string {
+  switch (cell.kind) {
+    case GridCellKind.Text:
+    case GridCellKind.Markdown:
+    case GridCellKind.Uri:
+      return cell.data;
+    case GridCellKind.Number:
+      return cell.data == null ? '' : String(cell.data);
+    case GridCellKind.Boolean:
+      return cell.data == null ? '' : String(cell.data);
+    default:
+      return '';
+  }
 }
 
 function drawInspectIcon(
@@ -95,111 +141,9 @@ function drawInspectIcon(
   ctx.restore();
 }
 
-// ── Custom cell: status dot on first data column ──
-
-interface StatusDotCellData {
-  kind: 'status-dot-cell';
-  displayText: string;
+function isInsideGridEditorOverlay(target: Element): boolean {
+  return Boolean(target.closest('.gdg-clip-region') || target.closest('.gdg-input'));
 }
-
-type StatusDotCell = CustomCell<StatusDotCellData>;
-
-const statusDotRenderer: CustomRenderer<StatusDotCell> = {
-  kind: GridCellKind.Custom,
-  needsHover: true,
-  isMatch: (c): c is StatusDotCell =>
-    typeof c.data === 'object' && c.data !== null && (c.data as StatusDotCellData).kind === 'status-dot-cell',
-  draw: ({ ctx, rect, cell, theme, hoverAmount }) => {
-    const { x, y, width, height } = rect;
-    const { displayText } = cell.data;
-    const PADDING = 8;
-    const iconSize = 12;
-    const iconPad = 6;
-    const hoverReserve = hoverAmount > 0 ? iconSize + iconPad : 0;
-    const textMaxWidth = width - PADDING * 2 - hoverReserve;
-
-    ctx.save();
-    ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
-    ctx.fillStyle = theme.textDark;
-    ctx.textBaseline = 'middle';
-    ctx.beginPath();
-    ctx.rect(x + PADDING, y, textMaxWidth, height);
-    ctx.clip();
-    ctx.fillText(displayText, x + PADDING, y + height / 2);
-    ctx.restore();
-
-    if (hoverAmount > 0) {
-      drawInspectIcon(
-        ctx,
-        x + width - iconSize - iconPad,
-        y + (height - iconSize) / 2,
-        iconSize,
-        theme.textMedium ?? '#888',
-        hoverAmount,
-      );
-    }
-
-    return true;
-  },
-};
-
-// ── Custom cell: changed field (blue bg + left border, current value only) ──
-
-interface DiffCellData {
-  kind: 'diff-cell';
-  displayText: string;
-  diffKind: 'unreviewed' | 'unpublished';
-  isIdCol?: boolean;
-}
-
-type DiffCell = CustomCell<DiffCellData>;
-
-const diffCellRenderer: CustomRenderer<DiffCell> = {
-  kind: GridCellKind.Custom,
-  needsHover: true,
-  isMatch: (c): c is DiffCell =>
-    typeof c.data === 'object' && c.data !== null && (c.data as DiffCellData).kind === 'diff-cell',
-  draw: ({ ctx, rect, cell, theme, hoverAmount }) => {
-    const { x, y, width, height } = rect;
-    const { displayText, diffKind, isIdCol } = cell.data;
-    const border = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER : DIFF_UNPUBLISHED_BORDER;
-    const BORDER_W = 3;
-    const PADDING = 8;
-    const iconSize = 12;
-    const iconPad = 6;
-    const hoverReserve = isIdCol && hoverAmount > 0 ? iconSize + iconPad : 0;
-
-    ctx.save();
-
-    // Left border
-    ctx.fillStyle = border;
-    ctx.fillRect(x, y, BORDER_W, height);
-
-    // Text clipped to remaining width
-    ctx.beginPath();
-    ctx.rect(x + BORDER_W + PADDING, y, width - BORDER_W - PADDING * 2 - hoverReserve, height);
-    ctx.clip();
-    ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
-    ctx.fillStyle = theme.textDark;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(displayText, x + BORDER_W + PADDING, y + height / 2);
-
-    ctx.restore();
-
-    if (isIdCol && hoverAmount > 0) {
-      drawInspectIcon(
-        ctx,
-        x + width - iconSize - iconPad,
-        y + (height - iconSize) / 2,
-        iconSize,
-        theme.textMedium ?? '#888',
-        hoverAmount,
-      );
-    }
-
-    return true;
-  },
-};
 
 // ── Row colours ──
 
@@ -264,21 +208,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(1);
-  const [cellModal, setCellModal] = useState<{
-    col: number;
-    row: number;
-    filename: string;
-    fieldName: string;
-    value: string;
-    fromValue: string;
-    diffKind: FieldValueDiffKind;
-  } | null>(null);
-  const [cellModalEditing, setCellModalEditing] = useState(false);
-  const [cellModalEditValue, setCellModalEditValue] = useState('');
+  const [activeEditorDiffKind, setActiveEditorDiffKind] = useState<EditorOverlayDiffKind | null>(null);
+  const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const gridRef = useRef<DataEditorRef | null>(null);
+  const cellPopoverRef = useRef<HTMLDivElement | null>(null);
+  const hoveredCellRef = useRef<Item | null>(null);
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
     if (observerRef.current) {
@@ -333,12 +271,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setFilterStatus(null);
     setColumnWidths({});
     setDetailRowIndex(null);
+    hoveredCellRef.current = null;
+    setActiveEditorDiffKind(null);
     setSchema(null);
-    setCellModal(null);
-    setCellModalEditing(false);
+    setCellPopover(null);
     setPage(1);
     setReloadKey(0);
   }, [selectedFolderPath]);
+
+  useEffect(() => {
+    const { body } = document;
+    if (activeEditorDiffKind == null) {
+      delete body.dataset.gridEditorDiff;
+      return;
+    }
+    body.dataset.gridEditorDiff = activeEditorDiffKind;
+    return () => {
+      delete body.dataset.gridEditorDiff;
+    };
+  }, [activeEditorDiffKind]);
 
   // Reset to page 1 when filter or sort changes
   useEffect(() => {
@@ -355,7 +306,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     void window.scratchFiles
       .getFolderMetadata(selectedFolderPath, workspacePath)
       .then((meta) => {
-        console.debug('Retrieved folder metadata', meta);
         if (!cancelled) setSchema(meta.schema);
       })
       .catch((err) => {
@@ -366,6 +316,56 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       cancelled = true;
     };
   }, [selectedFolderPath, workspacePath]);
+
+  useEffect(() => {
+    if (!cellPopover) {
+      return;
+    }
+
+    const nextBounds = gridRef.current?.getBounds(cellPopover.col, cellPopover.row);
+    if (!nextBounds) {
+      return;
+    }
+
+    setCellPopover((current) =>
+      current == null ||
+      (current.bounds.x === nextBounds.x &&
+        current.bounds.y === nextBounds.y &&
+        current.bounds.width === nextBounds.width &&
+        current.bounds.height === nextBounds.height)
+        ? current
+        : {
+            ...current,
+            bounds: nextBounds,
+          },
+    );
+  }, [cellPopover, gridSize]);
+
+  useEffect(() => {
+    if (!cellPopover) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (cellPopoverRef.current?.contains(target)) {
+        return;
+      }
+
+      if (isInsideGridEditorOverlay(target)) {
+        return;
+      }
+
+      setCellPopover(null);
+    };
+
+    window.addEventListener('mousedown', handlePointerDown, true);
+    return () => window.removeEventListener('mousedown', handlePointerDown, true);
+  }, [cellPopover]);
 
   // ── Derived ──
 
@@ -426,6 +426,53 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     };
   }, [diffData?.rows]);
 
+  const closeGridEditorChrome = useCallback(() => {
+    setActiveEditorDiffKind(null);
+    setCellPopover(null);
+  }, []);
+
+  const refreshGridData = useCallback(() => {
+    setReloadKey((k) => k + 1);
+  }, []);
+
+  const acceptGridCellChange = useCallback(
+    (filename: string, fieldName: string, nextValue: string, logLabel: string) => {
+      if (!selectedFolderPath || !workspacePath) {
+        return;
+      }
+
+      void window.scratchFiles
+        .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
+        .then(() => {
+          closeGridEditorChrome();
+          refreshGridData();
+        })
+        .catch((err: unknown) => {
+          console.error(`[acceptCellChange] ${logLabel} failed:`, err);
+        });
+    },
+    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+  );
+
+  const undoApprovedGridCellChange = useCallback(
+    (filename: string, fieldName: string) => {
+      if (!selectedFolderPath || !workspacePath) {
+        return;
+      }
+
+      void window.scratchFiles
+        .undoApprovedCellChange(selectedFolderPath, workspacePath, filename, fieldName)
+        .then(() => {
+          closeGridEditorChrome();
+          refreshGridData();
+        })
+        .catch((err: unknown) => {
+          console.error('[undoApprovedCellChange] undo failed:', err);
+        });
+    },
+    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+  );
+
   // ── Cell content ──
 
   const getCellContent = useCallback(
@@ -439,72 +486,68 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       const status = r.__rowStatus;
       const rowBg = ROW_TINT[status];
-      const rowTheme = rowBg ? { bgCell: rowBg } : undefined;
+      const rowTheme = rowBg ? { bgCell: rowBg } : {};
       const val = r[colId];
-      const isUnreviewed = r.__changedFields.includes(colId);
-      const isUnpublished = !isUnreviewed && r.__unpublishedFields.includes(colId);
+      const { diffKind } = getCellDiffState(r, colId);
+      const diffTheme =
+        diffKind === 'unreviewed'
+          ? { bgCell: DIFF_WORKING_BG }
+          : diffKind === 'unpublished'
+            ? { bgCell: DIFF_UNPUBLISHED_BG }
+            : {};
+      const themeOverride = { ...rowTheme, ...diffTheme };
+      const allowOverlay = status !== 'deleted';
 
-      // Unreviewed change (w != d): darker blue
-      if (isUnreviewed) {
-        return {
-          kind: GridCellKind.Custom as const,
-          allowOverlay: false as const,
-          ...(col === 0 ? { cursor: 'pointer' } : {}),
-          copyData: toDisplayString(val),
-          themeOverride: { bgCell: DIFF_WORKING_BG },
-          data: {
-            kind: 'diff-cell' as const,
-            displayText: toDisplayString(val),
-            diffKind: 'unreviewed',
-            isIdCol: col === 0,
-          } satisfies DiffCellData,
-        };
-      }
-
-      // Unpublished change (w == d but d != m): lighter blue
-      if (isUnpublished) {
-        return {
-          kind: GridCellKind.Custom as const,
-          allowOverlay: false as const,
-          ...(col === 0 ? { cursor: 'pointer' } : {}),
-          copyData: toDisplayString(val),
-          themeOverride: { bgCell: DIFF_UNPUBLISHED_BG },
-          data: {
-            kind: 'diff-cell' as const,
-            displayText: toDisplayString(val),
-            diffKind: 'unpublished',
-            isIdCol: col === 0,
-          } satisfies DiffCellData,
-        };
-      }
-
-      // First column: inspect-on-hover
       if (col === 0) {
+        const kind = inferCellKind(val);
+        if (kind === GridCellKind.Boolean) {
+          return {
+            kind,
+            data: typeof val === 'boolean' ? val : undefined,
+            allowOverlay,
+            copyData: toDisplayString(val),
+            themeOverride,
+          };
+        }
+        if (kind === GridCellKind.Number) {
+          return {
+            kind,
+            data: val == null ? undefined : Number(val),
+            displayData: toDisplayString(val),
+            allowOverlay,
+            copyData: toDisplayString(val),
+            themeOverride,
+          };
+        }
+        const display = toDisplayString(val);
         return {
-          kind: GridCellKind.Custom as const,
-          allowOverlay: false as const,
-          cursor: 'pointer',
-          copyData: toDisplayString(val),
-          themeOverride: rowTheme,
-          data: {
-            kind: 'status-dot-cell' as const,
-            displayText: toDisplayString(val),
-          } satisfies StatusDotCellData,
+          kind: GridCellKind.Text as const,
+          data: display,
+          displayData: display,
+          allowOverlay,
+          copyData: display,
+          themeOverride,
         };
       }
 
-      // Standard cells
       const kind = inferCellKind(val);
       if (kind === GridCellKind.Boolean) {
-        return { kind, data: Boolean(val), allowOverlay: false as const, themeOverride: rowTheme };
+        return {
+          kind,
+          data: typeof val === 'boolean' ? val : undefined,
+          allowOverlay,
+          copyData: toDisplayString(val),
+          themeOverride,
+        };
       }
       if (kind === GridCellKind.Number) {
         return {
           kind,
           data: val == null ? undefined : Number(val),
           displayData: toDisplayString(val),
-          allowOverlay: false as const,
-          themeOverride: rowTheme,
+          allowOverlay,
+          copyData: toDisplayString(val),
+          themeOverride,
         };
       }
       const display = toDisplayString(val);
@@ -512,8 +555,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         kind: GridCellKind.Text as const,
         data: display,
         displayData: display,
-        allowOverlay: false as const,
-        themeOverride: rowTheme,
+        allowOverlay,
+        copyData: display,
+        themeOverride,
       };
     },
     [pagedRows, columns],
@@ -531,19 +575,39 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [columns],
   );
 
-  const drawCell: DrawCellCallback = useCallback((args, drawContent) => {
-    drawContent();
-    if (args.col !== 0 || args.hoverAmount === 0) return;
-    const { ctx, rect, theme, hoverAmount } = args;
-    drawInspectIcon(
-      ctx,
-      rect.x + rect.width - 12 - 6,
-      rect.y + (rect.height - 12) / 2,
-      12,
-      theme.textMedium ?? '#888',
-      hoverAmount,
-    );
-  }, []);
+  const drawCell: DrawCellCallback = useCallback(
+    (args, drawContent) => {
+      drawContent();
+      const hoveredCell = hoveredCellRef.current;
+      const row = pagedRows[args.row] as DiffRow | undefined;
+      const colId = columns[args.col]?.id;
+      if (!row || !colId) {
+        return;
+      }
+
+      const { diffKind } = getCellDiffState(row, colId);
+      if (diffKind !== null) {
+        args.ctx.save();
+        args.ctx.fillStyle = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER : DIFF_UNPUBLISHED_BORDER;
+        args.ctx.fillRect(args.rect.x, args.rect.y, 3, args.rect.height);
+        args.ctx.restore();
+      }
+
+      if (args.col !== 0 || hoveredCell?.[0] !== args.col || hoveredCell?.[1] !== args.row) {
+        return;
+      }
+
+      drawInspectIcon(
+        args.ctx,
+        args.rect.x + args.rect.width - 12 - 6,
+        args.rect.y + (args.rect.height - 12) / 2,
+        12,
+        args.theme.textMedium ?? '#888',
+        1,
+      );
+    },
+    [columns, pagedRows],
+  );
 
   const onCellClicked = useCallback(([col, row]: Item, event: CellClickedEventArgs) => {
     if (col !== 0) return;
@@ -553,31 +617,87 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, []);
 
+  const setHoveredCellWithDamage = useCallback((next: Item | null) => {
+    const prev = hoveredCellRef.current;
+    const isSameCell = prev?.[0] === next?.[0] && prev?.[1] === next?.[1];
+    if (isSameCell) {
+      return;
+    }
+
+    hoveredCellRef.current = next;
+
+    const damageCells: { cell: Item }[] = [];
+    if (prev?.[0] === 0) {
+      damageCells.push({ cell: prev });
+    }
+    if (next?.[0] === 0) {
+      damageCells.push({ cell: next });
+    }
+    if (damageCells.length > 0) {
+      gridRef.current?.updateCells(damageCells);
+    }
+  }, []);
+
+  const onMouseMove = useCallback(
+    (args: GridMouseEventArgs) => {
+      setHoveredCellWithDamage(args.kind === 'cell' ? args.location : null);
+    },
+    [setHoveredCellWithDamage],
+  );
+
+  const onGridMouseLeave = useCallback(() => {
+    setHoveredCellWithDamage(null);
+  }, [setHoveredCellWithDamage]);
+
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
       if (r.__rowStatus === 'deleted') return;
+      const bounds = gridRef.current?.getBounds(col, row);
+      if (!bounds) return;
       const value = toDisplayString(r[colId]);
-      const isUnreviewed = r.__changedFields.includes(colId);
-      const isUnpublished = !isUnreviewed && r.__unpublishedFields.includes(colId);
-      const diffKind: FieldValueDiffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
-      const fromValue = isUnreviewed
-        ? toDisplayString(r.__fromFields[colId])
-        : isUnpublished
-          ? toDisplayString(r.__masterFields[colId])
-          : '';
-      setCellModal({ col, row, filename: r.__filename, fieldName: colId, value, fromValue, diffKind });
-      if (diffKind !== null) {
-        setCellModalEditing(false);
-      } else {
-        setCellModalEditValue(value);
-        setCellModalEditing(true);
+      const { diffKind, fromValue } = getCellDiffState(r, colId);
+      setActiveEditorDiffKind(diffKind ?? 'none');
+      if (diffKind === null) {
+        setCellPopover(null);
+        return;
       }
+      setCellPopover({ col, row, filename: r.__filename, fieldName: colId, value, fromValue, diffKind, bounds });
     },
     [pagedRows, columns],
   );
+
+  const onCellEdited = useCallback(
+    ([col, row]: Item, newValue: EditableGridCell) => {
+      const r = pagedRows[row] as DiffRow | undefined;
+      const colId = columns[col]?.id;
+      if (!r || !colId || r.__rowStatus === 'deleted') {
+        return;
+      }
+
+      acceptGridCellChange(r.__filename, colId, editableCellToString(newValue), 'grid overlay save');
+    },
+    [acceptGridCellChange, columns, pagedRows],
+  );
+
+  const onFinishedEditing = useCallback(() => {
+    closeGridEditorChrome();
+  }, [closeGridEditorChrome]);
+
+  const isEditorOutsideClick = useCallback((event: MouseEvent | TouchEvent) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return true;
+    }
+
+    if (cellPopoverRef.current?.contains(target)) {
+      return false;
+    }
+
+    return true;
+  }, []);
 
   const onColumnResize = useCallback(
     (column: GridColumn, newSize: number, colIndex: number) => {
@@ -661,9 +781,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       {selectedFolderPath && !loading && !error && pagedRows.length > 0 && (
         <>
-          <Box ref={wrapperRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+          <Box ref={wrapperRef} onMouseLeave={onGridMouseLeave} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
             {gridSize && (
               <DataEditor
+                ref={gridRef}
                 columns={columns}
                 rows={pagedRows.length}
                 getCellContent={getCellContent}
@@ -673,13 +794,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 smoothScrollY
                 onHeaderClicked={onHeaderClicked}
                 onCellClicked={onCellClicked}
+                onMouseMove={onMouseMove}
                 onCellActivated={onCellActivated}
+                onCellEdited={onCellEdited}
+                onFinishedEditing={onFinishedEditing}
+                isOutsideClick={isEditorOutsideClick}
                 cellActivationBehavior="double-click"
                 onColumnResize={onColumnResize}
                 drawCell={drawCell}
                 rowMarkers="number"
                 freezeColumns={1}
-                customRenderers={[statusDotRenderer, diffCellRenderer]}
               />
             )}
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
@@ -788,67 +912,55 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         </>
       )}
 
-      <Modal opened={cellModal !== null} onClose={() => setCellModal(null)} title={cellModal?.fieldName} size="lg">
-        {cellModal &&
-          selectedFolderPath &&
-          workspacePath &&
-          (() => {
-            const { diffKind, value, fromValue, filename, fieldName } = cellModal;
-            const saveAndClose = (saveValue: string, logLabel: string) => {
-              void window.scratchFiles
-                .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, saveValue)
-                .then(() => {
-                  setCellModal(null);
-                  setReloadKey((k) => k + 1);
-                })
-                .catch((err: unknown) => {
-                  console.error(`[acceptCellChange] ${logLabel} failed:`, err);
-                });
-            };
-            const undoApprovedAndClose = () => {
-              void window.scratchFiles
-                .undoApprovedCellChange(selectedFolderPath, workspacePath, filename, fieldName)
-                .then(() => {
-                  setCellModal(null);
-                  setReloadKey((k) => k + 1);
-                })
-                .catch((err: unknown) => {
-                  console.error('[undoApprovedCellChange] undo failed:', err);
-                });
-            };
+      {cellPopover &&
+        selectedFolderPath &&
+        workspacePath &&
+        (() => {
+          const { bounds, diffKind, value, fromValue, filename, fieldName } = cellPopover;
+          const popoverWidth = Math.max(280, Math.floor(bounds.width));
+          const left = Math.max(12, Math.min(bounds.x, window.innerWidth - popoverWidth - 12));
 
-            return (
-              <FieldValuePanel
-                value={value}
-                fromValue={fromValue}
-                diffKind={diffKind}
-                editing={cellModalEditing}
-                editValue={cellModalEditValue}
-                onEditValueChange={setCellModalEditValue}
-                onSave={() => saveAndClose(cellModalEditValue, 'save')}
-                onCancel={() => {
-                  if (diffKind !== null) {
-                    setCellModalEditing(false);
-                  } else {
-                    setCellModal(null);
-                  }
+          return (
+            <Portal target="#portal">
+              <Box
+                className="click-outside-ignore"
+                ref={cellPopoverRef}
+                style={{
+                  position: 'fixed',
+                  left,
+                  top: Math.max(8, bounds.y - 8),
+                  transform: 'translateY(-100%)',
+                  zIndex: 10010,
+                  width: popoverWidth,
+                  maxWidth: Math.max(280, window.innerWidth - 24),
+                  backgroundColor: 'var(--bg-base)',
+                  border: '1px solid var(--fg-divider)',
+                  borderRadius: 0,
+                  boxShadow: 'none',
+                  padding: 0,
                 }}
-                onApprove={diffKind === 'unreviewed' ? () => saveAndClose(value, 'approve') : undefined}
-                onUndo={
-                  diffKind === 'unreviewed'
-                    ? () => saveAndClose(fromValue, 'undo')
-                    : diffKind === 'unpublished'
-                      ? undoApprovedAndClose
+              >
+                <FieldValuePanel
+                  value={value}
+                  fromValue={fromValue}
+                  diffKind={diffKind}
+                  onApprove={
+                    diffKind === 'unreviewed'
+                      ? () => acceptGridCellChange(filename, fieldName, value, 'approve')
                       : undefined
-                }
-                onEdit={() => {
-                  setCellModalEditValue(value);
-                  setCellModalEditing(true);
-                }}
-              />
-            );
-          })()}
-      </Modal>
+                  }
+                  onUndo={
+                    diffKind === 'unreviewed'
+                      ? () => acceptGridCellChange(filename, fieldName, fromValue, 'undo')
+                      : diffKind === 'unpublished'
+                        ? () => undoApprovedGridCellChange(filename, fieldName)
+                        : undefined
+                  }
+                />
+              </Box>
+            </Portal>
+          );
+        })()}
     </Stack>
   );
 });

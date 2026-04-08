@@ -1,8 +1,7 @@
-import { ActionIcon, Box, Group, Stack, Textarea, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, Stack } from '@mantine/core';
 import { diffWordsWithSpace } from 'diff';
-import { Check, Pencil, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 import { memo } from 'react';
-import { ButtonPrimaryLight, ButtonSecondaryOutline } from '../../components/base/buttons';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
 export type FieldValueDiffKind = 'unreviewed' | 'unpublished' | null;
@@ -11,14 +10,9 @@ interface FieldValuePanelProps {
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
-  editing?: boolean;
-  editValue?: string;
-  onEditValueChange?: (value: string) => void;
-  onSave?: () => void;
-  onCancel?: () => void;
+  onClick?: () => void;
   onApprove?: () => void;
   onUndo?: () => void;
-  onEdit?: () => void;
 }
 
 const DIFF_WORKING_BG = '#dbeafe'; // blue-100  — unreviewed (w != d)
@@ -57,27 +51,27 @@ function IconActionButton({
           };
 
   return (
-    <Tooltip label={label} withArrow position="left">
-      <ActionIcon
-        variant="transparent"
-        size={24}
-        radius={6}
-        aria-label={label}
-        onClick={onClick}
-        styles={{
-          root: {
-            ...styles,
-            minWidth: 24,
-            minHeight: 24,
-            '&:hover': {
-              filter: 'brightness(0.97)',
-            },
+    <ActionIcon
+      variant="transparent"
+      size={24}
+      radius={0}
+      aria-label={label}
+      onClick={onClick}
+      styles={{
+        root: {
+          ...styles,
+          minWidth: 24,
+          minHeight: 24,
+          '&:hover': {
+            filter: 'brightness(0.97)',
           },
-        }}
-      >
+        },
+      }}
+    >
+      <span style={{ display: 'inline-flex', pointerEvents: 'none' }}>
         <StyledLucideIcon Icon={icon} size={14} strokeWidth={2.25} />
-      </ActionIcon>
-    </Tooltip>
+      </span>
+    </ActionIcon>
   );
 }
 
@@ -85,14 +79,9 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   value,
   fromValue = '',
   diffKind,
-  editing = false,
-  editValue,
-  onEditValueChange,
-  onSave,
-  onCancel,
+  onClick,
   onApprove,
   onUndo,
-  onEdit,
 }: FieldValuePanelProps) {
   const bg =
     diffKind === 'unreviewed' ? DIFF_WORKING_BG : diffKind === 'unpublished' ? DIFF_UNPUBLISHED_BG : 'var(--bg-base)';
@@ -101,92 +90,67 @@ export const FieldValuePanel = memo(function FieldValuePanel({
       ? DIFF_WORKING_BORDER
       : diffKind === 'unpublished'
         ? DIFF_UNPUBLISHED_BORDER
-        : 'var(--fg-divider)';
-  const hasActions = editing ? Boolean(onSave || onCancel) : Boolean(onApprove || onUndo || onEdit);
+        : 'transparent';
+  const hasActions = Boolean(onApprove || onUndo);
 
   return (
     <Group align="flex-start" gap="md" wrap="nowrap">
-      <Box style={{ flex: 1, minWidth: 0 }}>
-        {editing ? (
-          <Textarea
-            autoFocus
-            autosize
-            minRows={4}
-            value={editValue ?? value}
-            onChange={(e) => onEditValueChange?.(e.currentTarget.value)}
-            styles={
-              diffKind !== null
-                ? {
-                    input: {
-                      backgroundColor: bg,
-                      borderLeft: `4px solid ${border}`,
-                      borderRadius: 4,
-                      fontFamily: 'monospace',
-                      fontSize: 13,
-                    },
-                  }
-                : { input: { fontFamily: 'monospace', fontSize: 13 } }
-            }
-          />
-        ) : (
-          <Box
-            style={{
-              backgroundColor: bg,
-              borderLeft: `4px solid ${border}`,
-              borderRadius: 4,
-              padding: '12px 16px',
-              fontFamily: 'monospace',
-              fontSize: 13,
-              lineHeight: 1.6,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-            }}
-          >
-            {diffKind !== null
-              ? diffWordsWithSpace(fromValue, value).map((part, i) => {
-                  if (part.removed) {
-                    return (
-                      <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
-                        {part.value}
-                      </span>
-                    );
-                  }
-                  if (part.added) {
-                    return (
-                      <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
-                        {part.value}
-                      </span>
-                    );
-                  }
-                  return <span key={i}>{part.value}</span>;
-                })
-              : value}
-          </Box>
-        )}
+      <Box
+        style={{ flex: 1, minWidth: 0 }}
+        onClick={onClick}
+        onKeyDown={
+          onClick
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onClick();
+                }
+              }
+            : undefined
+        }
+        role={onClick ? 'button' : undefined}
+        tabIndex={onClick ? 0 : undefined}
+      >
+        <Box
+          style={{
+            backgroundColor: bg,
+            borderLeft: `4px solid ${border}`,
+            borderRadius: 0,
+            padding: '12px 16px',
+            fontFamily: 'monospace',
+            fontSize: 13,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            cursor: onClick ? 'text' : 'default',
+          }}
+        >
+          {diffKind !== null
+            ? diffWordsWithSpace(fromValue, value).map((part, i) => {
+                if (part.removed) {
+                  return (
+                    <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
+                      {part.value}
+                    </span>
+                  );
+                }
+                if (part.added) {
+                  return (
+                    <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
+                      {part.value}
+                    </span>
+                  );
+                }
+                return <span key={i}>{part.value}</span>;
+              })
+            : value}
+        </Box>
       </Box>
 
       {hasActions && (
-        <Stack gap="xs" style={{ flexShrink: 0, width: editing ? 100 : 24 }}>
-          {editing ? (
-            <>
-              {onSave && (
-                <ButtonPrimaryLight fullWidth onClick={onSave}>
-                  Save
-                </ButtonPrimaryLight>
-              )}
-              {onCancel && (
-                <ButtonSecondaryOutline fullWidth onClick={onCancel}>
-                  Cancel
-                </ButtonSecondaryOutline>
-              )}
-            </>
-          ) : (
-            <>
-              {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
-              {onUndo && <IconActionButton label="Undo" onClick={onUndo} tone="undo" icon={RotateCcw} />}
-              {onEdit && <IconActionButton label="Edit" onClick={onEdit} tone="secondary" icon={Pencil} />}
-            </>
-          )}
+        <Stack gap="xs" style={{ flexShrink: 0, width: 24 }}>
+          {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
+          {onUndo && <IconActionButton label="Undo" onClick={onUndo} tone="undo" icon={RotateCcw} />}
         </Stack>
       )}
     </Group>

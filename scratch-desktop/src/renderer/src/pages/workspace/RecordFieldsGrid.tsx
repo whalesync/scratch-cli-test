@@ -1,4 +1,4 @@
-import { Box, ScrollArea, Table } from '@mantine/core';
+import { Box, ScrollArea, Table, Textarea } from '@mantine/core';
 import { memo } from 'react';
 import { Text12Medium, Text12Regular } from '../../components/base/text';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
@@ -8,6 +8,12 @@ export interface RecordFieldRow {
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
+  editing?: boolean;
+  editValue?: string;
+  onClick?: () => void;
+  onEditValueChange?: (value: string) => void;
+  onEditCommit?: () => void;
+  onEditCancel?: () => void;
   onApprove?: () => void;
   onUndo?: () => void;
 }
@@ -29,12 +35,12 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
     <ScrollArea style={{ flex: 1 }}>
       <Table
         horizontalSpacing="md"
-        verticalSpacing="md"
+        verticalSpacing={0}
         withRowBorders
         styles={{
           table: { tableLayout: 'fixed' },
           th: { backgroundColor: 'var(--bg-panel)', position: 'sticky', top: 0, zIndex: 1 },
-          td: { verticalAlign: 'top' },
+          td: { verticalAlign: 'top', paddingTop: 0, paddingBottom: 0 },
         }}
       >
         <Table.Thead>
@@ -59,13 +65,56 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                 </Text12Medium>
               </Table.Td>
               <Table.Td>
-                <FieldValuePanel
-                  value={row.value}
-                  fromValue={row.fromValue}
-                  diffKind={row.diffKind}
-                  onApprove={row.onApprove}
-                  onUndo={row.onUndo}
-                />
+                {row.editing ? (
+                  <Textarea
+                    autoFocus
+                    autosize
+                    minRows={2}
+                    value={row.editValue ?? row.value}
+                    onChange={(e) => row.onEditValueChange?.(e.currentTarget.value)}
+                    onBlur={() => row.onEditCommit?.()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        row.onEditCommit?.();
+                        return;
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        row.onEditCancel?.();
+                      }
+                    }}
+                    styles={{
+                      input: {
+                        backgroundColor:
+                          row.diffKind === 'unreviewed'
+                            ? '#dbeafe'
+                            : row.diffKind === 'unpublished'
+                              ? '#eff6ff'
+                              : 'var(--bg-base)',
+                        borderLeft: `4px solid ${
+                          row.diffKind === 'unreviewed'
+                            ? '#60a5fa'
+                            : row.diffKind === 'unpublished'
+                              ? '#93c5fd'
+                              : 'transparent'
+                        }`,
+                        borderRadius: 0,
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                      },
+                    }}
+                  />
+                ) : (
+                  <FieldValuePanel
+                    value={row.value}
+                    fromValue={row.fromValue}
+                    diffKind={row.diffKind}
+                    onClick={row.onClick}
+                    onApprove={row.onApprove}
+                    onUndo={row.onUndo}
+                  />
+                )}
               </Table.Td>
             </Table.Tr>
           ))}
