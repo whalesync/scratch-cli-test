@@ -6,6 +6,7 @@ import { join, resolve } from 'path';
 import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
+  type DiffGridFilter,
   type FilterStatus,
   acceptCellChange,
   countWorkspaceFiles,
@@ -13,7 +14,7 @@ import {
   listFiles,
   listFolders,
   readBatch,
-  readDiffGridData,
+  readDiffGridDataPage,
   readDiffRecordData,
   readFileContent,
   readFolderStatuses,
@@ -473,8 +474,20 @@ ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, works
   readFolderStatuses(folderPath, workspacePath),
 );
 
-ipcMain.handle('files:read-diff-grid-data', async (_, folderPath: string, workspacePath: string) =>
-  readDiffGridData(folderPath, workspacePath),
+ipcMain.handle(
+  'files:read-diff-grid-data',
+  async (
+    _,
+    folderPath: string,
+    workspacePath: string,
+    opts?: {
+      offset?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      filters?: DiffGridFilter[];
+    },
+  ) => readDiffGridDataPage(folderPath, workspacePath, opts ?? {}),
 );
 ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>
   readDiffRecordData(folderPath, workspacePath, filename),

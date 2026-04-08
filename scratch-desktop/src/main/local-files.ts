@@ -257,6 +257,11 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
 export type GridVersion = 'working' | 'dirty' | 'main';
 export type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+export type DiffGridFilterKind = 'unreviewed' | 'unpublished';
+
+export type DiffGridFilter =
+  | { scope: 'global'; kind: DiffGridFilterKind }
+  | { scope: 'column'; kind: DiffGridFilterKind; columnId: string; columnTitle: string };
 
 export interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
@@ -276,6 +281,10 @@ export interface DiffGridResult {
   columns: string[];
   total: number;
   summary: DiffGridSummary;
+  filterCounts: {
+    unreviewed: number;
+    unpublished: number;
+  };
 }
 
 export interface DiffRecordResult {
@@ -301,6 +310,14 @@ interface ReadGridDataOptions {
   columns?: string[];
   filterStatus?: FilterStatus;
   workspacePath?: string;
+}
+
+interface ReadDiffGridDataOptions {
+  offset?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  filters?: DiffGridFilter[];
 }
 
 interface GridDataResult {
@@ -902,6 +919,14 @@ function pickDisplayRecordData(
  * __masterFields holds the master-branch values (the "from" side for the unpublished diff display).
  */
 export async function readDiffGridData(folderPath: string, workspacePath: string): Promise<DiffGridResult> {
+  return readDiffGridDataPage(folderPath, workspacePath, {});
+}
+
+export async function readDiffGridDataPage(
+  folderPath: string,
+  workspacePath: string,
+  opts: ReadDiffGridDataOptions,
+): Promise<DiffGridResult> {
   const workingPath = folderPath;
   const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
   const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
@@ -943,7 +968,81 @@ export async function readDiffGridData(folderPath: string, workspacePath: string
     deleted: rows.filter((r) => r.__rowStatus === 'deleted').length,
   };
 
-  return { rows, columns: Array.from(columnSet), total: rows.length, summary };
+  const filterCounts = {
+    unreviewed: rows.filter((row) => rowHasUnreviewedChanges(row)).length,
+    unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
+  };
+  const filteredRows = applyDiffGridFilters(rows, opts.filters ?? []);
+  const sortedRows = sortDiffRows(filteredRows, opts.sortBy, opts.sortOrder);
+  const offset = Math.max(0, opts.offset ?? 0);
+  const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
+  const pagedRows = sortedRows.slice(offset, offset + limit);
+
+  return {
+    rows: pagedRows,
+    columns: Array.from(columnSet),
+    total: filteredRows.length,
+    summary,
+    filterCounts,
+  };
+}
+
+function rowHasUnreviewedChanges(row: DiffRow): boolean {
+  return row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__changedFields.length > 0;
+}
+
+function rowHasUnpublishedChanges(row: DiffRow): boolean {
+  return row.__unpublishedFields.length > 0;
+}
+
+function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter): boolean {
+  if (filter.scope === 'global') {
+    return filter.kind === 'unreviewed' ? rowHasUnreviewedChanges(row) : rowHasUnpublishedChanges(row);
+  }
+
+  return filter.kind === 'unreviewed'
+    ? row.__changedFields.includes(filter.columnId)
+    : row.__unpublishedFields.includes(filter.columnId);
+}
+
+function applyDiffGridFilters(rows: DiffRow[], filters: DiffGridFilter[]): DiffRow[] {
+  if (filters.length === 0) {
+    return rows;
+  }
+
+  return rows.filter((row) => filters.every((filter) => filterMatchesDiffRow(row, filter)));
+}
+
+function compareSortableValues(aVal: unknown, bVal: unknown, sortOrder: 'asc' | 'desc'): number {
+  const direction = sortOrder === 'asc' ? 1 : -1;
+
+  if (aVal == null && bVal == null) return 0;
+  if (aVal == null) return direction;
+  if (bVal == null) return -direction;
+  if (typeof aVal === 'number' && typeof bVal === 'number') return (aVal - bVal) * direction;
+
+  const aText = typeof aVal === 'string' ? aVal : JSON.stringify(aVal);
+  const bText = typeof bVal === 'string' ? bVal : JSON.stringify(bVal);
+  return aText.localeCompare(bText, undefined, { sensitivity: 'base', numeric: true }) * direction;
+}
+
+function compareFilename(a: DiffRow, b: DiffRow): number {
+  return a.__filename.localeCompare(b.__filename, undefined, { sensitivity: 'base', numeric: true });
+}
+
+function sortDiffRows(rows: DiffRow[], sortBy?: string, sortOrder?: 'asc' | 'desc'): DiffRow[] {
+  return [...rows].sort((a, b) => {
+    let primary = 0;
+    if (sortBy && sortOrder) {
+      primary = compareSortableValues(a[sortBy], b[sortBy], sortOrder);
+    }
+
+    if (primary !== 0) {
+      return primary;
+    }
+
+    return compareFilename(a, b);
+  });
 }
 
 export async function readDiffRecordData(

@@ -14,6 +14,10 @@ type ScratchCommandEvent =
       error?: string;
     };
 
+type DiffGridFilter =
+  | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
+  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string };
+
 interface ScratchDeepLinkAPI {
   onDeepLink: (callback: (route: string, query: string) => void) => () => void;
 }
@@ -178,6 +182,13 @@ interface ScratchFilesAPI {
   readDiffGridData: (
     folderPath: string,
     workspacePath: string,
+    opts?: {
+      offset?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      filters?: DiffGridFilter[];
+    },
   ) => Promise<{
     rows: Array<
       Record<string, unknown> & {
@@ -192,6 +203,7 @@ interface ScratchFilesAPI {
     columns: string[];
     total: number;
     summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
+    filterCounts: { unreviewed: number; unpublished: number };
   }>;
   readDiffRecordData: (
     folderPath: string,

@@ -6,10 +6,18 @@ import { Text12Medium, Text12Regular } from '../../components/base/text';
 interface FolderGridHeaderMenuProps {
   columnTitle: string;
   bounds: Rectangle | null;
+  onShowNeedsReview: () => void;
+  onShowApproved: () => void;
   onClose: () => void;
 }
 
-export function FolderGridHeaderMenu({ columnTitle, bounds, onClose }: FolderGridHeaderMenuProps) {
+export function FolderGridHeaderMenu({
+  columnTitle,
+  bounds,
+  onShowNeedsReview,
+  onShowApproved,
+  onClose,
+}: FolderGridHeaderMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -67,8 +75,22 @@ export function FolderGridHeaderMenu({ columnTitle, bounds, onClose }: FolderGri
           <Divider my={4} />
 
           <MenuSectionLabel>Filters</MenuSectionLabel>
-          <MenuAction onClick={onClose}>Only show records that need review</MenuAction>
-          <MenuAction onClick={onClose}>Only show records with approved changes</MenuAction>
+          <MenuAction
+            onClick={() => {
+              onShowNeedsReview();
+              onClose();
+            }}
+          >
+            Only show records that need review
+          </MenuAction>
+          <MenuAction
+            onClick={() => {
+              onShowApproved();
+              onClose();
+            }}
+          >
+            Only show records with approved changes
+          </MenuAction>
 
           <Box px={8} py={4}>
             <Text12Regular c="var(--fg-muted)">Filter by...</Text12Regular>

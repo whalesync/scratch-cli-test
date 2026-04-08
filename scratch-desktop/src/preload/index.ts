@@ -21,6 +21,10 @@ type ScratchCommandEvent =
       error?: string;
     };
 
+type DiffGridFilter =
+  | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
+  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string };
+
 const scratchDeepLink = {
   onDeepLink: (callback: (route: string, query: string) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, route: string, query: string): void => {
@@ -225,6 +229,13 @@ const scratchFiles = {
   readDiffGridData: (
     folderPath: string,
     workspacePath: string,
+    opts?: {
+      offset?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      filters?: DiffGridFilter[];
+    },
   ): Promise<{
     rows: Array<
       Record<string, unknown> & {
@@ -239,7 +250,8 @@ const scratchFiles = {
     columns: string[];
     total: number;
     summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
-  }> => invoke('files:read-diff-grid-data', folderPath, workspacePath),
+    filterCounts: { unreviewed: number; unpublished: number };
+  }> => invoke('files:read-diff-grid-data', folderPath, workspacePath, opts ?? {}),
   readDiffRecordData: (
     folderPath: string,
     workspacePath: string,

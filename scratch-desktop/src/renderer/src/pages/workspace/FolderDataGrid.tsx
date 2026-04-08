@@ -37,9 +37,10 @@ interface DiffGridResult {
   columns: string[];
   total: number;
   summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
+  filterCounts: { unreviewed: number; unpublished: number };
 }
 
-type FilterStatus = 'unreviewed' | 'unpublished';
+type FilterKind = 'unreviewed' | 'unpublished';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
 
 interface HeaderMenuState {
@@ -47,6 +48,10 @@ interface HeaderMenuState {
   columnTitle: string;
   bounds: Rectangle;
 }
+
+type GridFilter =
+  | { scope: 'global'; kind: FilterKind }
+  | { scope: 'column'; kind: FilterKind; columnId: string; columnTitle: string };
 
 interface CellPopoverState {
   col: number;
@@ -85,14 +90,6 @@ function toDisplayString(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
-}
-
-function rowHasUnreviewedChanges(row: DiffRow): boolean {
-  return row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__changedFields.length > 0;
-}
-
-function rowHasUnpublishedChanges(row: DiffRow): boolean {
-  return row.__unpublishedFields.length > 0;
 }
 
 function getCellDiffState(row: DiffRow, fieldName: string): { diffKind: FieldValueDiffKind; fromValue: string } {
@@ -155,6 +152,18 @@ function isInsideGridEditorOverlay(target: Element): boolean {
   return Boolean(target.closest('.gdg-clip-region') || target.closest('.gdg-input'));
 }
 
+function filterKey(filter: GridFilter): string {
+  return filter.scope === 'global' ? `global:${filter.kind}` : `column:${filter.columnId}:${filter.kind}`;
+}
+
+function filterLabel(filter: GridFilter): string {
+  if (filter.scope === 'global') {
+    return filter.kind === 'unreviewed' ? 'Needs review' : 'Approved';
+  }
+
+  return `${filter.columnTitle}: ${filter.kind === 'unreviewed' ? 'Needs review' : 'Approved'}`;
+}
+
 // ── Row colours ──
 
 const ROW_TINT: Record<RowStatus, string | undefined> = {
@@ -202,6 +211,44 @@ function FilterPill({
   );
 }
 
+function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <Box
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '2px 6px 2px 8px',
+        borderRadius: 10,
+        border: '1px solid var(--mantine-color-blue-4)',
+        backgroundColor: 'var(--mantine-color-blue-0)',
+        lineHeight: 1,
+      }}
+    >
+      <Text12Medium c="var(--mantine-color-blue-7)" component="span">
+        {label}
+      </Text12Medium>
+      <Box
+        component="button"
+        type="button"
+        onClick={onRemove}
+        style={{
+          border: 0,
+          backgroundColor: 'transparent',
+          color: 'var(--mantine-color-blue-7)',
+          cursor: 'pointer',
+          padding: 0,
+          lineHeight: 1,
+        }}
+      >
+        <Text12Regular c="inherit" component="span">
+          ×
+        </Text12Regular>
+      </Box>
+    </Box>
+  );
+}
+
 // ── Component ──
 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
@@ -213,7 +260,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     column: null,
     direction: null,
   });
-  const [filterStatus, setFilterStatus] = useState<FilterStatus | null>(null);
+  const [activeFilters, setActiveFilters] = useState<GridFilter[]>([]);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
@@ -257,7 +304,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setError(null);
 
     window.scratchFiles
-      .readDiffGridData(selectedFolderPath, workspacePath)
+      .readDiffGridData(selectedFolderPath, workspacePath, {
+        offset: (page - 1) * PAGE_SIZE,
+        limit: PAGE_SIZE,
+        sortBy: sort.column ?? undefined,
+        sortOrder: sort.direction ?? undefined,
+        filters: activeFilters,
+      })
       .then((result) => {
         if (!cancelled) setDiffData(result as DiffGridResult);
       })
@@ -274,12 +327,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return () => {
       cancelled = true;
     };
-  }, [dataRefreshKey, selectedFolderPath, workspacePath, reloadKey]);
+  }, [activeFilters, dataRefreshKey, page, reloadKey, selectedFolderPath, sort.column, sort.direction, workspacePath]);
 
   // Reset state when folder changes
   useEffect(() => {
     setSort({ column: null, direction: null });
-    setFilterStatus(null);
+    setActiveFilters([]);
     setColumnWidths({});
     setDetailRowIndex(null);
     hoveredCellRef.current = null;
@@ -306,7 +359,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Reset to page 1 when filter or sort changes
   useEffect(() => {
     setPage(1);
-  }, [filterStatus, sort]);
+  }, [activeFilters, sort]);
 
   // Load schema when folder changes
   useEffect(() => {
@@ -381,33 +434,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // ── Derived ──
 
-  const filteredRows = useMemo(() => {
-    const allRows = diffData?.rows ?? [];
-    if (!filterStatus) return allRows;
-    if (filterStatus === 'unreviewed') {
-      return allRows.filter((r) => rowHasUnreviewedChanges(r));
+  const pagedRows = useMemo(() => diffData?.rows ?? [], [diffData?.rows]);
+  const totalPages = Math.max(1, Math.ceil((diffData?.total ?? 0) / PAGE_SIZE));
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
     }
-    // unpublished
-    return allRows.filter((r) => rowHasUnpublishedChanges(r));
-  }, [diffData?.rows, filterStatus]);
-
-  const sortedRows = useMemo(() => {
-    if (!filteredRows.length || !sort.column || !sort.direction) return filteredRows;
-    const col = sort.column;
-    const dir = sort.direction === 'asc' ? 1 : -1;
-    return [...filteredRows].sort((a, b) => {
-      const aVal = a[col];
-      const bVal = b[col];
-      if (aVal == null && bVal == null) return 0;
-      if (aVal == null) return dir;
-      if (bVal == null) return -dir;
-      if (typeof aVal === 'number' && typeof bVal === 'number') return (aVal - bVal) * dir;
-      return toDisplayString(aVal).localeCompare(toDisplayString(bVal)) * dir;
-    });
-  }, [filteredRows, sort]);
-
-  const totalPages = Math.ceil(sortedRows.length / PAGE_SIZE);
-  const pagedRows = useMemo(() => sortedRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [sortedRows, page]);
+  }, [page, totalPages]);
 
   const titleColumnId = useMemo(() => {
     const raw = schema?.titleColumnRemoteId;
@@ -432,13 +466,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }));
   }, [columnWidths, diffData?.columns, titleColumnId]);
 
-  const filterCounts = useMemo(() => {
-    const rows = diffData?.rows ?? [];
-    return {
-      unreviewed: rows.filter((row) => rowHasUnreviewedChanges(row)).length,
-      unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
-    };
-  }, [diffData?.rows]);
+  const filterCounts = diffData?.filterCounts;
+
+  const activeColumnFilters = useMemo(
+    () =>
+      activeFilters.filter((filter): filter is Extract<GridFilter, { scope: 'column' }> => filter.scope === 'column'),
+    [activeFilters],
+  );
+
+  const hasGlobalFilter = useCallback(
+    (kind: FilterKind) => activeFilters.some((filter) => filter.scope === 'global' && filter.kind === kind),
+    [activeFilters],
+  );
 
   const closeGridEditorChrome = useCallback(() => {
     setActiveEditorDiffKind(null);
@@ -756,8 +795,42 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [columns],
   );
 
-  const handleFilterToggle = useCallback((status: FilterStatus) => {
-    setFilterStatus((prev) => (prev === status ? null : status));
+  const handleGlobalFilterToggle = useCallback((kind: FilterKind) => {
+    setActiveFilters((current) => {
+      const exists = current.some((filter) => filter.scope === 'global' && filter.kind === kind);
+      if (exists) {
+        return current.filter((filter) => !(filter.scope === 'global' && filter.kind === kind));
+      }
+      return [...current, { scope: 'global', kind }];
+    });
+  }, []);
+
+  const handleAddColumnFilter = useCallback(
+    (kind: FilterKind) => {
+      if (!headerMenu) {
+        return;
+      }
+
+      setActiveFilters((current) => {
+        const withoutSameColumn = current.filter(
+          (filter) => !(filter.scope === 'column' && filter.columnId === headerMenu.columnId),
+        );
+        return [
+          ...withoutSameColumn,
+          {
+            scope: 'column',
+            kind,
+            columnId: headerMenu.columnId,
+            columnTitle: headerMenu.columnTitle,
+          },
+        ];
+      });
+    },
+    [headerMenu],
+  );
+
+  const handleRemoveFilter = useCallback((filterToRemove: GridFilter) => {
+    setActiveFilters((current) => current.filter((filter) => filterKey(filter) !== filterKey(filterToRemove)));
   }, []);
 
   // ── Render ──
@@ -788,15 +861,22 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             <FilterPill
               label="Needs review"
               count={filterCounts?.unreviewed ?? 0}
-              active={filterStatus === 'unreviewed'}
-              onClick={() => handleFilterToggle('unreviewed')}
+              active={hasGlobalFilter('unreviewed')}
+              onClick={() => handleGlobalFilterToggle('unreviewed')}
             />
             <FilterPill
               label="Approved"
               count={filterCounts?.unpublished ?? 0}
-              active={filterStatus === 'unpublished'}
-              onClick={() => handleFilterToggle('unpublished')}
+              active={hasGlobalFilter('unpublished')}
+              onClick={() => handleGlobalFilterToggle('unpublished')}
             />
+            {activeColumnFilters.map((filter) => (
+              <ActiveFilterChip
+                key={filterKey(filter)}
+                label={filterLabel(filter)}
+                onRemove={() => handleRemoveFilter(filter)}
+              />
+            ))}
           </Group>
         </Box>
       )}
@@ -822,7 +902,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       {selectedFolderPath && !loading && !error && pagedRows.length === 0 && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text13Regular c="dimmed">
-            {filterStatus ? 'No rows match the current filter' : 'No data in this folder'}
+            {activeFilters.length > 0 ? 'No rows match the current filter' : 'No data in this folder'}
           </Text13Regular>
         </Box>
       )}
@@ -859,6 +939,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             <FolderGridHeaderMenu
               columnTitle={headerMenu?.columnTitle ?? ''}
               bounds={headerMenu?.bounds ?? null}
+              onShowNeedsReview={() => handleAddColumnFilter('unreviewed')}
+              onShowApproved={() => handleAddColumnFilter('unpublished')}
               onClose={() => setHeaderMenu(null)}
             />
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
@@ -885,7 +967,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             }}
           >
             <Text12Regular c="var(--fg-muted)">
-              {sortedRows.length.toLocaleString()} rows &middot; {columns.length} columns
+              {(diffData?.total ?? 0).toLocaleString()} rows &middot; {columns.length} columns
               {sort.column && (
                 <span style={{ marginLeft: 8 }}>
                   &middot; Sorted by {sort.column} {sort.direction === 'desc' ? '\u2193' : '\u2191'}
