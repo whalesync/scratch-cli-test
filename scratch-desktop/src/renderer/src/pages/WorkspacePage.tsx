@@ -23,6 +23,7 @@ export function WorkspacePage() {
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
+  const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
 
@@ -105,6 +106,10 @@ export function WorkspacePage() {
     }
   }, [workspace, navigate]);
 
+  const handleDataRefresh = useCallback(() => {
+    setDataRefreshKey((current) => current + 1);
+  }, []);
+
   useEffect(() => {
     void fetchWorkspace();
   }, [fetchWorkspace]);
@@ -138,12 +143,14 @@ export function WorkspacePage() {
         onClose={() => setPublishModalOpen(false)}
         workspaceName={workspace.name}
         localPath={localPath}
+        onDataRefresh={handleDataRefresh}
       />
       <PullAllModal
         opened={pullAllModalOpen}
         onClose={() => setPullAllModalOpen(false)}
         workspaceName={workspace.name}
         localPath={localPath}
+        onDataRefresh={handleDataRefresh}
       />
       <WorkspaceHeader
         workspace={workspace}
@@ -162,6 +169,7 @@ export function WorkspacePage() {
         localPath={localPath}
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={setSelectedFolderPath}
+        dataRefreshKey={dataRefreshKey}
       />
     </Box>
   );

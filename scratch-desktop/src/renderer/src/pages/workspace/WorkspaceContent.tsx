@@ -18,13 +18,20 @@ interface WorkspaceContentProps {
   localPath: string | null;
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string | null) => void;
+  dataRefreshKey: number;
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 500;
 const DEFAULT_SIDEBAR_WIDTH = 280;
 
-export function WorkspaceContent({ workspace, localPath, selectedFolderPath, onSelectFolder }: WorkspaceContentProps) {
+export function WorkspaceContent({
+  workspace,
+  localPath,
+  selectedFolderPath,
+  onSelectFolder,
+  dataRefreshKey,
+}: WorkspaceContentProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
@@ -65,7 +72,7 @@ export function WorkspaceContent({ workspace, localPath, selectedFolderPath, onS
     return () => {
       cancelled = true;
     };
-  }, [localPath]);
+  }, [dataRefreshKey, localPath]);
 
   return (
     <Box
@@ -92,7 +99,12 @@ export function WorkspaceContent({ workspace, localPath, selectedFolderPath, onS
       <ResizeHandle onResizeStart={handleResizeStart} onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
       {/* Data grid — memoized so sidebar width changes don't re-render it */}
-      <FolderDataGrid workspaceId={workspace.id} selectedFolderPath={selectedFolderPath} workspacePath={localPath} />
+      <FolderDataGrid
+        workspaceId={workspace.id}
+        selectedFolderPath={selectedFolderPath}
+        workspacePath={localPath}
+        dataRefreshKey={dataRefreshKey}
+      />
     </Box>
   );
 }

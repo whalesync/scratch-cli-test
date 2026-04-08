@@ -42,6 +42,7 @@ interface FolderDataGridProps {
   workspaceId: string;
   selectedFolderPath: string | null;
   workspacePath: string | null;
+  dataRefreshKey: number;
 }
 
 // ── Constants ──
@@ -243,7 +244,7 @@ function FilterPill({
 // ── Component ──
 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
-  const { selectedFolderPath, workspacePath } = props;
+  const { selectedFolderPath, workspacePath, dataRefreshKey } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -317,7 +318,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return () => {
       cancelled = true;
     };
-  }, [selectedFolderPath, workspacePath, reloadKey]);
+  }, [dataRefreshKey, selectedFolderPath, workspacePath, reloadKey]);
 
   // Reset state when folder changes
   useEffect(() => {
@@ -803,6 +804,17 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   console.error(`[acceptCellChange] ${logLabel} failed:`, err);
                 });
             };
+            const undoApprovedAndClose = () => {
+              void window.scratchFiles
+                .undoApprovedCellChange(selectedFolderPath, workspacePath, filename, fieldName)
+                .then(() => {
+                  setCellModal(null);
+                  setReloadKey((k) => k + 1);
+                })
+                .catch((err: unknown) => {
+                  console.error('[undoApprovedCellChange] undo failed:', err);
+                });
+            };
 
             return (
               <Group align="flex-start" gap="md" wrap="nowrap">
@@ -901,15 +913,22 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       </ButtonSecondaryOutline>
                     </>
                   ) : (
-                    <ButtonSecondaryOutline
-                      fullWidth
-                      onClick={() => {
-                        setCellModalEditValue(value);
-                        setCellModalEditing(true);
-                      }}
-                    >
-                      Edit
-                    </ButtonSecondaryOutline>
+                    <>
+                      {diffKind === 'unpublished' && (
+                        <ButtonDangerLight fullWidth onClick={undoApprovedAndClose}>
+                          Undo
+                        </ButtonDangerLight>
+                      )}
+                      <ButtonSecondaryOutline
+                        fullWidth
+                        onClick={() => {
+                          setCellModalEditValue(value);
+                          setCellModalEditing(true);
+                        }}
+                      >
+                        Edit
+                      </ButtonSecondaryOutline>
+                    </>
                   )}
                 </Stack>
               </Group>

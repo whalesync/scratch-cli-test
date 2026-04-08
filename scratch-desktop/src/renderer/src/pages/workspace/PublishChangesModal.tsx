@@ -49,6 +49,7 @@ interface PublishChangesModalProps {
   localPath: string | null;
   autoStartPlanningOnOpen?: boolean;
   assumeUnreviewedApproved?: boolean;
+  onDataRefresh: () => void;
 }
 
 function isTerminalState(state: JobStatus['state']): boolean {
@@ -235,6 +236,7 @@ export function PublishChangesModal({
   localPath,
   autoStartPlanningOnOpen = false,
   assumeUnreviewedApproved = false,
+  onDataRefresh,
 }: PublishChangesModalProps) {
   const planningSessionIdRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<number | null>(null);
@@ -455,9 +457,12 @@ export function PublishChangesModal({
           if (hydrated.every((job) => job.state === 'completed')) {
             setMode('complete');
             if (localPath) {
-              window.scratchDesktop.pullWorkspaceChanges(localPath).catch((err) => {
-                console.debug('Post-publish pull failed:', err);
-              });
+              window.scratchDesktop
+                .pullWorkspaceChanges(localPath)
+                .then(onDataRefresh)
+                .catch((err) => {
+                  console.debug('Post-publish pull failed:', err);
+                });
             }
             return;
           }
@@ -487,7 +492,7 @@ export function PublishChangesModal({
         pollingIntervalRef.current = null;
       }
     };
-  }, [jobIds, localPath, mode]);
+  }, [jobIds, localPath, mode, onDataRefresh]);
 
   const totals = useMemo(
     () =>

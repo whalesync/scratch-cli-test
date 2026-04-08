@@ -8,8 +8,8 @@
  */
 
 import { execFile } from 'child_process';
-import { readdir, readFile, stat, writeFile } from 'fs/promises';
-import { basename, extname, join, relative, sep } from 'path';
+import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
+import { basename, dirname, extname, join, relative, sep } from 'path';
 
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
@@ -113,6 +113,8 @@ interface ConnectionPaths {
   workingConnPath: string;
   reviewedDirtyConnPath: string;
 }
+
+type JsonFieldValue = { exists: true; value: unknown } | { exists: false };
 
 // ── Public functions ──
 
@@ -938,11 +940,88 @@ export async function acceptCellChange(
   console.debug('[acceptCellChange] dirty ref updated');
 }
 
+/**
+ * Reverts a reviewed-but-unpublished cell back to the master value in both
+ * editable copies. This intentionally reads master in the main process so
+ * nullable, numeric, object, and missing values are preserved exactly.
+ */
+export async function undoApprovedCellChange(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+  fieldName: string,
+): Promise<void> {
+  const workingFile = join(folderPath, filename);
+  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+  const dirtyFile = join(dirtyPath, filename);
+  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
+  const masterFile = join(masterPath, filename);
+  const masterValue = await readJsonField(masterFile, fieldName);
+
+  console.debug('[undoApprovedCellChange] working:', workingFile);
+  console.debug('[undoApprovedCellChange] dirty:  ', dirtyFile);
+  console.debug('[undoApprovedCellChange] master: ', masterFile);
+  console.debug(
+    '[undoApprovedCellChange] field:',
+    fieldName,
+    '→',
+    masterValue.exists ? JSON.stringify(masterValue.value) : '<missing>',
+  );
+
+  await applyJsonField(workingFile, fieldName, masterValue);
+  console.debug('[undoApprovedCellChange] working file patched');
+
+  await applyJsonField(dirtyFile, fieldName, masterValue);
+  console.debug('[undoApprovedCellChange] dirty file patched');
+
+  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
+  console.debug('[undoApprovedCellChange] dirty ref updated');
+}
+
 async function patchJsonField(filePath: string, fieldName: string, value: unknown): Promise<void> {
-  const content = await readFile(filePath, 'utf-8');
-  const obj = JSON.parse(content) as Record<string, unknown>;
+  const obj = (await readJsonObject(filePath)) ?? {};
   setNestedValue(obj, fieldName, value);
+  await writeJsonObject(filePath, obj);
+}
+
+async function applyJsonField(filePath: string, fieldName: string, value: JsonFieldValue): Promise<void> {
+  if (value.exists) {
+    await patchJsonField(filePath, fieldName, value.value);
+    return;
+  }
+  await removeJsonField(filePath, fieldName);
+}
+
+async function readJsonField(filePath: string, fieldName: string): Promise<JsonFieldValue> {
+  const obj = await readJsonObject(filePath);
+  if (!obj) return { exists: false };
+  return getNestedValue(obj, fieldName);
+}
+
+async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    const parsed: unknown = JSON.parse(content);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    throw new Error(`JSON file ${filePath} does not contain an object`);
+  } catch (err) {
+    if (isFileNotFoundError(err)) return null;
+    throw err;
+  }
+}
+
+async function writeJsonObject(filePath: string, obj: Record<string, unknown>): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(obj, null, 2));
+}
+
+async function removeJsonField(filePath: string, fieldName: string): Promise<void> {
+  const obj = await readJsonObject(filePath);
+  if (!obj) return;
+  deleteNestedValue(obj, fieldName);
+  await writeJsonObject(filePath, obj);
 }
 
 function setNestedValue(obj: Record<string, unknown>, dotPath: string, value: unknown): void {
@@ -957,6 +1036,43 @@ function setNestedValue(obj: Record<string, unknown>, dotPath: string, value: un
   }
   const lastPart = parts[parts.length - 1];
   current[lastPart] = value;
+}
+
+function getNestedValue(obj: Record<string, unknown>, dotPath: string): JsonFieldValue {
+  const parts = dotPath.split('.');
+  let current: unknown = obj;
+  for (const part of parts) {
+    if (typeof current !== 'object' || current === null || Array.isArray(current) || !(part in current)) {
+      return { exists: false };
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return { exists: true, value: current };
+}
+
+function deleteNestedValue(obj: Record<string, unknown>, dotPath: string): boolean {
+  const parts = dotPath.split('.');
+  return deleteNestedValueAt(obj, parts, 0);
+}
+
+function deleteNestedValueAt(current: Record<string, unknown>, parts: string[], index: number): boolean {
+  const part = parts[index];
+  if (index === parts.length - 1) {
+    delete current[part];
+  } else {
+    const child = current[part];
+    if (typeof child === 'object' && child !== null && !Array.isArray(child)) {
+      const childIsEmpty = deleteNestedValueAt(child as Record<string, unknown>, parts, index + 1);
+      if (childIsEmpty) {
+        delete current[part];
+      }
+    }
+  }
+  return Object.keys(current).length === 0;
+}
+
+function isFileNotFoundError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';
 }
 
 function parseFieldValue(str: string): unknown {

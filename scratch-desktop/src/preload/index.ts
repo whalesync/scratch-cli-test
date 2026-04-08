@@ -247,6 +247,12 @@ const scratchFiles = {
     fieldName: string,
     value: string,
   ): Promise<void> => invoke('files:accept-cell-change', folderPath, workspacePath, filename, fieldName, value),
+  undoApprovedCellChange: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+  ): Promise<void> => invoke('files:undo-approved-cell-change', folderPath, workspacePath, filename, fieldName),
 };
 
 if (process.contextIsolated) {

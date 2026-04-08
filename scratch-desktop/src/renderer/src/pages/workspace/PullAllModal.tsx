@@ -41,9 +41,10 @@ interface PullAllModalProps {
   onClose: () => void;
   localPath: string | null;
   workspaceName?: string | null;
+  onDataRefresh: () => void;
 }
 
-export function PullAllModal({ opened, onClose, localPath, workspaceName }: PullAllModalProps) {
+export function PullAllModal({ opened, onClose, localPath, workspaceName, onDataRefresh }: PullAllModalProps) {
   const [phase, setPhase] = useState<'starting' | 'polling' | 'done' | 'error'>('starting');
   const [error, setError] = useState<string | null>(null);
   const [jobIds, setJobIds] = useState<string[]>([]);
@@ -130,9 +131,12 @@ export function PullAllModal({ opened, onClose, localPath, workspaceName }: Pull
           if (hydrated.every((job) => job.state === 'completed')) {
             setPhase('done');
             if (localPath) {
-              window.scratchDesktop.pullWorkspaceChanges(localPath).catch((err) => {
-                console.debug('Post-pull download failed:', err);
-              });
+              window.scratchDesktop
+                .pullWorkspaceChanges(localPath)
+                .then(onDataRefresh)
+                .catch((err) => {
+                  console.debug('Post-pull download failed:', err);
+                });
             }
           } else {
             setPhase('error');
@@ -158,7 +162,7 @@ export function PullAllModal({ opened, onClose, localPath, workspaceName }: Pull
         pollingIntervalRef.current = null;
       }
     };
-  }, [phase, jobIds, localPath]);
+  }, [phase, jobIds, localPath, onDataRefresh]);
 
   const allDone = jobs.length > 0 && jobs.every((j) => isTerminalState(j.state));
   const completedCount = jobs.filter((j) => j.state === 'completed').length;

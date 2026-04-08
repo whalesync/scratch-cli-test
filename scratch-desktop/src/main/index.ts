@@ -19,6 +19,7 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
+  undoApprovedCellChange,
 } from './local-files';
 import {
   listLocalPublishPlans,
@@ -478,6 +479,11 @@ ipcMain.handle(
   'files:accept-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     acceptCellChange(folderPath, workspacePath, filename, fieldName, value),
+);
+ipcMain.handle(
+  'files:undo-approved-cell-change',
+  async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
+    undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
 );
 
 void app.whenReady().then(() => {

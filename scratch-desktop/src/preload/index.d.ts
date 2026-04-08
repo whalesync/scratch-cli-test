@@ -200,6 +200,12 @@ interface ScratchFilesAPI {
     fieldName: string,
     value: string,
   ) => Promise<void>;
+  undoApprovedCellChange: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+  ) => Promise<void>;
 }
 
 declare global {
