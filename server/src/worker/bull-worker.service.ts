@@ -61,10 +61,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     this.queue = new Queue('worker-queue', { connection: this.getRedis() });
 
     // Create the worker to process jobs
+    // maxStalledCount is high because Cloud Run instances are ephemeral and
+    // non-graceful shutdowns can cause false stall detections.
     this.worker = new Worker('worker-queue', async (job: Job) => this.processJob(job), {
       connection: this.getRedis(),
       concurrency: this.configService.getWorkerConcurrency(),
       lockDuration: this.configService.getWorkerLockTimeout(),
+      maxStalledCount: 20,
     });
 
     // Set up event listeners

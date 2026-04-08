@@ -878,6 +878,61 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(params.checkpoint).toHaveBeenCalled();
     });
 
+    it('should checkpoint before rebaseDirty and buildIndex to prevent BullMQ stall', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({
+          files: [{ id: 'rec1', slug: 'post-1' }],
+          connectorProgress: {},
+        });
+      });
+
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: [],
+        updated: [],
+        unchanged: [],
+      });
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      // Track call order across checkpoint, rebaseDirty, and buildIndex
+      const callOrder: string[] = [];
+      params.checkpoint.mockImplementation(() => {
+        callOrder.push('checkpoint');
+        return Promise.resolve();
+      });
+      (mockScratchGitService.rebaseDirty as jest.Mock).mockImplementation(() => {
+        callOrder.push('rebaseDirty');
+        return Promise.resolve();
+      });
+      (mockScratchGitService.buildIndex as jest.Mock).mockImplementation(() => {
+        callOrder.push('buildIndex');
+        return Promise.resolve();
+      });
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // Verify checkpoint is called immediately before both long-running git operations.
+      // This prevents BullMQ from marking the job as stalled during these operations.
+      const buildIndexIdx = callOrder.indexOf('buildIndex');
+      const rebaseDirtyIdx = callOrder.indexOf('rebaseDirty');
+      expect(buildIndexIdx).toBeGreaterThan(-1);
+      expect(rebaseDirtyIdx).toBeGreaterThan(-1);
+
+      // There must be a checkpoint immediately before buildIndex
+      expect(callOrder[buildIndexIdx - 1]).toBe('checkpoint');
+      // There must be a checkpoint immediately before rebaseDirty
+      expect(callOrder[rebaseDirtyIdx - 1]).toBe('checkpoint');
+    });
+
     it('should fetch fresh schema from connector before pulling', async () => {
       const freshSchema: BaseJsonTableSpec = {
         ...defaultTableSpec,

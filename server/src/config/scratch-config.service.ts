@@ -124,7 +124,7 @@ export class ScratchConfigService {
   }
 
   getWorkerLockTimeout(): number {
-    return this.getOptionalNumberVariable('WORKER_LOCK_TIMEOUT_MS', 30_000);
+    return this.getOptionalNumberVariable('WORKER_LOCK_TIMEOUT_MS', 120_000);
   }
 
   getUseJobs(): boolean {

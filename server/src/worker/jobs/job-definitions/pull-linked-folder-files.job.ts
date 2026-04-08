@@ -120,8 +120,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const totalFilesAccumulator = { count: 0 };
     const pullStats = { created: 0, updated: 0, deleted: 0, failed: false };
+    let lastPublicProgress = progress.publicProgress;
     for (const dataFolderId of data.dataFolderIds) {
-      await this.pullFolder({
+      lastPublicProgress = await this.pullFolder({
         jobId,
         dataFolderId,
         folderCount,
@@ -134,6 +135,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         progress,
       });
     }
+
+    // Checkpoint before buildIndex to keep BullMQ lock alive after folder processing
+    await checkpoint({
+      publicProgress: lastPublicProgress,
+      jobProgress: {},
+      connectorProgress: {},
+    });
 
     // Rebuild the index once after all folders are done (not per-folder)
     await this.scratchGitService.buildIndex(repoId).catch((err) => {
@@ -187,7 +195,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         'timestamp'
       >,
     ) => Promise<void>;
-  }) {
+  }): Promise<PullLinkedFolderFilesPublicProgress> {
     const {
       jobId,
       dataFolderId,
@@ -527,6 +535,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         // Don't fail the job for cleanup errors
       }
 
+      // Checkpoint before rebase to keep BullMQ lock alive after potentially slow delete operation
+      await checkpoint({
+        publicProgress,
+        jobProgress: {},
+        connectorProgress: {},
+      });
+
       // Rebase dirty once at the end of the job (not after every batch)
       await this.scratchGitService.rebaseDirty(repoId);
 
@@ -588,6 +603,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           error: err,
         });
       }
+
+      return publicProgress;
     } catch (error) {
       // Mark as failed
       publicProgress.status = 'failed';
