@@ -1,7 +1,9 @@
-import { Box, Group, Stack, Textarea } from '@mantine/core';
+import { ActionIcon, Box, Group, Stack, Textarea, Tooltip } from '@mantine/core';
 import { diffWordsWithSpace } from 'diff';
+import { Check, Pencil, RotateCcw } from 'lucide-react';
 import { memo } from 'react';
-import { ButtonDangerLight, ButtonPrimaryLight, ButtonSecondaryOutline } from '../../components/base/buttons';
+import { ButtonPrimaryLight, ButtonSecondaryOutline } from '../../components/base/buttons';
+import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
 export type FieldValueDiffKind = 'unreviewed' | 'unpublished' | null;
 
@@ -23,6 +25,61 @@ const DIFF_WORKING_BG = '#dbeafe'; // blue-100  — unreviewed (w != d)
 const DIFF_WORKING_BORDER = '#60a5fa'; // blue-400
 const DIFF_UNPUBLISHED_BG = '#eff6ff'; // blue-50   — unpublished (d != m, w == d)
 const DIFF_UNPUBLISHED_BORDER = '#93c5fd'; // blue-300
+
+function IconActionButton({
+  label,
+  onClick,
+  tone,
+  icon,
+}: {
+  label: string;
+  onClick: () => void;
+  tone: 'approve' | 'undo' | 'secondary';
+  icon: typeof Check;
+}) {
+  const styles =
+    tone === 'approve'
+      ? {
+          backgroundColor: 'var(--mantine-color-green-1)',
+          color: 'var(--mantine-color-green-8)',
+          border: '1px solid var(--mantine-color-green-3)',
+        }
+      : tone === 'undo'
+        ? {
+            backgroundColor: 'var(--mantine-color-red-1)',
+            color: 'var(--mantine-color-red-8)',
+            border: '1px solid var(--mantine-color-red-3)',
+          }
+        : {
+            backgroundColor: 'var(--bg-selected)',
+            color: 'var(--fg-primary)',
+            border: '1px solid var(--fg-divider)',
+          };
+
+  return (
+    <Tooltip label={label} withArrow position="left">
+      <ActionIcon
+        variant="transparent"
+        size={24}
+        radius={6}
+        aria-label={label}
+        onClick={onClick}
+        styles={{
+          root: {
+            ...styles,
+            minWidth: 24,
+            minHeight: 24,
+            '&:hover': {
+              filter: 'brightness(0.97)',
+            },
+          },
+        }}
+      >
+        <StyledLucideIcon Icon={icon} size={14} strokeWidth={2.25} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
 
 export const FieldValuePanel = memo(function FieldValuePanel({
   value,
@@ -109,7 +166,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
       </Box>
 
       {hasActions && (
-        <Stack gap="xs" style={{ flexShrink: 0, width: 100 }}>
+        <Stack gap="xs" style={{ flexShrink: 0, width: editing ? 100 : 24 }}>
           {editing ? (
             <>
               {onSave && (
@@ -125,21 +182,9 @@ export const FieldValuePanel = memo(function FieldValuePanel({
             </>
           ) : (
             <>
-              {onApprove && (
-                <ButtonPrimaryLight fullWidth onClick={onApprove}>
-                  Approve
-                </ButtonPrimaryLight>
-              )}
-              {onUndo && (
-                <ButtonDangerLight fullWidth onClick={onUndo}>
-                  Undo
-                </ButtonDangerLight>
-              )}
-              {onEdit && (
-                <ButtonSecondaryOutline fullWidth onClick={onEdit}>
-                  Edit
-                </ButtonSecondaryOutline>
-              )}
+              {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
+              {onUndo && <IconActionButton label="Undo" onClick={onUndo} tone="undo" icon={RotateCcw} />}
+              {onEdit && <IconActionButton label="Edit" onClick={onEdit} tone="secondary" icon={Pencil} />}
             </>
           )}
         </Stack>

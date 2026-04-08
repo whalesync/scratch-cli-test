@@ -193,6 +193,25 @@ interface ScratchFilesAPI {
     total: number;
     summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
   }>;
+  readDiffRecordData: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+  ) => Promise<{
+    row: Record<string, unknown> & {
+      __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+      __changedFields: string[];
+      __fromFields: Record<string, unknown>;
+      __unpublishedFields: string[];
+      __masterFields: Record<string, unknown>;
+      __filename: string;
+    };
+    columns: string[];
+    workingData: Record<string, unknown> | null;
+    dirtyData: Record<string, unknown> | null;
+    masterData: Record<string, unknown> | null;
+    displayData: Record<string, unknown> | null;
+  } | null>;
   acceptCellChange: (
     folderPath: string,
     workspacePath: string,

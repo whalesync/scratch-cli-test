@@ -64,6 +64,14 @@ function toDisplayString(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function rowHasUnreviewedChanges(row: DiffRow): boolean {
+  return row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__changedFields.length > 0;
+}
+
+function rowHasUnpublishedChanges(row: DiffRow): boolean {
+  return row.__unpublishedFields.length > 0;
+}
+
 function inferCellKind(value: unknown): GridCellKind {
   if (typeof value === 'boolean') return GridCellKind.Boolean;
   if (typeof value === 'number') return GridCellKind.Number;
@@ -365,12 +373,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     const allRows = diffData?.rows ?? [];
     if (!filterStatus) return allRows;
     if (filterStatus === 'unreviewed') {
-      return allRows.filter(
-        (r) => r.__rowStatus === 'modified' || r.__rowStatus === 'added' || r.__rowStatus === 'deleted',
-      );
+      return allRows.filter((r) => rowHasUnreviewedChanges(r));
     }
     // unpublished
-    return allRows.filter((r) => r.__rowStatus === 'unpublished');
+    return allRows.filter((r) => rowHasUnpublishedChanges(r));
   }, [diffData?.rows, filterStatus]);
 
   const sortedRows = useMemo(() => {
@@ -412,13 +418,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }));
   }, [columnWidths, diffData?.columns, titleColumnId]);
 
-  // Filter counts derived from summary — no extra IPC calls needed
-  const filterCounts = diffData
-    ? {
-        unreviewed: diffData.summary.modified + diffData.summary.added + diffData.summary.deleted,
-        unpublished: diffData.summary.unpublished,
-      }
-    : null;
+  const filterCounts = useMemo(() => {
+    const rows = diffData?.rows ?? [];
+    return {
+      unreviewed: rows.filter((row) => rowHasUnreviewedChanges(row)).length,
+      unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
+    };
+  }, [diffData?.rows]);
 
   // ── Cell content ──
 
@@ -435,9 +441,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const rowBg = ROW_TINT[status];
       const rowTheme = rowBg ? { bgCell: rowBg } : undefined;
       const val = r[colId];
+      const isUnreviewed = r.__changedFields.includes(colId);
+      const isUnpublished = !isUnreviewed && r.__unpublishedFields.includes(colId);
 
       // Unreviewed change (w != d): darker blue
-      if (status === 'modified' && r.__changedFields.includes(colId)) {
+      if (isUnreviewed) {
         return {
           kind: GridCellKind.Custom as const,
           allowOverlay: false as const,
@@ -454,7 +462,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       // Unpublished change (w == d but d != m): lighter blue
-      if (status === 'unpublished' && r.__unpublishedFields.includes(colId)) {
+      if (isUnpublished) {
         return {
           kind: GridCellKind.Custom as const,
           allowOverlay: false as const,
@@ -552,8 +560,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (!r || !colId) return;
       if (r.__rowStatus === 'deleted') return;
       const value = toDisplayString(r[colId]);
-      const isUnreviewed = r.__rowStatus === 'modified' && r.__changedFields.includes(colId);
-      const isUnpublished = r.__rowStatus === 'unpublished' && r.__unpublishedFields.includes(colId);
+      const isUnreviewed = r.__changedFields.includes(colId);
+      const isUnpublished = !isUnreviewed && r.__unpublishedFields.includes(colId);
       const diffKind: FieldValueDiffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
       const fromValue = isUnreviewed
         ? toDisplayString(r.__fromFields[colId])

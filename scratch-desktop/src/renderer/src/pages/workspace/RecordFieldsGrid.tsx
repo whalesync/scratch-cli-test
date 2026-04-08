@@ -1,94 +1,76 @@
-import DataEditor, { GridCellKind, type GridColumn, type Item } from '@glideapps/glide-data-grid';
-import '@glideapps/glide-data-grid/dist/index.css';
-import { Box } from '@mantine/core';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { flattenObject } from '../../utils/flatten-object';
+import { Box, ScrollArea, Table } from '@mantine/core';
+import { memo } from 'react';
+import { Text12Medium, Text12Regular } from '../../components/base/text';
+import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 
-function toDisplayString(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
+export interface RecordFieldRow {
+  fieldName: string;
+  value: string;
+  fromValue?: string;
+  diffKind: FieldValueDiffKind;
+  onApprove?: () => void;
+  onUndo?: () => void;
 }
 
 interface RecordFieldsGridProps {
-  data: Record<string, unknown>;
+  rows: RecordFieldRow[];
 }
 
-export const RecordFieldsGrid = memo(function RecordFieldsGrid({ data }: RecordFieldsGridProps) {
-  const entries = useMemo(() => {
-    const flat = flattenObject(data);
-    return Object.entries(flat);
-  }, [data]);
-
-  const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
-  const observerRef = useRef<ResizeObserver | null>(null);
-
-  const wrapperRef = useCallback((el: HTMLDivElement | null) => {
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-      observerRef.current = null;
-    }
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setGridSize({ width: Math.floor(rect.width), height: Math.floor(rect.height) });
-    const observer = new ResizeObserver((obs) => {
-      const { width, height } = obs[0].contentRect;
-      setGridSize({ width: Math.floor(width), height: Math.floor(height) });
-    });
-    observer.observe(el);
-    observerRef.current = observer;
-  }, []);
-
-  const columns: GridColumn[] = useMemo(
-    () => [
-      { id: 'field', title: 'Field', width: 200 },
-      { id: 'value', title: 'Value', width: gridSize ? Math.max(200, gridSize.width - 200) : 400 },
-    ],
-    [gridSize],
-  );
-
-  const getCellContent = useCallback(
-    ([col, row]: Item) => {
-      const entry = entries[row];
-      if (!entry) {
-        return { kind: GridCellKind.Text as const, data: '', displayData: '', allowOverlay: false as const };
-      }
-
-      if (col === 0) {
-        return {
-          kind: GridCellKind.Text as const,
-          data: entry[0],
-          displayData: entry[0],
-          allowOverlay: false as const,
-          themeOverride: { baseFontStyle: '500 13px' },
-        };
-      }
-
-      const display = toDisplayString(entry[1]);
-      return {
-        kind: GridCellKind.Text as const,
-        data: display,
-        displayData: display,
-        allowOverlay: true as const,
-      };
-    },
-    [entries],
-  );
+export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordFieldsGridProps) {
+  if (rows.length === 0) {
+    return (
+      <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Text12Regular c="dimmed">No fields available</Text12Regular>
+      </Box>
+    );
+  }
 
   return (
-    <Box ref={wrapperRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-      {gridSize && (
-        <DataEditor
-          columns={columns}
-          rows={entries.length}
-          getCellContent={getCellContent}
-          width={gridSize.width}
-          height={gridSize.height}
-          smoothScrollY
-          rowMarkers="none"
-        />
-      )}
-    </Box>
+    <ScrollArea style={{ flex: 1 }}>
+      <Table
+        horizontalSpacing="md"
+        verticalSpacing="md"
+        withRowBorders
+        styles={{
+          table: { tableLayout: 'fixed' },
+          th: { backgroundColor: 'var(--bg-panel)', position: 'sticky', top: 0, zIndex: 1 },
+          td: { verticalAlign: 'top' },
+        }}
+      >
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th style={{ width: 280 }}>
+              <Text12Medium c="var(--fg-muted)">Field</Text12Medium>
+            </Table.Th>
+            <Table.Th>
+              <Text12Medium c="var(--fg-muted)">Value</Text12Medium>
+            </Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {rows.map((row) => (
+            <Table.Tr key={row.fieldName}>
+              <Table.Td style={{ width: 280 }}>
+                <Text12Medium
+                  c="var(--fg-primary)"
+                  style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
+                >
+                  {row.fieldName}
+                </Text12Medium>
+              </Table.Td>
+              <Table.Td>
+                <FieldValuePanel
+                  value={row.value}
+                  fromValue={row.fromValue}
+                  diffKind={row.diffKind}
+                  onApprove={row.onApprove}
+                  onUndo={row.onUndo}
+                />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </ScrollArea>
   );
 });

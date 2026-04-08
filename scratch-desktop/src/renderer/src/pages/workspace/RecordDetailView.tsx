@@ -4,7 +4,24 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Medium, Text12Regular, TextMono12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
-import { RecordFieldsGrid } from './RecordFieldsGrid';
+import { flattenObject } from '../../utils/flatten-object';
+import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
+
+interface DiffRecordData {
+  row: Record<string, unknown> & {
+    __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+    __changedFields: string[];
+    __fromFields: Record<string, unknown>;
+    __unpublishedFields: string[];
+    __masterFields: Record<string, unknown>;
+    __filename: string;
+  };
+  columns: string[];
+  workingData: Record<string, unknown> | null;
+  dirtyData: Record<string, unknown> | null;
+  masterData: Record<string, unknown> | null;
+  displayData: Record<string, unknown> | null;
+}
 
 interface RecordDetailViewProps {
   rows: Array<Record<string, unknown>>;
@@ -15,6 +32,19 @@ interface RecordDetailViewProps {
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
+}
+
+function rowHasUnreviewedChanges(
+  row:
+    | (Record<string, unknown> & {
+        __rowStatus?: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+        __changedFields?: string[];
+      })
+    | null
+    | undefined,
+): boolean {
+  if (!row) return false;
+  return row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || (row.__changedFields?.length ?? 0) > 0;
 }
 
 function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
@@ -29,6 +59,13 @@ function getRecordName(row: Record<string, unknown>, titleColumnId: string | nul
   return '';
 }
 
+function toDisplayString(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
 export const RecordDetailView = memo(function RecordDetailView({
   rows,
   selectedIndex,
@@ -40,39 +77,47 @@ export const RecordDetailView = memo(function RecordDetailView({
   onRecordChanged,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
-  const [rawData, setRawData] = useState<Record<string, unknown> | null>(null);
+  const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recordReloadKey, setRecordReloadKey] = useState(0);
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
 
   const currentRow = rows[selectedIndex];
   const recordName = currentRow ? getRecordName(currentRow, titleColumnId) : '';
-  const hasUnreviewedChanges = currentRow?.__rowStatus != null && currentRow.__rowStatus !== 'unchanged';
+  const hasUnreviewedChanges = rowHasUnreviewedChanges(recordData?.row ?? currentRow);
+  const currentFilename =
+    recordData?.row.__filename ?? (typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined);
 
   const currentRecordCliPath = useMemo(() => {
-    const filename = currentRow?.__filename as string | undefined;
+    const filename = typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined;
     if (!filename || !folderPath.startsWith(workspacePath)) return null;
     const relativeFolderPath = folderPath.slice(workspacePath.length).replace(/^\//, '');
     return `${relativeFolderPath}/${filename}`;
   }, [currentRow, folderPath, workspacePath]);
 
-  // Load raw file data when selection changes
+  const displayData = recordData?.displayData ?? null;
+
+  // Load shared diff data when selection changes
   useEffect(() => {
     const row = rows[selectedIndex];
     const filename = row?.__filename as string | undefined;
-    if (!filename) return;
+    if (!filename) {
+      setRecordData(null);
+      return;
+    }
 
     let cancelled = false;
     setLoading(true);
 
     window.scratchFiles
-      .readFile(`${folderPath}/${filename}`)
+      .readDiffRecordData(folderPath, workspacePath, filename)
       .then((result) => {
-        if (!cancelled && result.type === 'json') {
-          setRawData(result.data);
+        if (!cancelled) {
+          setRecordData(result);
         }
       })
       .catch(() => {
-        if (!cancelled) setRawData(null);
+        if (!cancelled) setRecordData(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -81,7 +126,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     return () => {
       cancelled = true;
     };
-  }, [selectedIndex, rows, folderPath]);
+  }, [selectedIndex, rows, folderPath, workspacePath, recordReloadKey]);
 
   // Escape key closes overlay (capture phase so it fires before the grid handles it)
   useEffect(() => {
@@ -131,6 +176,73 @@ export const RecordDetailView = memo(function RecordDetailView({
         console.debug('rejectRecord failed', err);
       });
   }, [workspacePath, currentRecordCliPath, onRecordChanged]);
+
+  const handleAcceptCellChange = useCallback(
+    (fieldName: string, value: string, logLabel: string) => {
+      if (!currentFilename) return;
+      void window.scratchFiles
+        .acceptCellChange(folderPath, workspacePath, currentFilename, fieldName, value)
+        .then(() => {
+          setRecordReloadKey((k) => k + 1);
+          onRecordChanged?.();
+        })
+        .catch((err: unknown) => {
+          console.error(`[acceptCellChange] ${logLabel} failed:`, err);
+        });
+    },
+    [currentFilename, folderPath, workspacePath, onRecordChanged],
+  );
+
+  const handleUndoApprovedCellChange = useCallback(
+    (fieldName: string) => {
+      if (!currentFilename) return;
+      void window.scratchFiles
+        .undoApprovedCellChange(folderPath, workspacePath, currentFilename, fieldName)
+        .then(() => {
+          setRecordReloadKey((k) => k + 1);
+          onRecordChanged?.();
+        })
+        .catch((err: unknown) => {
+          console.error('[undoApprovedCellChange] undo failed:', err);
+        });
+    },
+    [currentFilename, folderPath, workspacePath, onRecordChanged],
+  );
+
+  const fieldRows = useMemo<RecordFieldRow[]>(() => {
+    if (!recordData || !displayData) {
+      return [];
+    }
+
+    const displayFields = flattenObject(displayData);
+    const changedFields = new Set(recordData.row.__changedFields);
+    const unpublishedFields = new Set(recordData.row.__unpublishedFields);
+
+    return recordData.columns.map((fieldName) => {
+      const isUnreviewed = changedFields.has(fieldName);
+      const isUnpublished = unpublishedFields.has(fieldName);
+      const diffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
+      const value = toDisplayString(displayFields[fieldName]);
+      const fromValue = isUnreviewed
+        ? toDisplayString(recordData.row.__fromFields[fieldName])
+        : isUnpublished
+          ? toDisplayString(recordData.row.__masterFields[fieldName])
+          : '';
+
+      return {
+        fieldName,
+        value,
+        fromValue,
+        diffKind,
+        onApprove: isUnreviewed ? () => handleAcceptCellChange(fieldName, value, 'approve') : undefined,
+        onUndo: isUnreviewed
+          ? () => handleAcceptCellChange(fieldName, fromValue, 'undo')
+          : isUnpublished
+            ? () => handleUndoApprovedCellChange(fieldName)
+            : undefined,
+      };
+    });
+  }, [displayData, recordData, handleAcceptCellChange, handleUndoApprovedCellChange]);
 
   return (
     <Box
@@ -252,19 +364,19 @@ export const RecordDetailView = memo(function RecordDetailView({
           </Box>
         )}
 
-        {!loading && rawData && !viewRaw && <RecordFieldsGrid data={rawData} />}
+        {!loading && displayData && !viewRaw && <RecordFieldsGrid rows={fieldRows} />}
 
-        {!loading && rawData && viewRaw && (
+        {!loading && displayData && viewRaw && (
           <ScrollArea style={{ flex: 1 }}>
             <Box style={{ padding: 12 }}>
               <TextMono12Regular component="pre" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
-                {JSON.stringify(rawData, null, 2)}
+                {JSON.stringify(displayData, null, 2)}
               </TextMono12Regular>
             </Box>
           </ScrollArea>
         )}
 
-        {!loading && !rawData && (
+        {!loading && !displayData && (
           <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Text12Regular c="dimmed">No data available</Text12Regular>
           </Box>

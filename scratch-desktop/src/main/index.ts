@@ -14,6 +14,7 @@ import {
   listFolders,
   readBatch,
   readDiffGridData,
+  readDiffRecordData,
   readFileContent,
   readFolderStatuses,
   readGridData,
@@ -474,6 +475,9 @@ ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, works
 
 ipcMain.handle('files:read-diff-grid-data', async (_, folderPath: string, workspacePath: string) =>
   readDiffGridData(folderPath, workspacePath),
+);
+ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>
+  readDiffRecordData(folderPath, workspacePath, filename),
 );
 ipcMain.handle(
   'files:accept-cell-change',

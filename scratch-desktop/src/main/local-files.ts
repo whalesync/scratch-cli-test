@@ -278,6 +278,15 @@ export interface DiffGridResult {
   summary: DiffGridSummary;
 }
 
+export interface DiffRecordResult {
+  row: DiffRow;
+  columns: string[];
+  workingData: Record<string, unknown> | null;
+  dirtyData: Record<string, unknown> | null;
+  masterData: Record<string, unknown> | null;
+  displayData: Record<string, unknown> | null;
+}
+
 export interface FolderStatuses {
   unreviewedFilenames: string[];
   unpublishedFilenames: string[];
@@ -783,6 +792,99 @@ export interface DiffGridSummary {
   deleted: number;
 }
 
+function makeDiffRow(
+  base: Record<string, unknown>,
+  status: RowStatus,
+  changedFields: string[],
+  fromFields: Record<string, unknown>,
+  unpublishedFields: string[],
+  masterFields: Record<string, unknown>,
+  filename: string,
+): DiffRow {
+  const row: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(base)) row[k] = v;
+  row['__rowStatus'] = status;
+  row['__changedFields'] = changedFields;
+  row['__fromFields'] = fromFields;
+  row['__unpublishedFields'] = unpublishedFields;
+  row['__masterFields'] = masterFields;
+  row['__filename'] = filename;
+  return row as DiffRow;
+}
+
+function compareFlattenedRecordVersions(
+  workingRow: Record<string, unknown> | undefined,
+  dirtyRow: Record<string, unknown> | undefined,
+  masterRow: Record<string, unknown> | undefined,
+  filename: string,
+): { row: DiffRow; columns: string[] } | null {
+  const columnSet = new Set<string>();
+
+  if (workingRow && !dirtyRow) {
+    for (const k of Object.keys(workingRow)) columnSet.add(k);
+    return { row: makeDiffRow(workingRow, 'added', [], {}, [], {}, filename), columns: Array.from(columnSet) };
+  }
+
+  if (!workingRow && dirtyRow) {
+    for (const k of Object.keys(dirtyRow)) columnSet.add(k);
+    return { row: makeDiffRow(dirtyRow, 'deleted', [], dirtyRow, [], {}, filename), columns: Array.from(columnSet) };
+  }
+
+  if (!workingRow && !dirtyRow && masterRow) {
+    const unpublishedFields = Object.keys(masterRow);
+    for (const k of unpublishedFields) columnSet.add(k);
+    return {
+      row: makeDiffRow({}, 'unpublished', [], {}, unpublishedFields, masterRow, filename),
+      columns: Array.from(columnSet),
+    };
+  }
+
+  if (workingRow && dirtyRow) {
+    const comparableMasterRow = masterRow ?? {};
+    const allKeysArr: string[] = Array.from(
+      new Set<string>(Object.keys(workingRow).concat(Object.keys(dirtyRow)).concat(Object.keys(comparableMasterRow))),
+    );
+
+    const changedFields: string[] = [];
+    const fromFields: Record<string, unknown> = {};
+    const unpublishedFields: string[] = [];
+    const masterFields: Record<string, unknown> = {};
+
+    for (const k of allKeysArr) {
+      columnSet.add(k);
+      const wStr = JSON.stringify(workingRow[k] as object);
+      const dStr = JSON.stringify(dirtyRow[k] as object);
+      const mStr = JSON.stringify(comparableMasterRow[k] as object);
+
+      if (wStr !== dStr) {
+        changedFields.push(k);
+        fromFields[k] = dirtyRow[k];
+      } else if (dStr !== mStr) {
+        unpublishedFields.push(k);
+        masterFields[k] = comparableMasterRow[k];
+      }
+    }
+
+    const status: RowStatus =
+      changedFields.length > 0 ? 'modified' : unpublishedFields.length > 0 ? 'unpublished' : 'unchanged';
+
+    return {
+      row: makeDiffRow(workingRow, status, changedFields, fromFields, unpublishedFields, masterFields, filename),
+      columns: Array.from(columnSet),
+    };
+  }
+
+  return null;
+}
+
+function pickDisplayRecordData(
+  workingData: Record<string, unknown> | null,
+  dirtyData: Record<string, unknown> | null,
+  masterData: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  return workingData ?? dirtyData ?? masterData;
+}
+
 /**
  * Compares working tree against dirty and master branches, returning a unified row list.
  *
@@ -819,82 +921,18 @@ export async function readDiffGridData(folderPath: string, workspacePath: string
   const columnSet = new Set<string>();
   const rows: DiffRow[] = [];
 
-  function makeDiffRow(
-    base: Record<string, unknown>,
-    status: RowStatus,
-    changedFields: string[],
-    fromFields: Record<string, unknown>,
-    unpublishedFields: string[],
-    masterFields: Record<string, unknown>,
-    filename: string,
-  ): DiffRow {
-    const row: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(base)) row[k] = v;
-    row['__rowStatus'] = status;
-    row['__changedFields'] = changedFields;
-    row['__fromFields'] = fromFields;
-    row['__unpublishedFields'] = unpublishedFields;
-    row['__masterFields'] = masterFields;
-    row['__filename'] = filename;
-    return row as DiffRow;
-  }
-
   for (const name of allNamesArr) {
-    const workingRow = workingFiles.get(name);
-    const dirtyRow = dirtyFiles.get(name);
-    const masterRow = masterFiles.get(name);
-
-    if (workingRow && !dirtyRow) {
-      // Unreviewed new file — not yet accepted to dirty
-      for (const k of Object.keys(workingRow)) columnSet.add(k);
-      rows.push(makeDiffRow(workingRow, 'added', [], {}, [], {}, name));
-    } else if (!workingRow && dirtyRow) {
-      // Unreviewed deletion — removed from working tree but still in dirty
-      for (const k of Object.keys(dirtyRow)) columnSet.add(k);
-      rows.push(makeDiffRow(dirtyRow, 'deleted', [], dirtyRow, [], {}, name));
-    } else if (!workingRow && !dirtyRow && masterRow) {
-      // Reviewed deletion — accepted in dirty, not yet published to master.
-      const unpublishedFields = Object.keys(masterRow);
-      for (const k of unpublishedFields) columnSet.add(k);
-      rows.push(makeDiffRow({}, 'unpublished', [], {}, unpublishedFields, masterRow, name));
-    } else if (workingRow && dirtyRow) {
-      // File exists in both working and dirty — compare all three versions field by field.
-      // If master file is absent (never published), masterRow is {}, so all dirty fields
-      // with values will differ from master and count as unpublished.
-      const comparableMasterRow = masterRow ?? {};
-
-      const allKeysArr: string[] = Array.from(
-        new Set<string>(Object.keys(workingRow).concat(Object.keys(dirtyRow)).concat(Object.keys(comparableMasterRow))),
-      );
-
-      const changedFields: string[] = [];
-      const fromFields: Record<string, unknown> = {};
-      const unpublishedFields: string[] = [];
-      const masterFields: Record<string, unknown> = {};
-
-      for (const k of allKeysArr) {
-        columnSet.add(k);
-        const wStr = JSON.stringify(workingRow[k] as object);
-        const dStr = JSON.stringify(dirtyRow[k] as object);
-        const mStr = JSON.stringify(comparableMasterRow[k] as object);
-
-        if (wStr !== dStr) {
-          // Unreviewed: working differs from dirty. Per the priority rule, w != d takes
-          // precedence — we do NOT additionally mark this field as unpublished even if d != m.
-          changedFields.push(k);
-          fromFields[k] = dirtyRow[k];
-        } else if (dStr !== mStr) {
-          // Reviewed but unpublished: working matches dirty, but dirty differs from master.
-          unpublishedFields.push(k);
-          masterFields[k] = comparableMasterRow[k];
-        }
-      }
-
-      const status: RowStatus =
-        changedFields.length > 0 ? 'modified' : unpublishedFields.length > 0 ? 'unpublished' : 'unchanged';
-
-      rows.push(makeDiffRow(workingRow, status, changedFields, fromFields, unpublishedFields, masterFields, name));
+    const compared = compareFlattenedRecordVersions(
+      workingFiles.get(name),
+      dirtyFiles.get(name),
+      masterFiles.get(name),
+      name,
+    );
+    if (!compared) {
+      continue;
     }
+    for (const column of compared.columns) columnSet.add(column);
+    rows.push(compared.row);
   }
 
   const summary: DiffGridSummary = {
@@ -906,6 +944,42 @@ export async function readDiffGridData(folderPath: string, workspacePath: string
   };
 
   return { rows, columns: Array.from(columnSet), total: rows.length, summary };
+}
+
+export async function readDiffRecordData(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+): Promise<DiffRecordResult | null> {
+  const workingFile = join(folderPath, filename);
+  const dirtyFile = join(getVersionFolderPath(folderPath, workspacePath, 'dirty'), filename);
+  const masterFile = join(getVersionFolderPath(folderPath, workspacePath, 'main'), filename);
+
+  const [workingData, dirtyData, masterData] = await Promise.all([
+    readJsonObject(workingFile),
+    readJsonObject(dirtyFile),
+    readJsonObject(masterFile),
+  ]);
+
+  const compared = compareFlattenedRecordVersions(
+    workingData ? flattenObject(workingData) : undefined,
+    dirtyData ? flattenObject(dirtyData) : undefined,
+    masterData ? flattenObject(masterData) : undefined,
+    filename,
+  );
+
+  if (!compared) {
+    return null;
+  }
+
+  return {
+    row: compared.row,
+    columns: compared.columns,
+    workingData,
+    dirtyData,
+    masterData,
+    displayData: pickDisplayRecordData(workingData, dirtyData, masterData),
+  };
 }
 
 /**
