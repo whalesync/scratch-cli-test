@@ -42,6 +42,8 @@ pub struct ConnectionEntry {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectorMarker {
     pub version: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detached: bool,
     pub workbook: ConnectorWorkbookRef,
     pub connector: ConnectorRef,
 }
@@ -206,6 +208,18 @@ pub fn write_workspace(
     let content =
         serde_yaml::to_string(&marker).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(marker_path(dir), content)
+}
+
+/// Rewrite the connections list in an existing workspace marker, preserving all other fields.
+pub fn rewrite_connections(dir: &Path, connections: &[ConnectionEntry]) -> io::Result<()> {
+    let path = marker_path(dir);
+    let content = fs::read_to_string(&path)?;
+    let mut marker: WorkspaceMarker =
+        serde_yaml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    marker.connections = connections.to_vec();
+    let new_content =
+        serde_yaml::to_string(&marker).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    fs::write(&path, new_content)
 }
 
 /// Sanitize a string for use as a filesystem directory name.

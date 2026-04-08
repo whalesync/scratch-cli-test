@@ -43,6 +43,7 @@ These are additions, not regressions.
 | `publish-from-git`     | Trigger server-side publish from local plan         |
 | `build-index`          | Rebuild SQLite file index for the workspace         |
 | `dump-index`           | Print index contents (debugging)                    |
+| `files download --on-delete` | Workspace sync on download: detects added/removed connections and reconciles local state |
 
 V2 `workspaces init` is also richer in Rust — it auto-creates master worktrees
 and rebuilds the file index after cloning, which the Go CLI does not do.

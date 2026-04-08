@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 
 use clap::Subcommand;
 
+use crate::api::ConnectorAccount;
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
 
@@ -38,10 +40,24 @@ fn cached_read_git_tree<'c>(
     cache.get_or_read(bare_repo, hash)
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum OnDeleteAction {
+    /// Interactively ask per removed connection
+    Prompt,
+    /// Automatically delete removed connections
+    Remove,
+    /// Automatically keep removed connections as detached
+    Keep,
+}
+
 #[derive(Subcommand)]
 pub enum FilesCommands {
     /// Download remote changes and three-way merge with local edits
-    Download,
+    Download {
+        /// What to do when a connection was removed from the server
+        #[arg(long, value_enum, default_value = "prompt")]
+        on_delete: OnDeleteAction,
+    },
     /// Commit all current working-tree record changes into the local dirty branch
     #[command(name = "accept-all")]
     AcceptAll,
@@ -80,6 +96,13 @@ struct ConnectionContext {
     reviewed_dirty_dir: PathBuf,
     bare_repo: PathBuf,
     db_path: PathBuf,
+}
+
+#[derive(Default)]
+struct WorkspaceSyncResult {
+    connections_added: Vec<String>,
+    connections_removed: Vec<String>,
+    connections_detached: Vec<String>,
 }
 
 #[derive(Default)]
@@ -126,7 +149,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
     let cwd = std::env::current_dir()?;
 
     match cmd {
-        FilesCommands::Download => run_download(&cwd, server_url, json),
+        FilesCommands::Download { on_delete } => run_download(&cwd, server_url, json, on_delete).await,
         FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::Reject { paths } => run_reject(&cwd, &paths, json),
@@ -147,11 +170,26 @@ fn get_token(server_url: &str) -> anyhow::Result<String> {
     Ok(creds.api_token)
 }
 
-fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+async fn run_download(cwd: &Path, server_url: &str, json: bool, on_delete: OnDeleteAction) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
+    let (workspace_marker, workspace_dir, _initial_contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url)?;
     let token = get_token(&workspace_server_url)?;
+
+    // Workspace sync phase: detect structural drift and reconcile
+    let sync_result = sync_workspace_structure(
+        &workspace_dir,
+        &workspace_marker,
+        &workspace_server_url,
+        &token,
+        on_delete,
+        json,
+    )
+    .await?;
+
+    // Re-read marker and rebuild contexts after sync
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, Some(cwd))?;
 
     if contexts.is_empty() {
         anyhow::bail!(
@@ -185,7 +223,147 @@ fn run_download(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
         aggregate_download(&results)
     };
 
-    print_download_result(&result, started.elapsed().as_millis(), json)
+    print_download_result(&sync_result, &result, started.elapsed().as_millis(), json)
+}
+
+async fn sync_workspace_structure(
+    workspace_dir: &Path,
+    workspace_marker: &markers::WorkspaceMarker,
+    server_url: &str,
+    token: &str,
+    on_delete: OnDeleteAction,
+    json: bool,
+) -> anyhow::Result<WorkspaceSyncResult> {
+    let client = crate::api::ApiClient::from_credentials(server_url)
+        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
+
+    let wb: crate::api::Workbook = client
+        .get(&format!("workbooks/{}", workspace_marker.workbook.id))
+        .await?;
+
+    let local_ids: std::collections::HashSet<&str> = workspace_marker
+        .connections
+        .iter()
+        .map(|c| c.id.as_str())
+        .collect();
+    let server_ids: std::collections::HashSet<&str> = wb
+        .connector_accounts
+        .iter()
+        .map(|ca| ca.id.as_str())
+        .collect();
+
+    let added: Vec<&ConnectorAccount> = wb
+        .connector_accounts
+        .iter()
+        .filter(|ca| !local_ids.contains(ca.id.as_str()))
+        .collect();
+    let removed: Vec<&markers::ConnectionEntry> = workspace_marker
+        .connections
+        .iter()
+        .filter(|c| !server_ids.contains(c.id.as_str()))
+        .collect();
+
+    // If nothing changed, return early
+    if added.is_empty() && removed.is_empty() {
+        return Ok(WorkspaceSyncResult::default());
+    }
+
+    let layout = WorkspaceLayout::for_cli(workspace_dir);
+    let mut result = WorkspaceSyncResult::default();
+
+    // Set up new connections
+    for ca in &added {
+        let dir_name = markers::connector_dir_name(&ca.service, &ca.display_name);
+        if !json {
+            println!("Setting up new connection: {}...", dir_name);
+        }
+        match super::workspaces::setup_connection(ca, &layout, token) {
+            Ok(_) => result.connections_added.push(dir_name),
+            Err(e) => eprintln!("  Warning: failed to set up connection {}: {e}", ca.display_name),
+        }
+    }
+
+    // Handle removed connections
+    for entry in &removed {
+        let action = if json {
+            // In JSON mode, default to keep (no interactive prompts)
+            OnDeleteAction::Keep
+        } else {
+            on_delete
+        };
+
+        match action {
+            OnDeleteAction::Remove => {
+                if !json {
+                    println!("Removing connection: {}...", entry.dir_name);
+                }
+                super::workspaces::teardown_connection(entry, &layout)?;
+                result.connections_removed.push(entry.dir_name.clone());
+            }
+            OnDeleteAction::Keep => {
+                if !json {
+                    println!(
+                        "Connection \"{}\" detached — files preserved at {}/",
+                        entry.display_name,
+                        workspace_dir.join(&entry.dir_name).display()
+                    );
+                }
+                super::workspaces::detach_connection(entry, workspace_marker, &layout)?;
+                result.connections_detached.push(entry.dir_name.clone());
+            }
+            OnDeleteAction::Prompt => {
+                println!(
+                    "Connection \"{}\" was removed from the server.",
+                    entry.display_name
+                );
+                println!("  [d] Delete local files");
+                println!("  [k] Keep as detached (files remain, no longer synced)");
+                print!("  > ");
+                io::stdout().flush()?;
+                let mut line = String::new();
+                io::stdin().lock().read_line(&mut line)?;
+                let response = line.trim().to_lowercase();
+                if response == "d" || response == "delete" {
+                    super::workspaces::teardown_connection(entry, &layout)?;
+                    result.connections_removed.push(entry.dir_name.clone());
+                } else {
+                    super::workspaces::detach_connection(entry, workspace_marker, &layout)?;
+                    result.connections_detached.push(entry.dir_name.clone());
+                    println!(
+                        "Connection \"{}\" detached — files preserved at {}/",
+                        entry.display_name,
+                        workspace_dir.join(&entry.dir_name).display()
+                    );
+                }
+            }
+        }
+    }
+
+    // Update the marker with the new connection list
+    let mut updated_connections: Vec<markers::ConnectionEntry> = workspace_marker
+        .connections
+        .iter()
+        .filter(|c| server_ids.contains(c.id.as_str()))
+        .cloned()
+        .collect();
+
+    // Add newly set up connections
+    for ca in &added {
+        let dir_name = markers::connector_dir_name(&ca.service, &ca.display_name);
+        if result.connections_added.contains(&dir_name) {
+            updated_connections.push(markers::ConnectionEntry {
+                id: ca.id.clone(),
+                display_name: ca.display_name.clone(),
+                service: ca.service.clone(),
+                repo_path: ca.repo_path.clone(),
+                dir_name,
+            });
+        }
+    }
+
+    markers::rewrite_connections(workspace_dir, &updated_connections)?;
+
+    Ok(result)
 }
 
 fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
@@ -1747,31 +1925,39 @@ fn print_file_list(paths: &[String]) {
 }
 
 fn print_download_result(
+    sync: &WorkspaceSyncResult,
     result: &DownloadResult,
     elapsed_ms: u128,
     json: bool,
 ) -> anyhow::Result<()> {
+    let has_sync_changes = !sync.connections_added.is_empty()
+        || !sync.connections_removed.is_empty()
+        || !sync.connections_detached.is_empty();
+
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "status": result.status,
-                "filesUpdated": result.files_updated,
-                "filesCreated": result.files_created,
-                "filesDeleted": result.files_deleted,
-                "filesMerged": result.files_merged,
-                "conflictsAutoResolved": result.conflicts_auto_resolved,
-                "messages": result.messages,
-                "elapsedMs": elapsed_ms,
-            }))?
-        );
+        let mut output = serde_json::json!({
+            "status": result.status,
+            "filesUpdated": result.files_updated,
+            "filesCreated": result.files_created,
+            "filesDeleted": result.files_deleted,
+            "filesMerged": result.files_merged,
+            "conflictsAutoResolved": result.conflicts_auto_resolved,
+            "messages": result.messages,
+            "elapsedMs": elapsed_ms,
+        });
+        if has_sync_changes {
+            output["connectionsAdded"] = serde_json::json!(sync.connections_added);
+            output["connectionsRemoved"] = serde_json::json!(sync.connections_removed);
+            output["connectionsDetached"] = serde_json::json!(sync.connections_detached);
+        }
+        println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
     let total =
         result.files_created + result.files_updated + result.files_merged + result.files_deleted;
     let elapsed = format_elapsed(elapsed_ms);
-    if total == 0 {
+    if total == 0 && !has_sync_changes {
         println!(
             "{} ({})",
             if result.status == "up_to_date" {
@@ -1786,6 +1972,24 @@ fn print_download_result(
 
     println!();
     let mut parts = Vec::new();
+    if !sync.connections_added.is_empty() {
+        parts.push(format!(
+            "{} connection(s) added",
+            sync.connections_added.len()
+        ));
+    }
+    if !sync.connections_removed.is_empty() {
+        parts.push(format!(
+            "{} connection(s) removed",
+            sync.connections_removed.len()
+        ));
+    }
+    if !sync.connections_detached.is_empty() {
+        parts.push(format!(
+            "{} connection(s) detached",
+            sync.connections_detached.len()
+        ));
+    }
     if result.files_created > 0 {
         parts.push(format!("{} added", result.files_created));
     }

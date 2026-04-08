@@ -382,51 +382,10 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     total += init_workbook_repo(wb, &layout, token)?;
 
     for ca in &wb.connector_accounts {
-        let dir_name = connector_dir_name(&ca.service, &ca.display_name);
-
-        if ca.git_url.is_empty() {
-            eprintln!("  Skipping connector {} (no git URL)", ca.display_name);
-            continue;
+        match setup_connection(ca, &layout, token) {
+            Ok(file_count) => total += file_count,
+            Err(e) => eprintln!("  Warning: failed to set up connection {}: {e}", ca.display_name),
         }
-        if ca.repo_path.is_empty() {
-            eprintln!("  Skipping connector {} (no repoPath)", ca.display_name);
-            continue;
-        }
-
-        let bare_repo = layout.bare_repo_path(&ca.repo_path);
-        let dirty_dir = layout.dirty_checkout_path(&dir_name);
-        let dirty_scratch_dir = layout.connection_scratch_path(&dir_name);
-        let master_dir = layout.master_worktree_path(&dir_name);
-        let db_path = layout.index_db_path(&ca.repo_path);
-
-        git_clone_bare(&ca.git_url, &bare_repo, token)?;
-        materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
-        let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
-        if let Err(e) = crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH) {
-            eprintln!("  Warning: could not set up reviewed-dirty worktree for {}: {e}", dir_name);
-        }
-
-        match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {
-            Ok(()) => {
-                // Include schema files that are normally excluded by the sparse checkout.
-                include_schemas_in_sparse_checkout(&master_dir)?;
-                sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
-                if let Some(parent) = db_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                if let Err(e) = crate::shared::index::build(&master_dir, &db_path) {
-                    eprintln!("  Warning: failed to build index for {}: {e}", dir_name);
-                }
-            }
-            Err(_) => {
-                eprintln!(
-                    "  Note: could not create master checkout for {} (main branch may not exist)",
-                    dir_name
-                );
-            }
-        }
-
-        total += count_files(&dirty_dir);
     }
 
     let wb_name = if wb.name.is_empty() {
@@ -644,6 +603,149 @@ fn repo_path_prefix(repo_path: &str) -> Option<&str> {
         .rsplit_once('/')
         .map(|(prefix, _)| prefix)
         .filter(|prefix| !prefix.is_empty())
+}
+
+// ── Connection lifecycle helpers ───────────────────────────────────────────
+
+/// Set up a single connection's local git infrastructure (bare repo, worktrees, index).
+/// Returns the number of files materialized in the dirty checkout.
+pub fn setup_connection(
+    ca: &ConnectorAccount,
+    layout: &WorkspaceLayout,
+    token: &str,
+) -> anyhow::Result<i64> {
+    let dir_name = connector_dir_name(&ca.service, &ca.display_name);
+
+    if ca.git_url.is_empty() {
+        anyhow::bail!("no git URL");
+    }
+    if ca.repo_path.is_empty() {
+        anyhow::bail!("no repoPath");
+    }
+
+    let bare_repo = layout.bare_repo_path(&ca.repo_path);
+    let dirty_dir = layout.dirty_checkout_path(&dir_name);
+    let dirty_scratch_dir = layout.connection_scratch_path(&dir_name);
+    let master_dir = layout.master_worktree_path(&dir_name);
+    let db_path = layout.index_db_path(&ca.repo_path);
+
+    git_clone_bare(&ca.git_url, &bare_repo, token)?;
+    materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
+    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
+    if let Err(e) = crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH) {
+        eprintln!("  Warning: could not set up reviewed-dirty worktree for {}: {e}", dir_name);
+    }
+
+    match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {
+        Ok(()) => {
+            include_schemas_in_sparse_checkout(&master_dir)?;
+            sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
+            if let Some(parent) = db_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if let Err(e) = crate::shared::index::build(&master_dir, &db_path) {
+                eprintln!("  Warning: failed to build index for {}: {e}", dir_name);
+            }
+        }
+        Err(_) => {
+            eprintln!(
+                "  Note: could not create master checkout for {} (main branch may not exist)",
+                dir_name
+            );
+        }
+    }
+
+    Ok(count_files(&dirty_dir))
+}
+
+/// Remove all local artifacts for a connection (bare repo, worktrees, index DB, checkout dirs).
+pub fn teardown_connection(
+    entry: &markers::ConnectionEntry,
+    layout: &WorkspaceLayout,
+) -> anyhow::Result<()> {
+    let bare_repo = layout.bare_repo_path(&entry.repo_path);
+    let dirty_dir = layout.dirty_checkout_path(&entry.dir_name);
+    let scratch_dir = layout.connection_scratch_path(&entry.dir_name);
+    let master_dir = layout.master_worktree_path(&entry.dir_name);
+    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&entry.dir_name);
+    let db_path = layout.index_db_path(&entry.repo_path);
+
+    // Prune worktrees before removing the bare repo
+    prune_worktrees(&bare_repo);
+
+    remove_path(&bare_repo);
+    remove_path(&db_path);
+    remove_path(&dirty_dir);
+    remove_path(&scratch_dir);
+    remove_path(&master_dir);
+    remove_path(&reviewed_dirty_dir);
+
+    Ok(())
+}
+
+/// Mark a connection as detached: preserve dirty checkout files but remove git infrastructure.
+pub fn detach_connection(
+    entry: &markers::ConnectionEntry,
+    workspace_marker: &markers::WorkspaceMarker,
+    layout: &WorkspaceLayout,
+) -> anyhow::Result<()> {
+    let dirty_dir = layout.dirty_checkout_path(&entry.dir_name);
+
+    // Write a detached connector marker into the connection directory
+    let connector_marker = markers::ConnectorMarker {
+        version: "2".to_string(),
+        detached: true,
+        workbook: markers::ConnectorWorkbookRef {
+            id: workspace_marker.workbook.id.clone(),
+            name: workspace_marker.workbook.name.clone(),
+        },
+        connector: markers::ConnectorRef {
+            id: entry.id.clone(),
+            display_name: entry.display_name.clone(),
+            service: entry.service.clone(),
+            repo_path: entry.repo_path.clone(),
+        },
+    };
+    let marker_content = serde_yaml::to_string(&connector_marker)
+        .map_err(|e| anyhow::anyhow!("failed to serialize detached marker: {e}"))?;
+    let marker_path = dirty_dir.join(".scratchmd");
+    std::fs::write(&marker_path, marker_content)?;
+
+    // Remove git infrastructure while preserving the dirty checkout directory
+    let bare_repo = layout.bare_repo_path(&entry.repo_path);
+    let scratch_dir = layout.connection_scratch_path(&entry.dir_name);
+    let master_dir = layout.master_worktree_path(&entry.dir_name);
+    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&entry.dir_name);
+    let db_path = layout.index_db_path(&entry.repo_path);
+
+    prune_worktrees(&bare_repo);
+
+    remove_path(&bare_repo);
+    remove_path(&db_path);
+    remove_path(&scratch_dir);
+    remove_path(&master_dir);
+    remove_path(&reviewed_dirty_dir);
+
+    Ok(())
+}
+
+fn prune_worktrees(bare_repo: &Path) {
+    if bare_repo.exists() {
+        let _ = std::process::Command::new("git")
+            .args(["-C", &bare_repo.to_string_lossy(), "worktree", "prune"])
+            .output();
+    }
+}
+
+fn remove_path(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    if path.is_dir() {
+        let _ = std::fs::remove_dir_all(path);
+    } else {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 #[cfg(test)]
