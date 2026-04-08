@@ -1,5 +1,5 @@
 import { Text12Regular, Text13Regular } from '@/components/base/text';
-import { Box, Group, Stack, UnstyledButton } from '@mantine/core';
+import { Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
 import { Bug, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
@@ -11,6 +11,7 @@ import { LocalFolder } from './WorkspaceContent';
 interface WorkspaceSidebarProps {
   workspace: Workspace;
   localFolders: LocalFolder[];
+  isFoldersLoading: boolean;
   width: number;
   minWidth: number;
   maxWidth: number;
@@ -21,6 +22,7 @@ interface WorkspaceSidebarProps {
 export function WorkspaceSidebar({
   workspace,
   localFolders,
+  isFoldersLoading,
   width,
   minWidth,
   maxWidth,
@@ -46,16 +48,27 @@ export function WorkspaceSidebar({
     >
       {/* Folder tree */}
       <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} py="xs">
-        {localFolders.length === 0 && (
-          <Text12Regular c="dimmed" px="sm" py="xs">
-            No folders yet
-          </Text12Regular>
+        {isFoldersLoading ? (
+          <Group justify="center" align="center" gap="sm">
+            <Loader size="xs" />
+            <Text12Regular c="dimmed" ta="center">
+              Loading folders…
+            </Text12Regular>
+          </Group>
+        ) : (
+          <>
+            {localFolders.length === 0 && (
+              <Text12Regular c="dimmed" px="sm" py="xs">
+                No folders yet
+              </Text12Regular>
+            )}
+            <FolderTree
+              localFolders={localFolders}
+              selectedFolderPath={selectedFolderPath}
+              onSelectFolder={onSelectFolder}
+            />
+          </>
         )}
-        <FolderTree
-          localFolders={localFolders}
-          selectedFolderPath={selectedFolderPath}
-          onSelectFolder={onSelectFolder}
-        />
       </Box>
 
       {/* Footer */}

@@ -1,5 +1,5 @@
 import { Box } from '@mantine/core';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Workspace } from '../../types/workspace';
 import { FolderDataGrid } from './FolderDataGrid';
 import { ResizeHandle } from './ResizeHandle';
@@ -35,6 +35,8 @@ export function WorkspaceContent({
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
+  const [isFoldersLoading, setIsFoldersLoading] = useState(false);
+  const folderLoadGeneration = useRef(0);
 
   const handleResizeStart = useCallback(() => {
     setIsResizing(true);
@@ -58,20 +60,35 @@ export function WorkspaceContent({
   // Load local folders when workspace is downloaded
   useEffect(() => {
     if (!localPath) {
+      folderLoadGeneration.current += 1;
       setLocalFolders([]);
+      setIsFoldersLoading(false);
       return;
     }
 
-    let cancelled = false;
-    void window.scratchFiles.listFolders(localPath).then((folders) => {
-      if (!cancelled) {
-        setLocalFolders(folders);
-      }
-    });
+    const generation = ++folderLoadGeneration.current;
+    setIsFoldersLoading(true);
 
-    return () => {
-      cancelled = true;
-    };
+    void window.scratchFiles
+      .listFolders(localPath)
+      .then((folders) => {
+        if (generation !== folderLoadGeneration.current) {
+          return;
+        }
+        setLocalFolders(folders);
+      })
+      .catch(() => {
+        if (generation !== folderLoadGeneration.current) {
+          return;
+        }
+        setLocalFolders([]);
+      })
+      .finally(() => {
+        if (generation !== folderLoadGeneration.current) {
+          return;
+        }
+        setIsFoldersLoading(false);
+      });
   }, [dataRefreshKey, localPath]);
 
   return (
@@ -88,6 +105,7 @@ export function WorkspaceContent({
       <WorkspaceSidebar
         workspace={workspace}
         localFolders={localFolders}
+        isFoldersLoading={isFoldersLoading}
         width={sidebarWidth}
         minWidth={MIN_SIDEBAR_WIDTH}
         maxWidth={MAX_SIDEBAR_WIDTH}
