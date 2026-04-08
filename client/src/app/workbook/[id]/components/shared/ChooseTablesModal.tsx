@@ -42,7 +42,7 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { TableDiscoveryMode } from '@spinner/shared-types';
-import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
+import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -59,19 +59,21 @@ function TableLabel({ table }: { table: TablePreview }) {
   return (
     <Group gap={6} align="center" wrap="nowrap">
       <Stack gap={0}>
-        <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
+        <Group gap={6} align="center" wrap="nowrap">
+          <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
+          {table.disabled && (
+            <Tooltip label={table.disabledReason ?? 'Not available'} multiline maw={250} position="right">
+              <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
+            </Tooltip>
+          )}
+          {!table.disabled && table.disabledCreates && (
+            <Tooltip label={table.disabledReason ?? 'Creates are not supported'} multiline maw={250} position="right">
+              <InfoIcon size={14} color="var(--mantine-color-dimmed)" />
+            </Tooltip>
+          )}
+        </Group>
         {description && <Text12Regular c="dimmed">{description}</Text12Regular>}
       </Stack>
-      {table.disabled && (
-        <Tooltip label={table.disabledReason ?? 'Not available'} multiline maw={250} position="right">
-          <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
-        </Tooltip>
-      )}
-      {!table.disabled && table.disabledCreates && (
-        <Tooltip label={table.disabledReason ?? 'Creates are not supported'} multiline maw={250} position="right">
-          <AlertTriangleIcon size={14} color="var(--mantine-color-yellow-6)" />
-        </Tooltip>
-      )}
     </Group>
   );
 }
