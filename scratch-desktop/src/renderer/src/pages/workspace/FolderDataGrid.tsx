@@ -8,11 +8,10 @@ import DataEditor, {
   type Item,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Modal, Stack, Textarea } from '@mantine/core';
-import { diffWordsWithSpace } from 'diff';
+import { Box, Group, Loader, Modal, Stack } from '@mantine/core';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ButtonDangerLight, ButtonPrimaryLight, ButtonSecondaryOutline } from '../../components/base/buttons';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
+import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { RecordDetailView } from './RecordDetailView';
 
 // ── Types ──
@@ -264,7 +263,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     fieldName: string;
     value: string;
     fromValue: string;
-    diffKind: 'unreviewed' | 'unpublished' | null;
+    diffKind: FieldValueDiffKind;
   } | null>(null);
   const [cellModalEditing, setCellModalEditing] = useState(false);
   const [cellModalEditValue, setCellModalEditValue] = useState('');
@@ -555,11 +554,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const value = toDisplayString(r[colId]);
       const isUnreviewed = r.__rowStatus === 'modified' && r.__changedFields.includes(colId);
       const isUnpublished = r.__rowStatus === 'unpublished' && r.__unpublishedFields.includes(colId);
-      const diffKind: 'unreviewed' | 'unpublished' | null = isUnreviewed
-        ? 'unreviewed'
-        : isUnpublished
-          ? 'unpublished'
-          : null;
+      const diffKind: FieldValueDiffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
       const fromValue = isUnreviewed
         ? toDisplayString(r.__fromFields[colId])
         : isUnpublished
@@ -791,8 +786,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           workspacePath &&
           (() => {
             const { diffKind, value, fromValue, filename, fieldName } = cellModal;
-            const bg = diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG;
-            const border = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER : DIFF_UNPUBLISHED_BORDER;
             const saveAndClose = (saveValue: string, logLabel: string) => {
               void window.scratchFiles
                 .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, saveValue)
@@ -817,121 +810,34 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             };
 
             return (
-              <Group align="flex-start" gap="md" wrap="nowrap">
-                <Box style={{ flex: 1, minWidth: 0 }}>
-                  {cellModalEditing ? (
-                    <Textarea
-                      autoFocus
-                      autosize
-                      minRows={4}
-                      value={cellModalEditValue}
-                      onChange={(e) => setCellModalEditValue(e.currentTarget.value)}
-                      styles={
-                        diffKind !== null
-                          ? {
-                              input: {
-                                backgroundColor: bg,
-                                borderLeft: `4px solid ${border}`,
-                                borderRadius: 4,
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                              },
-                            }
-                          : { input: { fontFamily: 'monospace', fontSize: 13 } }
-                      }
-                    />
-                  ) : (
-                    <Box
-                      style={{
-                        backgroundColor: bg,
-                        borderLeft: `4px solid ${border}`,
-                        borderRadius: 4,
-                        padding: '12px 16px',
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                        lineHeight: 1.6,
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      {diffWordsWithSpace(fromValue, value).map((part, i) => {
-                        if (part.removed) {
-                          return (
-                            <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
-                              {part.value}
-                            </span>
-                          );
-                        }
-                        if (part.added) {
-                          return (
-                            <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
-                              {part.value}
-                            </span>
-                          );
-                        }
-                        return <span key={i}>{part.value}</span>;
-                      })}
-                    </Box>
-                  )}
-                </Box>
-
-                <Stack gap="xs" style={{ flexShrink: 0, width: 100 }}>
-                  {cellModalEditing ? (
-                    <>
-                      <ButtonPrimaryLight fullWidth onClick={() => saveAndClose(cellModalEditValue, 'save')}>
-                        Save
-                      </ButtonPrimaryLight>
-                      <ButtonSecondaryOutline
-                        fullWidth
-                        onClick={() => {
-                          if (diffKind !== null) {
-                            setCellModalEditing(false);
-                          } else {
-                            setCellModal(null);
-                          }
-                        }}
-                      >
-                        Cancel
-                      </ButtonSecondaryOutline>
-                    </>
-                  ) : diffKind === 'unreviewed' ? (
-                    <>
-                      <ButtonPrimaryLight fullWidth onClick={() => saveAndClose(value, 'approve')}>
-                        Approve
-                      </ButtonPrimaryLight>
-                      <ButtonDangerLight fullWidth onClick={() => saveAndClose(fromValue, 'undo')}>
-                        Undo
-                      </ButtonDangerLight>
-                      <ButtonSecondaryOutline
-                        fullWidth
-                        onClick={() => {
-                          setCellModalEditValue(value);
-                          setCellModalEditing(true);
-                        }}
-                      >
-                        Edit
-                      </ButtonSecondaryOutline>
-                    </>
-                  ) : (
-                    <>
-                      {diffKind === 'unpublished' && (
-                        <ButtonDangerLight fullWidth onClick={undoApprovedAndClose}>
-                          Undo
-                        </ButtonDangerLight>
-                      )}
-                      <ButtonSecondaryOutline
-                        fullWidth
-                        onClick={() => {
-                          setCellModalEditValue(value);
-                          setCellModalEditing(true);
-                        }}
-                      >
-                        Edit
-                      </ButtonSecondaryOutline>
-                    </>
-                  )}
-                </Stack>
-              </Group>
+              <FieldValuePanel
+                value={value}
+                fromValue={fromValue}
+                diffKind={diffKind}
+                editing={cellModalEditing}
+                editValue={cellModalEditValue}
+                onEditValueChange={setCellModalEditValue}
+                onSave={() => saveAndClose(cellModalEditValue, 'save')}
+                onCancel={() => {
+                  if (diffKind !== null) {
+                    setCellModalEditing(false);
+                  } else {
+                    setCellModal(null);
+                  }
+                }}
+                onApprove={diffKind === 'unreviewed' ? () => saveAndClose(value, 'approve') : undefined}
+                onUndo={
+                  diffKind === 'unreviewed'
+                    ? () => saveAndClose(fromValue, 'undo')
+                    : diffKind === 'unpublished'
+                      ? undoApprovedAndClose
+                      : undefined
+                }
+                onEdit={() => {
+                  setCellModalEditValue(value);
+                  setCellModalEditing(true);
+                }}
+              />
             );
           })()}
       </Modal>
