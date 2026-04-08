@@ -348,6 +348,13 @@ export class ScratchGitService {
 
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
 
+      // TODO: Only write to MAIN_BRANCH, not DIRTY_BRANCH. Nothing reads schemas from dirty
+      // (readSchemaFromGit and the index route both read from main). Writing to dirty is unnecessary
+      // and was the original cause of a bug where "Changes to approve" showed with no actual file
+      // differences — the schema's generatedAt timestamp created a .scratch/ diff between merge_base
+      // and dirty. The has_dirty endpoint now filters dotfiles (has_visible_tree_changes in
+      // scratch-git-2/src/service/git/repo.rs) so this is no longer user-visible, but the extra
+      // writes are still wasted work.
       for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {
         await this.commitFilesToBranch(repoId, branch, [file], message);
         // Clean up the legacy .schema.json if it still exists on this branch

@@ -531,4 +531,175 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert!(files.contains_key("readme.txt"));
     }
+
+    // ── has_visible_tree_changes tests ──
+
+    #[test]
+    fn visible_changes_identical_commits() {
+        let (_tmp, repo) = setup_repo();
+        let oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        assert!(!repo.has_visible_tree_changes(oid, oid).unwrap());
+    }
+
+    #[test]
+    fn visible_changes_detects_added_file() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: "new.txt".to_string(),
+                content: Some("content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add file",
+        );
+        assert!(repo.has_visible_tree_changes(oid_a, oid_b).unwrap());
+    }
+
+    #[test]
+    fn visible_changes_detects_deleted_file() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: Some("content".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add",
+        );
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: None,
+                oid: None,
+                change_type: ChangeType::Delete,
+            }],
+            "delete",
+        );
+        assert!(repo.has_visible_tree_changes(oid_a, oid_b).unwrap());
+    }
+
+    #[test]
+    fn visible_changes_detects_modified_file() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: Some("v1".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "v1",
+        );
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: "file.txt".to_string(),
+                content: Some("v2".to_string()),
+                oid: None,
+                change_type: ChangeType::Modify,
+            }],
+            "v2",
+        );
+        assert!(repo.has_visible_tree_changes(oid_a, oid_b).unwrap());
+    }
+
+    #[test]
+    fn visible_changes_ignores_dotfile_only_changes() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: ".scratch/schema.json".to_string(),
+                content: Some("{\"generatedAt\": \"2026-04-01\"}".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "add schema",
+        );
+        assert!(!repo.has_visible_tree_changes(oid_a, oid_b).unwrap());
+    }
+
+    #[test]
+    fn visible_changes_ignores_dotfile_when_visible_files_unchanged() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: "data.json".to_string(),
+                    content: Some("record".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: ".scratch/schema.json".to_string(),
+                    content: Some("v1".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "initial",
+        );
+        let oid_b = commit_files(
+            &repo,
+            &[FileChange {
+                path: ".scratch/schema.json".to_string(),
+                content: Some("v2".to_string()),
+                oid: None,
+                change_type: ChangeType::Modify,
+            }],
+            "update schema only",
+        );
+        assert!(!repo.has_visible_tree_changes(oid_a, oid_b).unwrap());
+    }
+
+    #[test]
+    fn visible_changes_detects_real_change_alongside_dotfile_change() {
+        let (_tmp, repo) = setup_repo();
+        let oid_a = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: "data.json".to_string(),
+                    content: Some("v1".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: ".scratch/schema.json".to_string(),
+                    content: Some("v1".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "initial",
+        );
+        let oid_b = commit_files(
+            &repo,
+            &[
+                FileChange {
+                    path: "data.json".to_string(),
+                    content: Some("v2".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+                FileChange {
+                    path: ".scratch/schema.json".to_string(),
+                    content: Some("v2".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+            ],
+            "update both",
+        );
+        assert!(repo.has_visible_tree_changes(oid_a, oid_b).unwrap());
+    }
 }

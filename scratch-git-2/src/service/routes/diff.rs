@@ -59,11 +59,9 @@ pub async fn has_dirty(State(state): State<AppState>, Path(id): Path<String>) ->
                 return Ok(json!({ "dirty": false }));
             }
 
-            // Optimized: compare tree OIDs directly
-            let merge_base_tree = git_repo.get_commit_tree_oid(merge_base_oid)?;
-            let dirty_tree = git_repo.get_commit_tree_oid(dirty_oid)?;
-
-            Ok::<_, AppError>(json!({ "dirty": merge_base_tree != dirty_tree }))
+            // Compare root-level non-dotfile entries only (fast, skips .scratch/ metadata)
+            let dirty = git_repo.has_visible_tree_changes(merge_base_oid, dirty_oid)?;
+            Ok::<_, AppError>(json!({ "dirty": dirty }))
         }
     })
     .await;

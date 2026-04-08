@@ -438,6 +438,62 @@ impl GitRepo {
         Ok(tags)
     }
 
+    /// Fast check for visible (non-dotfile) tree changes between two commits.
+    /// Compares only root-level non-dotfile entry OIDs, avoiding a full tree walk.
+    /// This is consistent with compare_commits which skips dotfiles.
+    pub fn has_visible_tree_changes(
+        &self,
+        oid_a: ObjectId,
+        oid_b: ObjectId,
+    ) -> Result<bool, AppError> {
+        let tree_a = self
+            .repo
+            .find_commit(oid_a)
+            .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?
+            .tree()
+            .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?;
+        let tree_b = self
+            .repo
+            .find_commit(oid_b)
+            .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?
+            .tree()
+            .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?;
+
+        // Quick exit: identical root trees
+        if tree_a.id() == tree_b.id() {
+            return Ok(false);
+        }
+
+        // Build map of non-dotfile entries from tree A
+        let mut map_a: std::collections::HashMap<Vec<u8>, (gix::objs::tree::EntryMode, ObjectId)> =
+            std::collections::HashMap::new();
+        for entry_ref in tree_a.iter() {
+            let e =
+                entry_ref.map_err(|e| AppError::internal(format!("tree read a err: {}", e)))?;
+            if !e.filename().starts_with(b".") {
+                map_a.insert(e.filename().to_vec(), (e.mode(), e.object_id()));
+            }
+        }
+
+        // Compare non-dotfile entries from tree B against A
+        let mut count_b = 0;
+        for entry_ref in tree_b.iter() {
+            let e =
+                entry_ref.map_err(|e| AppError::internal(format!("tree read b err: {}", e)))?;
+            if e.filename().starts_with(b".") {
+                continue;
+            }
+            count_b += 1;
+            match map_a.get(e.filename()) {
+                Some((_, oid_a)) if *oid_a == e.object_id() => {}
+                _ => return Ok(true), // added or modified
+            }
+        }
+
+        // If A had more non-dotfile entries, something was deleted
+        Ok(count_b != map_a.len())
+    }
+
     /// Get commit tree OID directly without loading the full tree.
     pub fn get_commit_tree_oid(&self, commit_oid: ObjectId) -> Result<ObjectId, AppError> {
         let commit = self
