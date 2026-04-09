@@ -1,7 +1,6 @@
 import DataEditor, {
   GridCellKind,
   GridColumnMenuIcon,
-  type CellClickedEventArgs,
   type DataEditorRef,
   type DrawCellCallback,
   type EditableGridCell,
@@ -12,9 +11,11 @@ import DataEditor, {
   type Rectangle,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Portal, Stack } from '@mantine/core';
+import { Box, Group, Loader, Portal, Stack, UnstyledButton } from '@mantine/core';
+import { Maximize2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
+import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { FolderGridHeaderMenu } from './FolderGridHeaderMenu';
 import { RecordDetailView } from './RecordDetailView';
@@ -75,6 +76,8 @@ interface FolderDataGridProps {
 // ── Constants ──
 
 const PAGE_SIZE = 100;
+const ROW_MARKER_WIDTH = 88;
+const INSPECT_BUTTON_SIZE = 18;
 
 // ── Diff colours ──
 
@@ -129,23 +132,6 @@ function editableCellToString(cell: EditableGridCell): string {
     default:
       return '';
   }
-}
-
-function drawInspectIcon(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
-  color: string,
-  opacity = 1,
-) {
-  ctx.save();
-  ctx.globalAlpha = opacity;
-  ctx.fillStyle = color;
-  ctx.font = `${size}px sans-serif`;
-  ctx.textBaseline = 'top';
-  ctx.fillText('\u{1F50D}', x, y);
-  ctx.restore();
 }
 
 function isInsideGridEditorOverlay(target: Element): boolean {
@@ -273,10 +259,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const gridRef = useRef<DataEditorRef | null>(null);
+  const wrapperElRef = useRef<HTMLDivElement | null>(null);
   const cellPopoverRef = useRef<HTMLDivElement | null>(null);
-  const hoveredCellRef = useRef<Item | null>(null);
+  const [hoveredRowIdx, setHoveredRowIdx] = useState<number | null>(null);
+  const [inspectButtonRect, setInspectButtonRect] = useState<{ x: number; y: number; height: number } | null>(null);
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
+    wrapperElRef.current = el;
     if (observerRef.current) {
       observerRef.current.disconnect();
       observerRef.current = null;
@@ -335,7 +324,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setActiveFilters([]);
     setColumnWidths({});
     setDetailRowIndex(null);
-    hoveredCellRef.current = null;
+    setHoveredRowIdx(null);
+    setInspectButtonRect(null);
     setHeaderMenu(null);
     setActiveEditorDiffKind(null);
     setSchema(null);
@@ -663,7 +653,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const drawCell: DrawCellCallback = useCallback(
     (args, drawContent) => {
       drawContent();
-      const hoveredCell = hoveredCellRef.current;
       const row = pagedRows[args.row] as DiffRow | undefined;
       const colId = columns[args.col]?.id;
       if (!row || !colId) {
@@ -677,63 +666,54 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         args.ctx.fillRect(args.rect.x, args.rect.y, 3, args.rect.height);
         args.ctx.restore();
       }
-
-      if (args.col !== 0 || hoveredCell?.[0] !== args.col || hoveredCell?.[1] !== args.row) {
-        return;
-      }
-
-      drawInspectIcon(
-        args.ctx,
-        args.rect.x + args.rect.width - 12 - 6,
-        args.rect.y + (args.rect.height - 12) / 2,
-        12,
-        args.theme.textMedium ?? '#888',
-        1,
-      );
     },
     [columns, pagedRows],
   );
 
-  const onCellClicked = useCallback(([col, row]: Item, event: CellClickedEventArgs) => {
+  const onCellClicked = useCallback(() => {
     setHeaderMenu(null);
-    if (col !== 0) return;
-    const iconZoneWidth = 12 + 6 * 2;
-    if (event.localEventX >= event.bounds.width - iconZoneWidth) {
-      setDetailRowIndex(row);
-    }
   }, []);
 
-  const setHoveredCellWithDamage = useCallback((next: Item | null) => {
-    const prev = hoveredCellRef.current;
-    const isSameCell = prev?.[0] === next?.[0] && prev?.[1] === next?.[1];
-    if (isSameCell) {
+  const recomputeInspectRect = useCallback((rowIdx: number | null) => {
+    if (rowIdx === null) {
+      setInspectButtonRect(null);
       return;
     }
-
-    hoveredCellRef.current = next;
-
-    const damageCells: { cell: Item }[] = [];
-    if (prev?.[0] === 0) {
-      damageCells.push({ cell: prev });
+    // Use col 0 (first data column) for reliable bounds; the marker column lives
+    // immediately to its left, so we anchor the button off col 0's left edge.
+    const bounds = gridRef.current?.getBounds(0, rowIdx);
+    const wrapperRect = wrapperElRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.height === 0 || !wrapperRect) {
+      setInspectButtonRect(null);
+      return;
     }
-    if (next?.[0] === 0) {
-      damageCells.push({ cell: next });
-    }
-    if (damageCells.length > 0) {
-      gridRef.current?.updateCells(damageCells);
-    }
+    // getBounds returns viewport-relative coordinates, but the button is
+    // absolutely positioned inside the wrapper, so subtract the wrapper origin.
+    setInspectButtonRect({
+      x: bounds.x - wrapperRect.left,
+      y: bounds.y - wrapperRect.top,
+      height: bounds.height,
+    });
   }, []);
 
   const onMouseMove = useCallback(
     (args: GridMouseEventArgs) => {
-      setHoveredCellWithDamage(args.kind === 'cell' ? args.location : null);
+      const nextRow = args.kind === 'cell' ? args.location[1] : null;
+      setHoveredRowIdx((prev) => (prev === nextRow ? prev : nextRow));
+      recomputeInspectRect(nextRow);
     },
-    [setHoveredCellWithDamage],
+    [recomputeInspectRect],
   );
 
   const onGridMouseLeave = useCallback(() => {
-    setHoveredCellWithDamage(null);
-  }, [setHoveredCellWithDamage]);
+    setHoveredRowIdx(null);
+    setInspectButtonRect(null);
+  }, []);
+
+  const onVisibleRegionChanged = useCallback(() => {
+    // Reposition the inspect button as the user scrolls.
+    recomputeInspectRect(hoveredRowIdx);
+  }, [recomputeInspectRect, hoveredRowIdx]);
 
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
@@ -925,6 +905,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onHeaderMenuClick={onHeaderMenuClick}
                 onCellClicked={onCellClicked}
                 onMouseMove={onMouseMove}
+                onVisibleRegionChanged={onVisibleRegionChanged}
                 onCellActivated={onCellActivated}
                 onCellEdited={onCellEdited}
                 onFinishedEditing={onFinishedEditing}
@@ -933,8 +914,38 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onColumnResize={onColumnResize}
                 drawCell={drawCell}
                 rowMarkers="number"
+                rowMarkerWidth={ROW_MARKER_WIDTH}
                 freezeColumns={1}
               />
+            )}
+            {inspectButtonRect && hoveredRowIdx !== null && (
+              <UnstyledButton
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  if (hoveredRowIdx !== null) setDetailRowIndex(hoveredRowIdx);
+                }}
+                tabIndex={-1}
+                aria-label="Open record detail"
+                style={{
+                  position: 'absolute',
+                  left: inspectButtonRect.x - INSPECT_BUTTON_SIZE - 6,
+                  top: inspectButtonRect.y + (inspectButtonRect.height - INSPECT_BUTTON_SIZE) / 2,
+                  width: INSPECT_BUTTON_SIZE,
+                  height: INSPECT_BUTTON_SIZE,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 3,
+                  border: '0.5px solid var(--fg-divider)',
+                  backgroundColor: 'var(--bg-base)',
+                  cursor: 'pointer',
+                  zIndex: 3,
+                  padding: 0,
+                }}
+              >
+                <StyledLucideIcon Icon={Maximize2} size={12} c="var(--fg-muted)" strokeWidth={2} />
+              </UnstyledButton>
             )}
             <FolderGridHeaderMenu
               columnTitle={headerMenu?.columnTitle ?? ''}
