@@ -40,6 +40,10 @@ export type PullLinkedFolderFilesProgress = {
   createdPaths?: string[];
   updatedPaths?: string[];
   deletedPaths?: string[];
+  /** Actual counts (not capped like path arrays). Available from newer server versions. */
+  createdCount?: number;
+  updatedCount?: number;
+  deletedCount?: number;
   hasDirtyDiscoveredDeletes?: boolean;
 };
 

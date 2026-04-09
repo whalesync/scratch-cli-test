@@ -129,6 +129,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         expect(result).toHaveLength(1);
         expect(result[0].path).toContain('my-blog-post.json');
+        expect(result[0].recordId).toBe('rec1');
+        expect(result[0].parsedRecord).toEqual({ id: 'rec1' });
       });
 
       it('should fall back to id when suggested name is undefined', () => {
@@ -301,6 +303,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         const parsedContent = JSON.parse(result[0].content) as typeof testRecord;
         expect(parsedContent).toEqual(testRecord);
+        // parsedRecord should also match the original
+        expect(result[0].parsedRecord).toEqual(testRecord);
       });
 
       it('should format JSON consistently with Prettier formatting rules', () => {
@@ -458,6 +462,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           createdPaths: [],
           updatedPaths: [],
           deletedPaths: [],
+          createdCount: 0,
+          updatedCount: 0,
+          deletedCount: 0,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -523,6 +530,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
       expect(lastCheckpoint.publicProgress.createdPaths).toContain('test-folder/test-post.json');
       expect(lastCheckpoint.publicProgress.updatedPaths).toHaveLength(0);
+      expect(lastCheckpoint.publicProgress.createdCount).toBe(1);
+      expect(lastCheckpoint.publicProgress.updatedCount).toBe(0);
     });
 
     it('should accumulate files across multiple batches for deletion tracking', async () => {
@@ -570,7 +579,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           unchanged: [],
         });
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
-      // Git has only the files that were downloaded - paths without leading slashes (matching gitFiles after strip)
+      // Git has only the files that were downloaded - paths without leading slashes (matching pulledPaths)
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
         { path: 'test-folder/post-1.json', name: 'post-1.json', type: 'file' },
         { path: 'test-folder/post-2.json', name: 'post-2.json', type: 'file' },
@@ -624,8 +633,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
       // Mock that git has two files, but only one was downloaded
       (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
-        { path: '/test-folder/post-1.json', name: 'post-1.json', type: 'file' },
-        { path: '/test-folder/post-2.json', name: 'post-2.json', type: 'file' },
+        { path: 'test-folder/post-1.json', name: 'post-1.json', type: 'file' },
+        { path: 'test-folder/post-2.json', name: 'post-2.json', type: 'file' },
       ]);
       (mockScratchGitService.deleteFilesFromBranch as jest.Mock).mockResolvedValue(undefined);
       (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
@@ -636,7 +645,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(mockScratchGitService.deleteFilesFromBranch).toHaveBeenCalledWith(
         'wkb_123',
         MAIN_BRANCH,
-        expect.arrayContaining(['/test-folder/post-2.json']),
+        expect.arrayContaining(['test-folder/post-2.json']),
         expect.stringContaining('Remove'),
       );
     });
@@ -1046,6 +1055,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             createdPaths: [],
             updatedPaths: [],
             deletedPaths: [],
+            createdCount: 0,
+            updatedCount: 0,
+            deletedCount: 0,
           },
           jobProgress: {},
           connectorProgress: { startingAfter: 'pi_abc123' },
@@ -1102,6 +1114,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             createdPaths: [],
             updatedPaths: [],
             deletedPaths: [],
+            createdCount: 0,
+            updatedCount: 0,
+            deletedCount: 0,
           },
           jobProgress: { completedFolderIds: ['dfld_1'] },
           connectorProgress: {},
@@ -1146,6 +1161,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             createdPaths: [],
             updatedPaths: [],
             deletedPaths: [],
+            createdCount: 0,
+            updatedCount: 0,
+            deletedCount: 0,
           },
           jobProgress: {},
           // Non-empty connectorProgress indicates a resume
@@ -1193,6 +1211,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             createdPaths: ['file1.json', 'file2.json'],
             updatedPaths: [],
             deletedPaths: [],
+            createdCount: 2,
+            updatedCount: 0,
+            deletedCount: 0,
           },
           jobProgress: {},
           connectorProgress: { startingAfter: 'pi_abc123' },
@@ -1227,6 +1248,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(lastCheckpoint.publicProgress.createdPaths).toContain('file1.json');
       expect(lastCheckpoint.publicProgress.createdPaths).toContain('file2.json');
       expect(lastCheckpoint.publicProgress.createdPaths).toContain('test-folder/post-3.json');
+      // Count should accumulate correctly
+      expect(lastCheckpoint.publicProgress.createdCount).toBe(3);
     });
 
     it('should not pass stale connectorProgress from a completed folder to the next folder', async () => {
@@ -1267,6 +1290,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             createdPaths: [],
             updatedPaths: [],
             deletedPaths: [],
+            createdCount: 0,
+            updatedCount: 0,
+            deletedCount: 0,
           },
           jobProgress: { completedFolderIds: ['dfld_charges'] }, // Charges already done
           connectorProgress: { startingAfter: 'ch_stale_charge_id' }, // Stale cursor from charges!
@@ -1293,6 +1319,135 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         {}, // Empty progress — not the stale { startingAfter: 'ch_stale_charge_id' }
         expect.anything(),
       );
+    });
+
+    it('should track deletedCount when files are removed', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({
+          files: [{ id: 'rec1', slug: 'post-1' }],
+          connectorProgress: {},
+        });
+      });
+
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: ['test-folder/post-1.json'],
+        updated: [],
+        unchanged: [],
+      });
+      (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
+      // Git has 3 files but only 1 was pulled — 2 should be deleted
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([
+        { path: 'test-folder/post-1.json', name: 'post-1.json', type: 'file' },
+        { path: 'test-folder/old-post.json', name: 'old-post.json', type: 'file' },
+        { path: 'test-folder/stale-post.json', name: 'stale-post.json', type: 'file' },
+      ]);
+      (mockScratchGitService.deleteFilesFromBranch as jest.Mock).mockResolvedValue(undefined);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+      expect(lastCheckpoint.publicProgress.deletedCount).toBe(2);
+      expect(lastCheckpoint.publicProgress.deletedPaths).toEqual([
+        'test-folder/old-post.json',
+        'test-folder/stale-post.json',
+      ]);
+    });
+
+    it('should track accurate counts even when path arrays are capped', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      // Generate 150 files — more than MAX_PROGRESS_PATHS (100)
+      const files = Array.from({ length: 150 }, (_, i) => ({
+        id: `rec${i}`,
+        slug: `post-${i}`,
+      }));
+      const createdPaths = files.map((f) => `test-folder/${f.slug}.json`);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files, connectorProgress: {} });
+      });
+
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: createdPaths,
+        updated: [],
+        unchanged: [],
+      });
+      (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue(
+        createdPaths.map((p) => ({ path: p, name: p.split('/').pop()!, type: 'file' })),
+      );
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+
+      // createdCount should reflect the actual number, not the capped array length
+      expect(lastCheckpoint.publicProgress.createdCount).toBe(150);
+      expect(lastCheckpoint.publicProgress.createdPaths).toHaveLength(100); // capped at MAX_PROGRESS_PATHS
+    });
+
+    it('should stop processing folders when abortSignal is aborted', async () => {
+      const folder1 = createMockDataFolder({ id: 'dfld_1' as DataFolderId, name: 'Folder 1' });
+      createMockDataFolder({ id: 'dfld_2' as DataFolderId, name: 'Folder 2' });
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+
+      (mockPrisma.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfld_1', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Test' } },
+        { id: 'dfld_2', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Test' } },
+      ]);
+
+      const abortController = new AbortController();
+
+      const params = createMockParams({
+        data: {
+          workbookId: 'wkb_123' as WorkbookId,
+          dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
+          userId: 'usr_123',
+          organizationId: 'org_123',
+        },
+        abortSignal: abortController.signal,
+      });
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(folder1);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      // Abort after the first folder's pull starts
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files: [], connectorProgress: {} });
+        abortController.abort();
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockScratchGitService.rebaseDirty as jest.Mock).mockResolvedValue(undefined);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(folder1);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // Only folder 1 should have been pulled — folder 2 skipped due to abort
+      expect(mockPrisma.dataFolder.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
     });
 
     it('should include completedFolderIds in jobProgress checkpoints', async () => {

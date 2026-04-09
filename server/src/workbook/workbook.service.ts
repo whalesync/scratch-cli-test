@@ -434,6 +434,9 @@ export class WorkbookService {
           createdPaths: [],
           updatedPaths: [],
           deletedPaths: [],
+          createdCount: 0,
+          updatedCount: 0,
+          deletedCount: 0,
         },
         runContext,
       );

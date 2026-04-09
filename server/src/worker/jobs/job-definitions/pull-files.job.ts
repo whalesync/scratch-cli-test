@@ -256,21 +256,17 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
           await this.fileIndexService.upsertBatch(
             builtFiles
               .map((f) => {
-                const content = JSON.parse(f.content) as Record<string, unknown>;
-                // eslint-disable-next-line @typescript-eslint/no-base-to-string
-                const recordId = String(content[tableSpec.idColumnRemoteId] || '');
-
                 const parts = f.path.split('/');
                 const filename = parts.pop()!;
                 const folderPath = parts.join('/').replace(/^\//, '');
 
-                if (!recordId) return null;
+                if (!f.recordId) return null;
 
                 return {
                   workbookId: dataFolder.workbookId,
                   folderPath,
                   filename,
-                  recordId,
+                  recordId: f.recordId,
                 };
               })
               .filter((x): x is NonNullable<typeof x> => x !== null),
@@ -281,8 +277,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
             MAIN_BRANCH,
             builtFiles.map((f) => ({
               path: f.path.startsWith('/') ? f.path.slice(1) : f.path,
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-              content: JSON.parse(f.content),
+              content: f.parsedRecord,
             })),
             tableSpec.schema,
           );
@@ -291,16 +286,16 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
           try {
             const assetEntries = builtFiles.flatMap((f) => {
               const normalizedPath = f.path.startsWith('/') ? f.path.slice(1) : f.path;
-              const content = JSON.parse(f.content) as Record<string, unknown>;
+              const recordContent = f.parsedRecord as Record<string, unknown>;
               // eslint-disable-next-line @typescript-eslint/no-base-to-string
-              const recordRemoteId = String(content[tableSpec.idColumnRemoteId] || '') || undefined;
+              const recordRemoteId = String(recordContent[tableSpec.idColumnRemoteId] || '') || undefined;
               return this.assetExtractorService.extractAssets(connector, {
                 workbookId: dataFolder.workbookId,
                 service: dataFolder.connectorService as Service,
                 dataFolderId: dataFolder.id,
                 recordFilePath: normalizedPath,
                 recordRemoteId,
-                recordContent: content,
+                recordContent,
                 schema: tableSpec.schema as Record<string, unknown>,
               });
             });
@@ -308,7 +303,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
               await this.assetIndexService.upsertBatch(assetEntries);
               WSLogger.info({
                 source: 'PullFilesJob',
-                message: `Asset index updated: extracted assets from pulled files`,
+                message: 'Asset index updated: extracted assets from pulled files',
                 service: dataFolder.connectorService,
                 workbookId: dataFolder.workbookId,
                 assetCount: assetEntries.length,

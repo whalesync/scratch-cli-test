@@ -1295,6 +1295,10 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
   const createdPaths = (progress.createdPaths as string[] | undefined) ?? [];
   const updatedPaths = (progress.updatedPaths as string[] | undefined) ?? [];
   const deletedPaths = (progress.deletedPaths as string[] | undefined) ?? [];
+  // Prefer actual counts (not capped) when available; fall back to path array lengths
+  const createdCount = (progress.createdCount as number | undefined) ?? createdPaths.length;
+  const updatedCount = (progress.updatedCount as number | undefined) ?? updatedPaths.length;
+  const deletedCount = (progress.deletedCount as number | undefined) ?? deletedPaths.length;
   if (!folderName && totalFiles === undefined) return null;
 
   const affectedFiles = collectAffectedFiles([{ createdPaths, updatedPaths, deletedPaths }]);
@@ -1308,7 +1312,7 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
             <Table.Th>Source</Table.Th>
             <Table.Th>Created</Table.Th>
             <Table.Th>Updated</Table.Th>
-            {deletedPaths.length > 0 && <Table.Th>Deleted</Table.Th>}
+            {deletedCount > 0 && <Table.Th>Deleted</Table.Th>}
             <Table.Th>Fetched</Table.Th>
             <Table.Th>Status</Table.Th>
           </Table.Tr>
@@ -1317,9 +1321,9 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
           <Table.Tr>
             <Table.Td>{folderName || 'Folder'}</Table.Td>
             <Table.Td>{connector ?? '-'}</Table.Td>
-            <Table.Td>{createdPaths.length}</Table.Td>
-            <Table.Td>{updatedPaths.length}</Table.Td>
-            {deletedPaths.length > 0 && <Table.Td>{deletedPaths.length}</Table.Td>}
+            <Table.Td>{createdCount}</Table.Td>
+            <Table.Td>{updatedCount}</Table.Td>
+            {deletedCount > 0 && <Table.Td>{deletedCount}</Table.Td>}
             <Table.Td>{totalFiles ?? 0}</Table.Td>
             <Table.Td>{status ?? '-'}</Table.Td>
           </Table.Tr>

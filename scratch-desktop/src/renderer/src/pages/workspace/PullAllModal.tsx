@@ -14,6 +14,9 @@ type PullProgress = {
   createdPaths: string[];
   updatedPaths: string[];
   deletedPaths: string[];
+  createdCount?: number;
+  updatedCount?: number;
+  deletedCount?: number;
 };
 
 function isTerminalState(state: JobStatus['state']): boolean {
@@ -242,11 +245,21 @@ export function PullAllModal({ opened, onClose, localPath, workspaceName, onData
                             {displayStatus}
                           </Badge>
                         </Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>{prog ? prog.createdPaths.length : '—'}</Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>{prog ? prog.updatedPaths.length : '—'}</Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>{prog ? prog.deletedPaths.length : '—'}</Table.Td>
                         <Table.Td style={{ textAlign: 'right' }}>
-                          {prog ? prog.createdPaths.length + prog.updatedPaths.length + prog.deletedPaths.length : '—'}
+                          {prog ? (prog.createdCount ?? prog.createdPaths.length) : '—'}
+                        </Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>
+                          {prog ? (prog.updatedCount ?? prog.updatedPaths.length) : '—'}
+                        </Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>
+                          {prog ? (prog.deletedCount ?? prog.deletedPaths.length) : '—'}
+                        </Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>
+                          {prog
+                            ? (prog.createdCount ?? prog.createdPaths.length) +
+                              (prog.updatedCount ?? prog.updatedPaths.length) +
+                              (prog.deletedCount ?? prog.deletedPaths.length)
+                            : '—'}
                         </Table.Td>
                       </Table.Tr>
                     );

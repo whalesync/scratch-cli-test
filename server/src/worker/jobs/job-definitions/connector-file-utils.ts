@@ -1,6 +1,15 @@
 import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import { formatJsonWithPrettier } from '../../../utils/json-formatter';
+import type { JsonSafeObject } from '../../../utils/objects';
 import { deduplicateFileName, normalizeFileName } from '../../../workbook/util';
+
+/** A file ready for git commit, with parsed record data for downstream index updates. */
+export type BuiltFile = {
+  path: string;
+  content: string;
+  recordId: string;
+  parsedRecord: JsonSafeObject;
+};
 
 /**
  * Constructs git file payloads from connector files, using suggested filenames from the connector.
@@ -16,14 +25,15 @@ export function buildGitFilesFromConnectorFiles(
   usedFileNames: Set<string>,
   existingFileNames: Map<string, string>,
   suggestedFileNames: (string | undefined)[],
-): { path: string; content: string }[] {
+): BuiltFile[] {
   const prefix = parentPath === '/' ? '' : parentPath;
   const idColumnRemoteId = tableSpec.idColumnRemoteId;
-  const processedFiles: { path: string; content: string }[] = [];
+  const processedFiles: BuiltFile[] = [];
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
-    const content = formatJsonWithPrettier(record as Record<string, unknown>);
+    const parsedRecord = record as JsonSafeObject;
+    const content = formatJsonWithPrettier(parsedRecord as Record<string, unknown>);
     const recordId = String(record[idColumnRemoteId]);
 
     let fileName = existingFileNames.get(recordId);
@@ -40,7 +50,7 @@ export function buildGitFilesFromConnectorFiles(
 
     const fullPath = prefix ? `${prefix}/${fileName}` : `/${fileName}`;
 
-    processedFiles.push({ path: fullPath, content });
+    processedFiles.push({ path: fullPath, content, recordId, parsedRecord });
   }
 
   return processedFiles;
