@@ -43,7 +43,7 @@ function ZeroState({ onCreate }: { onCreate: () => void }) {
             width: 96,
             height: 96,
             borderRadius: 22,
-            background: 'var(--mantine-color-green-1)',
+            background: 'var(--highlight-fill)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

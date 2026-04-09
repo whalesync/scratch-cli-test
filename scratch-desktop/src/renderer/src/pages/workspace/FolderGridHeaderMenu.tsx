@@ -135,7 +135,7 @@ export function FolderGridHeaderMenu({
               onApproveField();
               onClose();
             }}
-            color="var(--mantine-color-green-7)"
+            color="var(--highlight-border)"
           >
             Approve all changes in this field
           </MenuAction>

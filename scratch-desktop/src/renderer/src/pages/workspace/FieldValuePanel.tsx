@@ -36,9 +36,10 @@ function IconActionButton({
   const styles =
     tone === 'approve'
       ? {
-          backgroundColor: 'var(--mantine-color-green-1)',
-          color: 'var(--mantine-color-green-8)',
-          border: '1px solid var(--mantine-color-green-3)',
+          backgroundColor: 'var(--highlight-fill)',
+          color: 'var(--highlight-text)',
+          border: '1.5px solid var(--highlight-border)',
+          fontWeight: 500,
         }
       : tone === 'undo'
         ? {

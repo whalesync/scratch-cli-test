@@ -27,8 +27,8 @@
   border-color: var(--mantine-color-gray-5);
 
   &:checked {
-    background-color: var(--mantine-color-green-6);
-    border-color: var(--mantine-color-green-8);
+    background-color: var(--highlight-fill);
+    border-color: var(--highlight-border);
   }
 }
 
@@ -126,10 +126,10 @@
   }
 
   &[data-accept] {
-    color: var(--mantine-color-green-8);
+    color: var(--highlight-border);
 
     .menuItemSection {
-      color: var(--mantine-color-green-8);
+      color: var(--highlight-border);
     }
   }
 
@@ -180,10 +180,10 @@
     }
 
     &[data-accept] {
-      color: var(--mantine-color-green-7);
+      color: var(--highlight-border);
 
       .menuItemSection {
-        color: var(--mantine-color-green-7);
+        color: var(--highlight-border);
       }
     }
   }

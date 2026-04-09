@@ -42,10 +42,10 @@ export function WorkspaceSwitcher({ currentWorkspaceId, currentWorkspaceName }: 
               <Menu.Item
                 key={ws.id}
                 onClick={() => handleSelect(ws)}
-                bg={ws.id === currentWorkspaceId ? 'var(--mantine-color-green-light)' : undefined}
+                bg={ws.id === currentWorkspaceId ? 'var(--highlight-fill)' : undefined}
                 rightSection={
                   ws.id === currentWorkspaceId ? (
-                    <Badge size="xs" color="green" variant="light">
+                    <Badge size="xs" color="yellow" variant="light">
                       Current
                     </Badge>
                   ) : null

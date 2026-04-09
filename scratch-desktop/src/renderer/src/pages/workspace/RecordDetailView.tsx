@@ -366,8 +366,8 @@ export const RecordDetailView = memo(function RecordDetailView({
                 width: '100%',
                 padding: '6px 12px',
                 border: 'none',
-                borderLeft: i === selectedIndex ? '2px solid var(--mantine-color-blue-4)' : '2px solid transparent',
-                backgroundColor: i === selectedIndex ? 'var(--bg-selected)' : 'transparent',
+                borderLeft: 'none',
+                backgroundColor: i === selectedIndex ? 'var(--highlight-fill)' : 'transparent',
                 cursor: 'pointer',
                 textAlign: 'left',
               }}

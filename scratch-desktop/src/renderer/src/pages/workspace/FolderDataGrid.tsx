@@ -85,6 +85,13 @@ const ROW_MARKER_WIDTH = 88;
 const INSPECT_BUTTON_SIZE = 18;
 const FLOATING_PANEL_GAP = 5;
 
+/** Glide grid accent — uses the yellow highlight design tokens */
+const GRID_THEME = {
+  accentColor: '#D4C800', // highlight border
+  accentFg: '#000000', // highlight text
+  accentLight: '#FEFB8A', // highlight fill
+};
+
 // ── Diff colours ──
 
 const DIFF_WORKING_BG = '#dbeafe'; // blue-100  — unreviewed (w != d)
@@ -198,13 +205,17 @@ function FilterPill({
         gap: 4,
         padding: '2px 8px',
         borderRadius: 10,
-        border: active ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
-        backgroundColor: active ? 'var(--mantine-color-blue-0)' : 'transparent',
+        border: active ? '1.5px solid var(--highlight-border)' : '0.5px solid var(--fg-divider)',
+        backgroundColor: active ? 'var(--highlight-fill)' : 'transparent',
         cursor: 'pointer',
         lineHeight: 1,
       }}
     >
-      <Text12Medium c={active ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
+      <Text12Medium
+        c={active ? 'var(--highlight-text)' : 'var(--fg-muted)'}
+        fw={active ? 500 : undefined}
+        component="span"
+      >
         {label}
         {` (${count.toLocaleString()})`}
       </Text12Medium>
@@ -221,12 +232,12 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
         gap: 6,
         padding: '2px 6px 2px 8px',
         borderRadius: 10,
-        border: '1px solid var(--mantine-color-blue-4)',
-        backgroundColor: 'var(--mantine-color-blue-0)',
+        border: '1.5px solid var(--highlight-border)',
+        backgroundColor: 'var(--highlight-fill)',
         lineHeight: 1,
       }}
     >
-      <Text12Medium c="var(--mantine-color-blue-7)" component="span">
+      <Text12Medium c="var(--highlight-text)" fw={500} component="span">
         {label}
       </Text12Medium>
       <Box
@@ -236,7 +247,7 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
         style={{
           border: 0,
           backgroundColor: 'transparent',
-          color: 'var(--mantine-color-blue-7)',
+          color: 'var(--highlight-text)',
           cursor: 'pointer',
           padding: 0,
           lineHeight: 1,
@@ -1074,6 +1085,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             {gridSize && (
               <DataEditor
                 ref={gridRef}
+                theme={GRID_THEME}
                 columns={columns}
                 rows={pagedRows.length}
                 getCellContent={getCellContent}

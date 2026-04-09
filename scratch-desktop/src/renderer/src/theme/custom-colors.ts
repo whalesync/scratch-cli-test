@@ -2,34 +2,34 @@ import { MantineColorsTuple } from '@mantine/core';
 
 // TODO: The design provides 12 shades, but mantine only takes 10 so i've dropped the first and last.
 
-export const CUSTOM_GREEN_LIGHT: MantineColorsTuple = [
-  '#FAFEFD', // Figma green/1 (light)
-  '#F3FBF9', // Figma green/2 (light)
-  '#00C8A020', // Figma green/3 (light)
-  '#00C39B33', // Figma green/4 (light)
-  // '#00B99547', // Figma green/5 (light)
-  '#00A7895F', // Figma green/6 (light)
-  '#009B807A', // Figma green/7 (light)
-  // '#009882AD', // Figma green/8 (light)
-  '#00A392', // Figma green/9 (light)
-  '#009686', // Figma green/10 (light)
-  '#008071', // Figma green/11 (light)
-  '#0E3D36', // Figma green/12 (light)
+// Yellow palette derived from the highlight design tokens:
+//   Fill: #FEFB8A  |  Border: #D4C800  |  Text: #3A3600
+// Shade 6 is the primary (used for Mantine primaryShade).
+// Text on yellow backgrounds should use --highlight-text or var(--fg-primary), not palette shades.
+export const CUSTOM_YELLOW_LIGHT: MantineColorsTuple = [
+  '#FFFEF5', // yellow/0 – tinted white
+  '#FEFDE0', // yellow/1 – very light wash
+  '#FEFB8A', // yellow/2 – highlight fill
+  '#F5F542', // yellow/3 – hover fill
+  '#FFFF66', // yellow/4 – logo yellow
+  '#E6DC00', // yellow/5 – vivid
+  '#D4C800', // yellow/6 – highlight border ← primaryShade
+  '#B8AE00', // yellow/7 – hover border
+  '#8C8500', // yellow/8 – deep
+  '#000000', // yellow/9 – black text on yellow
 ];
 
-export const CUSTOM_GREEN_DARK: MantineColorsTuple = [
-  '#131F1D', // Figma green/1 (dark)
-  '#122421', // Figma green/2 (dark)
-  '#00FAE11F', // Figma green/3 (dark)
-  '#00FFE52B', // Figma green/4 (dark)
-  // '#00FCE33B', // Figma green/5 (dark)
-  '#00FCE34A', // Figma green/6 (dark)
-  '#00FDE463', // Figma green/7 (dark)
-  // '#00FFE57D', // Figma green/8 (dark)
-  '#2CE9D5', // Figma green/9 (dark)
-  '#0CDECB', // Figma green/10 (dark)
-  '#00D8C5', // Figma green/11 (dark)
-  '#9BF9EB', // Figma green/12 (dark)
+export const CUSTOM_YELLOW_DARK: MantineColorsTuple = [
+  '#1F1E0F', // yellow/0 – dark base
+  '#2A2810', // yellow/1 – dark surface
+  '#FEFB8A30', // yellow/2 – faint glow
+  '#FEFB8A50', // yellow/3 – subtle glow
+  '#FFFF6680', // yellow/4 – soft glow
+  '#FFFF66AA', // yellow/5 – medium glow
+  '#D4C800', // yellow/6 – highlight border ← primaryShade
+  '#FEFB8A', // yellow/7 – highlight fill on dark
+  '#FFFF66', // yellow/8 – logo yellow on dark
+  '#FFFACC', // yellow/9 – high-contrast text on dark
 ];
 
 export const CUSTOM_RED_LIGHT: MantineColorsTuple = [

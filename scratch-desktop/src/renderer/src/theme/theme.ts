@@ -18,10 +18,10 @@ import {
   CUSTOM_DARK,
   CUSTOM_GRAY_DARK,
   CUSTOM_GRAY_LIGHT,
-  CUSTOM_GREEN_DARK,
-  CUSTOM_GREEN_LIGHT,
   CUSTOM_RED_DARK,
   CUSTOM_RED_LIGHT,
+  CUSTOM_YELLOW_DARK,
+  CUSTOM_YELLOW_LIGHT,
 } from './custom-colors';
 import classes from './theme.module.css';
 import { variantColorResolver } from './variant-color-resolver';
@@ -53,12 +53,12 @@ export const SCRATCH_MANTINE_THEME = createTheme({
       dark: 'redDark',
     }),
 
-    greenLight: CUSTOM_GREEN_LIGHT,
-    greenDark: CUSTOM_GREEN_DARK,
-    green: virtualColor({
-      name: 'green',
-      light: 'greenLight',
-      dark: 'greenDark',
+    yellowLight: CUSTOM_YELLOW_LIGHT,
+    yellowDark: CUSTOM_YELLOW_DARK,
+    yellow: virtualColor({
+      name: 'yellow',
+      light: 'yellowLight',
+      dark: 'yellowDark',
     }),
 
     blue: CUSTOM_BLUE,
@@ -74,12 +74,14 @@ export const SCRATCH_MANTINE_THEME = createTheme({
     suggestion: virtualColor({
       name: 'suggestion',
       light: 'blue',
-      dark: 'green',
+      dark: 'yellow',
     }),
   },
 
-  primaryColor: 'greenLight',
-  primaryShade: { light: 8, dark: 8 },
+  primaryColor: 'yellowLight',
+  primaryShade: { light: 6, dark: 6 },
+
+  focusRing: 'auto',
 
   white: '#ffffff',
   black: '#000000',

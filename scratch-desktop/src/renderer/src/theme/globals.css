@@ -15,6 +15,13 @@
   --fg-muted: var(--mantine-color-gray-7);
   --fg-divider: var(--mantine-color-gray-4);
 
+  /* Yellow highlight system — shared design tokens */
+  --highlight-fill: #FEFB8A;
+  --highlight-border: #D4C800;
+  --highlight-text: #000000;
+  --highlight-fill-hover: #F5F542;
+  --highlight-border-hover: #B8AE00;
+
   font-feature-settings:
     'liga' 1,
     'calt' 1; /* fix for Chrome */
@@ -103,6 +110,12 @@ body {
   box-sizing: border-box;
   padding: 0;
   margin: 0;
+}
+
+/* Override Mantine focus ring to use the highlight border token */
+*:focus-visible {
+  outline: 1.5px solid var(--highlight-border);
+  outline-offset: -1.5px;
 }
 
 a {

@@ -184,15 +184,15 @@ export function CloudWorkspaceCard({
 export function PendingWorkspaceCard({
   workspace,
   label,
-  color = 'green',
+  color = 'yellow',
 }: {
   workspace: Workspace;
   label: string;
-  color?: 'green' | 'gray';
+  color?: 'yellow' | 'gray';
 }) {
-  const tint = color === 'green' ? 'var(--mantine-color-green-0)' : 'var(--mantine-color-gray-1)';
-  const border = color === 'green' ? 'var(--mantine-color-green-4)' : 'var(--mantine-color-gray-4)';
-  const ink = color === 'green' ? 'var(--mantine-color-green-8)' : 'var(--fg-secondary)';
+  const tint = color === 'yellow' ? 'var(--highlight-fill)' : 'var(--mantine-color-gray-1)';
+  const border = color === 'yellow' ? 'var(--highlight-border)' : 'var(--mantine-color-gray-4)';
+  const ink = color === 'yellow' ? 'var(--highlight-text)' : 'var(--fg-secondary)';
   return (
     <Box
       style={{
@@ -219,5 +219,5 @@ export function PendingWorkspaceCard({
 
 /** Backwards-compatible alias used by the cloud download flow. */
 export function DownloadingWorkspaceCard({ workspace }: { workspace: Workspace }) {
-  return <PendingWorkspaceCard workspace={workspace} label="Downloading…" color="green" />;
+  return <PendingWorkspaceCard workspace={workspace} label="Downloading…" color="yellow" />;
 }

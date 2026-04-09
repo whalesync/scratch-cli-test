@@ -53,17 +53,15 @@
   }
 }
 
+/* ── Yellow highlight button tokens ── */
+
 /* Compact buttons for toolbars and sidebars */
 .ButtonCompactPrimary {
   height: 22px;
   font-size: 11px;
-  background-color: var(--mantine-color-green-1);
-  color: var(--mantine-color-green-9);
-  border: none;
-
-  &:hover:not(:disabled) {
-    background-color: var(--mantine-color-green-2);
-  }
+  border: 1.5px solid var(--highlight-border);
+  font-weight: 500;
+  --button-hover: var(--highlight-fill-hover);
 }
 
 .ButtonCompactDanger {

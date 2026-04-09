@@ -78,7 +78,7 @@ function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: 
           gap: 4,
           paddingLeft: 8 + depth * INDENT_PX,
           paddingRight: 8,
-          backgroundColor: isSelected ? 'var(--fg-divider)' : undefined,
+          backgroundColor: isSelected ? 'var(--highlight-fill)' : undefined,
         }}
       >
         {/* Chevron for expandable nodes */}

@@ -9,17 +9,30 @@ import { Text13Book, Text13Regular } from './text';
 export const ButtonPrimarySolid = Button.withProps({
   variant: 'filled',
   size: 'sm',
-  color: 'var(--mantine-color-green-6)', // fill
-  c: 'var(--mantine-color-green-0)', // text
-  styles: { root: { borderColor: 'var(--mantine-color-green-8)' } },
+  color: 'var(--highlight-fill)',
+  c: 'var(--highlight-text)',
+  styles: {
+    root: {
+      border: '1.5px solid var(--highlight-border)',
+      fontWeight: 500,
+      '--button-hover': 'var(--highlight-fill-hover)',
+    },
+  },
 });
 
 export const ButtonPrimaryLight = Button.withProps({
-  variant: 'light',
+  variant: 'filled',
   size: 'sm',
-  c: 'green.8', // text
+  color: 'var(--highlight-fill)',
+  c: 'var(--highlight-text)',
   classNames: { root: customBordersClasses.cornerBorders },
-  styles: { root: { backgroundColor: 'var(--mantine-color-green-2)' } },
+  styles: {
+    root: {
+      border: '1.5px solid var(--highlight-border)',
+      fontWeight: 500,
+      '--button-hover': 'var(--highlight-fill-hover)',
+    },
+  },
 });
 
 export const ButtonSecondarySolid = Button.withProps({
@@ -71,15 +84,19 @@ export const ButtonDangerLight = Button.withProps({
 });
 
 export const IconButtonPrimaryOutline = Button.withProps({
-  variant: 'light',
+  variant: 'filled',
   size: 'sm',
-  color: 'green.6',
-  c: 'green.8',
+  color: 'var(--highlight-fill)',
+  c: 'var(--highlight-text)',
   p: 0,
   classNames: { root: customBordersClasses.cornerBorders },
   styles: {
-    root: { aspectRatio: '1', backgroundColor: 'var(--mantine-color-green-2)' },
-    inner: { color: 'var(--mantine-color-gray-9)' },
+    root: {
+      aspectRatio: '1',
+      border: '1.5px solid var(--highlight-border)',
+      fontWeight: 500,
+      '--button-hover': 'var(--highlight-fill-hover)',
+    },
   },
 });
 
@@ -117,8 +134,10 @@ export const IconButtonToolbar = Button.withProps({
 
 // Compact buttons for toolbars and sidebars
 export const ButtonCompactPrimary = Button.withProps({
-  variant: 'light',
+  variant: 'filled',
   size: 'compact-xs',
+  color: 'var(--highlight-fill)',
+  c: 'var(--highlight-text)',
   classNames: { root: styles.ButtonCompactPrimary },
 });
 
