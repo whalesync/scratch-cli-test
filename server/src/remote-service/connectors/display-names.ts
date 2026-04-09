@@ -35,7 +35,10 @@ export function getServiceMetadata(service: Service): ConnectorMetadata {
  */
 export function getAllConnectorMetadata(): Record<string, ConnectorMetadata> {
   const result: Record<string, ConnectorMetadata> = {};
-  for (const [service, reg] of connectorRegistry.getAll()) {
+  const entries = [...connectorRegistry.getAll()].sort(([, a], [, b]) =>
+    a.metadata.displayName.localeCompare(b.metadata.displayName),
+  );
+  for (const [service, reg] of entries) {
     const { supportedAuthMethods } = reg;
     const defaultAuthMethod = supportedAuthMethods[0] ?? 'oauth';
     result[service] = { ...reg.metadata, supportedAuthMethods, defaultAuthMethod };
