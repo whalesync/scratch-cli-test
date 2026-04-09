@@ -19,7 +19,7 @@ import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
 
 /** Maximum number of file paths to track per category in progress */
-const MAX_PROGRESS_PATHS = 1000;
+const MAX_PROGRESS_PATHS = 100;
 
 export type PullLinkedFolderFilesPublicProgress = {
   totalFiles: number;

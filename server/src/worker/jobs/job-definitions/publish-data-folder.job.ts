@@ -18,7 +18,7 @@ import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 export type FolderPublishStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
 /** Maximum number of file paths to track per category in progress */
-const MAX_PROGRESS_PATHS = 1000;
+const MAX_PROGRESS_PATHS = 100;
 
 export type FolderPublishProgress = {
   id: string;
