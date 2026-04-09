@@ -192,9 +192,16 @@ export const RecordDetailView = memo(function RecordDetailView({
       });
   }, [workspacePath, currentRecordCliPath, onRecordChanged]);
 
+  const clearFieldEdit = useCallback(() => {
+    editingFieldRef.current = null;
+    setEditingFieldName(null);
+    setEditingFieldValue('');
+  }, []);
+
   const handleAcceptCellChange = useCallback(
     (fieldName: string, value: string, logLabel: string) => {
       if (!currentFilename) return;
+      clearFieldEdit();
       void window.scratchFiles
         .acceptCellChange(folderPath, workspacePath, currentFilename, fieldName, value)
         .then(() => {
@@ -205,12 +212,13 @@ export const RecordDetailView = memo(function RecordDetailView({
           console.error(`[acceptCellChange] ${logLabel} failed:`, err);
         });
     },
-    [currentFilename, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, currentFilename, folderPath, workspacePath, onRecordChanged],
   );
 
   const handleUndoApprovedCellChange = useCallback(
     (fieldName: string) => {
       if (!currentFilename) return;
+      clearFieldEdit();
       void window.scratchFiles
         .undoApprovedCellChange(folderPath, workspacePath, currentFilename, fieldName)
         .then(() => {
@@ -221,7 +229,7 @@ export const RecordDetailView = memo(function RecordDetailView({
           console.error('[undoApprovedCellChange] undo failed:', err);
         });
     },
-    [currentFilename, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, currentFilename, folderPath, workspacePath, onRecordChanged],
   );
 
   const beginFieldEdit = useCallback((fieldName: string, value: string) => {
@@ -230,14 +238,15 @@ export const RecordDetailView = memo(function RecordDetailView({
     setEditingFieldValue(value);
   }, []);
 
-  const cancelFieldEdit = useCallback((fieldName: string) => {
-    if (editingFieldRef.current !== fieldName) {
-      return;
-    }
-    editingFieldRef.current = null;
-    setEditingFieldName(null);
-    setEditingFieldValue('');
-  }, []);
+  const cancelFieldEdit = useCallback(
+    (fieldName: string) => {
+      if (editingFieldRef.current !== fieldName) {
+        return;
+      }
+      clearFieldEdit();
+    },
+    [clearFieldEdit],
+  );
 
   const commitFieldEdit = useCallback(
     (fieldName: string, currentValue: string) => {
@@ -246,9 +255,7 @@ export const RecordDetailView = memo(function RecordDetailView({
       }
 
       const nextValue = editingFieldValue;
-      editingFieldRef.current = null;
-      setEditingFieldName(null);
-      setEditingFieldValue('');
+      clearFieldEdit();
 
       if (nextValue === currentValue) {
         return;
@@ -264,7 +271,7 @@ export const RecordDetailView = memo(function RecordDetailView({
           console.error('[acceptCellChange] record edit failed:', err);
         });
     },
-    [currentFilename, editingFieldValue, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, currentFilename, editingFieldValue, folderPath, workspacePath, onRecordChanged],
   );
 
   const fieldRows = useMemo<RecordFieldRow[]>(() => {
@@ -292,8 +299,10 @@ export const RecordDetailView = memo(function RecordDetailView({
         value,
         fromValue,
         diffKind,
+        displayMode: isUnreviewed ? 'diff' : 'current',
         editing: editingFieldName === fieldName,
         editValue: editingFieldName === fieldName ? editingFieldValue : undefined,
+        referenceValue: diffKind !== null ? fromValue : undefined,
         onClick: () => beginFieldEdit(fieldName, value),
         onEditValueChange: (nextValue) => setEditingFieldValue(nextValue),
         onEditCommit: () => commitFieldEdit(fieldName, value),

@@ -6,6 +6,7 @@ import DataEditor, {
   type EditableGridCell,
   type GridColumn,
   type GridMouseEventArgs,
+  type GridSelection,
   type HeaderClickedEventArgs,
   type Item,
   type Rectangle,
@@ -17,6 +18,7 @@ import { Maximize2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { FolderGridHeaderMenu } from './FolderGridHeaderMenu';
 import { RecordDetailView } from './RecordDetailView';
@@ -81,6 +83,7 @@ interface FolderDataGridProps {
 const PAGE_SIZE = 100;
 const ROW_MARKER_WIDTH = 88;
 const INSPECT_BUTTON_SIZE = 18;
+const FLOATING_PANEL_GAP = 5;
 
 // ── Diff colours ──
 
@@ -264,7 +267,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(1);
   const [headerMenu, setHeaderMenu] = useState<HeaderMenuState | null>(null);
+  const [gridSelection, setGridSelection] = useState<GridSelection | undefined>(undefined);
   const [activeEditorDiffKind, setActiveEditorDiffKind] = useState<EditorOverlayDiffKind | null>(null);
+  const [editingCell, setEditingCell] = useState<Item | null>(null);
   const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -339,7 +344,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setHoveredRowIdx(null);
     setInspectButtonRect(null);
     setHeaderMenu(null);
+    setGridSelection(undefined);
     setActiveEditorDiffKind(null);
+    setEditingCell(null);
     setSchema(null);
     setCellPopover(null);
     setPage(1);
@@ -468,6 +475,61 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }));
   }, [columnWidths, diffData?.columns, titleColumnId]);
 
+  const buildCellPopoverState = useCallback(
+    (col: number, row: number): CellPopoverState | null => {
+      const record = pagedRows[row] as DiffRow | undefined;
+      const columnId = columns[col]?.id;
+      if (!record || !columnId || record.__rowStatus === 'deleted') {
+        return null;
+      }
+
+      const { diffKind, fromValue } = getCellDiffState(record, columnId);
+      if (diffKind === null) {
+        return null;
+      }
+
+      const bounds = gridRef.current?.getBounds(col, row);
+      if (!bounds) {
+        return null;
+      }
+
+      return {
+        col,
+        row,
+        filename: record.__filename,
+        fieldName: columnId,
+        value: toDisplayString(record[columnId]),
+        fromValue,
+        diffKind,
+        bounds,
+      };
+    },
+    [columns, pagedRows],
+  );
+
+  useEffect(() => {
+    const currentCell = gridSelection?.current?.cell;
+    if (!currentCell) {
+      setCellPopover(null);
+      return;
+    }
+
+    const [col, row] = currentCell;
+    setCellPopover(buildCellPopoverState(col, row));
+  }, [buildCellPopoverState, gridSelection]);
+
+  useEffect(() => {
+    const currentCell = gridSelection?.current?.cell;
+    if (!currentCell || editingCell == null) {
+      return;
+    }
+
+    if (currentCell[0] !== editingCell[0] || currentCell[1] !== editingCell[1]) {
+      setEditingCell(null);
+      setActiveEditorDiffKind(null);
+    }
+  }, [editingCell, gridSelection]);
+
   const filterCounts = diffData?.filterCounts;
 
   const activeColumnFilters = useMemo(
@@ -481,10 +543,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [activeFilters],
   );
 
-  const closeGridEditorChrome = useCallback(() => {
+  const clearActiveEditorState = useCallback(() => {
     setActiveEditorDiffKind(null);
-    setCellPopover(null);
+    setEditingCell(null);
   }, []);
+
+  const closeGridEditorChrome = useCallback(() => {
+    clearActiveEditorState();
+    setCellPopover(null);
+  }, [clearActiveEditorState]);
 
   const refreshGridData = useCallback(() => {
     setReloadKey((k) => k + 1);
@@ -810,18 +877,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const colId = columns[col]?.id;
       if (!r || !colId) return;
       if (r.__rowStatus === 'deleted') return;
-      const bounds = gridRef.current?.getBounds(col, row);
-      if (!bounds) return;
-      const value = toDisplayString(r[colId]);
-      const { diffKind, fromValue } = getCellDiffState(r, colId);
+      const { diffKind } = getCellDiffState(r, colId);
       setActiveEditorDiffKind(diffKind ?? 'none');
+      setEditingCell([col, row]);
       if (diffKind === null) {
         setCellPopover(null);
         return;
       }
-      setCellPopover({ col, row, filename: r.__filename, fieldName: colId, value, fromValue, diffKind, bounds });
+      setCellPopover(buildCellPopoverState(col, row));
     },
-    [pagedRows, columns],
+    [buildCellPopoverState, columns, pagedRows],
   );
 
   const onCellEdited = useCallback(
@@ -838,8 +903,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   );
 
   const onFinishedEditing = useCallback(() => {
-    closeGridEditorChrome();
-  }, [closeGridEditorChrome]);
+    clearActiveEditorState();
+  }, [clearActiveEditorState]);
 
   const isEditorOutsideClick = useCallback((event: MouseEvent | TouchEvent) => {
     const target = event.target;
@@ -1016,6 +1081,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 height={gridSize.height}
                 smoothScrollX
                 smoothScrollY
+                gridSelection={gridSelection}
+                onGridSelectionChange={setGridSelection}
+                onSelectionCleared={() => {
+                  setGridSelection(undefined);
+                  setCellPopover(null);
+                  clearActiveEditorState();
+                }}
                 onHeaderClicked={onHeaderClicked}
                 onHeaderContextMenu={onHeaderContextMenu}
                 onHeaderMenuClick={onHeaderMenuClick}
@@ -1195,6 +1267,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           const { bounds, diffKind, value, fromValue, filename, fieldName } = cellPopover;
           const popoverWidth = Math.max(280, Math.floor(bounds.width));
           const left = Math.max(12, Math.min(bounds.x, window.innerWidth - popoverWidth - 12));
+          const isEditingPopover =
+            editingCell != null && editingCell[0] === cellPopover.col && editingCell[1] === cellPopover.row;
+          let undoAction: (() => void) | undefined;
+          if (diffKind === 'unreviewed') {
+            undoAction = () => acceptGridCellChange(filename, fieldName, fromValue, 'undo');
+          } else if (diffKind === 'unpublished') {
+            undoAction = () => undoApprovedGridCellChange(filename, fieldName);
+          }
 
           return (
             <Portal target="#portal">
@@ -1204,7 +1284,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 style={{
                   position: 'fixed',
                   left,
-                  top: Math.max(8, bounds.y - 8),
+                  top: Math.max(FLOATING_PANEL_GAP, bounds.y - FLOATING_PANEL_GAP),
                   transform: 'translateY(-100%)',
                   zIndex: 10010,
                   width: popoverWidth,
@@ -1216,23 +1296,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   padding: 0,
                 }}
               >
-                <FieldValuePanel
-                  value={value}
-                  fromValue={fromValue}
-                  diffKind={diffKind}
-                  onApprove={
-                    diffKind === 'unreviewed'
-                      ? () => acceptGridCellChange(filename, fieldName, value, 'approve')
-                      : undefined
-                  }
-                  onUndo={
-                    diffKind === 'unreviewed'
-                      ? () => acceptGridCellChange(filename, fieldName, fromValue, 'undo')
-                      : diffKind === 'unpublished'
-                        ? () => undoApprovedGridCellChange(filename, fieldName)
-                        : undefined
-                  }
-                />
+                {!isEditingPopover && diffKind === 'unreviewed' ? (
+                  <FieldValuePanel
+                    value={value}
+                    fromValue={fromValue}
+                    diffKind={diffKind}
+                    displayMode="diff"
+                    onApprove={() => acceptGridCellChange(filename, fieldName, value, 'approve')}
+                    onUndo={undoAction}
+                  />
+                ) : (
+                  <FieldReferenceStrip value={fromValue} onUndo={undoAction} />
+                )}
               </Box>
             </Portal>
           );

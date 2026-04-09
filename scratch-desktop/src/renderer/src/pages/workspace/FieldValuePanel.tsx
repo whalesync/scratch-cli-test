@@ -1,24 +1,26 @@
 import { ActionIcon, Box, Group, Stack } from '@mantine/core';
-import { diffWordsWithSpace } from 'diff';
 import { Check, RotateCcw } from 'lucide-react';
 import { memo } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
 export type FieldValueDiffKind = 'unreviewed' | 'unpublished' | null;
+export type FieldValueDisplayMode = 'diff' | 'current';
 
 interface FieldValuePanelProps {
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
+  displayMode?: FieldValueDisplayMode;
   onClick?: () => void;
   onApprove?: () => void;
   onUndo?: () => void;
 }
 
 const DIFF_WORKING_BG = '#dbeafe'; // blue-100  — unreviewed (w != d)
-const DIFF_WORKING_BORDER = '#60a5fa'; // blue-400
 const DIFF_UNPUBLISHED_BG = '#eff6ff'; // blue-50   — unpublished (d != m, w == d)
-const DIFF_UNPUBLISHED_BORDER = '#93c5fd'; // blue-300
+const DIFF_REMOVED_BG = '#fee2e2'; // red-100
+const MAX_CONTENT_HEIGHT = 'calc(1.5em * 5 + 12px)';
+const ACTION_BUTTON_SIZE = 24;
 
 function IconActionButton({
   label,
@@ -53,15 +55,18 @@ function IconActionButton({
   return (
     <ActionIcon
       variant="transparent"
-      size={24}
-      radius={0}
+      size={ACTION_BUTTON_SIZE}
+      radius={3}
       aria-label={label}
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       styles={{
         root: {
           ...styles,
-          minWidth: 24,
-          minHeight: 24,
+          minWidth: ACTION_BUTTON_SIZE,
+          minHeight: ACTION_BUTTON_SIZE,
+          padding: 3,
+          boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
           '&:hover': {
             filter: 'brightness(0.97)',
           },
@@ -79,22 +84,16 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   value,
   fromValue = '',
   diffKind,
+  displayMode = diffKind === 'unreviewed' ? 'diff' : 'current',
   onClick,
   onApprove,
   onUndo,
 }: FieldValuePanelProps) {
-  const bg =
-    diffKind === 'unreviewed' ? DIFF_WORKING_BG : diffKind === 'unpublished' ? DIFF_UNPUBLISHED_BG : 'var(--bg-base)';
-  const border =
-    diffKind === 'unreviewed'
-      ? DIFF_WORKING_BORDER
-      : diffKind === 'unpublished'
-        ? DIFF_UNPUBLISHED_BORDER
-        : 'transparent';
   const hasActions = Boolean(onApprove || onUndo);
+  const actionCount = (onApprove ? 1 : 0) + (onUndo ? 1 : 0);
 
   return (
-    <Group align="flex-start" gap="md" wrap="nowrap">
+    <Group align="stretch" gap={8} wrap="nowrap">
       <Box
         style={{ flex: 1, minWidth: 0 }}
         onClick={onClick}
@@ -113,42 +112,87 @@ export const FieldValuePanel = memo(function FieldValuePanel({
       >
         <Box
           style={{
-            backgroundColor: bg,
-            borderLeft: `4px solid ${border}`,
+            backgroundColor: 'var(--bg-base)',
             borderRadius: 0,
-            padding: '12px 16px',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            lineHeight: 1.6,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
+            overflow: 'hidden',
             cursor: onClick ? 'text' : 'default',
           }}
         >
-          {diffKind !== null
-            ? diffWordsWithSpace(fromValue, value).map((part, i) => {
-                if (part.removed) {
-                  return (
-                    <span key={i} style={{ color: '#dc2626', textDecoration: 'line-through' }}>
-                      {part.value}
-                    </span>
-                  );
-                }
-                if (part.added) {
-                  return (
-                    <span key={i} style={{ color: '#16a34a', fontWeight: 700 }}>
-                      {part.value}
-                    </span>
-                  );
-                }
-                return <span key={i}>{part.value}</span>;
-              })
-            : value}
+          {displayMode === 'diff' ? (
+            <Box style={{ maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }}>
+              <Box
+                style={{
+                  padding: '6px 12px 2px',
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                }}
+              >
+                <span
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    color: '#dc2626',
+                    textDecoration: 'line-through',
+                    backgroundColor: DIFF_REMOVED_BG,
+                    boxDecorationBreak: 'clone',
+                    WebkitBoxDecorationBreak: 'clone',
+                    padding: '0 2px',
+                  }}
+                >
+                  {fromValue}
+                </span>
+              </Box>
+              <Box
+                style={{
+                  padding: '2px 12px 8px',
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                <span
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    backgroundColor: diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG,
+                    color: 'var(--mantine-color-blue-8)',
+                    boxDecorationBreak: 'clone',
+                    WebkitBoxDecorationBreak: 'clone',
+                    padding: '0 2px',
+                  }}
+                >
+                  {value}
+                </span>
+              </Box>
+            </Box>
+          ) : (
+            <Box
+              style={{
+                padding: '8px 12px',
+                fontFamily: 'monospace',
+                fontSize: 13,
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                color: 'var(--fg-primary)',
+                maxHeight: MAX_CONTENT_HEIGHT,
+                overflowY: 'auto',
+              }}
+            >
+              {value}
+            </Box>
+          )}
         </Box>
       </Box>
 
       {hasActions && (
-        <Stack gap="xs" style={{ flexShrink: 0, width: 24 }}>
+        <Stack
+          gap={6}
+          align="center"
+          justify={actionCount === 1 ? 'center' : 'flex-start'}
+          style={{ flexShrink: 0, width: ACTION_BUTTON_SIZE + 4, padding: '2px 0' }}
+        >
           {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
           {onUndo && <IconActionButton label="Undo" onClick={onUndo} tone="undo" icon={RotateCcw} />}
         </Stack>

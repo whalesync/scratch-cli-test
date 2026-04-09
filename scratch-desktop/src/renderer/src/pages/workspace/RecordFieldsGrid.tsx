@@ -1,15 +1,18 @@
-import { Box, ScrollArea, Table, Textarea } from '@mantine/core';
-import { memo } from 'react';
+import { Box, Portal, ScrollArea, Table, Textarea } from '@mantine/core';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Text12Medium, Text12Regular } from '../../components/base/text';
-import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
+import { FieldReferenceStrip } from './FieldReferenceStrip';
+import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
 
 export interface RecordFieldRow {
   fieldName: string;
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
+  displayMode?: FieldValueDisplayMode;
   editing?: boolean;
   editValue?: string;
+  referenceValue?: string;
   onClick?: () => void;
   onEditValueChange?: (value: string) => void;
   onEditCommit?: () => void;
@@ -22,7 +25,33 @@ interface RecordFieldsGridProps {
   rows: RecordFieldRow[];
 }
 
+const FLOATING_PANEL_GAP = 5;
+
 export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordFieldsGridProps) {
+  const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
+  const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
+
+  const editingRow = useMemo(() => rows.find((row) => row.editing) ?? null, [rows]);
+
+  useEffect(() => {
+    if (!editingAnchorEl || !editingRow?.referenceValue || !editingRow.onUndo) {
+      setEditingAnchorRect(null);
+      return;
+    }
+
+    const updateRect = () => {
+      setEditingAnchorRect(editingAnchorEl.getBoundingClientRect());
+    };
+
+    updateRect();
+    window.addEventListener('resize', updateRect);
+    window.addEventListener('scroll', updateRect, true);
+    return () => {
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect, true);
+    };
+  }, [editingAnchorEl, editingRow]);
+
   if (rows.length === 0) {
     return (
       <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -65,63 +94,87 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                 </Text12Medium>
               </Table.Td>
               <Table.Td>
-                {row.editing ? (
-                  <Textarea
-                    autoFocus
-                    autosize
-                    minRows={1}
-                    value={row.editValue ?? row.value}
-                    onChange={(e) => row.onEditValueChange?.(e.currentTarget.value)}
-                    onBlur={() => row.onEditCommit?.()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        row.onEditCommit?.();
-                        return;
-                      }
-                      if (e.key === 'Escape') {
-                        e.preventDefault();
-                        row.onEditCancel?.();
-                      }
-                    }}
-                    styles={{
-                      input: {
-                        backgroundColor:
-                          row.diffKind === 'unreviewed'
-                            ? '#dbeafe'
-                            : row.diffKind === 'unpublished'
-                              ? '#eff6ff'
-                              : 'var(--bg-base)',
-                        borderLeft: `4px solid ${
-                          row.diffKind === 'unreviewed'
-                            ? '#60a5fa'
-                            : row.diffKind === 'unpublished'
-                              ? '#93c5fd'
-                              : 'transparent'
-                        }`,
-                        borderRadius: 0,
-                        padding: '12px 16px',
-                        fontFamily: 'monospace',
-                        fontSize: 13,
-                        lineHeight: 1.6,
-                      },
-                    }}
-                  />
-                ) : (
-                  <FieldValuePanel
-                    value={row.value}
-                    fromValue={row.fromValue}
-                    diffKind={row.diffKind}
-                    onClick={row.onClick}
-                    onApprove={row.onApprove}
-                    onUndo={row.onUndo}
-                  />
-                )}
+                <Box
+                  style={{
+                    borderLeft: `4px solid ${
+                      row.diffKind === 'unreviewed'
+                        ? '#60a5fa'
+                        : row.diffKind === 'unpublished'
+                          ? '#93c5fd'
+                          : 'transparent'
+                    }`,
+                  }}
+                >
+                  {row.editing ? (
+                    <Box style={{ display: 'grid', gap: 6 }}>
+                      <Box ref={row.editing ? setEditingAnchorEl : undefined}>
+                        <Textarea
+                          autoFocus
+                          autosize
+                          minRows={1}
+                          value={row.editValue ?? row.value}
+                          onChange={(e) => row.onEditValueChange?.(e.currentTarget.value)}
+                          onBlur={() => row.onEditCommit?.()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              row.onEditCommit?.();
+                              return;
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              row.onEditCancel?.();
+                            }
+                          }}
+                          styles={{
+                            input: {
+                              backgroundColor: 'var(--bg-base)',
+                              borderRadius: 0,
+                              padding: '12px 16px',
+                              fontFamily: 'monospace',
+                              fontSize: 13,
+                              lineHeight: 1.6,
+                            },
+                          }}
+                        />
+                      </Box>
+                    </Box>
+                  ) : (
+                    <FieldValuePanel
+                      value={row.value}
+                      fromValue={row.fromValue}
+                      diffKind={row.diffKind}
+                      displayMode={row.displayMode}
+                      onClick={row.onClick}
+                      onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
+                      onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
+                    />
+                  )}
+                </Box>
               </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
+
+      {editingRow?.referenceValue != null && editingRow.onUndo && editingAnchorRect && (
+        <Portal target="#portal">
+          <Box
+            className="click-outside-ignore"
+            style={{
+              position: 'fixed',
+              left: Math.max(12, Math.min(editingAnchorRect.left, window.innerWidth - editingAnchorRect.width - 12)),
+              top: Math.max(FLOATING_PANEL_GAP, editingAnchorRect.top - FLOATING_PANEL_GAP),
+              transform: 'translateY(-100%)',
+              zIndex: 10010,
+              width: Math.max(280, Math.floor(editingAnchorRect.width)),
+              maxWidth: Math.max(280, window.innerWidth - 24),
+            }}
+          >
+            <FieldReferenceStrip value={editingRow.referenceValue} onUndo={editingRow.onUndo} />
+          </Box>
+        </Portal>
+      )}
     </ScrollArea>
   );
 });
