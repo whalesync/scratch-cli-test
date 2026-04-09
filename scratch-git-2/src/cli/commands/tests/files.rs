@@ -1,5 +1,6 @@
 use super::*;
 use std::process::Command;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn workspace_marker(connections: &[(&str, &str)]) -> markers::WorkspaceMarker {
@@ -405,6 +406,403 @@ fn tree_cache_returns_same_result_on_repeated_reads() {
 
 fn git_available() -> bool {
     Command::new("git").arg("--version").output().is_ok()
+}
+
+fn json_bytes(value: &str) -> Vec<u8> {
+    value.as_bytes().to_vec()
+}
+
+fn empty_conn_ctx() -> ConnectionContext {
+    ConnectionContext {
+        conn_dir_name: "Conn".to_string(),
+        dirty_dir: PathBuf::new(),
+        scratch_dir: PathBuf::new(),
+        master_dir: PathBuf::new(),
+        reviewed_dirty_dir: PathBuf::new(),
+        bare_repo: PathBuf::new(),
+        db_path: PathBuf::new(),
+    }
+}
+
+#[test]
+fn accept_field_in_folder_accepts_modified_and_created_rows_but_ignores_deleted_rows() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"Before","ts":"a"}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3,"name":"Deleted dirty","ts":"c"}"#),
+        ),
+    ]);
+    let local_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"After","ts":"a"}"#),
+        ),
+        (
+            "public/smoke_records/record-2.json".to_string(),
+            json_bytes(r#"{"id":2,"name":"Created","ts":"b"}"#),
+        ),
+    ]);
+
+    let (accepted_map, result) =
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+
+    assert_eq!(
+        String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
+        "{\n  \"id\": 1,\n  \"name\": \"After\",\n  \"ts\": \"a\"\n}"
+    );
+    assert_eq!(
+        String::from_utf8(accepted_map["public/smoke_records/record-2.json"].clone()).unwrap(),
+        "{\n  \"name\": \"Created\"\n}"
+    );
+    assert!(accepted_map.contains_key("public/smoke_records/record-3.json"));
+    assert_eq!(
+        result.changed_paths,
+        vec![
+            "Conn/public/smoke_records/record-1.json".to_string(),
+            "Conn/public/smoke_records/record-2.json".to_string(),
+        ]
+    );
+    assert!(result.dirty_changed);
+}
+
+#[test]
+fn reject_field_in_folder_discards_unreviewed_and_undoes_unpublished_for_one_field() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"Dirty","ts":"a"}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3,"name":"Created approved"}"#),
+        ),
+        (
+            "public/smoke_records/record-4.json".to_string(),
+            json_bytes(r#"{"id":4,"name":"Deleted dirty"}"#),
+        ),
+    ]);
+    let local_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"Local edit","ts":"a"}"#),
+        ),
+        (
+            "public/smoke_records/record-2.json".to_string(),
+            json_bytes(r#"{"id":2,"name":"Created local"}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3,"name":"Created approved"}"#),
+        ),
+    ]);
+    let master_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"Dirty","ts":"a"}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3}"#),
+        ),
+    ]);
+
+    let (next_local_map, next_dirty_map, result) = reject_field_in_folder(
+        &ctx,
+        "public/smoke_records",
+        "name",
+        &base_map,
+        &local_map,
+        &master_map,
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
+        "{\n  \"id\": 1,\n  \"name\": \"Dirty\",\n  \"ts\": \"a\"\n}"
+    );
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-2.json"].clone()).unwrap(),
+        "{\n  \"id\": 2\n}"
+    );
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-3.json"].clone()).unwrap(),
+        "{\n  \"id\": 3\n}"
+    );
+    assert_eq!(
+        String::from_utf8(next_dirty_map["public/smoke_records/record-3.json"].clone()).unwrap(),
+        "{\n  \"id\": 3\n}"
+    );
+    assert!(next_dirty_map.contains_key("public/smoke_records/record-4.json"));
+    assert_eq!(
+        result.changed_paths,
+        vec![
+            "Conn/public/smoke_records/record-1.json".to_string(),
+            "Conn/public/smoke_records/record-2.json".to_string(),
+            "Conn/public/smoke_records/record-3.json".to_string(),
+        ]
+    );
+    assert!(result.dirty_changed);
+}
+
+#[test]
+fn field_commands_handle_nested_paths_and_prune_empty_parents() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::from([(
+        "public/smoke_records/record-1.json".to_string(),
+        json_bytes(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
+    )]);
+    let accept_local_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"author":{"name":"After","role":"editor"}}"#),
+        ),
+        (
+            "public/smoke_records/record-2.json".to_string(),
+            json_bytes(r#"{"id":2,"author":{"name":"Created"}}"#),
+        ),
+    ]);
+    let reject_local_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"author":{"name":"After","role":"editor"}}"#),
+        ),
+        (
+            "public/smoke_records/record-2.json".to_string(),
+            json_bytes(r#"{"id":2,"author":{"name":"Created"}}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3,"author":{"name":"Approved nested"}}"#),
+        ),
+    ]);
+    let dirty_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3,"author":{"name":"Approved nested"}}"#),
+        ),
+    ]);
+    let master_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
+        ),
+        (
+            "public/smoke_records/record-3.json".to_string(),
+            json_bytes(r#"{"id":3}"#),
+        ),
+    ]);
+
+    let (accepted_map, accept_result) = accept_field_in_folder(
+        &ctx,
+        "public/smoke_records",
+        "author.name",
+        &base_map,
+        &accept_local_map,
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
+        "{\n  \"author\": {\n    \"name\": \"After\",\n    \"role\": \"editor\"\n  },\n  \"id\": 1\n}"
+    );
+    assert_eq!(
+        String::from_utf8(accepted_map["public/smoke_records/record-2.json"].clone()).unwrap(),
+        "{\n  \"author\": {\n    \"name\": \"Created\"\n  }\n}"
+    );
+    assert_eq!(accept_result.changed_paths.len(), 2);
+
+    let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
+        &ctx,
+        "public/smoke_records",
+        "author.name",
+        &dirty_map,
+        &reject_local_map,
+        &master_map,
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
+        "{\n  \"author\": {\n    \"name\": \"Before\",\n    \"role\": \"editor\"\n  },\n  \"id\": 1\n}"
+    );
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-2.json"].clone()).unwrap(),
+        "{\n  \"id\": 2\n}"
+    );
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-3.json"].clone()).unwrap(),
+        "{\n  \"id\": 3\n}"
+    );
+    assert_eq!(
+        String::from_utf8(next_dirty_map["public/smoke_records/record-3.json"].clone()).unwrap(),
+        "{\n  \"id\": 3\n}"
+    );
+    assert_eq!(reject_result.changed_paths.len(), 3);
+    assert!(reject_result.dirty_changed);
+}
+
+#[test]
+fn reject_field_in_folder_deletes_created_file_when_last_field_is_removed() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::new();
+    let local_map = HashMap::from([(
+        "public/smoke_records/record-1.json".to_string(),
+        json_bytes(r#"{"name":"Only field"}"#),
+    )]);
+    let master_map = HashMap::new();
+
+    let (next_local_map, next_dirty_map, result) = reject_field_in_folder(
+        &ctx,
+        "public/smoke_records",
+        "name",
+        &base_map,
+        &local_map,
+        &master_map,
+    )
+    .unwrap();
+
+    assert!(!next_local_map.contains_key("public/smoke_records/record-1.json"));
+    assert!(next_dirty_map.is_empty());
+    assert_eq!(
+        result.changed_paths,
+        vec!["Conn/public/smoke_records/record-1.json".to_string()]
+    );
+    assert!(!result.dirty_changed);
+}
+
+#[test]
+fn field_commands_are_noop_when_target_field_has_no_relevant_changes() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::from([(
+        "public/smoke_records/record-1.json".to_string(),
+        json_bytes(r#"{"id":1,"name":"Stable","ts":"a"}"#),
+    )]);
+    let local_map = HashMap::from([(
+        "public/smoke_records/record-1.json".to_string(),
+        json_bytes(r#"{"id":1,"name":"Stable","ts":"a"}"#),
+    )]);
+    let master_map = base_map.clone();
+
+    let (accepted_map, accept_result) =
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+    let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
+        &ctx,
+        "public/smoke_records",
+        "name",
+        &base_map,
+        &local_map,
+        &master_map,
+    )
+    .unwrap();
+
+    assert_eq!(accepted_map, base_map);
+    assert!(accept_result.changed_paths.is_empty());
+    assert!(!accept_result.dirty_changed);
+    assert_eq!(next_local_map, local_map);
+    assert_eq!(next_dirty_map, base_map);
+    assert!(reject_result.changed_paths.is_empty());
+    assert!(!reject_result.dirty_changed);
+}
+
+#[test]
+fn field_commands_only_touch_requested_folder() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"Before"}"#),
+        ),
+        (
+            "public/other_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":10,"name":"Other before"}"#),
+        ),
+    ]);
+    let local_map = HashMap::from([
+        (
+            "public/smoke_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":1,"name":"After"}"#),
+        ),
+        (
+            "public/other_records/record-1.json".to_string(),
+            json_bytes(r#"{"id":10,"name":"Other after"}"#),
+        ),
+    ]);
+    let master_map = base_map.clone();
+
+    let (accepted_map, accept_result) =
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+    let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
+        &ctx,
+        "public/smoke_records",
+        "name",
+        &base_map,
+        &local_map,
+        &master_map,
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
+        "{\n  \"id\": 1,\n  \"name\": \"After\"\n}"
+    );
+    assert_eq!(
+        accepted_map["public/other_records/record-1.json"],
+        base_map["public/other_records/record-1.json"]
+    );
+    assert_eq!(
+        String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
+        "{\n  \"id\": 1,\n  \"name\": \"Before\"\n}"
+    );
+    assert_eq!(
+        next_local_map["public/other_records/record-1.json"],
+        local_map["public/other_records/record-1.json"]
+    );
+    assert_eq!(
+        next_dirty_map["public/other_records/record-1.json"],
+        base_map["public/other_records/record-1.json"]
+    );
+    assert_eq!(
+        accept_result.changed_paths,
+        vec!["Conn/public/smoke_records/record-1.json".to_string()]
+    );
+    assert_eq!(
+        reject_result.changed_paths,
+        vec!["Conn/public/smoke_records/record-1.json".to_string()]
+    );
+}
+
+#[test]
+fn accept_field_in_folder_ignores_unpublished_only_changes() {
+    let ctx = empty_conn_ctx();
+
+    let base_map = HashMap::from([(
+        "public/smoke_records/record-1.json".to_string(),
+        json_bytes(r#"{"id":1,"name":"Approved value"}"#),
+    )]);
+    let local_map = base_map.clone();
+
+    let (accepted_map, result) =
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+
+    assert_eq!(accepted_map, base_map);
+    assert!(result.changed_paths.is_empty());
+    assert!(!result.dirty_changed);
 }
 
 fn run_git(dir: &Path, args: &[&str]) {

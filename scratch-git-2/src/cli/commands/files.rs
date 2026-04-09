@@ -3,6 +3,7 @@ use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 
 use clap::Subcommand;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::api::ConnectorAccount;
 use crate::config::markers;
@@ -68,11 +69,31 @@ pub enum FilesCommands {
         #[arg(required = true)]
         paths: Vec<String>,
     },
+    /// Accept one field across all records in a folder, committing only that field into dirty
+    #[command(name = "accept-field")]
+    AcceptField {
+        /// Folder path relative to the workspace root, or absolute path to a folder inside the workspace
+        #[arg(long)]
+        folder: PathBuf,
+        /// Dot-separated field path to accept (for example: "name" or "author.name")
+        #[arg(long)]
+        field: String,
+    },
     /// Discard working-tree changes for one or more files, restoring the dirty-branch version
     Reject {
         /// Paths to reject, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
         #[arg(required = true)]
         paths: Vec<String>,
+    },
+    /// Discard one field across all records in a folder, restoring only that field from dirty
+    #[command(name = "reject-field")]
+    RejectField {
+        /// Folder path relative to the workspace root, or absolute path to a folder inside the workspace
+        #[arg(long)]
+        folder: PathBuf,
+        /// Dot-separated field path to reject (for example: "name" or "author.name")
+        #[arg(long)]
+        field: String,
     },
     /// List record changes that exist only in the working tree and have not been accepted locally
     Unreviewed,
@@ -137,6 +158,12 @@ struct AcceptAllResult {
     accepted_paths: Vec<String>,
 }
 
+#[derive(Default)]
+struct FieldCommandResult {
+    changed_paths: Vec<String>,
+    dirty_changed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct UnreviewedEntry {
     #[serde(rename = "connectionName")]
@@ -152,7 +179,9 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Download { on_delete } => run_download(&cwd, server_url, json, on_delete).await,
         FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
+        FilesCommands::AcceptField { folder, field } => run_accept_field(&cwd, &folder, &field, json),
         FilesCommands::Reject { paths } => run_reject(&cwd, &paths, json),
+        FilesCommands::RejectField { folder, field } => run_reject_field(&cwd, &folder, &field, json),
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
@@ -654,6 +683,174 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
     Ok(())
 }
 
+fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+    let (ctx, repo_folder, display_folder) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(&ctx)?;
+    let local_map = read_materialized_repo(&ctx)?;
+
+    let (accepted_map, result) = accept_field_in_folder(&ctx, &repo_folder, field, &base_map, &local_map)?;
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if result.changed_paths.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "no_changes",
+                    "field": field,
+                    "folder": display_folder,
+                    "filesAccepted": 0,
+                    "paths": [],
+                    "elapsedMs": elapsed_ms,
+                }))?
+            );
+        } else {
+            println!(
+                "No field changes to approve for '{}' in {}. ({})",
+                field,
+                display_folder,
+                format_elapsed(elapsed_ms)
+            );
+        }
+        return Ok(());
+    }
+
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        base_hash.as_deref(),
+        &accepted_map,
+        &format!("Accept field '{}' in {}", field, repo_folder),
+    )?;
+    update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
+    update_reviewed_dirty(&ctx, &new_dirty_hash)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "accepted",
+                "field": field,
+                "folder": display_folder,
+                "filesAccepted": result.changed_paths.len(),
+                "paths": result.changed_paths,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+    } else {
+        println!(
+            "Accepted field '{}' in {} file(s) under {}. ({})",
+            field,
+            result.changed_paths.len(),
+            display_folder,
+            format_elapsed(elapsed_ms)
+        );
+        print_file_list(&result.changed_paths);
+    }
+
+    Ok(())
+}
+
+fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+    let (ctx, repo_folder, display_folder) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    let master_map = match master_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(&ctx)?;
+    let local_map = read_materialized_repo(&ctx)?;
+
+    let (next_local_map, next_dirty_map, result) =
+        reject_field_in_folder(&ctx, &repo_folder, field, &base_map, &local_map, &master_map)?;
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if result.changed_paths.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "no_changes",
+                    "field": field,
+                    "folder": display_folder,
+                    "filesRejected": 0,
+                    "paths": [],
+                    "elapsedMs": elapsed_ms,
+                }))?
+            );
+        } else {
+            println!(
+                "No field changes to discard for '{}' in {}. ({})",
+                field,
+                display_folder,
+                format_elapsed(elapsed_ms)
+            );
+        }
+        return Ok(());
+    }
+
+    apply_changed_working_files(&ctx, &local_map, &next_local_map, &repo_folder)?;
+
+    if result.dirty_changed {
+        let new_dirty_hash = commit_file_map_to_dirty_ref(
+            &ctx.bare_repo,
+            base_hash.as_deref(),
+            &next_dirty_map,
+            &format!("Reject field '{}' in {}", field, repo_folder),
+        )?;
+        update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
+        update_reviewed_dirty(&ctx, &new_dirty_hash)?;
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "rejected",
+                "field": field,
+                "folder": display_folder,
+                "filesRejected": result.changed_paths.len(),
+                "paths": result.changed_paths,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+    } else {
+        println!(
+            "Rejected field '{}' in {} file(s) under {}. ({})",
+            field,
+            result.changed_paths.len(),
+            display_folder,
+            format_elapsed(elapsed_ms)
+        );
+        print_file_list(&result.changed_paths);
+    }
+
+    Ok(())
+}
+
 fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
 
@@ -923,6 +1120,70 @@ fn build_connection_contexts(
         .collect();
 
     Ok(contexts)
+}
+
+fn resolve_folder_context(
+    workspace_dir: &Path,
+    contexts: &[ConnectionContext],
+    folder: &Path,
+) -> anyhow::Result<(ConnectionContext, String, String)> {
+    let raw_target = if folder.is_absolute() {
+        folder.to_path_buf()
+    } else {
+        workspace_dir.join(folder)
+    };
+    let target = normalize_path(&raw_target);
+    let rel = target.strip_prefix(workspace_dir).map_err(|_| {
+        anyhow::anyhow!(
+            "Folder '{}' is not inside workspace '{}'.",
+            target.display(),
+            workspace_dir.display()
+        )
+    })?;
+    let parts: Vec<String> = rel
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    if parts.len() < 2 {
+        anyhow::bail!(
+            "Folder '{}' must point to a data folder inside a connection.",
+            target.display()
+        );
+    }
+    if parts[0].starts_with('.') {
+        anyhow::bail!(
+            "Folder '{}' is inside Scratch metadata. Pass a data folder under a connection.",
+            target.display()
+        );
+    }
+
+    let conn_name = &parts[0];
+    let repo_folder = parts[1..].join("/");
+    let ctx = contexts
+        .iter()
+        .find(|ctx| ctx.conn_dir_name == *conn_name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("No connection found for '{}'.", conn_name))?;
+
+    Ok((ctx, repo_folder, rel.to_slash_lossy()))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 fn detect_selected_connection(
@@ -1371,6 +1632,271 @@ fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
     read_dirty_disk(&ctx.dirty_dir, &ctx.dirty_dir, &mut map)?;
     read_scratch_disk(&ctx.scratch_dir, &ctx.scratch_dir, &mut map)?;
     Ok(map)
+}
+
+fn accept_field_in_folder(
+    ctx: &ConnectionContext,
+    repo_folder: &str,
+    field: &str,
+    base_map: &FileMap,
+    local_map: &FileMap,
+) -> anyhow::Result<(FileMap, FieldCommandResult)> {
+    let mut next_dirty_map = base_map.clone();
+    let mut result = FieldCommandResult::default();
+
+    for path in iter_data_paths_in_folder(base_map, local_map, None, repo_folder) {
+        let Some(local_content) = local_map.get(path.as_str()) else {
+            continue;
+        };
+        let base_content = base_map.get(path.as_str());
+
+        if let Some(base_content) = base_content {
+            let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
+            let base_obj = parse_json_object_bytes(base_content, path.as_str())?;
+            let local_value = read_nested_json_value(&local_obj, field);
+            let base_value = read_nested_json_value(&base_obj, field);
+
+            if local_value == base_value {
+                continue;
+            }
+
+            let mut accepted_obj = base_obj;
+            apply_nested_json_value(&mut accepted_obj, field, local_value);
+            next_dirty_map.insert(path.clone(), json_object_to_bytes(&accepted_obj)?);
+        } else {
+            let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
+            let Some(local_value) = read_nested_json_value(&local_obj, field) else {
+                continue;
+            };
+
+            let mut accepted_obj = JsonMap::new();
+            apply_nested_json_value(&mut accepted_obj, field, Some(local_value));
+            next_dirty_map.insert(path.clone(), json_object_to_bytes(&accepted_obj)?);
+        }
+
+        result
+            .changed_paths
+            .push(format!("{}/{}", ctx.conn_dir_name, path));
+        result.dirty_changed = true;
+    }
+
+    Ok((next_dirty_map, result))
+}
+
+fn reject_field_in_folder(
+    ctx: &ConnectionContext,
+    repo_folder: &str,
+    field: &str,
+    base_map: &FileMap,
+    local_map: &FileMap,
+    master_map: &FileMap,
+) -> anyhow::Result<(FileMap, FileMap, FieldCommandResult)> {
+    let mut next_local_map = local_map.clone();
+    let mut next_dirty_map = base_map.clone();
+    let mut result = FieldCommandResult::default();
+
+    for path in iter_data_paths_in_folder(base_map, local_map, Some(master_map), repo_folder) {
+        let local_content = local_map.get(path.as_str());
+        let base_content = base_map.get(path.as_str());
+        let master_content = master_map.get(path.as_str());
+
+        if local_content.is_none() && base_content.is_some() {
+            // Deleted locally: field-level reject is a no-op for deleted files.
+            continue;
+        }
+
+        if base_content.is_none() && local_content.is_none() {
+            // Master-only file (for example an unpublished deletion): not a field-level target.
+            continue;
+        }
+
+        let changed = match (local_content, base_content) {
+            (Some(local_content), Some(base_content)) => {
+                let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
+                let base_obj = parse_json_object_bytes(base_content, path.as_str())?;
+                let master_obj = match master_content {
+                    Some(content) => Some(parse_json_object_bytes(content, path.as_str())?),
+                    None => None,
+                };
+
+                let local_value = read_nested_json_value(&local_obj, field);
+                let base_value = read_nested_json_value(&base_obj, field);
+                let master_value = master_obj
+                    .as_ref()
+                    .and_then(|obj| read_nested_json_value(obj, field));
+
+                if local_value != base_value {
+                    let mut next_local_obj = local_obj;
+                    apply_nested_json_value(&mut next_local_obj, field, base_value);
+                    next_local_map.insert(path.clone(), json_object_to_bytes(&next_local_obj)?);
+                    true
+                } else if base_value != master_value {
+                    let mut next_local_obj = local_obj;
+                    let mut next_dirty_obj = base_obj;
+                    apply_nested_json_value(&mut next_local_obj, field, master_value.clone());
+                    apply_nested_json_value(&mut next_dirty_obj, field, master_value);
+                    next_local_map.insert(path.clone(), json_object_to_bytes(&next_local_obj)?);
+                    next_dirty_map.insert(path.clone(), json_object_to_bytes(&next_dirty_obj)?);
+                    result.dirty_changed = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            (Some(local_content), None) => {
+                let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
+                let local_value = read_nested_json_value(&local_obj, field);
+                if local_value.is_none() {
+                    false
+                } else {
+                    let mut next_local_obj = local_obj;
+                    apply_nested_json_value(&mut next_local_obj, field, None);
+                    if next_local_obj.is_empty() {
+                        next_local_map.remove(path.as_str());
+                    } else {
+                        next_local_map.insert(path.clone(), json_object_to_bytes(&next_local_obj)?);
+                    }
+                    true
+                }
+            }
+            (None, None) => false,
+            (None, Some(_)) => false,
+        };
+
+        if changed {
+            result
+                .changed_paths
+                .push(format!("{}/{}", ctx.conn_dir_name, path));
+        }
+    }
+
+    Ok((next_local_map, next_dirty_map, result))
+}
+
+fn iter_data_paths_in_folder(
+    base_map: &FileMap,
+    local_map: &FileMap,
+    master_map: Option<&FileMap>,
+    repo_folder: &str,
+) -> Vec<String> {
+    let mut paths = std::collections::BTreeSet::new();
+
+    for key in base_map.keys() {
+        if is_data_path_in_folder(key, repo_folder) {
+            paths.insert(key.clone());
+        }
+    }
+    for key in local_map.keys() {
+        if is_data_path_in_folder(key, repo_folder) {
+            paths.insert(key.clone());
+        }
+    }
+    if let Some(master_map) = master_map {
+        for key in master_map.keys() {
+            if is_data_path_in_folder(key, repo_folder) {
+                paths.insert(key.clone());
+            }
+        }
+    }
+
+    paths.into_iter().collect()
+}
+
+fn is_data_path_in_folder(path: &str, repo_folder: &str) -> bool {
+    !path.starts_with(".scratch/")
+        && path.ends_with(".json")
+        && (repo_folder.is_empty() || path.starts_with(&format!("{repo_folder}/")))
+}
+
+fn parse_json_object_bytes(content: &[u8], path: &str) -> anyhow::Result<JsonMap<String, JsonValue>> {
+    let parsed: JsonValue = serde_json::from_slice(content)
+        .map_err(|err| anyhow::anyhow!("Failed to parse JSON in '{}': {}", path, err))?;
+    match parsed {
+        JsonValue::Object(obj) => Ok(obj),
+        _ => anyhow::bail!("JSON record '{}' must have an object at the top level.", path),
+    }
+}
+
+fn json_object_to_bytes(object: &JsonMap<String, JsonValue>) -> anyhow::Result<Vec<u8>> {
+    Ok(serde_json::to_vec_pretty(&JsonValue::Object(object.clone()))?)
+}
+
+fn read_nested_json_value(object: &JsonMap<String, JsonValue>, field: &str) -> Option<JsonValue> {
+    let mut current = object.get(field.split('.').next()?)?;
+    let mut parts = field.split('.');
+    parts.next()?;
+
+    for part in parts {
+        current = current.as_object()?.get(part)?;
+    }
+
+    Some(current.clone())
+}
+
+fn apply_nested_json_value(object: &mut JsonMap<String, JsonValue>, field: &str, value: Option<JsonValue>) {
+    let parts: Vec<&str> = field.split('.').filter(|part| !part.is_empty()).collect();
+    if parts.is_empty() {
+        return;
+    }
+    apply_nested_json_value_parts(object, &parts, value);
+}
+
+fn apply_nested_json_value_parts(
+    object: &mut JsonMap<String, JsonValue>,
+    parts: &[&str],
+    value: Option<JsonValue>,
+) -> bool {
+    if parts.len() == 1 {
+        match value {
+            Some(value) => {
+                object.insert(parts[0].to_string(), value);
+            }
+            None => {
+                object.remove(parts[0]);
+            }
+        }
+        return object.is_empty();
+    }
+
+    let key = parts[0].to_string();
+    let child = object
+        .entry(key.clone())
+        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+    if !child.is_object() {
+        *child = JsonValue::Object(JsonMap::new());
+    }
+    let should_prune = apply_nested_json_value_parts(child.as_object_mut().unwrap(), &parts[1..], value);
+    if should_prune {
+        object.remove(&key);
+    }
+    object.is_empty()
+}
+
+fn apply_changed_working_files(
+    ctx: &ConnectionContext,
+    previous_local_map: &FileMap,
+    next_local_map: &FileMap,
+    repo_folder: &str,
+) -> anyhow::Result<()> {
+    for path in iter_data_paths_in_folder(previous_local_map, next_local_map, None, repo_folder) {
+        let before = previous_local_map.get(path.as_str());
+        let after = next_local_map.get(path.as_str());
+        if before == after {
+            continue;
+        }
+
+        let disk_path = ctx.dirty_dir.join(&path);
+        match after {
+            Some(content) => write_file(&disk_path, content)?,
+            None => {
+                if disk_path.exists() {
+                    std::fs::remove_file(&disk_path)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {

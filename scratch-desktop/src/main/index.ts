@@ -24,9 +24,11 @@ import {
   undoApprovedCellChange,
 } from './local-files';
 import {
+  acceptFieldChanges,
   listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
+  rejectFieldChanges,
   runScratchmd,
   runScratchmdCapture,
   runScratchmdJson,
@@ -502,6 +504,12 @@ ipcMain.handle(
   'files:undo-approved-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
+);
+ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
+  acceptFieldChanges(workspacePath, folderPath, fieldName),
+);
+ipcMain.handle('files:reject-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
+  rejectFieldChanges(workspacePath, folderPath, fieldName),
 );
 
 void app.whenReady().then(() => {

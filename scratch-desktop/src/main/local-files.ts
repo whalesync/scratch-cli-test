@@ -261,7 +261,8 @@ export type DiffGridFilterKind = 'unreviewed' | 'unpublished';
 
 export type DiffGridFilter =
   | { scope: 'global'; kind: DiffGridFilterKind }
-  | { scope: 'column'; kind: DiffGridFilterKind; columnId: string; columnTitle: string };
+  | { scope: 'column'; kind: DiffGridFilterKind; columnId: string; columnTitle: string }
+  | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
 export interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
@@ -998,6 +999,25 @@ function rowHasUnpublishedChanges(row: DiffRow): boolean {
 function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter): boolean {
   if (filter.scope === 'global') {
     return filter.kind === 'unreviewed' ? rowHasUnreviewedChanges(row) : rowHasUnpublishedChanges(row);
+  }
+
+  if (filter.scope === 'text') {
+    const query = filter.value.trim().toLocaleLowerCase();
+    if (query.length === 0) {
+      return true;
+    }
+
+    const rawValue = row[filter.columnId];
+    const textValue =
+      rawValue == null
+        ? ''
+        : typeof rawValue === 'string'
+          ? rawValue
+          : typeof rawValue === 'number' || typeof rawValue === 'boolean'
+            ? String(rawValue)
+            : JSON.stringify(rawValue);
+
+    return textValue.toLocaleLowerCase().includes(query);
   }
 
   return filter.kind === 'unreviewed'

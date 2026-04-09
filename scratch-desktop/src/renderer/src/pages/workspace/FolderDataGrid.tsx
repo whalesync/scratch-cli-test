@@ -12,6 +12,7 @@ import DataEditor, {
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
 import { Box, Group, Loader, Portal, Stack, UnstyledButton } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { Maximize2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
@@ -52,7 +53,8 @@ interface HeaderMenuState {
 
 type GridFilter =
   | { scope: 'global'; kind: FilterKind }
-  | { scope: 'column'; kind: FilterKind; columnId: string; columnTitle: string };
+  | { scope: 'column'; kind: FilterKind; columnId: string; columnTitle: string }
+  | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
 interface CellPopoverState {
   col: number;
@@ -140,12 +142,21 @@ function isInsideGridEditorOverlay(target: Element): boolean {
 }
 
 function filterKey(filter: GridFilter): string {
-  return filter.scope === 'global' ? `global:${filter.kind}` : `column:${filter.columnId}:${filter.kind}`;
+  if (filter.scope === 'global') {
+    return `global:${filter.kind}`;
+  }
+  if (filter.scope === 'text') {
+    return `text:${filter.columnId}`;
+  }
+  return `column:${filter.columnId}:${filter.kind}`;
 }
 
 function filterLabel(filter: GridFilter): string {
   if (filter.scope === 'global') {
     return filter.kind === 'unreviewed' ? 'Needs review' : 'Approved';
+  }
+  if (filter.scope === 'text') {
+    return `${filter.columnTitle}: "${filter.value}"`;
   }
 
   return `${filter.columnTitle}: ${filter.kind === 'unreviewed' ? 'Needs review' : 'Approved'}`;
@@ -461,7 +472,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const activeColumnFilters = useMemo(
     () =>
-      activeFilters.filter((filter): filter is Extract<GridFilter, { scope: 'column' }> => filter.scope === 'column'),
+      activeFilters.filter((filter): filter is Exclude<GridFilter, { scope: 'global' }> => filter.scope !== 'global'),
     [activeFilters],
   );
 
@@ -516,6 +527,82 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     },
     [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
   );
+
+  const acceptGridFieldChanges = useCallback(() => {
+    if (!selectedFolderPath || !workspacePath || !headerMenu) {
+      return;
+    }
+
+    const { columnId, columnTitle } = headerMenu;
+    closeGridEditorChrome();
+
+    void window.scratchFiles
+      .acceptFieldChanges(selectedFolderPath, workspacePath, columnId)
+      .then((result) => {
+        refreshGridData();
+        if (result.status === 'no_changes') {
+          notifications.show({
+            color: 'gray',
+            title: 'Nothing to approve',
+            message: `No field changes to approve for "${columnTitle}".`,
+          });
+          return;
+        }
+
+        const fileCount = result.filesAccepted ?? result.paths.length;
+        notifications.show({
+          color: 'green',
+          title: 'Field approved',
+          message: `Approved ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
+        });
+      })
+      .catch((err: unknown) => {
+        console.error('[acceptFieldChanges] field approve failed:', err);
+        notifications.show({
+          color: 'red',
+          title: 'Failed to approve field',
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
+  }, [closeGridEditorChrome, headerMenu, refreshGridData, selectedFolderPath, workspacePath]);
+
+  const rejectGridFieldChanges = useCallback(() => {
+    if (!selectedFolderPath || !workspacePath || !headerMenu) {
+      return;
+    }
+
+    const { columnId, columnTitle } = headerMenu;
+    closeGridEditorChrome();
+
+    void window.scratchFiles
+      .rejectFieldChanges(selectedFolderPath, workspacePath, columnId)
+      .then((result) => {
+        refreshGridData();
+        if (result.status === 'no_changes') {
+          notifications.show({
+            color: 'gray',
+            title: 'Nothing to discard',
+            message: `No field changes to discard for "${columnTitle}".`,
+          });
+          return;
+        }
+
+        const fileCount = result.filesRejected ?? result.paths.length;
+        notifications.show({
+          color: 'green',
+          title: 'Field discarded',
+          message: `Discarded ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
+        });
+      })
+      .catch((err: unknown) => {
+        console.error('[rejectFieldChanges] field reject failed:', err);
+        notifications.show({
+          color: 'red',
+          title: 'Failed to discard field',
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
+  }, [closeGridEditorChrome, headerMenu, refreshGridData, selectedFolderPath, workspacePath]);
 
   // ── Cell content ──
 
@@ -810,6 +897,34 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [headerMenu],
   );
 
+  const handleApplyTextFilter = useCallback(
+    (value: string) => {
+      if (!headerMenu) {
+        return;
+      }
+
+      const nextValue = value.trim();
+      setActiveFilters((current) => {
+        const withoutSameColumnText = current.filter(
+          (filter) => !(filter.scope === 'text' && filter.columnId === headerMenu.columnId),
+        );
+        if (nextValue.length === 0) {
+          return withoutSameColumnText;
+        }
+        return [
+          ...withoutSameColumnText,
+          {
+            scope: 'text',
+            columnId: headerMenu.columnId,
+            columnTitle: headerMenu.columnTitle,
+            value: nextValue,
+          },
+        ];
+      });
+    },
+    [headerMenu],
+  );
+
   const handleRemoveFilter = useCallback((filterToRemove: GridFilter) => {
     setActiveFilters((current) => current.filter((filter) => filterKey(filter) !== filterKey(filterToRemove)));
   }, []);
@@ -951,8 +1066,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             <FolderGridHeaderMenu
               columnTitle={headerMenu?.columnTitle ?? ''}
               bounds={headerMenu?.bounds ?? null}
+              initialFilterValue={
+                headerMenu == null
+                  ? ''
+                  : (activeFilters.find(
+                      (filter): filter is Extract<GridFilter, { scope: 'text' }> =>
+                        filter.scope === 'text' && filter.columnId === headerMenu.columnId,
+                    )?.value ?? '')
+              }
               onShowNeedsReview={() => handleAddColumnFilter('unreviewed')}
               onShowApproved={() => handleAddColumnFilter('unpublished')}
+              onApplyTextFilter={handleApplyTextFilter}
+              onApproveField={acceptGridFieldChanges}
+              onRejectField={rejectGridFieldChanges}
               onClose={() => setHeaderMenu(null)}
             />
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (

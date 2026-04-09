@@ -31,6 +31,16 @@ export interface UnreviewedChangeEntry {
   status: string;
 }
 
+export interface FieldActionResult {
+  status: 'accepted' | 'rejected' | 'no_changes';
+  field: string;
+  folder: string;
+  filesAccepted?: number;
+  filesRejected?: number;
+  paths: string[];
+  elapsedMs: number;
+}
+
 interface LocalPublishPlan {
   planId: string;
   createdAt: string;
@@ -369,6 +379,28 @@ export async function listLocalPublishPlans(workspacePath: string): Promise<Loca
     }
     throw error;
   }
+}
+
+export async function acceptFieldChanges(
+  workspacePath: string,
+  folderPath: string,
+  fieldName: string,
+): Promise<FieldActionResult> {
+  return runScratchmdJson<FieldActionResult>(
+    ['--json', 'files', 'accept-field', '--folder', folderPath, '--field', fieldName],
+    workspacePath,
+  );
+}
+
+export async function rejectFieldChanges(
+  workspacePath: string,
+  folderPath: string,
+  fieldName: string,
+): Promise<FieldActionResult> {
+  return runScratchmdJson<FieldActionResult>(
+    ['--json', 'files', 'reject-field', '--folder', folderPath, '--field', fieldName],
+    workspacePath,
+  );
 }
 
 export async function triggerPublishFromGit(

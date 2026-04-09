@@ -16,7 +16,8 @@ type ScratchCommandEvent =
 
 type DiffGridFilter =
   | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
-  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string };
+  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
+  | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
 interface ScratchDeepLinkAPI {
   onDeepLink: (callback: (route: string, query: string) => void) => () => void;
@@ -237,6 +238,32 @@ interface ScratchFilesAPI {
     filename: string,
     fieldName: string,
   ) => Promise<void>;
+  acceptFieldChanges: (
+    folderPath: string,
+    workspacePath: string,
+    fieldName: string,
+  ) => Promise<{
+    status: 'accepted' | 'rejected' | 'no_changes';
+    field: string;
+    folder: string;
+    filesAccepted?: number;
+    filesRejected?: number;
+    paths: string[];
+    elapsedMs: number;
+  }>;
+  rejectFieldChanges: (
+    folderPath: string,
+    workspacePath: string,
+    fieldName: string,
+  ) => Promise<{
+    status: 'accepted' | 'rejected' | 'no_changes';
+    field: string;
+    folder: string;
+    filesAccepted?: number;
+    filesRejected?: number;
+    paths: string[];
+    elapsedMs: number;
+  }>;
 }
 
 declare global {

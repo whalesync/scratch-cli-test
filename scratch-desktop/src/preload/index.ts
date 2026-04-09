@@ -23,7 +23,8 @@ type ScratchCommandEvent =
 
 type DiffGridFilter =
   | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
-  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string };
+  | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
+  | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
 const scratchDeepLink = {
   onDeepLink: (callback: (route: string, query: string) => void): (() => void) => {
@@ -284,6 +285,32 @@ const scratchFiles = {
     filename: string,
     fieldName: string,
   ): Promise<void> => invoke('files:undo-approved-cell-change', folderPath, workspacePath, filename, fieldName),
+  acceptFieldChanges: (
+    folderPath: string,
+    workspacePath: string,
+    fieldName: string,
+  ): Promise<{
+    status: 'accepted' | 'rejected' | 'no_changes';
+    field: string;
+    folder: string;
+    filesAccepted?: number;
+    filesRejected?: number;
+    paths: string[];
+    elapsedMs: number;
+  }> => invoke('files:accept-field-changes', folderPath, workspacePath, fieldName),
+  rejectFieldChanges: (
+    folderPath: string,
+    workspacePath: string,
+    fieldName: string,
+  ): Promise<{
+    status: 'accepted' | 'rejected' | 'no_changes';
+    field: string;
+    folder: string;
+    filesAccepted?: number;
+    filesRejected?: number;
+    paths: string[];
+    elapsedMs: number;
+  }> => invoke('files:reject-field-changes', folderPath, workspacePath, fieldName),
 };
 
 if (process.contextIsolated) {

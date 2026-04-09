@@ -1,24 +1,37 @@
 import type { Rectangle } from '@glideapps/glide-data-grid';
 import { Box, Divider, Portal, Stack, TextInput } from '@mantine/core';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Text12Medium, Text12Regular } from '../../components/base/text';
 
 interface FolderGridHeaderMenuProps {
   columnTitle: string;
   bounds: Rectangle | null;
+  initialFilterValue: string;
   onShowNeedsReview: () => void;
   onShowApproved: () => void;
+  onApplyTextFilter: (value: string) => void;
+  onApproveField: () => void;
+  onRejectField: () => void;
   onClose: () => void;
 }
 
 export function FolderGridHeaderMenu({
   columnTitle,
   bounds,
+  initialFilterValue,
   onShowNeedsReview,
   onShowApproved,
+  onApplyTextFilter,
+  onApproveField,
+  onRejectField,
   onClose,
 }: FolderGridHeaderMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [filterValue, setFilterValue] = useState(initialFilterValue);
+
+  useEffect(() => {
+    setFilterValue(initialFilterValue);
+  }, [columnTitle, initialFilterValue]);
 
   useEffect(() => {
     if (!bounds) {
@@ -49,6 +62,11 @@ export function FolderGridHeaderMenu({
   const menuWidth = 236;
   const left = Math.max(12, Math.min(bounds.x, window.innerWidth - menuWidth - 12));
   const top = Math.max(12, Math.min(bounds.y + bounds.height + 4, window.innerHeight - 320));
+
+  const submitTextFilter = () => {
+    onApplyTextFilter(filterValue);
+    onClose();
+  };
 
   return (
     <Portal target="#portal">
@@ -94,16 +112,40 @@ export function FolderGridHeaderMenu({
 
           <Box px={8} py={4}>
             <Text12Regular c="var(--fg-muted)">Filter by...</Text12Regular>
-            <TextInput placeholder="Type to filter..." size="xs" disabled mt={6} />
+            <TextInput
+              placeholder="Type to filter..."
+              size="xs"
+              mt={6}
+              value={filterValue}
+              onChange={(event) => setFilterValue(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  submitTextFilter();
+                }
+              }}
+            />
           </Box>
 
           <Divider my={4} />
 
           <MenuSectionLabel>{columnTitle}</MenuSectionLabel>
-          <MenuAction onClick={onClose} color="var(--mantine-color-green-7)">
+          <MenuAction
+            onClick={() => {
+              onApproveField();
+              onClose();
+            }}
+            color="var(--mantine-color-green-7)"
+          >
             Approve all changes in this field
           </MenuAction>
-          <MenuAction onClick={onClose} color="var(--mantine-color-red-7)">
+          <MenuAction
+            onClick={() => {
+              onRejectField();
+              onClose();
+            }}
+            color="var(--mantine-color-red-7)"
+          >
             Discard all changes in this field
           </MenuAction>
         </Stack>
