@@ -220,7 +220,7 @@ export function buildWordPressJsonTableSpec(
 
     // Track title column
     if (fieldId === 'title') {
-      titleColumnRemoteId = [tableId, fieldId];
+      titleColumnRemoteId = ['title', 'raw'];
     }
 
     // Track main content column
