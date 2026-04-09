@@ -14,6 +14,8 @@ export interface DataFolder {
   id: string;
   name: string;
   path: string | null;
+  connectorAccountId: string | null;
   connectorService: string | null;
   connectorDisplayName: string | null;
+  lock: string | null;
 }

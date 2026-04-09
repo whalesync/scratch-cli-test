@@ -25,4 +25,10 @@ export const jobApi = {
     const res = await axios.post<JobStatus[]>('/jobs/bulk-status', { jobIds });
     return res.data;
   },
+
+  getActiveJobs: async (workbookId: string): Promise<JobStatus[]> => {
+    const axios = API_CONFIG.getAxiosInstance();
+    const res = await axios.get<JobStatus[]>(`/jobs/workbook/${workbookId}/active`);
+    return res.data;
+  },
 };

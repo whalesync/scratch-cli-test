@@ -9,13 +9,13 @@ Each call spawns a new `scratchmd` subprocess.
 | IPC | CLI command | Notes |
 |-----|-------------|-------|
 | `scratch:create-workspace` | `workspaces create <name>` | One-shot |
-| `scratch:init-workspace` | `workspaces init <id>` | One-shot |
+| `scratch:init-workspace` | `workspaces init <id>` (`opts.force` → `--force`) | One-shot; `--force` deletes and reclones the local workspace dir |
 | `scratch:remove-workspace` | `workspaces unsync <id> --yes` | One-shot |
 | `scratch:accept-all-changes` | `files accept-all` | One-shot |
 | `scratch:list-unreviewed-changes` | `files unreviewed --json` | Called per-render of status filter |
 | `scratch:list-unpushed-changes` | `files unpushed --json` | Same |
 | `scratch:push-workspace-changes` | `files upload` | One-shot |
-| `scratch:pull-workspace-changes` | `files download` | One-shot |
+| `scratch:pull-workspace-changes` | `files download` | Syncs local connection layout with the server, then pulls each repo |
 | `scratch:validate-local-sync` | `syncs validate-local` | One-shot |
 | `scratch:start-run-local-sync` | `syncs run-local` (streaming) | Long-running stream |
 | `scratch:start-plan-publish` | `plan-publish` (streaming) | Long-running stream |

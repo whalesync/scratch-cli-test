@@ -45,7 +45,11 @@ interface ScratchDesktopAPI {
   getWorkspacesRegistry: () => Promise<Array<{ id: string; path: string; fileCount: number }>>;
   createWorkspace: (name: string) => Promise<{ id: string; name: string }>;
   pickParentFolder: () => Promise<string | null>;
-  initWorkspace: (workbookId: string, cwd: string) => Promise<{ stdout: string; stderr: string }>;
+  initWorkspace: (
+    workbookId: string,
+    cwd: string,
+    opts?: { force?: boolean },
+  ) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
   acceptAllChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   acceptRecord: (
@@ -73,7 +77,10 @@ interface ScratchDesktopAPI {
     }>
   >;
   pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
-  pullWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
+  pullWorkspaceChanges: (
+    workspacePath: string,
+    opts?: { onDelete?: string },
+  ) => Promise<{ stdout: string; stderr: string }>;
   listLocalSyncs: (workspacePath: string) => Promise<string[]>;
   validateLocalSync: (
     workspacePath: string,

@@ -354,8 +354,8 @@ ipcMain.handle('scratch:pick-parent-folder', async () => {
 ipcMain.handle('scratch:create-workspace', async (_, name: string) =>
   runScratchmdJson<{ id: string; name: string }>(['--json', 'workspaces', 'create', name]),
 );
-ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: string) =>
-  runScratchmd(['workspaces', 'init', workbookId], cwd),
+ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: string, opts?: { force?: boolean }) =>
+  runScratchmd(['workspaces', 'init', workbookId, ...(opts?.force ? ['--force'] : [])], cwd),
 );
 ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) =>
   runScratchmd(['workspaces', 'unsync', workbookId, '--yes']),
@@ -379,9 +379,13 @@ ipcMain.handle('scratch:list-local-publish-plans', async (_, workspacePath: stri
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
   runScratchmd(['files', 'upload'], workspacePath),
 );
-ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string) =>
-  runScratchmd(['files', 'download'], workspacePath),
-);
+ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string, opts?: { onDelete?: string }) => {
+  const args = ['files', 'download'];
+  if (opts?.onDelete) {
+    args.push('--on-delete', opts.onDelete);
+  }
+  return runScratchmd(args, workspacePath);
+});
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
   runScratchmdCapture(['syncs', 'validate-local', '--sync', syncName], workspacePath),

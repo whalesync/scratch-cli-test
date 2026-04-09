@@ -61,8 +61,11 @@ const scratchDesktop = {
     invoke('scratch:get-workspaces-registry'),
   createWorkspace: (name: string): Promise<{ id: string; name: string }> => invoke('scratch:create-workspace', name),
   pickParentFolder: (): Promise<string | null> => invoke('scratch:pick-parent-folder'),
-  initWorkspace: (workbookId: string, cwd: string): Promise<{ stdout: string; stderr: string }> =>
-    invoke('scratch:init-workspace', workbookId, cwd),
+  initWorkspace: (
+    workbookId: string,
+    cwd: string,
+    opts?: { force?: boolean },
+  ): Promise<{ stdout: string; stderr: string }> => invoke('scratch:init-workspace', workbookId, cwd, opts),
   removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
   acceptAllChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
     invoke('scratch:accept-all-changes', workspacePath),
@@ -98,8 +101,10 @@ const scratchDesktop = {
   > => invoke('scratch:list-local-publish-plans', workspacePath),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
     invoke('scratch:push-workspace-changes', workspacePath),
-  pullWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
-    invoke('scratch:pull-workspace-changes', workspacePath),
+  pullWorkspaceChanges: (
+    workspacePath: string,
+    opts?: { onDelete?: string },
+  ): Promise<{ stdout: string; stderr: string }> => invoke('scratch:pull-workspace-changes', workspacePath, opts),
   listLocalSyncs: (workspacePath: string): Promise<string[]> => invoke('scratch:list-local-syncs', workspacePath),
   validateLocalSync: (
     workspacePath: string,
