@@ -162,7 +162,7 @@ export function WorkspaceHeader({
           ))}
         {isDownloaded &&
           (compact ? (
-            <Tooltip label="Delete Local Copy">
+            <Tooltip label="Remove Local Copy">
               <IconButtonGhost
                 size="compact-xs"
                 color="red.6"
@@ -180,7 +180,7 @@ export function WorkspaceHeader({
               loading={deleting}
               onClick={() => void onDelete()}
             >
-              Delete Local Copy
+              Remove Local Copy
             </ButtonDangerLight>
           ))}
       </Group>
