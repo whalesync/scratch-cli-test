@@ -71,6 +71,7 @@ interface FolderDataGridProps {
   selectedFolderPath: string | null;
   workspacePath: string | null;
   dataRefreshKey: number;
+  onPublishFile?: (relativePath: string) => void;
 }
 
 // ── Constants ──
@@ -964,6 +965,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
                 onRecordChanged={() => setReloadKey((k) => k + 1)}
+                onPublishFile={props.onPublishFile}
               />
             )}
           </Box>

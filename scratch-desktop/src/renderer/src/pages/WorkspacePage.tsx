@@ -21,6 +21,7 @@ export function WorkspacePage() {
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [publishFilePath, setPublishFilePath] = useState<string | null>(null);
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
@@ -140,10 +141,14 @@ export function WorkspacePage() {
     <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
       <PublishChangesModal
         opened={publishModalOpen}
-        onClose={() => setPublishModalOpen(false)}
+        onClose={() => {
+          setPublishModalOpen(false);
+          setPublishFilePath(null);
+        }}
         workspaceName={workspace.name}
         localPath={localPath}
         onDataRefresh={handleDataRefresh}
+        filterPath={publishFilePath}
       />
       <PullAllModal
         opened={pullAllModalOpen}
@@ -170,6 +175,10 @@ export function WorkspacePage() {
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={setSelectedFolderPath}
         dataRefreshKey={dataRefreshKey}
+        onPublishFile={(relativePath: string) => {
+          setPublishFilePath(relativePath);
+          setPublishModalOpen(true);
+        }}
       />
     </Box>
   );

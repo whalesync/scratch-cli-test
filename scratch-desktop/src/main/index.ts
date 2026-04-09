@@ -257,10 +257,10 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     logPerf('main windowReadyToShow (from app start)', performance.now() - appStartTime);
-    mainWindow.show();
+    mainWindow?.show();
     const openDevTools = process.env['OPEN_DEVTOOLS'] === '1' || is.dev;
     if (openDevTools) {
-      mainWindow.webContents.openDevTools({ mode: 'bottom' });
+      mainWindow?.webContents.openDevTools({ mode: 'bottom' });
     }
   });
 
@@ -387,9 +387,10 @@ ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, s
 ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: string, syncName: string) =>
   startScratchmdLiveCommand(event.sender, ['syncs', 'run-local', '--sync', syncName], workspacePath),
 );
-ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string) =>
-  startScratchmdLiveCommand(event.sender, ['plan-publish'], workspacePath),
-);
+ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string, filterPath?: string) => {
+  const args = filterPath ? ['plan-publish', '--filter', filterPath] : ['plan-publish'];
+  return startScratchmdLiveCommand(event.sender, args, workspacePath);
+});
 ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: string) =>
   startScratchmdLiveCommand(event.sender, ['publish-from-git'], workspacePath),
 );

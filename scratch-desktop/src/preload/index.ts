@@ -107,8 +107,8 @@ const scratchDesktop = {
     invoke('scratch:validate-local-sync', workspacePath, syncName),
   startRunLocalSync: (workspacePath: string, syncName: string): Promise<{ sessionId: string }> =>
     invoke('scratch:start-run-local-sync', workspacePath, syncName),
-  startPlanPublish: (workspacePath: string): Promise<{ sessionId: string }> =>
-    invoke('scratch:start-plan-publish', workspacePath),
+  startPlanPublish: (workspacePath: string, filterPath?: string): Promise<{ sessionId: string }> =>
+    invoke('scratch:start-plan-publish', workspacePath, filterPath),
   startPublishFromGit: (workspacePath: string): Promise<{ sessionId: string }> =>
     invoke('scratch:start-publish-from-git', workspacePath),
   triggerPublishFromGit: (workspacePath: string): Promise<{ stdout: string; stderr: string; jobIds: string[] }> =>

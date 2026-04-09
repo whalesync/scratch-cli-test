@@ -79,7 +79,7 @@ interface ScratchDesktopAPI {
     syncName: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
-  startPlanPublish: (workspacePath: string) => Promise<{ sessionId: string }>;
+  startPlanPublish: (workspacePath: string, filterPath?: string) => Promise<{ sessionId: string }>;
   startPublishFromGit: (workspacePath: string) => Promise<{ sessionId: string }>;
   triggerPublishFromGit: (workspacePath: string) => Promise<{ stdout: string; stderr: string; jobIds: string[] }>;
   startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;

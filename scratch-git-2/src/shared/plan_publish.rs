@@ -115,6 +115,7 @@ pub fn build_publish_plan(
         db_path,
         &dirty_dir.join(".scratch"),
         timestamp,
+        None,
     )
 }
 
@@ -128,6 +129,7 @@ pub fn build_publish_plan_with_scratch_dir(
     db_path: &Path,
     scratch_dir: &Path,
     timestamp: &str,
+    filter: Option<&str>,
 ) -> anyhow::Result<Option<PlanResult>> {
     // 1. Collect files (skip .scratch and .git dirs)
     let master_files = collect_files(master_dir)?;
@@ -149,6 +151,13 @@ pub fn build_publish_plan_with_scratch_dir(
         if !dirty_files.contains_key(rel) {
             deleted.push(rel.clone());
         }
+    }
+
+    // Apply optional path filter
+    if let Some(filter_path) = filter {
+        modified.retain(|r| r == filter_path);
+        added.retain(|r| r == filter_path);
+        deleted.retain(|r| r == filter_path);
     }
 
     if modified.is_empty() && added.is_empty() && deleted.is_empty() {

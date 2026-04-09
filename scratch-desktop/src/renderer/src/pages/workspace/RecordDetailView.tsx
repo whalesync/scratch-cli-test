@@ -32,6 +32,7 @@ interface RecordDetailViewProps {
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
+  onPublishFile?: (relativePath: string) => void;
 }
 
 function rowHasUnreviewedChanges(
@@ -75,6 +76,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   onSelectIndex,
   onClose,
   onRecordChanged,
+  onPublishFile,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
@@ -88,6 +90,10 @@ export const RecordDetailView = memo(function RecordDetailView({
   const currentRow = rows[selectedIndex];
   const recordName = currentRow ? getRecordName(currentRow, titleColumnId) : '';
   const hasUnreviewedChanges = rowHasUnreviewedChanges(recordData?.row ?? currentRow);
+  const hasPublishableChanges =
+    (recordData?.row.__unpublishedFields?.length ?? 0) > 0 ||
+    recordData?.row.__rowStatus === 'added' ||
+    recordData?.row.__rowStatus === 'deleted';
   const currentFilename =
     recordData?.row.__filename ?? (typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined);
 
@@ -410,6 +416,15 @@ export const RecordDetailView = memo(function RecordDetailView({
               >
                 Reject
               </ButtonSecondaryOutline>
+              {onPublishFile && (
+                <ButtonSecondaryOutline
+                  size="compact-xs"
+                  onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
+                  disabled={!currentRecordCliPath || !hasPublishableChanges}
+                >
+                  Publish
+                </ButtonSecondaryOutline>
+              )}
               <ButtonSecondaryOutline
                 size="compact-xs"
                 onClick={() => setViewRaw((v) => !v)}

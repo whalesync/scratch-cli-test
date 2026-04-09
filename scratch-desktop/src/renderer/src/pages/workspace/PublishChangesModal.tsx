@@ -50,6 +50,8 @@ interface PublishChangesModalProps {
   autoStartPlanningOnOpen?: boolean;
   assumeUnreviewedApproved?: boolean;
   onDataRefresh: () => void;
+  /** When set, scopes the publish plan to a single file (relative path within workspace). */
+  filterPath?: string | null;
 }
 
 function isTerminalState(state: JobStatus['state']): boolean {
@@ -237,6 +239,7 @@ export function PublishChangesModal({
   autoStartPlanningOnOpen = false,
   assumeUnreviewedApproved = false,
   onDataRefresh,
+  filterPath,
 }: PublishChangesModalProps) {
   const planningSessionIdRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<number | null>(null);
@@ -273,14 +276,14 @@ export function PublishChangesModal({
       setPlanningExitCode(null);
       setPlanningRunning(true);
       setMode('planning');
-      const { sessionId } = await window.scratchDesktop.startPlanPublish(localPath);
+      const { sessionId } = await window.scratchDesktop.startPlanPublish(localPath, filterPath ?? undefined);
       planningSessionIdRef.current = sessionId;
     } catch (err) {
       setPlanningRunning(false);
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to start publish plan');
     }
-  }, [localPath]);
+  }, [filterPath, localPath]);
 
   const loadInitialState = useCallback(async () => {
     if (!opened || !localPath) {
@@ -306,7 +309,7 @@ export function PublishChangesModal({
       setUnreviewedEntries(nextUnreviewed);
       setPlans(nextPlans);
 
-      if (autoStartPlanningOnOpen) {
+      if (autoStartPlanningOnOpen || filterPath) {
         setPlanSource('new');
         await startPlanning();
         return;
@@ -332,7 +335,7 @@ export function PublishChangesModal({
     } finally {
       setInitializing(false);
     }
-  }, [assumeUnreviewedApproved, autoStartPlanningOnOpen, localPath, opened, startPlanning]);
+  }, [assumeUnreviewedApproved, autoStartPlanningOnOpen, filterPath, localPath, opened, startPlanning]);
 
   const continueAfterApproval = useCallback(() => {
     if (plans.length > 0) {
@@ -513,7 +516,12 @@ export function PublishChangesModal({
   const canClose = !planningRunning && !publishing;
 
   return (
-    <Modal opened={opened} onClose={canClose ? onClose : () => undefined} title="Publish changes" size="lg">
+    <Modal
+      opened={opened}
+      onClose={canClose ? onClose : () => undefined}
+      title={filterPath ? 'Publish file' : 'Publish changes'}
+      size="lg"
+    >
       <Stack gap="md">
         {initializing ? (
           <Center py="md">

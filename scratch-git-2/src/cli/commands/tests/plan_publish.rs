@@ -113,7 +113,7 @@ fn test_simple_edit() {
         &json!({"id": "rec1", "fields": {"title": "New"}}),
     );
 
-    run(tmp.path()).unwrap();
+    run(tmp.path(), None).unwrap();
 
     let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
     let plan = read_plan_json(&plan_root);
@@ -148,7 +148,7 @@ fn test_create_and_delete() {
     write_json(&master_dir, "posts/same.json", &json!({"id": "rec_same"}));
     write_json(&conn_dir, "posts/same.json", &json!({"id": "rec_same"}));
 
-    run(tmp.path()).unwrap();
+    run(tmp.path(), None).unwrap();
 
     let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
     let plan = read_plan_json(&plan_root);
@@ -179,7 +179,7 @@ fn test_nothing_to_publish_when_identical() {
         &json!({"id": "rec1", "fields": {"title": "Same"}}),
     );
 
-    run(tmp.path()).unwrap();
+    run(tmp.path(), None).unwrap();
 
     assert!(
         find_plan_root(&scratch_dir).is_none(),
@@ -199,7 +199,7 @@ fn test_pending_file_gets_rename_entry() {
         &json!({"fields": {"title": "New"}}),
     );
 
-    run(tmp.path()).unwrap();
+    run(tmp.path(), None).unwrap();
 
     let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
     let plan = read_plan_json(&plan_root);
@@ -225,7 +225,7 @@ fn test_asset_pseudo_refs_stripped_in_create() {
         }),
     );
 
-    run(tmp.path()).unwrap();
+    run(tmp.path(), None).unwrap();
 
     let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
     let create_file = phase_file(&scratch_dir, &plan_root, "posts", "create", "new.json");
@@ -290,7 +290,7 @@ fn uses_local_dirty_branch_not_working_tree_when_bare_repo_exists() {
         &json!({"id": "rec1", "fields": {"title": "Unreviewed"}}),
     );
 
-    run(root).unwrap();
+    run(root, None).unwrap();
 
     assert!(
         find_plan_root(&scratch_dir).is_none(),
@@ -351,7 +351,7 @@ fn reviewed_dirty_snapshot_is_cleaned_up_after_planning() {
         &json!({"id": "rec1", "fields": {"title": "Unreviewed"}}),
     );
 
-    run(root).unwrap();
+    run(root, None).unwrap();
 
     assert!(
         !reviewed_dirty_dir.exists(),
@@ -379,7 +379,7 @@ fn test_compute_changed_fields() {
     write_json(&master_dir, "t/r.json", &master);
     write_json(&conn_dir, "t/r.json", &dirty);
 
-    run(root).unwrap();
+    run(root, None).unwrap();
 
     let plan_root = find_plan_root(&scratch_dir).expect("plan dir");
     let edit_file = phase_file(&scratch_dir, &plan_root, "t", "edit", "r.json");

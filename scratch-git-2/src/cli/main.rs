@@ -86,6 +86,9 @@ enum Commands {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
+        /// Only include files matching this relative path (e.g. "connection/folder/file.json")
+        #[arg(long)]
+        filter: Option<String>,
     },
     /// Trigger server-side publish from the local publish plan
     #[command(name = "publish-from-git")]
@@ -193,7 +196,9 @@ async fn main() {
             }
         }
 
-        Commands::PlanPublish { workspace } => plan_publish::run(&workspace),
+        Commands::PlanPublish { workspace, filter } => {
+            plan_publish::run(&workspace, filter.as_deref())
+        }
 
         Commands::PublishFromGit { workspace } => match build_client(&server_url) {
             Ok(client) => plan_publish::run_publish_from_git(&workspace, &client).await,

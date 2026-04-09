@@ -19,6 +19,7 @@ interface WorkspaceContentProps {
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string | null) => void;
   dataRefreshKey: number;
+  onPublishFile?: (relativePath: string) => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
@@ -31,6 +32,7 @@ export function WorkspaceContent({
   selectedFolderPath,
   onSelectFolder,
   dataRefreshKey,
+  onPublishFile,
 }: WorkspaceContentProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -122,6 +124,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         workspacePath={localPath}
         dataRefreshKey={dataRefreshKey}
+        onPublishFile={onPublishFile}
       />
     </Box>
   );

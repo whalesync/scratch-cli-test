@@ -15,7 +15,7 @@ use crate::shared::plan_publish::{self, PlanResult};
 // Entry point: build plan for all connectors in a workspace
 // ---------------------------------------------------------------------------
 
-pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
+pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
     let workspace = resolve_workspace(workspace_start)?;
     let workspace_marker = read_workspace_marker(&workspace)?;
     let layout = WorkspaceLayout::for_cli(&workspace);
@@ -32,6 +32,16 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
 
     for connection in &workspace_marker.connections {
         let conn_name = connection.dir_name.clone();
+
+        // If a filter is set, determine if it applies to this connection and strip the
+        // connection prefix so the shared function receives a connection-relative path.
+        let conn_filter: Option<&str> = match filter {
+            Some(f) => match f.strip_prefix(&format!("{}/", conn_name)) {
+                Some(rest) => Some(rest),
+                None => continue, // filter doesn't match this connection, skip it
+            },
+            None => None,
+        };
         let dirty_dir = layout.dirty_checkout_path(&conn_name);
         let master_dir = layout.master_worktree_path(&conn_name);
         let scratch_dir = layout.connection_scratch_path(&conn_name);
@@ -83,6 +93,7 @@ pub fn run(workspace_start: &Path) -> anyhow::Result<()> {
             &db_path,
             &scratch_dir,
             &timestamp,
+            conn_filter,
         ) {
             Ok(Some(result)) => {
                 print_report(&conn_name, &result);
