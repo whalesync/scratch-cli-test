@@ -89,6 +89,17 @@ echo -e "${YELLOW}Installing server dependencies...${NC}"
 }
 echo -e "${GREEN}Server dependencies installed${NC}"
 
+echo -e "${YELLOW}Cleaning and rebuilding server...${NC}"
+(
+    cd "$SCRIPT_DIR/server"
+    rm -rf dist
+    yarn build
+) || {
+    echo -e "${RED}Failed to build server${NC}"
+    exit 1
+}
+echo -e "${GREEN}Server build complete${NC}"
+
 echo -e "${YELLOW}Running Prisma migrations...${NC}"
 (
     cd "$SCRIPT_DIR/server"
