@@ -92,10 +92,19 @@ if [ "$BUILD_LINUX" = "true" ]; then
   yarn electron-builder --linux --publish never
 fi
 
-# Ad-hoc codesign is now handled by the afterPack hook in electron-builder.yml,
-# so the .app inside DMG/ZIP artifacts is signed before packaging.
+# 6. Ad-hoc codesign the .app bundle (requires macOS host with codesign)
+for APP in dist/mac-arm64/*.app; do
+  [ -d "$APP" ] || continue
+  if command -v codesign &>/dev/null; then
+    echo "Ad-hoc signing $APP..."
+    chmod +x scripts/fix_macos_app_signatures.sh
+    scripts/fix_macos_app_signatures.sh "$APP"
+  else
+    echo "WARNING: codesign not available (not on macOS). Skipping ad-hoc signing."
+  fi
+done
 
-# 6. Collect artifacts into dist-release-test
+# 7. Collect artifacts into dist-release-test
 DIST_DIR="./dist-release-test"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -106,21 +115,34 @@ for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
   cp "$FILE" "$DIST_DIR/$FNAME"
   echo "  $FNAME"
 done
+# Zip .app bundles so they can be uploaded to the GitHub release
+for APP in dist/mac-arm64/*.app; do
+  [ -d "$APP" ] || continue
+  APPNAME=$(basename "$APP" .app)
+  ZIPNAME="${APPNAME}.app.zip"
+  echo "  Zipping $APP → $ZIPNAME"
+  (cd dist/mac-arm64 && zip -r -y "../../$DIST_DIR/$ZIPNAME" "$(basename "$APP")")
+done
+# Copy linux-unpacked
+if [ -d "dist/linux-unpacked" ]; then
+  cp -R dist/linux-unpacked "$DIST_DIR/linux-unpacked"
+  echo "  linux-unpacked/"
+fi
 
-# 7. Validate at least one artifact was collected
-ARTIFACT_COUNT=$(find "$DIST_DIR" -type f | wc -l | tr -d ' ')
+# 8. Validate at least one artifact was collected
+ARTIFACT_COUNT=$(find "$DIST_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')
 if [ "$ARTIFACT_COUNT" -eq 0 ]; then
   echo "ERROR: No build artifacts found in $DIST_DIR. Aborting release."
   exit 1
 fi
 echo "Found $ARTIFACT_COUNT artifact(s)"
 
-# 8. Compute checksums
+# 9. Compute checksums (files only, not directories like .app or linux-unpacked)
 # shellcheck disable=SC2094
 # checksums.txt is excluded by grep -v before the redirect, so no read/write conflict
-(cd "$DIST_DIR" && shasum -a 256 -- * | grep -v checksums.txt > checksums.txt)
+(cd "$DIST_DIR" && find . -maxdepth 1 -type f ! -name checksums.txt -exec shasum -a 256 {} + > checksums.txt)
 
-# 9. Create GitHub release (prerelease = true, no Homebrew update)
+# 10. Create GitHub release (prerelease = true, no Homebrew update)
 # The release API creates the tag on GitHub automatically — no need to push a local tag.
 RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \

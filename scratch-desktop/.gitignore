@@ -1,5 +1,7 @@
 out/
 dist/
+dist-release/
+dist-release-test/
 resources/bin/
 *.env
 node_modules/

@@ -284,10 +284,6 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
     - if: *local-user-if-master
       when: manual
       allow_failure: true
@@ -306,10 +302,6 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
     - if: *local-user-if-master
       when: manual
       allow_failure: true
@@ -354,10 +346,6 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
     - if: *local-user-if-master
       when: manual
       allow_failure: true
@@ -373,10 +361,6 @@ local dummy job:
     MAC_TARGETS: "dmg zip"
     BUILD_LINUX: "false"
   rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
     - if: *local-user-if-master
       when: manual
       allow_failure: true

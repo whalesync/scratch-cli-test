@@ -18,6 +18,8 @@ extraResources:
   - from: build/icons
     to: icons
 
+afterPack: scripts/afterPack.cjs
+
 mac:
   icon: build/icons/mac/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
@@ -32,11 +34,9 @@ mac:
     - target: dmg
       arch:
         - arm64
-        - x64
     - target: zip
       arch:
         - arm64
-        - x64
 
 win:
   icon: build/icons/win/icon.ico

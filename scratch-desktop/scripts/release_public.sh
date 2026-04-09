@@ -94,7 +94,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false yarn electron-builder --mac zip --publish neve
 echo "Packaging Linux targets..."
 yarn electron-builder --linux --publish never
 
-# 6. Collect and rename artifacts into dist-release
+# 7. Collect and rename artifacts into dist-release
 DIST_DIR="./dist-release"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -105,25 +105,38 @@ for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
   cp "$FILE" "$DIST_DIR/$FNAME"
   echo "  $FNAME"
 done
+# Zip .app bundles so they can be uploaded to the GitHub release
+for APP in dist/mac-arm64/*.app; do
+  [ -d "$APP" ] || continue
+  APPNAME=$(basename "$APP" .app)
+  ZIPNAME="${APPNAME}.app.zip"
+  echo "  Zipping $APP → $ZIPNAME"
+  (cd dist/mac-arm64 && zip -r -y "../../$DIST_DIR/$ZIPNAME" "$(basename "$APP")")
+done
+# Copy linux-unpacked
+if [ -d "dist/linux-unpacked" ]; then
+  cp -R dist/linux-unpacked "$DIST_DIR/linux-unpacked"
+  echo "  linux-unpacked/"
+fi
 
-# 7. Validate at least one artifact was collected
-ARTIFACT_COUNT=$(find "$DIST_DIR" -type f | wc -l | tr -d ' ')
+# 8. Validate at least one artifact was collected
+ARTIFACT_COUNT=$(find "$DIST_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')
 if [ "$ARTIFACT_COUNT" -eq 0 ]; then
   echo "ERROR: No build artifacts found in $DIST_DIR. Aborting release."
   exit 1
 fi
 echo "Found $ARTIFACT_COUNT artifact(s)"
 
-# 8. Compute SHA256 for each archive
+# 9. Compute SHA256 for each archive (files only, not directories like .app or linux-unpacked)
 SHA_FILE="$DIST_DIR/checksums.txt"
-(cd "$DIST_DIR" && shasum -a 256 -- * | grep -v 'checksums.txt' > checksums.txt)
+(cd "$DIST_DIR" && find . -maxdepth 1 -type f ! -name checksums.txt -exec shasum -a 256 {} + > checksums.txt)
 echo "SHA256 checksums:"
 cat "$SHA_FILE"
 
 # Helper: extract sha256 for a given archive name
 sha_for() { grep "$1" "$SHA_FILE" | awk '{print $1}'; }
 
-# 9. Create GitHub release and upload artifacts
+# 10. Create GitHub release and upload artifacts
 # The release API creates the tag on GitHub automatically — no need to push a local tag.
 echo "Creating GitHub release $NEW_VERSION..."
 RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
@@ -154,7 +167,7 @@ for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DI
     --data-binary "@$FILE"
 done
 
-# 10. Update Homebrew cask in whalesync/homebrew-scratch-cli
+# 11. Update Homebrew cask in whalesync/homebrew-scratch-cli
 echo "Updating Homebrew cask..."
 TAP_DIR=$(mktemp -d)
 git clone "https://${GITHUB_TOKEN}@github.com/whalesync/homebrew-scratch-cli.git" "$TAP_DIR"

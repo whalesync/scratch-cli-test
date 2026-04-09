@@ -14,8 +14,9 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import { app } from 'electron';
 import { readdir, readFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 
 // ── Types ──
 
@@ -56,48 +57,53 @@ interface LocalPublishPlan {
   tablePaths: string[];
 }
 
-// ── Core spawn helpers ──
+// ── Binary path resolution ──
 
-const SCRATCHMD_BINARIES = ['scratchmd', '/usr/local/bin/scratchmd'];
+function getScratchmdBinaryPath(): string {
+  if (!app.isPackaged) {
+    // Dev mode: use the locally-built debug binary from the monorepo
+    return resolve(__dirname, '..', '..', 'scratch-git-2', 'target', 'debug', 'scratchmd');
+  }
+  // Packaged: use the bundled binary in Resources/bin/
+  return join(process.resourcesPath, 'bin', 'scratchmd');
+}
+
+// ── Core spawn helpers ──
 
 export function runScratchmdCapture(args: string[], cwd?: string): Promise<ScratchmdResult> {
   return new Promise((resolve, reject) => {
-    let attemptIndex = 0;
+    const binary = getScratchmdBinaryPath();
+    const child = spawn(binary, args, {
+      cwd,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-    const attempt = (): void => {
-      const command = SCRATCHMD_BINARIES[attemptIndex];
-      const child = spawn(command, args, {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+    let stdout = '';
+    let stderr = '';
 
-      let stdout = '';
-      let stderr = '';
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
 
-      child.stdout.on('data', (chunk: Buffer | string) => {
-        stdout += chunk.toString();
-      });
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
 
-      child.stderr.on('data', (chunk: Buffer | string) => {
-        stderr += chunk.toString();
-      });
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        const hint = app.isPackaged
+          ? 'Bundled scratchmd binary missing — app may be corrupted.'
+          : "scratchmd binary not found. Run 'cargo build --bin scratchmd' in scratch-git-2/.";
+        reject(new Error(hint));
+        return;
+      }
+      reject(new Error(`Failed to start scratchmd: ${error.message}`));
+    });
 
-      child.on('error', (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT' && attemptIndex < SCRATCHMD_BINARIES.length - 1) {
-          attemptIndex += 1;
-          attempt();
-          return;
-        }
-        reject(new Error(`Failed to start scratchmd: ${error.message}`));
-      });
-
-      child.on('close', (code) => {
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      });
-    };
-
-    attempt();
+    child.on('close', (code) => {
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
   });
 }
 
@@ -134,8 +140,6 @@ export function startScratchmdLiveCommand(
 ): Promise<{ sessionId: string }> {
   return new Promise((resolve, reject) => {
     const sessionId = randomUUID();
-    let attemptIndex = 0;
-    let started = false;
     let finished = false;
 
     const emit = (payload: Record<string, unknown>): void => {
@@ -151,51 +155,38 @@ export function startScratchmdLiveCommand(
       emit({ type: 'exit', exitCode, error });
     };
 
-    const attempt = (): void => {
-      const command = SCRATCHMD_BINARIES[attemptIndex];
-      const child = spawn(command, args, {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+    const binary = getScratchmdBinaryPath();
+    const child = spawn(binary, args, {
+      cwd,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-      child.on('spawn', () => {
-        if (!started) {
-          started = true;
-          resolve({ sessionId });
-        }
-      });
+    child.on('spawn', () => {
+      resolve({ sessionId });
+    });
 
-      child.stdout.on('data', (chunk: Buffer | string) => {
-        emit({ type: 'chunk', stream: 'stdout', chunk: chunk.toString() });
-      });
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      emit({ type: 'chunk', stream: 'stdout', chunk: chunk.toString() });
+    });
 
-      child.stderr.on('data', (chunk: Buffer | string) => {
-        emit({ type: 'chunk', stream: 'stderr', chunk: chunk.toString() });
-      });
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      emit({ type: 'chunk', stream: 'stderr', chunk: chunk.toString() });
+    });
 
-      child.on('error', (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT' && attemptIndex < SCRATCHMD_BINARIES.length - 1) {
-          attemptIndex += 1;
-          attempt();
-          return;
-        }
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      const message =
+        error.code === 'ENOENT'
+          ? app.isPackaged
+            ? 'Bundled scratchmd binary missing — app may be corrupted.'
+            : "scratchmd binary not found. Run 'cargo build --bin scratchmd' in scratch-git-2/."
+          : `Failed to start scratchmd: ${error.message}`;
+      reject(new Error(message));
+    });
 
-        const message = `Failed to start scratchmd: ${error.message}`;
-        if (!started) {
-          reject(new Error(message));
-          return;
-        }
-
-        emitExit(-1, message);
-      });
-
-      child.on('close', (code) => {
-        emitExit(code ?? -1);
-      });
-    };
-
-    attempt();
+    child.on('close', (code) => {
+      emitExit(code ?? -1);
+    });
   });
 }
 
@@ -226,11 +217,11 @@ export function startScratchmdLiveSequence(
       emit({ type: 'exit', exitCode, error });
     };
 
-    const runStep = (attemptIndex: number): void => {
+    const binary = getScratchmdBinaryPath();
+
+    const runStep = (): void => {
       const step = steps[stepIndex];
-      const binary = SCRATCHMD_BINARIES[attemptIndex];
       const header = `\n$ scratchmd ${step.label}\n`;
-      let abandoned = false;
 
       const child = spawn(binary, step.args, {
         cwd,
@@ -255,13 +246,12 @@ export function startScratchmdLiveSequence(
       });
 
       child.on('error', (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT' && attemptIndex < SCRATCHMD_BINARIES.length - 1) {
-          abandoned = true;
-          runStep(attemptIndex + 1);
-          return;
-        }
-
-        const message = `Failed to start scratchmd: ${error.message}`;
+        const message =
+          error.code === 'ENOENT'
+            ? app.isPackaged
+              ? 'Bundled scratchmd binary missing — app may be corrupted.'
+              : "scratchmd binary not found. Run 'cargo build --bin scratchmd' in scratch-git-2/."
+            : `Failed to start scratchmd: ${error.message}`;
         if (!started) {
           reject(new Error(message));
           return;
@@ -270,9 +260,6 @@ export function startScratchmdLiveSequence(
       });
 
       child.on('close', (code) => {
-        if (abandoned) {
-          return;
-        }
         if ((code ?? -1) !== 0) {
           emitExit(code ?? -1);
           return;
@@ -284,7 +271,7 @@ export function startScratchmdLiveSequence(
           return;
         }
 
-        runStep(0);
+        runStep();
       });
     };
 
@@ -294,7 +281,7 @@ export function startScratchmdLiveSequence(
       return;
     }
 
-    runStep(0);
+    runStep();
   });
 }
 

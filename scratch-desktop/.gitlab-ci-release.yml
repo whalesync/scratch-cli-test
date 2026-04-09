@@ -4,15 +4,18 @@
   image: node:22
   variables:
     GIT_DEPTH: 0
-  dependencies: []
+  needs:
+    - job: build-cli-for-desktop-prod
+      artifacts: true
+      optional: true
+    - job: build-cli-for-desktop-test
+      artifacts: true
+      optional: true
   artifacts:
     when: always
     paths:
-      - scratch-desktop/dist/*.dmg
-      - scratch-desktop/dist/*.zip
-      - scratch-desktop/dist/*.AppImage
-      - scratch-desktop/dist/*.deb
-    expire_in: 1 week
+      - scratch-desktop/dist-release/
+    expire_in: 1 day
   before_script:
     - apt-get update -qq && apt-get install -y zip jq
     - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
@@ -27,7 +30,7 @@
 Release desktop Linux and Windows apps (patch version):
   extends: .release_desktop_prod_job
   variables:
-    RELEASE_TYPE: 'patch'
+    RELEASE_TYPE: "patch"
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
@@ -35,7 +38,7 @@ Release desktop Linux and Windows apps (patch version):
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
-    - if: '$CI_MERGE_REQUEST_IID'
+    - if: "$CI_MERGE_REQUEST_IID"
       changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
@@ -43,32 +46,24 @@ Release desktop Linux and Windows apps (patch version):
 Release desktop Linux and Windows apps (minor version):
   extends: .release_desktop_prod_job
   variables:
-    RELEASE_TYPE: 'minor'
+    RELEASE_TYPE: "minor"
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_MERGE_REQUEST_IID'
-      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
 Release desktop Linux and Windows apps (major version):
   extends: .release_desktop_prod_job
   variables:
-    RELEASE_TYPE: 'major'
+    RELEASE_TYPE: "major"
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_MERGE_REQUEST_IID'
-      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
@@ -78,15 +73,18 @@ Release desktop Linux and Windows apps (major version):
   image: node:22
   variables:
     GIT_DEPTH: 0
-  dependencies: []
+  needs:
+    - job: build-cli-for-desktop-prod
+      artifacts: true
+      optional: true
+    - job: build-cli-for-desktop-test
+      artifacts: true
+      optional: true
   artifacts:
     when: always
     paths:
-      - scratch-desktop/dist/*.dmg
-      - scratch-desktop/dist/*.zip
-      - scratch-desktop/dist/*.AppImage
-      - scratch-desktop/dist/*.deb
-    expire_in: 1 week
+      - scratch-desktop/dist-release-test/
+    expire_in: 1 day
   before_script:
     - apt-get update -qq && apt-get install -y zip jq
     - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
@@ -98,49 +96,37 @@ Release desktop Linux and Windows apps (major version):
       when: manual
       allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
-    - if: '$CI_MERGE_REQUEST_IID'
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
 
-'TEST: Release desktop Linux and Windows apps (patch version)':
+"TEST: Release desktop Linux and Windows apps (patch version)":
   extends: .release_desktop_test_job
   variables:
-    RELEASE_TYPE: 'patch'
+    RELEASE_TYPE: "patch"
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
-    - if: '$CI_MERGE_REQUEST_IID'
+    - if: "$CI_MERGE_REQUEST_IID"
       changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
-'TEST: Release desktop Linux and Windows apps (minor version)':
+"TEST: Release desktop Linux and Windows apps (minor version)":
   extends: .release_desktop_test_job
   variables:
-    RELEASE_TYPE: 'minor'
+    RELEASE_TYPE: "minor"
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
-    - if: '$CI_MERGE_REQUEST_IID'
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
 
-'TEST: Release desktop Linux and Windows apps (major version)':
+"TEST: Release desktop Linux and Windows apps (major version)":
   extends: .release_desktop_test_job
   variables:
-    RELEASE_TYPE: 'major'
+    RELEASE_TYPE: "major"
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
     - !reference [.rules, skip_for_local_runner_users]
-    - if: '$CI_MERGE_REQUEST_IID'
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
