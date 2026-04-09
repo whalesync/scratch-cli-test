@@ -92,4 +92,10 @@ router.post("/simulate-error", (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+router.post("/set-response-delay", (req, res) => {
+  const { delayMs } = req.body;
+  store.setResponseDelay(delayMs ?? 0);
+  res.status(200).json({ ok: true });
+});
+
 export default router;

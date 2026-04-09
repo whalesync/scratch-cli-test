@@ -38,6 +38,15 @@ export function createApp(): express.Express {
     next();
   });
 
+  // Response delay middleware — adds artificial latency to simulate slow APIs
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/test/") || store.responseDelayMs <= 0) {
+      next();
+      return;
+    }
+    setTimeout(next, store.responseDelayMs);
+  });
+
   app.use(authMiddleware);
 
   app.use("/test", testAdminRouter);

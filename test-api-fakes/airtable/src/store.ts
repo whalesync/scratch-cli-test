@@ -55,6 +55,7 @@ class Store {
   errorQueue: QueuedError[] = [];
   rateLimitCount: number = 0;
   rateLimitRetryAfterSeconds: number = 30;
+  responseDelayMs: number = 0;
 
   reset(): void {
     this.bases.clear();
@@ -63,6 +64,7 @@ class Store {
     this.errorQueue = [];
     this.rateLimitCount = 0;
     this.rateLimitRetryAfterSeconds = 30;
+    this.responseDelayMs = 0;
   }
 
   addBase(base: Base): void {
@@ -157,6 +159,10 @@ class Store {
     if (this.rateLimitCount <= 0) return null;
     this.rateLimitCount--;
     return this.rateLimitRetryAfterSeconds;
+  }
+
+  setResponseDelay(ms: number): void {
+    this.responseDelayMs = ms;
   }
 }
 

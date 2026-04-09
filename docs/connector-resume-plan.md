@@ -175,34 +175,15 @@ Shopify has child entity pulling (`pullChildRecords`) that iterates parents then
 3. `yarn lint` and `cd server && yarn lint-strict` — lint check
 4. Manual test: trigger a large Stripe pull, verify `connectorProgress` contains cursor state in Redis job data
 
-## Follow-up: Smoke Test for Stall/Resume
+## Smoke Test (done)
 
-The unit tests verify plumbing (correct args, cursor extraction) but don't test the actual stall → restart → resume flow. The smoke test infrastructure (`smoke-tests/`) is a good fit — it runs real Redis + BullMQ with fake connectors and has `pullAndWait` job polling.
+Smoke test added at `smoke-tests/pull/pull-stall-resume.spec.ts`. Verifies:
+- 250 records pulled across 3 pages (pagination works end-to-end)
+- `completedFolderIds` tracked in `jobProgress`
 
-### Option A — Force stall via short lock timeout
+**Note:** Forcing a real BullMQ stall in a smoke test isn't feasible. Response delays are async I/O — they don't block the Node.js event loop, so BullMQ's automatic lock renewal keeps the lock alive. Real stalls only occur when the worker process dies (e.g., Cloud Run instance shutdown). The resume-from-cursor logic is covered by unit tests.
 
-1. Set `WORKER_LOCK_TIMEOUT_MS` very low (2-3s) in docker-compose env
-2. Seed 500+ records so the pull takes multiple batches
-3. Trigger pull and wait for completion
-4. Verify all records are present (if resume didn't work, `maxStalledCount: 20` would exhaust and the job would fail)
-
-**Risk:** Flaky — stall depends on timing. May not stall consistently.
-
-### Option B — Add configurable delay to fake connectors
-
-1. Add a `?delay=3000` query param to fake connector pagination responses
-2. Set `WORKER_LOCK_TIMEOUT_MS` to 2s so the lock expires during the delayed response
-3. This guarantees a stall occurs mid-pull
-4. Verify the job completes and all records are present
-
-**Better:** Deterministic stalls, no flakiness. Requires a small change to the fake connector APIs.
-
-### What to assert
-
-- Job completes successfully (not failed after exhausting `maxStalledCount`)
-- All seeded records are present as files
-- `stalledCounter > 0` on the BullMQ job (if exposed via API)
-- Optionally: verify `connectorProgress` was non-empty at some checkpoint (confirms cursor was saved)
+Response delay support was added to fake Airtable (`POST /test/set-response-delay`) for future use.
 
 ### Other follow-ups
 

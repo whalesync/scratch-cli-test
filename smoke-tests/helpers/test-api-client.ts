@@ -110,4 +110,8 @@ export class FakeAdminClient {
   async simulateError(statusCode: number, body: any): Promise<void> {
     await this.client.post("/test/simulate-error", { statusCode, body });
   }
+
+  async setResponseDelay(delayMs: number): Promise<void> {
+    await this.client.post("/test/set-response-delay", { delayMs });
+  }
 }
