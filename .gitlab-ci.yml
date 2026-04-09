@@ -5,6 +5,7 @@ include:
   - "/gitlab-ci/local-runners.yml"
   - "/gitlab-ci/stages/01-build-and-test.yml"
   - "/gitlab-ci/stages/01-smoke-tests.yml"
+  - "/gitlab-ci/stages/01-cli-integration-tests.yml"
   - "/gitlab-ci/stages/02-push-to-prod.yml"
   - "/gitlab-ci/stages/03-push-images.yml"
   - "/gitlab-ci/stages/04-run-migrations.yml"

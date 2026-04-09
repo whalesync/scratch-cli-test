@@ -1,0 +1,75 @@
+include:
+  - "/gitlab-ci/stages.yml"
+  - "/gitlab-ci/common.yml"
+
+# =============================================================================
+# CLI INTEGRATION TESTS
+#
+# Jest suites in scratch-cli-tests/ shell out to the Rust scratchmd binary
+# (built in global-setup) against a remote Scratch stack. Env vars come from
+# the GitLab File variable CLI_INTEGRATION_TEST_CONFIG (copied to
+# scratch-cli-tests/.env.integration).
+# =============================================================================
+
+.changes:
+  cli-integration-tests:
+    - gitlab-ci/stages/01-cli-integration-tests.yml
+    - scratch-cli-tests/**/*
+
+.cli-integration-tests:
+  stage: build and test
+  image: rust:slim-bookworm
+  interruptible: true
+  variables:
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+  cache:
+    - key:
+        files:
+          - scratch-git-2/Cargo.lock
+        prefix: cli-integration-tests
+      fallback_keys:
+        - scratch-git-2-cargo
+      unprotect: true
+      paths:
+        - .cargo/registry/cache
+        - .cargo/registry/index
+        - scratch-git-2/target
+      policy: pull-push
+  timeout: 45m
+  before_script:
+    - apt-get update && apt-get install -y pkg-config libssl-dev git ca-certificates curl gnupg && rm -rf /var/lib/apt/lists/*
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - apt-get update && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
+    - corepack enable && corepack prepare yarn@1.22.22 --activate
+    - |
+      if [ -z "${CLI_INTEGRATION_TEST_CONFIG:-}" ] || [ ! -f "${CLI_INTEGRATION_TEST_CONFIG}" ]; then
+        echo "ERROR: Set CI/CD variable CLI_INTEGRATION_TEST_CONFIG (File type) with scratch-cli-tests env contents."
+        exit 1
+      fi
+    - cp "${CLI_INTEGRATION_TEST_CONFIG}" scratch-cli-tests/.env.integration
+  script:
+    - yarn install --frozen-lockfile --cache-folder .yarn --prefer-offline
+    - cd scratch-cli-tests && yarn test:integration
+
+cli integration tests:
+  extends: .cli-integration-tests
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled Tests"'
+
+notify slack on cli integration test failure:
+  stage: build and test
+  dependencies: []
+  needs:
+    - job: cli integration tests
+      optional: true
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"❌ CLI integration tests failed\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
+      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Scheduled Tests"'
+      when: on_failure
+  allow_failure: true
