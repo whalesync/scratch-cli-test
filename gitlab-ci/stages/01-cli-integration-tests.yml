@@ -23,17 +23,28 @@ include:
   variables:
     CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
   cache:
+    # scratch-git-2/target must NOT use fallback scratch-git-2-cargo: that key is
+    # also populated by warm-scratch-git-cargo-cache (hasty-dolphin image, newer
+    # glibc). Restoring those artifacts on rust:slim-bookworm fails with
+    # GLIBC_2.39 not found when running build scripts.
     - key:
         files:
           - scratch-git-2/Cargo.lock
-        prefix: cli-integration-tests
+        prefix: cli-integration-tests-target
+      unprotect: true
+      paths:
+        - scratch-git-2/target
+      policy: pull-push
+    - key:
+        files:
+          - scratch-git-2/Cargo.lock
+        prefix: cli-integration-tests-registry
       fallback_keys:
         - scratch-git-2-cargo
       unprotect: true
       paths:
         - .cargo/registry/cache
         - .cargo/registry/index
-        - scratch-git-2/target
       policy: pull-push
   timeout: 45m
   before_script:
