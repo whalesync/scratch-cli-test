@@ -1229,6 +1229,72 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       expect(lastCheckpoint.publicProgress.createdPaths).toContain('test-folder/post-3.json');
     });
 
+    it('should not pass stale connectorProgress from a completed folder to the next folder', async () => {
+      // Regression: when a job stalls mid-way through folder A and restarts,
+      // the connectorProgress cursor from folder A (e.g. a charge ID) must not
+      // leak into folder B (e.g. customers), causing a "No such customer" error.
+      createMockDataFolder({ id: 'dfld_charges' as DataFolderId, name: 'Charges', path: '/charges' });
+      const customersFolder = createMockDataFolder({
+        id: 'dfld_customers' as DataFolderId,
+        name: 'Customers',
+        path: '/customers',
+      });
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+
+      (mockPrisma.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfld_charges', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Stripe' } },
+        { id: 'dfld_customers', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Stripe' } },
+      ]);
+
+      const params = createMockParams({
+        data: {
+          workbookId: 'wkb_123' as WorkbookId,
+          dataFolderIds: ['dfld_charges' as DataFolderId, 'dfld_customers' as DataFolderId],
+          userId: 'usr_123',
+          organizationId: 'org_123',
+        },
+        progress: {
+          publicProgress: {
+            totalFiles: 100,
+            folderCount: 2,
+            connectionName: 'Stripe',
+            folderId: 'dfld_charges', // Progress was saved for charges folder
+            folderName: 'Charges',
+            connector: 'stripe',
+            filter: null,
+            status: 'active' as const,
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          },
+          jobProgress: { completedFolderIds: ['dfld_charges'] }, // Charges already done
+          connectorProgress: { startingAfter: 'ch_stale_charge_id' }, // Stale cursor from charges!
+        },
+      });
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(customersFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files: [], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(customersFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // The stale charge cursor must NOT be passed to the customers pull
+      expect(mockConnector.pullRecordFiles).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Function),
+        {}, // Empty progress — not the stale { startingAfter: 'ch_stale_charge_id' }
+        expect.anything(),
+      );
+    });
+
     it('should include completedFolderIds in jobProgress checkpoints', async () => {
       const dataFolder = createMockDataFolder();
       const connectorAccount = createMockConnectorAccount();

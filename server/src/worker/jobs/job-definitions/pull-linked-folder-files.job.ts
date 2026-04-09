@@ -524,7 +524,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     };
 
     try {
-      await connector.pullRecordFiles(tableSpec, callback, progress.connectorProgress ?? {}, pullOptions);
+      // Only pass connector progress when resuming the SAME folder — a stale cursor
+      // from a different folder (e.g. a charge ID used as a customer pagination cursor)
+      // will cause API errors.
+      const resumeProgress = canRestoreProgress ? (progress.connectorProgress ?? {}) : {};
+      await connector.pullRecordFiles(tableSpec, callback, resumeProgress, pullOptions);
 
       // After download, remove files from main that no longer exist in remote.
       // Skip deletion on resumed runs because gitFiles only contains files from
