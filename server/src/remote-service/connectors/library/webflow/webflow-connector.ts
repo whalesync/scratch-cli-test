@@ -195,8 +195,7 @@ export class WebflowConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
@@ -209,7 +208,7 @@ export class WebflowConnector extends Connector {
       return;
     }
 
-    let offset = 0;
+    let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
     let hasMore = true;
 
     while (hasMore) {
@@ -228,8 +227,6 @@ export class WebflowConnector extends Connector {
         break;
       }
 
-      await callback({ files: items as unknown as ConnectorFile[] });
-
       // Check if there are more items
       const pagination = response.pagination;
       if (pagination) {
@@ -241,6 +238,8 @@ export class WebflowConnector extends Connector {
         hasMore = items.length === WEBFLOW_DEFAULT_BATCH_SIZE;
         offset += items.length;
       }
+
+      await callback({ files: items as unknown as ConnectorFile[], connectorProgress: { nextOffset: offset } });
     }
   }
 

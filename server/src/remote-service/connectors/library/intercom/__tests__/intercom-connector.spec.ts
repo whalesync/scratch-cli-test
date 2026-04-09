@@ -322,7 +322,7 @@ describe('IntercomConnector', () => {
       expect(callback).toHaveBeenCalledTimes(1);
       expect(collected[0]).toHaveLength(2);
       // Default: hydrate = true
-      expect(mockListConversations).toHaveBeenCalledWith(20, true);
+      expect(mockListConversations).toHaveBeenCalledWith(20, true, undefined);
     });
 
     it('skips hydration when excludeConversationParts is set', async () => {
@@ -339,7 +339,7 @@ describe('IntercomConnector', () => {
       );
 
       // hydrate = false when excludeConversationParts is true
-      expect(mockListConversations).toHaveBeenCalledWith(20, false);
+      expect(mockListConversations).toHaveBeenCalledWith(20, false, undefined);
     });
 
     it('throws for unknown table type', async () => {

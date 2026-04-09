@@ -95,9 +95,13 @@ export class StripeApiClient {
    * List entities with cursor-based pagination.
    * Returns an async generator that yields pages of entities.
    */
-  async *listEntities(entityType: StripeEntityType, limit = 100): AsyncGenerator<Record<string, unknown>[], void> {
+  async *listEntities(
+    entityType: StripeEntityType,
+    limit = 100,
+    resumeAfter?: string,
+  ): AsyncGenerator<Record<string, unknown>[], void> {
     const endpoint = ENTITY_ENDPOINTS[entityType];
-    let startingAfter: string | undefined;
+    let startingAfter: string | undefined = resumeAfter;
     let hasMore = true;
 
     while (hasMore) {

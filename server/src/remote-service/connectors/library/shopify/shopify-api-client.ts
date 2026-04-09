@@ -232,14 +232,19 @@ export class ShopifyApiClient {
   /**
    * List entities by type using generated query fields.
    */
-  async *listEntities(entityType: string, pageSize = 50): AsyncGenerator<Record<string, unknown>[], void> {
+  async *listEntities(
+    entityType: string,
+    pageSize = 50,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ nodes: Record<string, unknown>[]; endCursor: string | null }, void> {
     if (entityType === 'metaobjects') {
+      // Metaobject resume not yet supported due to compound pagination (definition + cursor)
       yield* this.listMetaobjects(pageSize);
       return;
     }
 
     if (entityType === 'files') {
-      yield* this.listFiles(pageSize);
+      yield* this.listFiles(pageSize, resumeCursor);
       return;
     }
 
@@ -259,14 +264,19 @@ export class ShopifyApiClient {
       }
     `;
 
-    yield* this.paginatedList(queryString, rootField, pageSize);
+    yield* this.paginatedList(queryString, rootField, pageSize, resumeCursor);
   }
 
   /**
    * Generic paginated list generator.
    */
-  private async *paginatedList<T>(queryString: string, rootField: string, pageSize: number): AsyncGenerator<T[], void> {
-    let cursor: string | null = null;
+  private async *paginatedList<T>(
+    queryString: string,
+    rootField: string,
+    pageSize: number,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ nodes: T[]; endCursor: string | null }, void> {
+    let cursor: string | null = resumeCursor ?? null;
     let hasMore = true;
 
     while (hasMore) {
@@ -279,17 +289,20 @@ export class ShopifyApiClient {
       const connection: ShopifyConnection<T> | undefined = response[rootField];
       if (!connection || connection.nodes.length === 0) break;
 
-      yield connection.nodes;
-
       hasMore = connection.pageInfo.hasNextPage;
       cursor = connection.pageInfo.endCursor;
+
+      yield { nodes: connection.nodes, endCursor: cursor };
     }
   }
 
   /**
    * List files with normalization.
    */
-  private async *listFiles(pageSize: number): AsyncGenerator<Record<string, unknown>[], void> {
+  private async *listFiles(
+    pageSize: number,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ nodes: Record<string, unknown>[]; endCursor: string | null }, void> {
     const queryFields = QUERY_FIELDS_MAP.files;
     const queryString = `
       query ListFiles($first: Int!, $after: String) {
@@ -300,8 +313,13 @@ export class ShopifyApiClient {
       }
     `;
 
-    for await (const batch of this.paginatedList<Record<string, unknown>>(queryString, 'files', pageSize)) {
-      const normalized = batch
+    for await (const page of this.paginatedList<Record<string, unknown>>(
+      queryString,
+      'files',
+      pageSize,
+      resumeCursor,
+    )) {
+      const normalized = page.nodes
         .filter((f) => f.id)
         .map((f) => {
           const file = { ...f };
@@ -314,7 +332,7 @@ export class ShopifyApiClient {
         });
 
       if (normalized.length > 0) {
-        yield normalized;
+        yield { nodes: normalized, endCursor: page.endCursor };
       }
     }
   }
@@ -322,7 +340,9 @@ export class ShopifyApiClient {
   /**
    * List metaobjects across all types.
    */
-  private async *listMetaobjects(pageSize: number): AsyncGenerator<Record<string, unknown>[], void> {
+  private async *listMetaobjects(
+    pageSize: number,
+  ): AsyncGenerator<{ nodes: Record<string, unknown>[]; endCursor: string | null }, void> {
     const definitions = await this.listMetaobjectDefinitions();
     const queryFields = QUERY_FIELDS_MAP.metaobjects;
 
@@ -349,10 +369,10 @@ export class ShopifyApiClient {
 
         if (!response.metaobjects || response.metaobjects.nodes.length === 0) break;
 
-        yield response.metaobjects.nodes;
-
         hasMore = response.metaobjects.pageInfo.hasNextPage;
         cursor = response.metaobjects.pageInfo.endCursor;
+
+        yield { nodes: response.metaobjects.nodes, endCursor: cursor };
       }
     }
   }

@@ -238,8 +238,7 @@ export class ShopifyConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
@@ -249,11 +248,14 @@ export class ShopifyConnector extends Connector {
       throw new ShopifyError(`Unsupported table: ${tableSpec.id.wsId}`, 400);
     }
 
+    const resumeCursor = (progress as { endCursor?: string })?.endCursor;
+
     // Check if this is a child entity
     if (isChildEntity(entityType)) {
+      // Child entity resume not yet supported due to compound pagination (parent + child cursors)
       await this.pullChildRecords(entityType, callback);
     } else {
-      await this.pullParentRecords(entityType, callback);
+      await this.pullParentRecords(entityType, callback, resumeCursor);
     }
   }
 
@@ -262,15 +264,20 @@ export class ShopifyConnector extends Connector {
    */
   private async pullParentRecords(
     entityType: EntityType,
-    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+    callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
+    resumeCursor?: string,
   ): Promise<void> {
-    for await (const entities of this.client.listEntities(entityType)) {
-      await callback({ files: entities as ConnectorFile[] });
+    for await (const batch of this.client.listEntities(entityType, 50, resumeCursor)) {
+      await callback({
+        files: batch.nodes as ConnectorFile[],
+        connectorProgress: batch.endCursor ? { endCursor: batch.endCursor } : {},
+      });
     }
   }
 
   /**
    * Pull records for a child entity by iterating through parents and extracting children.
+   * Note: Resume not yet supported for child entities due to compound pagination.
    */
   private async pullChildRecords(
     entityType: EntityType,
@@ -291,8 +298,8 @@ export class ShopifyConnector extends Connector {
     });
 
     // Iterate through all parents
-    for await (const parents of this.client.listEntities(parentType)) {
-      for (const parent of parents) {
+    for await (const batch of this.client.listEntities(parentType)) {
+      for (const parent of batch.nodes) {
         const parentId = String(parent.id);
 
         // Fetch the connection data for this parent

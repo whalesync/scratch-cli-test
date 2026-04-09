@@ -148,13 +148,19 @@ export class StripeConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     _options: ConnectorPullOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as StripeEntityType;
+    const resumeAfter = (progress as { startingAfter?: string })?.startingAfter;
 
-    for await (const entities of this.client.listEntities(entityType)) {
-      await callback({ files: entities as unknown as ConnectorFile[] });
+    for await (const entities of this.client.listEntities(entityType, 100, resumeAfter)) {
+      const lastEntity = entities[entities.length - 1];
+      const lastId = lastEntity?.id as string | undefined;
+      await callback({
+        files: entities as unknown as ConnectorFile[],
+        connectorProgress: lastId ? { startingAfter: lastId } : {},
+      });
     }
   }
 

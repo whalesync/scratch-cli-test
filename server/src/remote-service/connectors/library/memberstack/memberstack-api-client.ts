@@ -68,8 +68,11 @@ export class MemberstackApiClient {
    * List members with cursor-based pagination.
    * Yields pages of member records.
    */
-  async *listMembers(pageSize = 200): AsyncGenerator<MemberstackMember[], void> {
-    let cursor: string | null = null;
+  async *listMembers(
+    pageSize = 200,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ data: MemberstackMember[]; endCursor: string | null }, void> {
+    let cursor: string | null = resumeCursor ?? null;
     let hasNextPage = true;
 
     while (hasNextPage) {
@@ -81,12 +84,12 @@ export class MemberstackApiClient {
       const response = await this.client.get<MemberstackPaginatedResponse>('/members', { params });
       const { data, endCursor, hasNextPage: nextPage } = response.data;
 
-      if (data && data.length > 0) {
-        yield data;
-      }
-
       cursor = endCursor;
       hasNextPage = nextPage;
+
+      if (data && data.length > 0) {
+        yield { data, endCursor: cursor };
+      }
     }
   }
 

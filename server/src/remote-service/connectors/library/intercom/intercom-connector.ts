@@ -119,26 +119,39 @@ export class IntercomConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     options: IntercomPullOptions,
   ): Promise<void> {
-    switch (tableSpec.id.wsId) {
-      case 'articles':
-        for await (const articles of this.client.listArticles()) {
-          await callback({ files: articles as unknown as ConnectorFile[] });
-        }
-        break;
+    const resumeProgress = progress as { nextPage?: number; startingAfter?: string };
 
-      case 'collections':
-        for await (const collections of this.client.listCollections()) {
-          await callback({ files: collections as unknown as ConnectorFile[] });
+    switch (tableSpec.id.wsId) {
+      case 'articles': {
+        let page = resumeProgress?.nextPage ?? 1;
+        for await (const articles of this.client.listArticles(25, page)) {
+          page++;
+          await callback({ files: articles as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
         }
         break;
+      }
+
+      case 'collections': {
+        let page = resumeProgress?.nextPage ?? 1;
+        for await (const collections of this.client.listCollections(20, page)) {
+          page++;
+          await callback({ files: collections as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
+        }
+        break;
+      }
 
       case 'conversations': {
         const hydrate = !options.excludeConversationParts;
-        for await (const conversations of this.client.listConversations(20, hydrate)) {
-          await callback({ files: conversations as unknown as ConnectorFile[] });
+        for await (const conversations of this.client.listConversations(20, hydrate, resumeProgress?.startingAfter)) {
+          const lastConvo = conversations[conversations.length - 1];
+          const lastId = lastConvo ? String((lastConvo as Record<string, unknown>).id) : undefined;
+          await callback({
+            files: conversations as unknown as ConnectorFile[],
+            connectorProgress: lastId ? { startingAfter: lastId } : {},
+          });
         }
         break;
       }

@@ -1030,5 +1030,230 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       // Verify pullRecordFiles was NOT called (schema fetch failed first)
       expect(mockConnector.pullRecordFiles).not.toHaveBeenCalled();
     });
+
+    it('should pass connectorProgress (not full Progress) to pullRecordFiles', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams({
+        progress: {
+          publicProgress: {
+            totalFiles: 50,
+            folderId: 'dfld_123',
+            folderName: 'Test Folder',
+            connector: 'stripe',
+            status: 'active' as const,
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          },
+          jobProgress: {},
+          connectorProgress: { startingAfter: 'pi_abc123' },
+        },
+      });
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files: [], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // The third argument should be connectorProgress, not the full Progress object
+      expect(mockConnector.pullRecordFiles).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Function),
+        { startingAfter: 'pi_abc123' },
+        expect.anything(),
+      );
+    });
+
+    it('should skip completed folders on resume', async () => {
+      createMockDataFolder({ id: 'dfld_1' as DataFolderId, name: 'Folder 1' });
+      const folder2 = createMockDataFolder({ id: 'dfld_2' as DataFolderId, name: 'Folder 2' });
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+
+      (mockPrisma.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfld_1', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Test' } },
+        { id: 'dfld_2', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Test' } },
+      ]);
+
+      const params = createMockParams({
+        data: {
+          workbookId: 'wkb_123' as WorkbookId,
+          dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
+          userId: 'usr_123',
+          organizationId: 'org_123',
+        },
+        progress: {
+          publicProgress: {
+            totalFiles: 100,
+            folderId: 'dfld_2',
+            folderName: 'Folder 2',
+            connector: 'stripe',
+            status: 'active' as const,
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          },
+          jobProgress: { completedFolderIds: ['dfld_1'] },
+          connectorProgress: {},
+        },
+      });
+
+      // Only folder 2 should be pulled since folder 1 is already completed
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(folder2);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files: [], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(folder2);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // pullRecordFiles should only be called once (for folder 2)
+      expect(mockConnector.pullRecordFiles).toHaveBeenCalledTimes(1);
+      // findUnique should only be called for folder 2 (folder 1 was skipped)
+      expect(mockPrisma.dataFolder.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.dataFolder.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'dfld_2' } }),
+      );
+    });
+
+    it('should skip deletion when resuming a folder', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams({
+        progress: {
+          publicProgress: {
+            totalFiles: 50,
+            folderId: 'dfld_123',
+            folderName: 'Test Folder',
+            connector: 'stripe',
+            status: 'active' as const,
+            createdPaths: [],
+            updatedPaths: [],
+            deletedPaths: [],
+          },
+          jobProgress: {},
+          // Non-empty connectorProgress indicates a resume
+          connectorProgress: { startingAfter: 'pi_abc123' },
+        },
+      });
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files: [{ id: 'rec1', slug: 'post-1' }], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: ['test-folder/post-1.json'],
+        updated: [],
+        unchanged: [],
+      });
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // listRepoFiles should NOT be called because deletion is skipped on resume
+      expect(mockScratchGitService.listRepoFiles).not.toHaveBeenCalled();
+      expect(mockScratchGitService.deleteFilesFromBranch).not.toHaveBeenCalled();
+    });
+
+    it('should restore publicProgress when resuming the same folder', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams({
+        progress: {
+          publicProgress: {
+            totalFiles: 500,
+            folderCount: 1,
+            connectionName: 'Test Connection',
+            folderId: 'dfld_123',
+            folderName: 'Test Folder',
+            connector: 'stripe',
+            filter: null,
+            status: 'active' as const,
+            createdPaths: ['file1.json', 'file2.json'],
+            updatedPaths: [],
+            deletedPaths: [],
+          },
+          jobProgress: {},
+          connectorProgress: { startingAfter: 'pi_abc123' },
+        },
+      });
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({
+          files: [{ id: 'rec3', slug: 'post-3' }],
+          connectorProgress: { startingAfter: 'pi_def456' },
+        });
+      });
+
+      (mockScratchGitService.commitFilesToBranch as jest.Mock).mockResolvedValue({
+        created: ['test-folder/post-3.json'],
+        updated: [],
+        unchanged: [],
+      });
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // The checkpoint should show accumulated totalFiles (500 from saved + 1 new)
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+      expect(lastCheckpoint.publicProgress.totalFiles).toBe(501);
+      // Previously tracked paths should be preserved
+      expect(lastCheckpoint.publicProgress.createdPaths).toContain('file1.json');
+      expect(lastCheckpoint.publicProgress.createdPaths).toContain('file2.json');
+      expect(lastCheckpoint.publicProgress.createdPaths).toContain('test-folder/post-3.json');
+    });
+
+    it('should include completedFolderIds in jobProgress checkpoints', async () => {
+      const dataFolder = createMockDataFolder();
+      const connectorAccount = createMockConnectorAccount();
+      const mockConnector = createMockConnector();
+      const params = createMockParams();
+
+      (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+      (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+      (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+        await callback({ files: [], connectorProgress: {} });
+      });
+
+      (mockScratchGitService.listRepoFiles as jest.Mock).mockResolvedValue([]);
+      (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+
+      await handler.run({ ...params, jobId: 'test-job-id' });
+
+      // The final checkpoint (before buildIndex) should include the completed folder
+      const checkpointCalls = params.checkpoint.mock.calls as {
+        jobProgress: { completedFolderIds: string[] };
+      }[][];
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+      expect(lastCheckpoint.jobProgress.completedFolderIds).toContain('dfld_123');
+    });
   });
 });

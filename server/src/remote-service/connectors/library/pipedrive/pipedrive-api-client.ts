@@ -186,8 +186,11 @@ export class PipedriveApiClient {
    * List all entities of a given type using cursor pagination.
    * Yields batches of entities.
    */
-  async *listEntities(entityType: PipedriveEntityType): AsyncGenerator<Record<string, unknown>[], void> {
-    let cursor: string | undefined;
+  async *listEntities(
+    entityType: PipedriveEntityType,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ data: Record<string, unknown>[]; nextCursor?: string }, void> {
+    let cursor: string | undefined = resumeCursor;
 
     do {
       const response: Record<string, unknown> = await this.withRetry(async () => {
@@ -205,12 +208,12 @@ export class PipedriveApiClient {
       });
 
       const data = response?.data;
-      if (Array.isArray(data) && data.length > 0) {
-        yield data as Record<string, unknown>[];
-      }
-
       const additionalData = response?.additional_data as { next_cursor?: string } | undefined;
       cursor = additionalData?.next_cursor ?? undefined;
+
+      if (Array.isArray(data) && data.length > 0) {
+        yield { data: data as Record<string, unknown>[], nextCursor: cursor };
+      }
     } while (cursor);
   }
 

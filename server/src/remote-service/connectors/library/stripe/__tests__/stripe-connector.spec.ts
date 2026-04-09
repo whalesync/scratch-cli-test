@@ -207,7 +207,7 @@ describe('StripeConnector', () => {
       const callback = jest.fn();
       await connector.pullRecordFiles(buildTableSpec('payment_intents'), callback, {}, { forceFull: false });
 
-      expect(mockListEntities).toHaveBeenCalledWith('payment_intents');
+      expect(mockListEntities).toHaveBeenCalledWith('payment_intents', 100, undefined);
     });
   });
 

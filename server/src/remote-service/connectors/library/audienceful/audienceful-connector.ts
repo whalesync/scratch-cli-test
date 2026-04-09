@@ -102,13 +102,17 @@ export class AudiencefulConnector extends Connector {
   async pullRecordFiles(
     _tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
-    for await (const people of this.client.listPeople()) {
-      await callback({ files: people as unknown as ConnectorFile[] });
+    const resumeUrl = (progress as { nextUrl?: string })?.nextUrl ?? undefined;
+
+    for await (const batch of this.client.listPeople(resumeUrl)) {
+      await callback({
+        files: batch.results as unknown as ConnectorFile[],
+        connectorProgress: batch.nextUrl ? { nextUrl: batch.nextUrl } : {},
+      });
     }
   }
 

@@ -234,13 +234,12 @@ export class PostgresConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
     const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    let offset = 0;
+    let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 
     while (true) {
       const rows = await this.client.selectRows(tableName, READ_BATCH_SIZE, offset);
@@ -248,8 +247,8 @@ export class PostgresConnector extends Connector {
         break;
       }
 
-      await callback({ files: rows as ConnectorFile[] });
       offset += rows.length;
+      await callback({ files: rows as ConnectorFile[], connectorProgress: { nextOffset: offset } });
 
       if (rows.length < READ_BATCH_SIZE) {
         break;

@@ -81,8 +81,8 @@ export class IntercomApiClient {
    * List articles with page-based pagination.
    * Yields pages of article records.
    */
-  async *listArticles(pageSize = 25): AsyncGenerator<IntercomArticle[], void> {
-    let page = 1;
+  async *listArticles(pageSize = 25, startPage = 1): AsyncGenerator<IntercomArticle[], void> {
+    let page = startPage;
     let totalPages = Infinity;
 
     while (page <= totalPages) {
@@ -157,8 +157,8 @@ export class IntercomApiClient {
    * List collections with page-based pagination.
    * Yields pages of collection records.
    */
-  async *listCollections(pageSize = 20): AsyncGenerator<IntercomCollection[], void> {
-    let page = 1;
+  async *listCollections(pageSize = 20, startPage = 1): AsyncGenerator<IntercomCollection[], void> {
+    let page = startPage;
     let totalPages = Infinity;
 
     while (page <= totalPages) {
@@ -243,8 +243,9 @@ export class IntercomApiClient {
   async *listConversations(
     pageSize = 20,
     hydrate = true,
+    resumeAfter?: string,
   ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
-    let startingAfter: string | undefined;
+    let startingAfter: string | undefined = resumeAfter;
     let hasMore = true;
 
     while (hasMore) {

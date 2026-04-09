@@ -182,7 +182,11 @@ export class LinearApiClient {
   /**
    * List entities by type using cursor-based pagination.
    */
-  async *listEntities(entityType: EntityType, pageSize = 50): AsyncGenerator<Record<string, unknown>[], void> {
+  async *listEntities(
+    entityType: EntityType,
+    pageSize = 50,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ nodes: Record<string, unknown>[]; endCursor: string | null }, void> {
     const queryFields = QUERY_FIELDS_MAP[entityType];
     const rootField = ROOT_FIELD_MAP[entityType];
 
@@ -195,14 +199,19 @@ export class LinearApiClient {
       }
     `;
 
-    yield* this.paginatedList(queryString, rootField, pageSize);
+    yield* this.paginatedList(queryString, rootField, pageSize, resumeCursor);
   }
 
   /**
    * Generic paginated list generator using Relay-style cursor pagination.
    */
-  private async *paginatedList<T>(queryString: string, rootField: string, pageSize: number): AsyncGenerator<T[], void> {
-    let cursor: string | null = null;
+  private async *paginatedList<T>(
+    queryString: string,
+    rootField: string,
+    pageSize: number,
+    resumeCursor?: string,
+  ): AsyncGenerator<{ nodes: T[]; endCursor: string | null }, void> {
+    let cursor: string | null = resumeCursor ?? null;
     let hasMore = true;
 
     while (hasMore) {
@@ -215,10 +224,10 @@ export class LinearApiClient {
       const connection: LinearConnection<T> | undefined = response[rootField];
       if (!connection || connection.nodes.length === 0) break;
 
-      yield connection.nodes;
-
       hasMore = connection.pageInfo.hasNextPage;
       cursor = connection.pageInfo.endCursor;
+
+      yield { nodes: connection.nodes, endCursor: cursor };
     }
   }
 

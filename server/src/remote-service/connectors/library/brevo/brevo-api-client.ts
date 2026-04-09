@@ -82,8 +82,8 @@ export class BrevoApiClient {
    * List contacts with offset-based pagination.
    * Yields pages of contact records.
    */
-  async *listContacts(pageSize = 1000): AsyncGenerator<BrevoContact[], void> {
-    let offset = 0;
+  async *listContacts(pageSize = 1000, startOffset = 0): AsyncGenerator<BrevoContact[], void> {
+    let offset = startOffset;
     let total = Infinity;
 
     while (offset < total) {
@@ -173,8 +173,8 @@ export class BrevoApiClient {
    * Note: The list endpoint may not return `htmlContent`; use `getTemplate()` for full data.
    * Yields pages of template metadata.
    */
-  async *listTemplates(pageSize = 1000): AsyncGenerator<BrevoTemplate[], void> {
-    let offset = 0;
+  async *listTemplates(pageSize = 1000, startOffset = 0): AsyncGenerator<BrevoTemplate[], void> {
+    let offset = startOffset;
     let total = Infinity;
 
     while (offset < total) {
@@ -253,8 +253,8 @@ export class BrevoApiClient {
    * List mailing lists with offset-based pagination.
    * Yields pages of mailing list records.
    */
-  async *listMailingLists(pageSize = 50): AsyncGenerator<BrevoMailingList[], void> {
-    let offset = 0;
+  async *listMailingLists(pageSize = 50, startOffset = 0): AsyncGenerator<BrevoMailingList[], void> {
+    let offset = startOffset;
     let total = Infinity;
 
     while (offset < total) {

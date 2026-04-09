@@ -35,6 +35,10 @@ export type PullLinkedFolderFilesPublicProgress = {
   deletedPaths: string[];
 };
 
+export type PullLinkedFolderFilesJobProgress = {
+  completedFolderIds?: string[];
+};
+
 export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
   typeof JobType.PullLinkedFolderFiles,
   {
@@ -47,7 +51,7 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
     initialPublicProgress?: PullLinkedFolderFilesPublicProgress;
   },
   PullLinkedFolderFilesPublicProgress,
-  Record<string, never>,
+  PullLinkedFolderFilesJobProgress,
   void
 >;
 
@@ -120,8 +124,20 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const totalFilesAccumulator = { count: 0 };
     const pullStats = { created: 0, updated: 0, deleted: 0, failed: false };
+    const completedFolderIds = [...(progress.jobProgress?.completedFolderIds ?? [])];
     let lastPublicProgress = progress.publicProgress;
     for (const dataFolderId of data.dataFolderIds) {
+      // Skip folders that were already completed before a stall/restart
+      if (completedFolderIds.includes(dataFolderId)) {
+        WSLogger.info({
+          source: 'PullLinkedFolderFilesJob',
+          message: 'Skipping already-completed folder on resume',
+          dataFolderId,
+          workbookId: data.workbookId,
+        });
+        continue;
+      }
+
       lastPublicProgress = await this.pullFolder({
         jobId,
         dataFolderId,
@@ -133,13 +149,17 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         data,
         checkpoint,
         progress,
+        completedFolderIds,
       });
+
+      // Track this folder as completed so it's skipped if the job restarts
+      completedFolderIds.push(dataFolderId);
     }
 
     // Checkpoint before buildIndex to keep BullMQ lock alive after folder processing
     await checkpoint({
       publicProgress: lastPublicProgress,
-      jobProgress: {},
+      jobProgress: { completedFolderIds },
       connectorProgress: {},
     });
 
@@ -195,6 +215,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         'timestamp'
       >,
     ) => Promise<void>;
+    completedFolderIds: string[];
   }): Promise<PullLinkedFolderFilesPublicProgress> {
     const {
       jobId,
@@ -207,7 +228,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       data,
       checkpoint,
       progress,
+      completedFolderIds,
     } = params;
+
+    // Detect whether this folder is being resumed after a stall.
+    // On resume, connectorProgress contains the pagination cursor from the last checkpoint.
+    const isResuming = Object.keys(progress.connectorProgress ?? {}).length > 0;
 
     const dataFolder = await this.prisma.dataFolder.findUnique({
       where: { id: dataFolderId },
@@ -230,19 +256,31 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
 
-    const publicProgress: PullLinkedFolderFilesPublicProgress = {
-      totalFiles: totalFilesAccumulator.count,
-      folderCount,
-      connectionName,
-      folderId: dataFolder.id,
-      folderName: dataFolder.name,
-      connector: dataFolder.connectorService,
-      filter: pullOptions.filter ?? null,
-      status: 'active',
-      createdPaths: [],
-      updatedPaths: [],
-      deletedPaths: [],
-    };
+    // Restore publicProgress from the last checkpoint when resuming the same folder,
+    // so file counts and tracked paths aren't reset to zero.
+    const savedPublicProgress = progress.publicProgress;
+    const canRestoreProgress = isResuming && savedPublicProgress?.folderId === dataFolder.id;
+
+    const publicProgress: PullLinkedFolderFilesPublicProgress = canRestoreProgress
+      ? { ...savedPublicProgress, status: 'active' }
+      : {
+          totalFiles: totalFilesAccumulator.count,
+          folderCount,
+          connectionName,
+          folderId: dataFolder.id,
+          folderName: dataFolder.name,
+          connector: dataFolder.connectorService,
+          filter: pullOptions.filter ?? null,
+          status: 'active',
+          createdPaths: [],
+          updatedPaths: [],
+          deletedPaths: [],
+        };
+
+    // Sync the accumulator with restored progress so subsequent folders get the right count
+    if (canRestoreProgress) {
+      totalFilesAccumulator.count = publicProgress.totalFiles;
+    }
 
     this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
       type: 'job-started',
@@ -257,7 +295,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // Checkpoint initial status
     await checkpoint({
       publicProgress,
-      jobProgress: {},
+      jobProgress: { completedFolderIds },
       connectorProgress: {},
     });
 
@@ -480,65 +518,77 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       await checkpoint({
         publicProgress,
-        jobProgress: {},
+        jobProgress: { completedFolderIds },
         connectorProgress: connectorProgress ?? {},
       });
     };
 
     try {
-      await connector.pullRecordFiles(tableSpec, callback, progress, pullOptions);
+      await connector.pullRecordFiles(tableSpec, callback, progress.connectorProgress ?? {}, pullOptions);
 
-      // After download, remove files from main that no longer exist in remote
-      // This ensures deleted items don't keep showing up in future diffs
+      // After download, remove files from main that no longer exist in remote.
+      // Skip deletion on resumed runs because gitFiles only contains files from
+      // the resumed portion — deleting based on incomplete data would incorrectly
+      // remove files committed before the stall. Deletion will happen on the next
+      // full (non-resumed) pull.
       const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
-      try {
-        const mainFiles = await this.scratchGitService.listRepoFiles(repoId, MAIN_BRANCH, folderPath);
-        const downloadedFilePaths = gitFiles.map((f) => f.path);
-        const filesToDelete = mainFiles
-          .filter((f) => !f.name.startsWith('.')) // Exclude dotfiles (e.g. .schema.json) from deletion
-          .filter((f) => !downloadedFilePaths.includes(f.path))
-          .map((f) => f.path);
+      if (isResuming) {
+        WSLogger.info({
+          source: 'PullLinkedFolderFilesJob',
+          message: 'Skipping deletion check on resumed run',
+          workbookId: dataFolder.workbookId,
+          dataFolderId: dataFolder.id,
+        });
+      } else {
+        try {
+          const mainFiles = await this.scratchGitService.listRepoFiles(repoId, MAIN_BRANCH, folderPath);
+          const downloadedFilePaths = gitFiles.map((f) => f.path);
+          const filesToDelete = mainFiles
+            .filter((f) => !f.name.startsWith('.')) // Exclude dotfiles (e.g. .schema.json) from deletion
+            .filter((f) => !downloadedFilePaths.includes(f.path))
+            .map((f) => f.path);
 
-        if (filesToDelete.length > 0) {
-          // Track deleted file paths
-          for (const path of filesToDelete) {
-            if (publicProgress.deletedPaths.length < MAX_PROGRESS_PATHS) {
-              publicProgress.deletedPaths.push(path);
+          if (filesToDelete.length > 0) {
+            // Track deleted file paths
+            for (const path of filesToDelete) {
+              if (publicProgress.deletedPaths.length < MAX_PROGRESS_PATHS) {
+                publicProgress.deletedPaths.push(path);
+              }
             }
+
+            WSLogger.debug({
+              source: 'DownloadLinkedFolderFilesJob',
+              message: 'Removing deleted files from main branch',
+              workbookId: dataFolder.workbookId,
+              dataFolderId: dataFolder.id,
+              filesToDelete,
+            });
+
+            await this.scratchGitService.deleteFilesFromBranch(
+              repoId,
+              MAIN_BRANCH,
+              filesToDelete,
+              `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
+            );
           }
-
-          WSLogger.debug({
-            source: 'DownloadLinkedFolderFilesJob',
-            message: 'Removing deleted files from main branch',
-            workbookId: dataFolder.workbookId,
-            dataFolderId: dataFolder.id,
-            filesToDelete,
-          });
-
-          await this.scratchGitService.deleteFilesFromBranch(
-            repoId,
-            MAIN_BRANCH,
-            filesToDelete,
-            `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
-          );
+        } catch (err) {
+          // On first pull, the main branch doesn't exist yet — nothing to clean up
+          if (!(err instanceof ScratchGitNotFoundError)) {
+            WSLogger.error({
+              source: 'DownloadLinkedFolderFilesJob',
+              message: 'Failed to clean up deleted files from main',
+              workbookId: dataFolder.workbookId,
+              error: err,
+            });
+          }
+          // Don't fail the job for cleanup errors
         }
-      } catch (err) {
-        // On first pull, the main branch doesn't exist yet — nothing to clean up
-        if (!(err instanceof ScratchGitNotFoundError)) {
-          WSLogger.error({
-            source: 'DownloadLinkedFolderFilesJob',
-            message: 'Failed to clean up deleted files from main',
-            workbookId: dataFolder.workbookId,
-            error: err,
-          });
-        }
-        // Don't fail the job for cleanup errors
       }
 
       // Checkpoint before rebase to keep BullMQ lock alive after potentially slow delete operation
       await checkpoint({
         publicProgress,
-        jobProgress: {},
+        jobProgress: { completedFolderIds },
         connectorProgress: {},
       });
 
@@ -554,7 +604,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       // Checkpoint final status
       await checkpoint({
         publicProgress,
-        jobProgress: {},
+        jobProgress: { completedFolderIds },
         connectorProgress: {},
       });
 
@@ -613,7 +663,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       // Checkpoint failed status
       await checkpoint({
         publicProgress,
-        jobProgress: {},
+        jobProgress: { completedFolderIds },
         connectorProgress: {},
       });
 

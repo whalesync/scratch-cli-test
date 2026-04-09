@@ -91,8 +91,8 @@ export class MocoApiClient {
    * List companies with pagination.
    * Returns an async generator that yields pages of companies.
    */
-  async *listCompanies(perPage = 100): AsyncGenerator<MocoCompany[], void> {
-    let page = 1;
+  async *listCompanies(perPage = 100, startPage = 1): AsyncGenerator<MocoCompany[], void> {
+    let page = startPage;
     let hasMore = true;
 
     while (hasMore) {
@@ -151,8 +151,8 @@ export class MocoApiClient {
    * List contacts with pagination.
    * Returns an async generator that yields pages of contacts.
    */
-  async *listContacts(perPage = 100): AsyncGenerator<MocoContact[], void> {
-    let page = 1;
+  async *listContacts(perPage = 100, startPage = 1): AsyncGenerator<MocoContact[], void> {
+    let page = startPage;
     let hasMore = true;
 
     while (hasMore) {
@@ -211,8 +211,8 @@ export class MocoApiClient {
    * List projects with pagination.
    * Returns an async generator that yields pages of projects.
    */
-  async *listProjects(perPage = 100): AsyncGenerator<MocoProject[], void> {
-    let page = 1;
+  async *listProjects(perPage = 100, startPage = 1): AsyncGenerator<MocoProject[], void> {
+    let page = startPage;
     let hasMore = true;
 
     while (hasMore) {
@@ -271,20 +271,24 @@ export class MocoApiClient {
    * List entities by type with pagination.
    * Returns an async generator that yields pages of entities.
    */
-  async *listEntities(entityType: MocoEntityType, perPage = 100): AsyncGenerator<Record<string, unknown>[], void> {
+  async *listEntities(
+    entityType: MocoEntityType,
+    perPage = 100,
+    startPage = 1,
+  ): AsyncGenerator<Record<string, unknown>[], void> {
     switch (entityType) {
       case 'companies':
-        for await (const page of this.listCompanies(perPage)) {
+        for await (const page of this.listCompanies(perPage, startPage)) {
           yield page as unknown as Record<string, unknown>[];
         }
         break;
       case 'contacts':
-        for await (const page of this.listContacts(perPage)) {
+        for await (const page of this.listContacts(perPage, startPage)) {
           yield page as unknown as Record<string, unknown>[];
         }
         break;
       case 'projects':
-        for await (const page of this.listProjects(perPage)) {
+        for await (const page of this.listProjects(perPage, startPage)) {
           yield page as unknown as Record<string, unknown>[];
         }
         break;

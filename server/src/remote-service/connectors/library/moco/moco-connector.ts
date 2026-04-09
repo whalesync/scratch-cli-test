@@ -122,15 +122,16 @@ export class MocoConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as MocoEntityType;
+    let page = (progress as { nextPage?: number })?.nextPage ?? 1;
 
-    for await (const entities of this.client.listEntities(entityType)) {
-      await callback({ files: entities as unknown as ConnectorFile[] });
+    for await (const entities of this.client.listEntities(entityType, 100, page)) {
+      page++;
+      await callback({ files: entities as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
     }
   }
 

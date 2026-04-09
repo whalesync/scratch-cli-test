@@ -102,15 +102,18 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: PipedriveDownloadProgress }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: PipedriveDownloadProgress,
+    progress: PipedriveDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
+    const resumeCursor = (progress as { nextCursor?: string })?.nextCursor;
 
-    for await (const batch of this.client.listEntities(entityType)) {
-      await callback({ files: batch as unknown as ConnectorFile[] });
+    for await (const batch of this.client.listEntities(entityType, resumeCursor)) {
+      await callback({
+        files: batch.data as unknown as ConnectorFile[],
+        connectorProgress: batch.nextCursor ? { nextCursor: batch.nextCursor } : {},
+      });
     }
   }
 

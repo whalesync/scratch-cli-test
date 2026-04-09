@@ -65,20 +65,21 @@ export class AirtableApiClient {
   async *listRecords(
     baseId: string,
     tableId: string,
-    options: { filterByFormula?: string; view?: string } = {},
-  ): AsyncGenerator<AirtableRecord[], void> {
-    let offset: string | undefined;
+    options: { filterByFormula?: string; view?: string; resumeOffset?: string } = {},
+  ): AsyncGenerator<{ records: AirtableRecord[]; nextOffset?: string }, void> {
+    const { resumeOffset, ...apiOptions } = options;
+    let offset: string | undefined = resumeOffset;
     do {
       const r = await this.retryableRequest(() =>
         this.client.get<{
           records: AirtableRecord[];
           offset?: string;
         }>(`/${baseId}/${tableId}`, {
-          params: { offset, ...options },
+          params: { offset, ...apiOptions },
         }),
       );
-      yield r.data.records;
       offset = r.data.offset;
+      yield { records: r.data.records, nextOffset: offset };
     } while (offset);
   }
 

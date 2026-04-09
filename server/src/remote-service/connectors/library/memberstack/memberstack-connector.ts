@@ -83,13 +83,17 @@ export class MemberstackConnector extends Connector {
   async pullRecordFiles(
     _tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
-    for await (const members of this.client.listMembers()) {
-      await callback({ files: members as unknown as ConnectorFile[] });
+    const resumeCursor = (progress as { endCursor?: string })?.endCursor ?? undefined;
+
+    for await (const batch of this.client.listMembers(200, resumeCursor)) {
+      await callback({
+        files: batch.data as unknown as ConnectorFile[],
+        connectorProgress: batch.endCursor ? { endCursor: batch.endCursor } : {},
+      });
     }
   }
 

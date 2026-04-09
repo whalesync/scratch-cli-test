@@ -35,11 +35,11 @@ The `ConnectorsService` (`connectors.service.ts`) uses the connector registry to
 ### Pull Flow
 
 1. **Pull job** (`worker/jobs/job-definitions/pull-linked-folder-files.job.ts`) creates a connector
-2. Calls `connector.pullRecordFiles(tableSpec, callback, progress, options)`
-3. Connector paginates through the remote API, calling `callback` with each batch of records
-4. Callback converts records to git files, commits them to the main branch, and rebases the dirty branch
-5. After all pages: files present in main but not pulled are deleted (removals)
-6. Progress is checkpointed after each batch for resumability
+2. Calls `connector.pullRecordFiles(tableSpec, callback, connectorProgress, options)`
+3. Connector paginates through the remote API, calling `callback` with each batch of records and a `connectorProgress` cursor
+4. Callback converts records to git files, commits them to the main branch, and checkpoints progress (including `connectorProgress`) to Redis
+5. After all pages: files present in main but not pulled are deleted (removals — skipped on resumed runs)
+6. If the job stalls and restarts, completed folders are skipped and the active folder resumes from the last checkpointed `connectorProgress` cursor
 
 ### Publish Flow
 
@@ -292,23 +292,30 @@ async pullRecordFiles(
 }
 ```
 
-#### Async Iterator (Airtable)
+#### Async Iterator (Stripe)
 
 ```typescript
 async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
-  callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
   progress: JsonSafeObject,
   options: ConnectorPullOptions,
 ): Promise<void> {
-  for await (const rawRecords of this.client.listRecords(baseId, tableId)) {
-    const files = rawRecords.map((record) => this.recordToFile(record));
-    await callback({ files });
+  const resumeAfter = (progress as { startingAfter?: string })?.startingAfter;
+
+  for await (const entities of this.client.listEntities(entityType, 100, resumeAfter)) {
+    const lastId = (entities[entities.length - 1] as Record<string, unknown>)?.id as string;
+    await callback({
+      files: entities as unknown as ConnectorFile[],
+      connectorProgress: lastId ? { startingAfter: lastId } : {},
+    });
   }
 }
 ```
 
-The async iterator pattern wraps pagination internally in the API client. Use this when building your own client or when the SDK provides generators. Note that connectorProgress is optional for async iterators since the iterator manages its own state (though resumability is limited).
+The async iterator pattern wraps pagination internally in the API client. The generator must accept an optional starting cursor so the connector can resume after a stall. The connector reads the cursor from `progress`, passes it to the generator, and writes the latest cursor to `connectorProgress` in each callback.
+
+**Important:** All connectors must persist pagination state via `connectorProgress`. When a BullMQ job stalls and restarts, the saved `connectorProgress` is passed back to `pullRecordFiles` as the `progress` parameter. If your connector doesn't write `connectorProgress`, it will re-fetch from page 1 on every restart.
 
 ### Hydration
 

@@ -69,8 +69,10 @@ export class AudiencefulApiClient {
    * Returns an async generator that yields pages of people.
    * Uses cursor-based pagination following the 'next' URL.
    */
-  async *listPeople(): AsyncGenerator<AudiencefulPerson[], void> {
-    let nextPageUrl: string | null = null;
+  async *listPeople(
+    resumeUrl?: string,
+  ): AsyncGenerator<{ results: AudiencefulPerson[]; nextUrl: string | null }, void> {
+    let nextPageUrl: string | null = resumeUrl ?? null;
 
     do {
       const url: string = nextPageUrl ?? '/people/'; // NextPageUrl is the full URI for pagination, but the base page is relative to the API base URL.
@@ -79,7 +81,7 @@ export class AudiencefulApiClient {
       nextPageUrl = response.data.next;
 
       if (response.data.results && response.data.results.length > 0) {
-        yield response.data.results;
+        yield { results: response.data.results, nextUrl: nextPageUrl };
       }
     } while (nextPageUrl);
   }

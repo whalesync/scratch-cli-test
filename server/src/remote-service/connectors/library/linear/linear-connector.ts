@@ -126,8 +126,7 @@ export class LinearConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
@@ -137,8 +136,13 @@ export class LinearConnector extends Connector {
       throw new LinearError(`Unsupported table: ${tableSpec.id.wsId}`, 400);
     }
 
-    for await (const entities of this.client.listEntities(entityType)) {
-      await callback({ files: entities as ConnectorFile[] });
+    const resumeCursor = (progress as { endCursor?: string })?.endCursor;
+
+    for await (const batch of this.client.listEntities(entityType, 50, resumeCursor)) {
+      await callback({
+        files: batch.nodes as ConnectorFile[],
+        connectorProgress: batch.endCursor ? { endCursor: batch.endCursor } : {},
+      });
     }
   }
 

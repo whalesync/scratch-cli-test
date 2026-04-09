@@ -101,21 +101,29 @@ export class BrevoConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
+    const resumeOffset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
+
     switch (tableSpec.id.wsId) {
-      case 'contacts':
-        for await (const contacts of this.client.listContacts()) {
-          await callback({ files: contacts as unknown as ConnectorFile[] });
+      case 'contacts': {
+        let offset = resumeOffset;
+        for await (const contacts of this.client.listContacts(1000, resumeOffset)) {
+          offset += contacts.length;
+          await callback({
+            files: contacts as unknown as ConnectorFile[],
+            connectorProgress: { nextOffset: offset },
+          });
         }
         break;
+      }
 
-      case 'templates':
+      case 'templates': {
         // The list endpoint may not include htmlContent, so we fetch each template individually.
-        for await (const templatePage of this.client.listTemplates()) {
+        let offset = resumeOffset;
+        for await (const templatePage of this.client.listTemplates(1000, resumeOffset)) {
           const fullTemplates: ConnectorFile[] = [];
           for (const template of templatePage) {
             const full = await this.client.getTemplate(template.id);
@@ -123,17 +131,25 @@ export class BrevoConnector extends Connector {
               fullTemplates.push(full as unknown as ConnectorFile);
             }
           }
+          offset += templatePage.length;
           if (fullTemplates.length > 0) {
-            await callback({ files: fullTemplates });
+            await callback({ files: fullTemplates, connectorProgress: { nextOffset: offset } });
           }
         }
         break;
+      }
 
-      case 'mailing_lists':
-        for await (const lists of this.client.listMailingLists()) {
-          await callback({ files: lists as unknown as ConnectorFile[] });
+      case 'mailing_lists': {
+        let offset = resumeOffset;
+        for await (const lists of this.client.listMailingLists(50, resumeOffset)) {
+          offset += lists.length;
+          await callback({
+            files: lists as unknown as ConnectorFile[],
+            connectorProgress: { nextOffset: offset },
+          });
         }
         break;
+      }
 
       default:
         throw new BrevoError(`Unknown table '${tableSpec.id.wsId}'`, 404);

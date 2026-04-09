@@ -544,7 +544,7 @@ export class SupabaseConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     options: ConnectorPullOptions,
   ): Promise<void> {
     const rawFilter = options.filter?.trim() || undefined;
@@ -557,14 +557,14 @@ export class SupabaseConnector extends Connector {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idColumnRemoteId;
       const filter = rawFilter;
-      let offset = 0;
+      let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 
       while (true) {
         const rows = await client.selectAll(schema, tableName, undefined, pk, READ_BATCH_SIZE, offset, filter);
         if (rows.length === 0) break;
 
-        await callback({ files: rows as ConnectorFile[] });
         offset += rows.length;
+        await callback({ files: rows as ConnectorFile[], connectorProgress: { nextOffset: offset } });
 
         if (rows.length < READ_BATCH_SIZE) break;
       }

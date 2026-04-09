@@ -146,20 +146,24 @@ export class AirtableConnector extends Connector {
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
-
-    _progress: JsonSafeObject,
+    progress: JsonSafeObject,
     options: AirtablePullOptions,
   ): Promise<void> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
     const filterByFormula = options.filter && options.filter.trim() !== '' ? options.filter : undefined;
     const view = options.view ?? undefined;
+    const resumeOffset = (progress as { airtableOffset?: string })?.airtableOffset;
 
-    for await (const rawRecords of this.client.listRecords(baseId, tableId, {
+    for await (const batch of this.client.listRecords(baseId, tableId, {
       filterByFormula,
       view,
+      resumeOffset,
     })) {
-      await callback({ files: rawRecords as unknown as ConnectorFile[] });
+      await callback({
+        files: batch.records as unknown as ConnectorFile[],
+        connectorProgress: batch.nextOffset ? { airtableOffset: batch.nextOffset } : {},
+      });
     }
   }
 
@@ -175,8 +179,8 @@ export class AirtableConnector extends Connector {
       const batch = ids.slice(i, i + BATCH_SIZE);
       const filterByFormula = `OR(${batch.map((id) => `RECORD_ID()='${id}'`).join(',')})`;
 
-      for await (const rawRecords of this.client.listRecords(baseId, tableId, { filterByFormula })) {
-        await callback({ files: rawRecords as unknown as ConnectorFile[] });
+      for await (const batch of this.client.listRecords(baseId, tableId, { filterByFormula })) {
+        await callback({ files: batch.records as unknown as ConnectorFile[] });
       }
     }
   }
