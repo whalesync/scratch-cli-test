@@ -144,10 +144,10 @@ V1 remains untouched and functional. V2 can be rolled out per-connector or behin
 
 ### Two-phase architecture
 
-The key insight: all folders in a connection share one git repo, and git commits are inherently serial — you can't have two concurrent commits to the same branch. So we can't just parallelize the existing V1 `onBatch` loop across folders. Instead, V2 separates API fetching from git accounting into two distinct phases.
+The key insight: all folders in a connection share one git repo, and git commits are inherently serial — you can't have two concurrent commits to the same branch. So we can't just parallelize the existing V1 `onBatch` loop across folders. Instead, V2 separates API fetching from processing into two clean phases.
 
 ```
-Phase 1 — FETCH (parallel, all folders at once)
+Phase 1 — FETCH (parallel, pure I/O)
 ┌─────────────────────────────────────────────────────────┐
 │  [Stripe: customers]  → staging/Customers/*.json        │
 │  [Stripe: products]   → staging/Products/*.json         │
@@ -157,25 +157,33 @@ Phase 1 — FETCH (parallel, all folders at once)
 │  [Stripe: pay_intents]→ staging/Payment Intents/*.json  │
 │  [Stripe: subscriptions]→ staging/Subscriptions/*.json  │
 └─────────────────────────────────────────────────────────┘
+        Only: fetch from API → save to staging → checkpoint cursor
         Time: max(slowest folder) ≈ 50s for Stripe
 
-Phase 2 — COMMIT & INDEX (sequential, fast)
+Phase 2 — PROCESS (sequential, one folder at a time)
 ┌─────────────────────────────────────────────────────────┐
-│  Read staged files → git commit → file index            │
-│  → file references → asset index → cleanup staging      │
+│  For each folder:                                       │
+│    Read staged files back (batched, from scratch-git-2) │
+│    → updateFileIndex (DB)                               │
+│    → updateFileReferences (DB)                          │
+│    → updateAssetIndex (DB)                              │
+│    → Commit to git (scratch-git-2, local disk)          │
+│    → Delete stale files                                 │
+│  Then: rebase, GC, build index, cleanup staging         │
 └─────────────────────────────────────────────────────────┘
-        Time: ~5-10s (all processing, no API waits)
+        Time: ~10-20s (disk reads + DB + git, no API waits)
 ```
 
-**Phase 1** is pure API I/O — no git, no DB indexes. Each folder fetches from the connector in parallel and writes raw JSON files to a staging area. The only constraint is the connector's API rate limit.
+**Phase 1** is pure API I/O — no git, no DB indexes, no business logic. Each folder fetches from the connector in parallel and writes raw JSON files to scratch-git-2's staging area. Records are discarded from worker memory immediately after staging. The only constraint is the connector's API rate limit.
 
-**Phase 2** reads the staged files and does all the git/DB work in one pass. Since there's no interleaving with slow API calls, this is fast. Could even do a single large git commit instead of one per batch.
+**Phase 2** reads staged files back from scratch-git-2 one batch at a time, runs all DB index updates, then commits to git. Memory stays flat — each batch is loaded, processed, and discarded. Reading files from scratch-git-2's local SSD over HTTP is fast (~ms per batch vs. ~5s per batch from Stripe).
 
 **Why two phases?**
+- **Clean separation of concerns** — Phase 1 only cares about getting data. Phase 2 only cares about processing it.
 - Git commits are serial per repo — can't parallelize them across folders anyway
-- Completely decouples the slow part (API) from the fast part (git + DB)
-- Simpler mental model: fetch everything, then process everything
-- The staged files are the durable artifact — no data loss on crash
+- Completely decouples the slow part (API) from the fast part (disk + DB + git)
+- The staged files on disk are the durable artifact — no data loss on crash
+- Worker memory stays flat in both phases — no need to hold 100K+ records in memory
 
 ### Connector-declared concurrency
 
@@ -262,7 +270,62 @@ The Cloud Run worker has no persistent disk, so staged files need to go somewher
 | **Co-locate worker on GCE** | Direct disk access, eliminates all network hops for both staging and git | Infra change, loses Cloud Run scaling |
 | **In-memory buffers** | Zero I/O, fastest possible | Lost on crash (no resume), memory-limited (512MB on Cloud Run) |
 
-**Recommendation:** Start with **scratch-git-2 staging API** — it keeps the architecture simple (staging and git on the same disk), and scratch-git-2 already handles file writes. A lightweight staging endpoint that accepts files and stores them in a temp directory under `/data/staging/{jobId}/` would be straightforward. Phase 2 then reads from staging and commits to git, all on the same disk.
+**Recommendation:** Start with **scratch-git-2 staging API** — it keeps the architecture simple (staging and git on the same disk), and scratch-git-2 already handles file writes.
+
+### scratch-git-2 staging API design
+
+New endpoints on scratch-git-2, storing files under `/data/staging/{jobId}/`:
+
+```
+# Phase 1: Worker streams files to staging
+POST /api/staging/{jobId}/files
+  Body: { folder: "Charges", files: [{ name: "ch_abc.json", content: {...} }, ...] }
+  → Writes to /data/staging/{jobId}/Charges/ch_abc.json
+
+# Phase 2: Worker reads staged files back in batches for indexing
+GET /api/staging/{jobId}/files?folder=Charges&offset=0&limit=100
+  → Returns: { files: [{ name: "ch_abc.json", content: {...} }, ...], total: 5000 }
+
+# Phase 2: Commit all staged files for a folder to git
+POST /api/staging/{jobId}/commit
+  Body: { repoId: "org_xxx/wkb_xxx/coa_xxx", folder: "Charges" }
+  → Reads staged files from disk, commits to git repo
+  → Returns: { created: [...], updated: [...] }
+
+# Cleanup (after success or on cancel/failure)
+DELETE /api/staging/{jobId}
+  → Removes staging directory
+```
+
+**Key design points:**
+- The staging write (`POST /files`) is cheap — just disk writes, no git overhead
+- The staging read (`GET /files`) is fast — SSD reads, ~ms per batch vs ~5s from Stripe
+- The commit (`POST /commit`) reads from local disk — no data transfer from Cloud Run
+- All three operations on the same disk — staging dir and git repo are co-located
+
+**Phase 2 flow in NestJS (per folder):**
+
+```typescript
+// Read staged files in batches — memory stays flat
+let offset = 0;
+while (true) {
+  const batch = await this.scratchGitService.getStagedFiles(jobId, folder, offset, 100);
+  if (batch.files.length === 0) break;
+
+  // DB index updates — we have the content in hand
+  const builtFiles = buildGitFilesFromStagedFiles(batch.files, tableSpec);
+  await Promise.all([
+    this.updateFileIndex(folderCtx, builtFiles),
+    this.updateFileReferences(folderCtx, builtFiles),
+    this.updateAssetIndex(folderCtx, builtFiles),
+  ]);
+
+  offset += batch.files.length;
+}
+
+// Git commit — scratch-git-2 reads from its own disk
+await this.scratchGitService.commitStagedFiles(jobId, repoId, folder);
+```
 
 If performance testing shows the HTTP overhead of writing to scratch-git-2 is significant, **co-locating the worker** becomes the natural next step — it eliminates the network hop entirely.
 
@@ -270,19 +333,11 @@ If performance testing shows the HTTP overhead of writing to scratch-git-2 is si
 
 **Parallel index updates within Phase 2:**
 
-```typescript
-await Promise.all([
-  this.updateFileIndex(folderCtx, builtFiles),
-  this.updateFileReferences(folderCtx, builtFiles),
-  this.updateAssetIndex(folderCtx, builtFiles),
-]);
-```
-
-These write to different tables with no data dependency. Saves ~60ms/batch.
+`updateFileIndex`, `updateFileReferences`, and `updateAssetIndex` run as `Promise.all()` instead of sequentially. These write to different tables with no data dependency. Saves ~60ms/batch.
 
 **Skip unchanged records (future):**
 
-Track a per-record `updatedAt` or hash. On subsequent pulls, skip records that haven't changed since the last pull. Stripe objects have an `updated` timestamp field. Makes re-pulls dramatically faster. Could be added to Phase 1 by comparing against the file index before writing to staging.
+Track a per-record `updatedAt` or hash. On subsequent pulls, skip records that haven't changed since the last pull. Stripe objects have an `updated` timestamp field. Makes re-pulls dramatically faster. Could be added to Phase 1 by comparing staged files against the file index before writing.
 
 ---
 
