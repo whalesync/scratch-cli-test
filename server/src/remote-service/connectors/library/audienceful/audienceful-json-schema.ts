@@ -49,9 +49,8 @@ function buildPeopleSchema(customFields: AudiencefulField[]): TSchema {
         description: 'Notes about this person. Accepts HTML or plain text.',
       }),
     ),
-    extra_data: Type.Record(Type.String(), Type.Unknown(), {
-      description: 'Additional custom field data stored for this person (e.g., first_name, last_name)',
-    }),
+    // extra_data is built dynamically below with custom fields as named properties
+    extra_data: Type.Object({}, { description: 'Additional custom field data stored for this person' }),
     status: Type.Union(
       [Type.Literal('active'), Type.Literal('unconfirmed'), Type.Literal('bounced'), Type.Literal('unsubscribed')],
       { description: 'Subscription status', [READONLY_FLAG]: true },
@@ -103,16 +102,22 @@ function buildPeopleSchema(customFields: AudiencefulField[]): TSchema {
     ),
   };
 
-  // Add custom fields (skip built-in fields)
+  // Add custom fields as properties inside extra_data (skip built-in fields)
   const builtInFields = Object.keys(properties);
+  const extraDataProperties: Record<string, TSchema> = {};
   for (const field of customFields) {
     if (builtInFields.includes(field.data_name)) continue;
     const fieldSchema = fieldTypeToSchema(field);
     if (!field.editable) {
       fieldSchema[READONLY_FLAG] = true;
     }
-    properties[field.data_name] = field.required ? fieldSchema : Type.Optional(fieldSchema);
+    extraDataProperties[field.data_name] = field.required ? fieldSchema : Type.Optional(fieldSchema);
   }
+  // Rebuild extra_data with custom fields as named properties, plus additionalProperties for unknown fields
+  properties.extra_data = Type.Object(extraDataProperties, {
+    description: 'Additional custom field data stored for this person',
+    additionalProperties: true,
+  });
 
   return Type.Object(properties, {
     $id: 'audienceful/people',
