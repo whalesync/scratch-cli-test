@@ -61,8 +61,9 @@ interface LocalPublishPlan {
 
 function getScratchmdBinaryPath(): string {
   if (!app.isPackaged) {
-    // Dev mode: use the locally-built debug binary from the monorepo
-    return resolve(__dirname, '..', '..', 'scratch-git-2', 'target', 'debug', 'scratchmd');
+    // Dev mode: resolve from the repo root (app.getAppPath() points to src/main in dev)
+    const repoRoot = resolve(app.getAppPath(), '..');
+    return join(repoRoot, 'scratch-git-2', 'target', 'debug', 'scratchmd');
   }
   // Packaged: use the bundled binary in Resources/bin/
   return join(process.resourcesPath, 'bin', 'scratchmd');
@@ -73,6 +74,7 @@ function getScratchmdBinaryPath(): string {
 export function runScratchmdCapture(args: string[], cwd?: string): Promise<ScratchmdResult> {
   return new Promise((resolve, reject) => {
     const binary = getScratchmdBinaryPath();
+    console.log('Running scratchmd command', binary, args);
     const child = spawn(binary, args, {
       cwd,
       env: process.env,
@@ -93,8 +95,8 @@ export function runScratchmdCapture(args: string[], cwd?: string): Promise<Scrat
     child.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') {
         const hint = app.isPackaged
-          ? 'Bundled scratchmd binary missing — app may be corrupted.'
-          : "scratchmd binary not found. Run 'cargo build --bin scratchmd' in scratch-git-2/.";
+          ? `Bundled scratchmd binary missing — app may be corrupted. Expected path: ${binary}`
+          : `scratchmd binary not found. Expected path: ${binary}. Run 'cargo build --bin scratchmd' in scratch-git-2/.`;
         reject(new Error(hint));
         return;
       }
