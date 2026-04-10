@@ -43,6 +43,7 @@ build-cli-for-desktop-test:
   variables:
     SCRATCH_DEFAULT_URL: "https://test-api.scratch.md"
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: on_success
     - if: "$CI_MERGE_REQUEST_IID"
