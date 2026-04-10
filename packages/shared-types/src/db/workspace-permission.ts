@@ -3,7 +3,7 @@ import { WorkbookId, WorkspacePermissionId } from '../ids';
 export interface WorkspacePermission {
   id: WorkspacePermissionId;
   workbookId: WorkbookId;
-  role: 'editor' | 'viewer';
+  role: 'editor';
   userId: string;
   userName: string;
   userEmail: string;

@@ -7,7 +7,11 @@ import { Actor, isSystemActor, WorkspacePermissionRole } from './types';
  * Admins and system actors always have access. For non-admins, the actor must have a matching workspace permission.
  */
 
-export function hasWorkspacePermissions(actor: Actor, workbookId: WorkbookId, role?: WorkspacePermissionRole): boolean {
+export function hasWorkspacePermissions(
+  actor: Actor,
+  workbookId: WorkbookId,
+  role: WorkspacePermissionRole = 'editor',
+): boolean {
   if (actor.isAdmin) {
     return true;
   }
@@ -25,17 +29,17 @@ export function hasWorkspacePermissions(actor: Actor, workbookId: WorkbookId, ro
     return false;
   }
 
-  if (role) {
-    return matchingPermission.role === role;
-  }
-
-  return true;
+  return matchingPermission.role === role;
 }
 
 /**
  * Throws a ForbiddenException if the actor does not have permission to access the workbook.
  */
-export function checkWorkspacePermissions(actor: Actor, workbookId: WorkbookId, role?: WorkspacePermissionRole): void {
+export function checkWorkspacePermissions(
+  actor: Actor,
+  workbookId: WorkbookId,
+  role: WorkspacePermissionRole = 'editor',
+): void {
   if (!hasWorkspacePermissions(actor, workbookId, role)) {
     throw new ForbiddenException(`User does not have permission to access workbook ${workbookId}`);
   }

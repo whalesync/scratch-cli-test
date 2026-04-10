@@ -4,7 +4,7 @@ export interface WorkspaceInvite {
   id: WorkspaceInviteId;
   workbookId: WorkbookId;
   email: string;
-  role: 'editor' | 'viewer';
+  role: 'editor';
   createdAt: string;
   invitedByUserId: string | null;
 }

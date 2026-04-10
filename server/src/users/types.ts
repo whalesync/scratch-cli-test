@@ -14,7 +14,7 @@ export interface SubscriptionStatus {
   subscriptionId?: SubscriptionId;
 }
 
-export type WorkspacePermissionRole = 'editor' | 'viewer';
+export type WorkspacePermissionRole = 'editor';
 
 export interface WorkspacePermission {
   id: WorkspacePermissionId;

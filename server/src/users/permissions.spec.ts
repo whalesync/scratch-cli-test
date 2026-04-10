@@ -21,13 +21,6 @@ describe('Permissions', () => {
     workspacePermissions: [{ workbookId, role: 'editor' }],
   };
 
-  const viewerActor: Actor = {
-    userId: 'user_viewer',
-    organizationId: 'org_1',
-    isAdmin: false,
-    workspacePermissions: [{ workbookId, role: 'viewer' }],
-  };
-
   const noPermissionsActor: Actor = {
     userId: 'user_none',
     organizationId: 'org_1',
@@ -47,7 +40,7 @@ describe('Permissions', () => {
       expect(hasWorkspacePermissions(adminActor, otherWorkbookId)).toBe(true);
     });
 
-    it('should return true when actor has a matching permission for the workbook', () => {
+    it('should return true when actor has a matching editor permission for the workbook', () => {
       expect(hasWorkspacePermissions(editorActor, workbookId)).toBe(true);
     });
 
@@ -63,17 +56,8 @@ describe('Permissions', () => {
       expect(hasWorkspacePermissions(noPermissionsActor, workbookId)).toBe(false);
     });
 
-    it('should return true when role matches the permission role', () => {
+    it('should return true when role explicitly matches editor', () => {
       expect(hasWorkspacePermissions(editorActor, workbookId, 'editor')).toBe(true);
-    });
-
-    it('should return false when role does not match the permission role', () => {
-      expect(hasWorkspacePermissions(editorActor, workbookId, 'viewer')).toBe(false);
-      expect(hasWorkspacePermissions(viewerActor, workbookId, 'editor')).toBe(false);
-    });
-
-    it('should return true when no role is specified and permission exists', () => {
-      expect(hasWorkspacePermissions(viewerActor, workbookId)).toBe(true);
     });
 
     it('should return true for admin even when a role is specified', () => {
@@ -82,7 +66,7 @@ describe('Permissions', () => {
   });
 
   describe('checkWorkspacePermissions', () => {
-    it('should not throw when actor has permission', () => {
+    it('should not throw when actor has editor permission', () => {
       expect(() => checkWorkspacePermissions(editorActor, workbookId)).not.toThrow();
     });
 
@@ -98,10 +82,6 @@ describe('Permissions', () => {
       expect(() => checkWorkspacePermissions(noPermissionsActor, workbookId)).toThrow(
         `User does not have permission to access workbook ${workbookId}`,
       );
-    });
-
-    it('should throw when role does not match', () => {
-      expect(() => checkWorkspacePermissions(viewerActor, workbookId, 'editor')).toThrow(ForbiddenException);
     });
 
     it('should not throw when role matches', () => {
