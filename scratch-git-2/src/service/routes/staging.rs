@@ -128,10 +128,7 @@ pub async fn read_staged_files(
 }
 
 /// Recursively collect file paths under `base_dir` without reading content.
-fn collect_paths_recursive(
-    dir: &PathBuf,
-    base_dir: &PathBuf,
-) -> Result<Vec<String>, AppError> {
+fn collect_paths_recursive(dir: &PathBuf, base_dir: &PathBuf) -> Result<Vec<String>, AppError> {
     let mut results = Vec::new();
     let read_dir = std::fs::read_dir(dir)
         .map_err(|e| AppError::internal(format!("Failed to read staging dir: {}", e)))?;
@@ -296,9 +293,8 @@ pub async fn cleanup_staging(
 
     let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
         if staging_dir.exists() {
-            std::fs::remove_dir_all(&staging_dir).map_err(|e| {
-                AppError::internal(format!("Failed to remove staging dir: {}", e))
-            })?;
+            std::fs::remove_dir_all(&staging_dir)
+                .map_err(|e| AppError::internal(format!("Failed to remove staging dir: {}", e)))?;
         }
         Ok(json!({ "success": true }))
     })

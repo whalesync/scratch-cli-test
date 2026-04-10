@@ -1,6 +1,6 @@
 use super::*;
-use std::process::Command;
 use std::path::PathBuf;
+use std::process::Command;
 use tempfile::TempDir;
 
 fn workspace_marker(connections: &[(&str, &str)]) -> markers::WorkspaceMarker {
@@ -380,7 +380,15 @@ fn read_tree_files_batched_handles_empty_tree() {
     commit_all(&source, "empty tree");
 
     let bare = tmp.path().join("bare.git");
-    run_git(tmp.path(), &["clone", "--bare", source.to_str().unwrap(), bare.to_str().unwrap()]);
+    run_git(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            source.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
 
     let map = read_git_tree(&bare, "refs/heads/main").unwrap();
     assert!(map.is_empty());
@@ -450,7 +458,8 @@ fn accept_field_in_folder_accepts_modified_and_created_rows_but_ignores_deleted_
     ]);
 
     let (accepted_map, result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
+            .unwrap();
 
     assert_eq!(
         String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
@@ -699,7 +708,8 @@ fn field_commands_are_noop_when_target_field_has_no_relevant_changes() {
     let master_map = base_map.clone();
 
     let (accepted_map, accept_result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
+            .unwrap();
     let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
         &ctx,
         "public/smoke_records",
@@ -746,7 +756,8 @@ fn field_commands_only_touch_requested_folder() {
     let master_map = base_map.clone();
 
     let (accepted_map, accept_result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
+            .unwrap();
     let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
         &ctx,
         "public/smoke_records",
@@ -798,7 +809,8 @@ fn accept_field_in_folder_ignores_unpublished_only_changes() {
     let local_map = base_map.clone();
 
     let (accepted_map, result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map).unwrap();
+        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
+            .unwrap();
 
     assert_eq!(accepted_map, base_map);
     assert!(result.changed_paths.is_empty());

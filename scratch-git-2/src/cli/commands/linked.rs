@@ -434,10 +434,8 @@ async fn publish(
 
 async fn pull_all(client: &ApiClient, workbook_id: &str) -> anyhow::Result<()> {
     let groups = client.list_linked_tables(workbook_id).await?;
-    let folders: Vec<&api::LinkedTable> = groups
-        .iter()
-        .flat_map(|g| g.data_folders.iter())
-        .collect();
+    let folders: Vec<&api::LinkedTable> =
+        groups.iter().flat_map(|g| g.data_folders.iter()).collect();
 
     if folders.is_empty() {
         println!("{}", serde_json::json!({ "jobIds": [] }));
@@ -450,6 +448,9 @@ async fn pull_all(client: &ApiClient, workbook_id: &str) -> anyhow::Result<()> {
         job_ids.push(resp.job_id);
     }
 
-    println!("{}", serde_json::to_string(&serde_json::json!({ "jobIds": job_ids }))?);
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({ "jobIds": job_ids }))?
+    );
     Ok(())
 }

@@ -16,7 +16,8 @@
     "ms-python.black-formatter",
     "ms-python.python",
     "ms-python.isort",
-    "golang.go"
+    "golang.go",
+    "rust-lang.rust-analyzer"
   ],
   // List of extensions recommended by VS Code that should not be recommended for users of this workspace.
   "unwantedRecommendations": []

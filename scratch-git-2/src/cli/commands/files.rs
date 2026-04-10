@@ -176,12 +176,18 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
     let cwd = std::env::current_dir()?;
 
     match cmd {
-        FilesCommands::Download { on_delete } => run_download(&cwd, server_url, json, on_delete).await,
+        FilesCommands::Download { on_delete } => {
+            run_download(&cwd, server_url, json, on_delete).await
+        }
         FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
-        FilesCommands::AcceptField { folder, field } => run_accept_field(&cwd, &folder, &field, json),
+        FilesCommands::AcceptField { folder, field } => {
+            run_accept_field(&cwd, &folder, &field, json)
+        }
         FilesCommands::Reject { paths } => run_reject(&cwd, &paths, json),
-        FilesCommands::RejectField { folder, field } => run_reject_field(&cwd, &folder, &field, json),
+        FilesCommands::RejectField { folder, field } => {
+            run_reject_field(&cwd, &folder, &field, json)
+        }
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
@@ -199,7 +205,12 @@ fn get_token(server_url: &str) -> anyhow::Result<String> {
     Ok(creds.api_token)
 }
 
-async fn run_download(cwd: &Path, server_url: &str, json: bool, on_delete: OnDeleteAction) -> anyhow::Result<()> {
+async fn run_download(
+    cwd: &Path,
+    server_url: &str,
+    json: bool,
+    on_delete: OnDeleteAction,
+) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, _initial_contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url)?;
@@ -312,7 +323,10 @@ async fn sync_workspace_structure(
         }
         match super::workspaces::setup_connection(ca, &layout, token) {
             Ok(_) => result.connections_added.push(dir_name),
-            Err(e) => eprintln!("  Warning: failed to set up connection {}: {e}", ca.display_name),
+            Err(e) => eprintln!(
+                "  Warning: failed to set up connection {}: {e}",
+                ca.display_name
+            ),
         }
     }
 
@@ -479,7 +493,12 @@ fn run_accept_all(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
     Ok(())
 }
 
-fn run_accept(cwd: &Path, _server_url: &str, input_paths: &[String], json: bool) -> anyhow::Result<()> {
+fn run_accept(
+    cwd: &Path,
+    _server_url: &str,
+    input_paths: &[String],
+    json: bool,
+) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
@@ -497,7 +516,9 @@ fn run_accept(cwd: &Path, _server_url: &str, input_paths: &[String], json: bool)
     for input_path in input_paths {
         let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
             let prefix = format!("{}/", ctx.conn_dir_name);
-            input_path.strip_prefix(&prefix).map(|rest| (i, rest.to_string()))
+            input_path
+                .strip_prefix(&prefix)
+                .map(|rest| (i, rest.to_string()))
         });
         match found {
             Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
@@ -536,8 +557,12 @@ fn run_accept(cwd: &Path, _server_url: &str, input_paths: &[String], json: bool)
         let mut accepted_map = base_map.clone();
         for (_, rel_path) in path_pairs {
             match local_map.get(rel_path.as_str()) {
-                Some(content) => { accepted_map.insert(rel_path.clone(), content.clone()); }
-                None => { accepted_map.remove(rel_path.as_str()); }
+                Some(content) => {
+                    accepted_map.insert(rel_path.clone(), content.clone());
+                }
+                None => {
+                    accepted_map.remove(rel_path.as_str());
+                }
             }
         }
 
@@ -602,7 +627,9 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
     for input_path in input_paths {
         let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
             let prefix = format!("{}/", ctx.conn_dir_name);
-            input_path.strip_prefix(&prefix).map(|rest| (i, rest.to_string()))
+            input_path
+                .strip_prefix(&prefix)
+                .map(|rest| (i, rest.to_string()))
         });
         match found {
             Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
@@ -690,7 +717,8 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
-    let (ctx, repo_folder, display_folder) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+    let (ctx, repo_folder, display_folder) =
+        resolve_folder_context(&workspace_dir, &contexts, folder)?;
 
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
@@ -700,7 +728,8 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     sync_schema_files_from_master(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
 
-    let (accepted_map, result) = accept_field_in_folder(&ctx, &repo_folder, field, &base_map, &local_map)?;
+    let (accepted_map, result) =
+        accept_field_in_folder(&ctx, &repo_folder, field, &base_map, &local_map)?;
     let elapsed_ms = started.elapsed().as_millis();
 
     if result.changed_paths.is_empty() {
@@ -769,7 +798,8 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
-    let (ctx, repo_folder, display_folder) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+    let (ctx, repo_folder, display_folder) =
+        resolve_folder_context(&workspace_dir, &contexts, folder)?;
 
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
@@ -784,8 +814,14 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     sync_schema_files_from_master(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
 
-    let (next_local_map, next_dirty_map, result) =
-        reject_field_in_folder(&ctx, &repo_folder, field, &base_map, &local_map, &master_map)?;
+    let (next_local_map, next_dirty_map, result) = reject_field_in_folder(
+        &ctx,
+        &repo_folder,
+        field,
+        &base_map,
+        &local_map,
+        &master_map,
+    )?;
     let elapsed_ms = started.elapsed().as_millis();
 
     if result.changed_paths.is_empty() {
@@ -972,7 +1008,10 @@ fn run_unpushed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
 
     println!("{} unpushed change(s):", entries.len());
     for entry in entries {
-        println!("  [{}] {} — {}", entry.connection_name, entry.status, entry.path);
+        println!(
+            "  [{}] {} — {}",
+            entry.connection_name, entry.status, entry.path
+        );
     }
     Ok(())
 }
@@ -1237,7 +1276,11 @@ fn update_dirty_worktree_index(ctx: &ConnectionContext, hash: &str) -> anyhow::R
 
 /// Ensure reviewed_dirty_dir is set up as a sparse worktree and reset it to the given dirty hash.
 fn update_reviewed_dirty(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<()> {
-    crate::git_ops::ensure_sparse_worktree(&ctx.bare_repo, &ctx.reviewed_dirty_dir, "refs/heads/dirty")?;
+    crate::git_ops::ensure_sparse_worktree(
+        &ctx.bare_repo,
+        &ctx.reviewed_dirty_dir,
+        "refs/heads/dirty",
+    )?;
     crate::git_ops::worktree_reset_hard(&ctx.reviewed_dirty_dir, hash)
 }
 
@@ -1317,10 +1360,16 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
     Ok(result)
 }
 
-fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> anyhow::Result<UploadResult> {
+fn upload_single_repo(
+    ctx: &ConnectionContext,
+    token: &str,
+    verbose: bool,
+) -> anyhow::Result<UploadResult> {
     let mut tree_cache = TreeCache::new();
 
-    if verbose { eprint!("  Reading local state..."); }
+    if verbose {
+        eprint!("  Reading local state...");
+    }
     let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
     // Clone base_map out of the cache so we can continue mutating the cache for
     // remote tree reads without holding a borrow.
@@ -1328,12 +1377,18 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
     sync_schema_files_from_master(ctx)?;
     let local_unreviewed = unreviewed_entries_cached(&mut tree_cache, ctx)?;
     let local_plan_map = read_local_publish_plan_map(ctx)?;
-    if verbose { eprintln!(" done"); }
+    if verbose {
+        eprintln!(" done");
+    }
 
     if local_unreviewed.is_empty() && local_plan_map.is_empty() {
-        if verbose { eprint!("  Fetching remote changes..."); }
+        if verbose {
+            eprint!("  Fetching remote changes...");
+        }
         crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
-        if verbose { eprintln!(" done"); }
+        if verbose {
+            eprintln!(" done");
+        }
 
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
         let remote_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?;
@@ -1347,17 +1402,26 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
 
     const MAX_RETRIES: i32 = 5;
     for attempt in 0..MAX_RETRIES {
-        if verbose { eprint!("  Fetching remote changes..."); }
+        if verbose {
+            eprint!("  Fetching remote changes...");
+        }
         crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
-        if verbose { eprintln!(" done"); }
+        if verbose {
+            eprintln!(" done");
+        }
 
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-        let remote_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?.clone();
+        let remote_map =
+            cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?.clone();
 
-        if verbose { eprint!("  Merging..."); }
+        if verbose {
+            eprint!("  Merging...");
+        }
         let (mut merged, mut result, mut messages) =
             prepare_upload_merge(&base_map, &base_map, &remote_map, attempt);
-        if verbose { eprintln!(" done"); }
+        if verbose {
+            eprintln!(" done");
+        }
 
         strip_publish_plan_files(&mut merged);
         let plan_file_count = local_plan_map.len() as i32;
@@ -1392,10 +1456,14 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
             "Upload from Scratch CLI",
         )?;
 
-        if verbose { eprint!("  Pushing..."); }
+        if verbose {
+            eprint!("  Pushing...");
+        }
         match crate::git_ops::push_origin_dirty(&ctx.bare_repo, token) {
             Ok(()) => {
-                if verbose { eprintln!(" done"); }
+                if verbose {
+                    eprintln!(" done");
+                }
                 sync_schema_files_from_master(ctx)?;
                 apply_remote_changes_to_working_copy(ctx, &base_map, &merged, &local_unreviewed)?;
                 update_dirty_worktree_index(ctx, &new_dirty_hash)?;
@@ -1405,7 +1473,9 @@ fn upload_single_repo(ctx: &ConnectionContext, token: &str, verbose: bool) -> an
                 return Ok(result);
             }
             Err(err) => {
-                if verbose { eprintln!(" retrying"); }
+                if verbose {
+                    eprintln!(" retrying");
+                }
                 if err.to_string().contains("non-fast-forward")
                     || err.to_string().contains("rejected")
                 {
@@ -1472,7 +1542,11 @@ fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedE
     };
     sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
-    Ok(compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map))
+    Ok(compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &base_map,
+        &local_map,
+    ))
 }
 
 fn unreviewed_entries_from_status(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
@@ -1559,7 +1633,10 @@ pub(crate) fn has_unreviewed_record_changes(
     };
     let mut working_tree_map = FileMap::new();
     read_dirty_disk(dirty_dir, dirty_dir, &mut working_tree_map)?;
-    Ok(!maps_equal(&data_only_map(&base_map), &data_only_map(&working_tree_map)))
+    Ok(!maps_equal(
+        &data_only_map(&base_map),
+        &data_only_map(&working_tree_map),
+    ))
 }
 
 fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
@@ -1625,7 +1702,6 @@ fn commit_file_map_to_dirty_ref(
 fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
     crate::git_ops::read_tree_files(bare_repo, hash)
 }
-
 
 fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
     let mut map = FileMap::new();
@@ -1808,17 +1884,25 @@ fn is_data_path_in_folder(path: &str, repo_folder: &str) -> bool {
         && (repo_folder.is_empty() || path.starts_with(&format!("{repo_folder}/")))
 }
 
-fn parse_json_object_bytes(content: &[u8], path: &str) -> anyhow::Result<JsonMap<String, JsonValue>> {
+fn parse_json_object_bytes(
+    content: &[u8],
+    path: &str,
+) -> anyhow::Result<JsonMap<String, JsonValue>> {
     let parsed: JsonValue = serde_json::from_slice(content)
         .map_err(|err| anyhow::anyhow!("Failed to parse JSON in '{}': {}", path, err))?;
     match parsed {
         JsonValue::Object(obj) => Ok(obj),
-        _ => anyhow::bail!("JSON record '{}' must have an object at the top level.", path),
+        _ => anyhow::bail!(
+            "JSON record '{}' must have an object at the top level.",
+            path
+        ),
     }
 }
 
 fn json_object_to_bytes(object: &JsonMap<String, JsonValue>) -> anyhow::Result<Vec<u8>> {
-    Ok(serde_json::to_vec_pretty(&JsonValue::Object(object.clone()))?)
+    Ok(serde_json::to_vec_pretty(&JsonValue::Object(
+        object.clone(),
+    ))?)
 }
 
 fn read_nested_json_value(object: &JsonMap<String, JsonValue>, field: &str) -> Option<JsonValue> {
@@ -1833,7 +1917,11 @@ fn read_nested_json_value(object: &JsonMap<String, JsonValue>, field: &str) -> O
     Some(current.clone())
 }
 
-fn apply_nested_json_value(object: &mut JsonMap<String, JsonValue>, field: &str, value: Option<JsonValue>) {
+fn apply_nested_json_value(
+    object: &mut JsonMap<String, JsonValue>,
+    field: &str,
+    value: Option<JsonValue>,
+) {
     let parts: Vec<&str> = field.split('.').filter(|part| !part.is_empty()).collect();
     if parts.is_empty() {
         return;
@@ -1865,7 +1953,8 @@ fn apply_nested_json_value_parts(
     if !child.is_object() {
         *child = JsonValue::Object(JsonMap::new());
     }
-    let should_prune = apply_nested_json_value_parts(child.as_object_mut().unwrap(), &parts[1..], value);
+    let should_prune =
+        apply_nested_json_value_parts(child.as_object_mut().unwrap(), &parts[1..], value);
     if should_prune {
         object.remove(&key);
     }

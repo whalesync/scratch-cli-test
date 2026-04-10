@@ -214,8 +214,8 @@ pub fn write_workspace(
 pub fn rewrite_connections(dir: &Path, connections: &[ConnectionEntry]) -> io::Result<()> {
     let path = marker_path(dir);
     let content = fs::read_to_string(&path)?;
-    let mut marker: WorkspaceMarker =
-        serde_yaml::from_str(&content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut marker: WorkspaceMarker = serde_yaml::from_str(&content)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     marker.connections = connections.to_vec();
     let new_content =
         serde_yaml::to_string(&marker).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;

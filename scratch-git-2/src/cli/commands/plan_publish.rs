@@ -76,8 +76,11 @@ pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
             && (!dirty_dir.exists() || has_unreviewed_record_changes(&bare_repo, &dirty_dir)?)
         {
             // Legacy path: materialize to a temp location (TempDirGuard cleans up after).
-            let tmp_path = std::env::temp_dir()
-                .join(format!("scratchmd-plan-{}-{}", std::process::id(), &conn_name));
+            let tmp_path = std::env::temp_dir().join(format!(
+                "scratchmd-plan-{}-{}",
+                std::process::id(),
+                &conn_name
+            ));
             _legacy_snapshot = Some(materialize_branch_from_bare(&bare_repo, &tmp_path)?);
             _legacy_snapshot.as_ref().unwrap().path.as_path()
         } else {

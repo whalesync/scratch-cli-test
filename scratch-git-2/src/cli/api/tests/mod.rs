@@ -24,10 +24,7 @@ fn workbook_deserializes_config_git_url_alias() {
 
 #[test]
 fn job_progress_path_uses_progress_endpoint() {
-    assert_eq!(
-        job_progress_path("job_123"),
-        "jobs/job_123/progress"
-    );
+    assert_eq!(job_progress_path("job_123"), "jobs/job_123/progress");
 }
 
 #[test]
@@ -66,15 +63,25 @@ fn build_request_does_not_set_zero_content_length_when_body_present() {
         .unwrap();
     // reqwest sets Content-Length at send time for json bodies, so it won't be in headers yet.
     // The key invariant: we must NOT have explicitly set it to "0".
-    assert_ne!(req.headers().get("Content-Length").map(|v| v.to_str().unwrap()), Some("0"));
+    assert_ne!(
+        req.headers()
+            .get("Content-Length")
+            .map(|v| v.to_str().unwrap()),
+        Some("0")
+    );
 }
 
 #[test]
 fn build_unauthed_request_sets_content_length_zero_when_no_body() {
     let client = Client::new();
-    let req = ApiClient::build_unauthed_request::<()>(&client, Method::POST, "http://localhost:3010/test", None)
-        .build()
-        .unwrap();
+    let req = ApiClient::build_unauthed_request::<()>(
+        &client,
+        Method::POST,
+        "http://localhost:3010/test",
+        None,
+    )
+    .build()
+    .unwrap();
     assert_eq!(req.headers().get("Content-Length").unwrap(), "0");
 }
 
@@ -82,8 +89,18 @@ fn build_unauthed_request_sets_content_length_zero_when_no_body() {
 fn build_unauthed_request_does_not_set_zero_content_length_when_body_present() {
     let client = Client::new();
     let body = serde_json::json!({"key": "value"});
-    let req = ApiClient::build_unauthed_request(&client, Method::POST, "http://localhost:3010/test", Some(&body))
-        .build()
-        .unwrap();
-    assert_ne!(req.headers().get("Content-Length").map(|v| v.to_str().unwrap()), Some("0"));
+    let req = ApiClient::build_unauthed_request(
+        &client,
+        Method::POST,
+        "http://localhost:3010/test",
+        Some(&body),
+    )
+    .build()
+    .unwrap();
+    assert_ne!(
+        req.headers()
+            .get("Content-Length")
+            .map(|v| v.to_str().unwrap()),
+        Some("0")
+    );
 }

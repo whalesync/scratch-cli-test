@@ -107,7 +107,11 @@ fn include_schemas_then_sync_copies_schema_into_scratch_dir() {
     sync_schema_files_from_master_checkout(&master_dir, &scratch_dir).unwrap();
 
     let schema_path = scratch_dir.join("Posts/schema.json");
-    assert!(schema_path.exists(), "schema.json should exist at {}", schema_path.display());
+    assert!(
+        schema_path.exists(),
+        "schema.json should exist at {}",
+        schema_path.display()
+    );
     assert_eq!(
         std::fs::read_to_string(&schema_path).unwrap(),
         r#"{"type":"object","properties":{"title":{"type":"string"}}}"#
@@ -130,12 +134,22 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
     run_git(&source_dir, &["checkout", "-b", "main"]);
 
     // Data files (these live on main)
-    write_file(&source_dir.join("Posts/hello-world.json"), r#"{"id":"1","title":"Hello World"}"#);
-    write_file(&source_dir.join("Posts/second-post.json"), r#"{"id":"2","title":"Second Post"}"#);
+    write_file(
+        &source_dir.join("Posts/hello-world.json"),
+        r#"{"id":"1","title":"Hello World"}"#,
+    );
+    write_file(
+        &source_dir.join("Posts/second-post.json"),
+        r#"{"id":"2","title":"Second Post"}"#,
+    );
 
     // Schema files under .scratch/ (committed to main, excluded by sparse checkout)
-    let schema_content = r#"{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}}}"#;
-    write_file(&source_dir.join(".scratch/Posts/schema.json"), schema_content);
+    let schema_content =
+        r#"{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}}}"#;
+    write_file(
+        &source_dir.join(".scratch/Posts/schema.json"),
+        schema_content,
+    );
 
     commit_all(&source_dir, "main: data + schema");
 

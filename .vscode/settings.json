@@ -16,5 +16,9 @@
   "[go]": {
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "golang.go"
+  },
+  "[rust]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
   }
 }

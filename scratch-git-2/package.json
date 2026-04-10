@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" cargo run",
     "build": "cargo build --release 2>&1 | tail -5",
+    "format": "cargo fmt",
     "test": "cargo test"
   }
 }

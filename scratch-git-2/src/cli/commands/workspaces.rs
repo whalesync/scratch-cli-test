@@ -384,7 +384,10 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     for ca in &wb.connector_accounts {
         match setup_connection(ca, &layout, token) {
             Ok(file_count) => total += file_count,
-            Err(e) => eprintln!("  Warning: failed to set up connection {}: {e}", ca.display_name),
+            Err(e) => eprintln!(
+                "  Warning: failed to set up connection {}: {e}",
+                ca.display_name
+            ),
         }
     }
 
@@ -468,7 +471,6 @@ fn materialize_dirty_checkout(
     Ok(())
 }
 
-
 /// Adds `.scratch/**/schema.json` to the sparse-checkout rules for a worktree so that
 /// schema files are materialized on disk despite the blanket `!.scratch` exclusion.
 fn include_schemas_in_sparse_checkout(worktree: &Path) -> anyhow::Result<()> {
@@ -476,7 +478,13 @@ fn include_schemas_in_sparse_checkout(worktree: &Path) -> anyhow::Result<()> {
 
     let wt = worktree.to_str().unwrap_or_default();
     let output = Command::new("git")
-        .args(["-C", wt, "sparse-checkout", "add", ".scratch/**/schema.json"])
+        .args([
+            "-C",
+            wt,
+            "sparse-checkout",
+            "add",
+            ".scratch/**/schema.json",
+        ])
         .output()
         .context("failed to run git sparse-checkout add")?;
     if !output.status.success() {
@@ -632,8 +640,13 @@ pub fn setup_connection(
     git_clone_bare(&ca.git_url, &bare_repo, token)?;
     materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
     let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
-    if let Err(e) = crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH) {
-        eprintln!("  Warning: could not set up reviewed-dirty worktree for {}: {e}", dir_name);
+    if let Err(e) =
+        crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH)
+    {
+        eprintln!(
+            "  Warning: could not set up reviewed-dirty worktree for {}: {e}",
+            dir_name
+        );
     }
 
     match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {

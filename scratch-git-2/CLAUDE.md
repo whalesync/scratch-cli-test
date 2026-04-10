@@ -6,6 +6,11 @@ A single Rust crate that ships two binaries:
 
 2. **`scratchmd`** — the end-user CLI. It runs business logic locally against JSON record files that are fetched from remote services (Airtable, Webflow, Notion, …). Key capabilities: three-way file upload/download, local sync execution with transformers (string_to_number, auto_convert, Rhai scripts), publish plan building (diff dirty vs master → phase files), and triggering server-side publish jobs.
 
+# Code style
+
+- Follow standard rust code conventions
+- After generating code run `cargo fmt` to ensure code changes match standard formatting
+
 ## Workflow
 
 ```bash
@@ -18,6 +23,10 @@ cargo run
 
 # Run all tests
 cargo test
+
+
+# format code
+cargo fmt
 ```
 
 Always run commands from inside `scratch-git-2/` (or the repo root using Turborepo).

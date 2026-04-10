@@ -468,8 +468,7 @@ impl GitRepo {
         let mut map_a: std::collections::HashMap<Vec<u8>, (gix::objs::tree::EntryMode, ObjectId)> =
             std::collections::HashMap::new();
         for entry_ref in tree_a.iter() {
-            let e =
-                entry_ref.map_err(|e| AppError::internal(format!("tree read a err: {}", e)))?;
+            let e = entry_ref.map_err(|e| AppError::internal(format!("tree read a err: {}", e)))?;
             if !e.filename().starts_with(b".") {
                 map_a.insert(e.filename().to_vec(), (e.mode(), e.object_id()));
             }
@@ -478,8 +477,7 @@ impl GitRepo {
         // Compare non-dotfile entries from tree B against A
         let mut count_b = 0;
         for entry_ref in tree_b.iter() {
-            let e =
-                entry_ref.map_err(|e| AppError::internal(format!("tree read b err: {}", e)))?;
+            let e = entry_ref.map_err(|e| AppError::internal(format!("tree read b err: {}", e)))?;
             if e.filename().starts_with(b".") {
                 continue;
             }

@@ -73,7 +73,9 @@ fn read_tree_files_batched(bare_repo: &Path, treeish: &str) -> anyhow::Result<Fi
         }
         let line_str = String::from_utf8_lossy(line);
         // Format: "100644 blob <hash>\t<path>"
-        let Some(tab_pos) = line_str.find('\t') else { continue };
+        let Some(tab_pos) = line_str.find('\t') else {
+            continue;
+        };
         let meta = &line_str[..tab_pos];
         let path = &line_str[tab_pos + 1..];
 
@@ -101,8 +103,14 @@ fn read_tree_files_batched(bare_repo: &Path, treeish: &str) -> anyhow::Result<Fi
         .spawn()
         .context("failed to spawn git cat-file --batch")?;
 
-    let mut stdin = cat_file.stdin.take().context("failed to open cat-file stdin")?;
-    let stdout = cat_file.stdout.take().context("failed to open cat-file stdout")?;
+    let mut stdin = cat_file
+        .stdin
+        .take()
+        .context("failed to open cat-file stdin")?;
+    let stdout = cat_file
+        .stdout
+        .take()
+        .context("failed to open cat-file stdout")?;
 
     // Write all hashes to stdin in a separate thread to avoid deadlock.
     let hashes: Vec<String> = entries.iter().map(|(h, _)| h.clone()).collect();
@@ -454,7 +462,9 @@ pub(crate) fn diff_name_status(
             continue;
         }
         let mut parts = line.splitn(3, '\t');
-        let Some(status_code) = parts.next() else { continue };
+        let Some(status_code) = parts.next() else {
+            continue;
+        };
         let Some(path) = parts.next() else { continue };
 
         if path.starts_with(".scratch/") {
@@ -628,7 +638,9 @@ pub(crate) struct WorktreeStatusEntry {
 
 /// Returns git status entries for the worktree using `--porcelain=v1 -z`.
 /// Returns an empty list if `worktree_path` is not a git worktree.
-pub(crate) fn worktree_status_entries(worktree_path: &Path) -> anyhow::Result<Vec<WorktreeStatusEntry>> {
+pub(crate) fn worktree_status_entries(
+    worktree_path: &Path,
+) -> anyhow::Result<Vec<WorktreeStatusEntry>> {
     if !worktree_path.join(".git").is_file() {
         return Ok(vec![]);
     }
@@ -663,7 +675,8 @@ pub(crate) fn worktree_status_entries(worktree_path: &Path) -> anyhow::Result<Ve
         let Some(nul_offset) = bytes[path_start..].iter().position(|&b| b == 0) else {
             break;
         };
-        let path = String::from_utf8_lossy(&bytes[path_start..path_start + nul_offset]).into_owned();
+        let path =
+            String::from_utf8_lossy(&bytes[path_start..path_start + nul_offset]).into_owned();
         i = path_start + nul_offset + 1;
 
         // Renames / copies have a second NUL-terminated original path — consume it

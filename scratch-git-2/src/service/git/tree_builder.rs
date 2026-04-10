@@ -182,6 +182,8 @@ pub fn entry_kind_from_mode(mode: gix::object::tree::EntryMode) -> gix::objs::tr
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use crate::service::git::repo::GitRepo;
     use crate::service::types::*;
     use tempfile::TempDir;
@@ -190,6 +192,68 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo = GitRepo::init(tmp.path(), "test").unwrap();
         (tmp, repo)
+    }
+
+    fn assert_git_available() {
+        assert!(
+            Command::new("git")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false),
+            "git must be on PATH for empty-segment regression tests"
+        );
+    }
+
+    /// `apply_changes_to_tree` does not normalize `//`. After stripping prefix `a`, the remainder
+    /// can start with `//`, so the next subtree segment is empty and we write an invalid tree entry.
+    ///
+    /// Canonical Git rejects that object: `git fsck` → `empty filename in tree entry`.
+    /// See docs/plans/2026-04-09-git-tree-corruption-empty-path-segments.md.
+    ///
+    /// Paths starting with `//` can also hit the empty-segment case but may recurse until stack overflow
+    /// instead of completing a commit; this case matches `parentPath/` + `file` → `a//x/...` on the server.
+    ///
+    /// After path normalization is implemented, update this test to expect a clean `git fsck` (or a
+    /// 4xx error at commit time instead of a written object).
+    #[test]
+    fn double_slash_in_logical_path_produces_tree_git_fsck_rejects() {
+        assert_git_available();
+
+        let (tmp, repo) = setup_repo();
+        let git_dir = tmp.path().join("test.git");
+
+        let changes = vec![FileChange {
+            path: "a//x/file.json".to_string(),
+            content: Some("{}".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }];
+
+        repo.commit_changes_to_ref(MAIN_BRANCH, &changes, "repro double-slash path")
+            .expect("tree builder currently accepts this path");
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&git_dir)
+            .args(["fsck", "--full", "--no-progress"])
+            .output()
+            .expect("spawn git fsck");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("empty filename"),
+            "expected git fsck to report empty tree entry name; status={:?} stderr={} stdout={}",
+            output.status,
+            stderr,
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            !output.status.success(),
+            "git fsck should fail on corrupt tree objects; status={:?} stderr={}",
+            output.status,
+            stderr
+        );
     }
 
     #[test]

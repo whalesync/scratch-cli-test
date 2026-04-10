@@ -94,10 +94,7 @@ impl ApiClient {
 
     /// Send a request discarding the response body (handles 200/204).
     async fn do_request_void(&self, method: Method, path: &str) -> ApiResult<()> {
-        let resp = self
-            .build_request::<()>(method, path, None)
-            .send()
-            .await?;
+        let resp = self.build_request::<()>(method, path, None).send().await?;
         Self::check_response(resp).await?;
         Ok(())
     }
@@ -331,7 +328,9 @@ pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
                 eprintln!();
                 return Err(ApiError::Other(format!(
                     "Job failed: {}",
-                    progress.failed_reason.unwrap_or_else(|| "unknown failure".to_string())
+                    progress
+                        .failed_reason
+                        .unwrap_or_else(|| "unknown failure".to_string())
                 )));
             }
             "canceled" => {

@@ -124,12 +124,11 @@ enum Commands {
 }
 
 fn require_git() -> anyhow::Result<()> {
-    match std::process::Command::new("git")
-        .arg("--version")
-        .output()
-    {
+    match std::process::Command::new("git").arg("--version").output() {
         Ok(output) if output.status.success() => Ok(()),
-        Ok(_) => anyhow::bail!("git is installed but returned an error. Please check your git installation."),
+        Ok(_) => anyhow::bail!(
+            "git is installed but returned an error. Please check your git installation."
+        ),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             anyhow::bail!("git is not installed. Please install git and try again.")
         }
