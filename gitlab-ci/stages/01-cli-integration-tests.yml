@@ -6,9 +6,11 @@ include:
 # CLI INTEGRATION TESTS
 #
 # Jest suites in scratch-cli-tests/ shell out to the Rust scratchmd binary
-# (built in global-setup) against a remote Scratch stack. Env vars come from
-# the GitLab File variable CLI_INTEGRATION_TEST_CONFIG (copied to
-# scratch-cli-tests/.env.integration).
+# against a remote Scratch stack. The job builds scratchmd here (rust:slim-
+# bookworm) and passes SCRATCH_CLI_BINARY so global-setup does not run cargo.
+# Uses an isolated CARGO_HOME under scratch-git-2 (no GitLab cargo cache, no
+# shared .cargo with other jobs). Env vars come from the GitLab File variable
+# CLI_INTEGRATION_TEST_CONFIG (copied to scratch-cli-tests/.env.integration).
 # =============================================================================
 
 .changes:
@@ -21,31 +23,10 @@ include:
   image: rust:slim-bookworm
   interruptible: true
   variables:
-    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-  cache:
-    # scratch-git-2/target must NOT use fallback scratch-git-2-cargo: that key is
-    # also populated by warm-scratch-git-cargo-cache (hasty-dolphin image, newer
-    # glibc). Restoring those artifacts on rust:slim-bookworm fails with
-    # GLIBC_2.39 not found when running build scripts.
-    - key:
-        files:
-          - scratch-git-2/Cargo.lock
-        prefix: cli-integration-tests-target
-      unprotect: true
-      paths:
-        - scratch-git-2/target
-      policy: pull-push
-    - key:
-        files:
-          - scratch-git-2/Cargo.lock
-        prefix: cli-integration-tests-registry
-      fallback_keys:
-        - scratch-git-2-cargo
-      unprotect: true
-      paths:
-        - .cargo/registry/cache
-        - .cargo/registry/index
-      policy: pull-push
+    # Job-local registry/git checkouts — not shared with other CI jobs or cache.
+    CARGO_HOME: "${CI_PROJECT_DIR}/scratch-git-2/.cargo-cli-integration"
+    # Prebuilt in script/; global-setup skips cargo when this is set.
+    SCRATCH_CLI_BINARY: "${CI_PROJECT_DIR}/scratch-git-2/target/release/scratchmd"
   timeout: 45m
   before_script:
     - apt-get update && apt-get install -y pkg-config libssl-dev git ca-certificates curl gnupg && rm -rf /var/lib/apt/lists/*
@@ -60,6 +41,7 @@ include:
     - cp "${CLI_INTEGRATION_TEST_CONFIG}" scratch-cli-tests/.env.integration
   script:
     - yarn install --frozen-lockfile --cache-folder .yarn --prefer-offline
+    - cd scratch-git-2 && cargo build --bin scratchmd --release
     - cd scratch-cli-tests && yarn test:integration
 
 cli integration tests:

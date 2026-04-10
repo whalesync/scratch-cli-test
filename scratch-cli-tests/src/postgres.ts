@@ -23,12 +23,12 @@ export async function setupTestTable(): Promise<void> {
     await client.query(`DROP TABLE IF EXISTS ${TEST_TABLE} CASCADE`);
 
     // Create table from SQL file
-    const sqlPath = path.resolve(__dirname, "../test_table.sql");
+    const sqlPath = path.resolve(__dirname, "../test_table_blog_posts.sql");
     const createSql = fs.readFileSync(sqlPath, "utf-8");
     await client.query(createSql);
 
     // Load test data from CSV
-    const csvPath = path.resolve(__dirname, "../test_data.csv");
+    const csvPath = path.resolve(__dirname, "../test_data_blog_posts.csv");
     const csvContent = fs.readFileSync(csvPath, "utf-8");
     const rows = parseCSV(csvContent);
 
