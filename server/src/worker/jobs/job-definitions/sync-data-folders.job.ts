@@ -33,6 +33,7 @@ export type SyncDataFoldersPublicProgress = {
     creates: number;
     updates: number;
     deletes: number;
+    skipped: number;
     createdPaths: string[];
     updatedPaths: string[];
     deletedPaths: string[];
@@ -159,6 +160,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         creates: 0,
         updates: 0,
         deletes: 0,
+        skipped: 0,
         createdPaths: [] as string[],
         updatedPaths: [] as string[],
         deletedPaths: [] as string[],
@@ -215,6 +217,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         // Update progress with results
         tableProgress.creates = result.recordsCreated;
         tableProgress.updates = result.recordsUpdated;
+        tableProgress.skipped = result.recordsSkipped;
         tableProgress.createdPaths = result.createdPaths.slice(0, MAX_PROGRESS_PATHS);
         tableProgress.updatedPaths = result.updatedPaths.slice(0, MAX_PROGRESS_PATHS);
         for (const e of result.errors) erroredRecordIds[i].add(e.sourceRemoteId);

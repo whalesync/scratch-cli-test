@@ -82,6 +82,7 @@ interface MatchKeyTransformContext {
 export interface SyncTableMappingResult {
   recordsCreated: number;
   recordsUpdated: number;
+  recordsSkipped: number;
   createdPaths: string[];
   updatedPaths: string[];
   errors: Array<{ sourceRemoteId: string; error: string }>;
@@ -775,6 +776,7 @@ export class SyncService {
     const result: SyncTableMappingResult = {
       recordsCreated: 0,
       recordsUpdated: 0,
+      recordsSkipped: 0,
       createdPaths: [],
       updatedPaths: [],
       errors: [],
@@ -973,26 +975,31 @@ export class SyncService {
         Array.from(batchRecordsById.keys()),
       );
 
-      // Check for source records that weren't included in mappings (missing or falsy match key)
+      // Skip source records with missing or empty match key — this is expected
+      // when source data has incomplete records and is not an error condition.
       if (tableMapping.recordMatching) {
+        let skippedNoMatchKey = 0;
         for (const [sourceId, sourceRecord] of batchRecordsById) {
           if (!batchMappings.has(sourceId)) {
             const matchKeyValue = get(sourceRecord.fields, tableMapping.recordMatching.sourceColumnId);
-            if (matchKeyValue === undefined || matchKeyValue === null) {
-              result.errors.push({
-                sourceRemoteId: sourceId,
-                error: `Source record missing record matching field: ${tableMapping.recordMatching.sourceColumnId}`,
-              });
-            } else if (
+            if (
+              matchKeyValue === undefined ||
+              matchKeyValue === null ||
               (typeof matchKeyValue !== 'string' && typeof matchKeyValue !== 'number') ||
               String(matchKeyValue).trim() === ''
             ) {
-              result.errors.push({
-                sourceRemoteId: sourceId,
-                error: `Source record has empty or invalid record matching value for field: ${tableMapping.recordMatching.sourceColumnId}`,
-              });
+              skippedNoMatchKey++;
             }
           }
+        }
+        if (skippedNoMatchKey > 0) {
+          result.recordsSkipped += skippedNoMatchKey;
+          WSLogger.info({
+            source: 'SyncService.syncTableMapping',
+            message: `Skipped ${skippedNoMatchKey} source record(s) with no match key value`,
+            syncId,
+            field: tableMapping.recordMatching.sourceColumnId,
+          });
         }
       }
 

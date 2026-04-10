@@ -9,6 +9,7 @@ export type SyncDataFoldersPublicProgress = {
     creates: number;
     updates: number;
     deletes: number;
+    skipped: number;
     status: TableStatus;
   }[];
 };

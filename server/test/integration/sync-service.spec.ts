@@ -868,13 +868,13 @@ describe('SyncService - syncTableMapping', () => {
 
     const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
 
-    // Record should fail, not be created
+    // Record should be skipped (not an error) when match key field is missing
     expect(result.recordsCreated).toBe(0);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].error).toContain('Source record missing record matching field: external_ref');
+    expect(result.recordsSkipped).toBe(1);
+    expect(result.errors).toHaveLength(0);
   });
 
-  it('should return errors for source records with falsy match key values (empty string, null) and skip them', async () => {
+  it('should skip source records with falsy match key values (empty string, null) without errors', async () => {
     const sourceFiles = [
       {
         folderId: sourceFolderId,
@@ -924,16 +924,10 @@ describe('SyncService - syncTableMapping', () => {
 
     const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
 
-    // Only rec3 (Bob) should be created; rec1 and rec2 should produce errors
+    // Only rec3 (Bob) should be created; rec1 and rec2 should be skipped (not errors)
     expect(result.recordsCreated).toBe(1);
-    expect(result.errors).toHaveLength(2);
-
-    const errorIds = result.errors.map((e) => e.sourceRemoteId).sort();
-    expect(errorIds).toEqual(['rec1', 'rec2']);
-
-    for (const err of result.errors) {
-      expect(err.error).toContain('record matching');
-    }
+    expect(result.recordsSkipped).toBe(2);
+    expect(result.errors).toHaveLength(0);
 
     // Verify only Bob's record was written
     expect(writtenFiles).toHaveLength(1);
@@ -1259,7 +1253,7 @@ describe('SyncService - syncTableMapping', () => {
     expect(fileContent.id).toBe('dest1');
   });
 
-  it('should report error when source record is missing a dot-separated match key field', async () => {
+  it('should skip source record when dot-separated match key field is missing', async () => {
     const sourceFiles = [
       {
         folderId: sourceFolderId,
@@ -1294,9 +1288,10 @@ describe('SyncService - syncTableMapping', () => {
 
     const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
 
+    // Record should be skipped (not an error) when nested match key field is missing
     expect(result.recordsCreated).toBe(0);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].error).toContain('meta.email');
+    expect(result.recordsSkipped).toBe(1);
+    expect(result.errors).toHaveLength(0);
   });
 
   it('should handle dot-separated idColumnRemoteId when parsing records', async () => {

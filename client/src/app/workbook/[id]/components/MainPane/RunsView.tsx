@@ -972,6 +972,7 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
     creates?: number;
     updates?: number;
     deletes?: number;
+    skipped?: number;
     errorCount?: number;
     warningCount?: number;
     createdPaths?: string[];
@@ -984,6 +985,7 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
   if (tables.length === 0) return null;
 
   const affectedFiles = collectAffectedFiles(tables);
+  const hasSkipped = tables.some((t) => (t.skipped ?? 0) > 0);
   const hasErrors = tables.some((t) => (t.errorCount ?? t.errors?.length ?? 0) > 0);
   const hasWarnings = tables.some((t) => (t.warningCount ?? t.warnings?.length ?? 0) > 0);
   const allErrors = tables.flatMap((t) =>
@@ -1003,6 +1005,7 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
             <Table.Th>Creates</Table.Th>
             <Table.Th>Updates</Table.Th>
             <Table.Th>Deletes</Table.Th>
+            {hasSkipped && <Table.Th>Skipped</Table.Th>}
             {hasErrors && <Table.Th>Errors</Table.Th>}
             {hasWarnings && <Table.Th>Warnings</Table.Th>}
             <Table.Th>Status</Table.Th>
@@ -1016,6 +1019,11 @@ function SyncProgressTable({ progress }: { progress: Record<string, unknown> }) 
               <Table.Td>{table.creates ?? 0}</Table.Td>
               <Table.Td>{table.updates ?? 0}</Table.Td>
               <Table.Td>{table.deletes ?? 0}</Table.Td>
+              {hasSkipped && (
+                <Table.Td>
+                  <Text13Regular c="dimmed">{table.skipped ?? 0}</Text13Regular>
+                </Table.Td>
+              )}
               {hasErrors && (
                 <Table.Td>
                   <Text13Regular c={table.errorCount ? 'var(--mantine-color-red-6)' : undefined}>
