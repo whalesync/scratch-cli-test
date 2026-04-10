@@ -124,6 +124,17 @@ const scratchDesktop = {
   pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
     invoke('scratch:pull-all-linked-tables', workspacePath),
   showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),
+  showNativeContextMenu: (
+    items: Array<{ id: string; label: string; type?: 'separator' }>,
+    onClick: (id: string) => void,
+  ): void => {
+    ipcRenderer.send('scratch:show-native-context-menu', items);
+    const handler = (_event: Electron.IpcRendererEvent, id: string): void => {
+      ipcRenderer.removeListener('scratch:native-context-menu-click', handler);
+      onClick(id);
+    };
+    ipcRenderer.once('scratch:native-context-menu-click', handler);
+  },
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
   getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),

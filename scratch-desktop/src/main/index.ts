@@ -1,6 +1,6 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { readdir, readFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { performance } from 'perf_hooks';
@@ -423,6 +423,22 @@ ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
 ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();
 });
+ipcMain.on(
+  'scratch:show-native-context-menu',
+  (event, items: Array<{ id: string; label: string; type?: 'separator'; danger?: boolean }>) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    const template = items.map((item) => {
+      if (item.type === 'separator') return { type: 'separator' as const };
+      return {
+        label: item.label,
+        click: () => event.sender.send('scratch:native-context-menu-click', item.id),
+      };
+    });
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: win });
+  },
+);
 ipcMain.handle('scratch:toggle-devtools', (event) => {
   event.sender.toggleDevTools();
 });

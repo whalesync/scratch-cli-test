@@ -1,7 +1,7 @@
 import { ConnectorIcon } from '@/components/ConnectorIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
-import { Box, Group, Menu, Progress } from '@mantine/core';
-import { Download, FolderOpen, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Box, Group, Progress } from '@mantine/core';
+import { Download, MoreHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Workspace } from '../types/workspace';
 import { ButtonSecondaryOutline, IconButtonGhost } from './base/buttons';
@@ -64,7 +64,6 @@ export function DownloadedWorkspaceCard({
   onRemove: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <Box
       role="button"
@@ -94,23 +93,26 @@ export function DownloadedWorkspaceCard({
         </Text16Medium>
         <ServiceIcons workspace={workspace} />
       </Box>
-      <Box onClick={(e) => e.stopPropagation()} style={{ visibility: hovered || menuOpen ? 'visible' : 'hidden' }}>
-        <Menu position="bottom-end" withinPortal shadow="md" width={200} onChange={setMenuOpen}>
-          <Menu.Target>
-            <IconButtonGhost aria-label="Workspace actions">
-              <StyledLucideIcon Icon={MoreHorizontal} size="sm" />
-            </IconButtonGhost>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item leftSection={<StyledLucideIcon Icon={FolderOpen} size="sm" />} onClick={onOpen}>
-              Open
-            </Menu.Item>
-            <Menu.Divider />
-            <Menu.Item color="red" leftSection={<StyledLucideIcon Icon={Trash2} size="sm" />} onClick={onRemove}>
-              Remove local copy
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
+      <Box
+        onClick={(e) => {
+          e.stopPropagation();
+          window.scratchDesktop.showNativeContextMenu(
+            [
+              { id: 'open', label: 'Open' },
+              { id: 'sep', label: '', type: 'separator' },
+              { id: 'remove', label: 'Remove local copy' },
+            ],
+            (id) => {
+              if (id === 'open') onOpen();
+              if (id === 'remove') onRemove();
+            },
+          );
+        }}
+        style={{ visibility: hovered ? 'visible' : 'hidden' }}
+      >
+        <IconButtonGhost aria-label="Workspace actions">
+          <StyledLucideIcon Icon={MoreHorizontal} size="sm" />
+        </IconButtonGhost>
       </Box>
     </Box>
   );

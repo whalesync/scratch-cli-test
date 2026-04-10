@@ -93,6 +93,10 @@ interface ScratchDesktopAPI {
   startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;
   pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
   showInFolder: (folderPath: string) => Promise<void>;
+  showNativeContextMenu: (
+    items: Array<{ id: string; label: string; type?: 'separator' }>,
+    onClick: (id: string) => void,
+  ) => void;
   openInTerminal: (folderPath: string) => Promise<void>;
   toggleDevTools: () => Promise<void>;
   getAppVersion: () => Promise<string>;

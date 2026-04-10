@@ -110,6 +110,10 @@ For built executables you can provide an environment variable and launch the app
 OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch
 ```
 
+## Native Context Menus
+
+Always use native Electron context menus — never Mantine `<Menu>` dropdowns — for right-click menus and action menus (kebab/three-dot buttons, "Open in..." buttons, etc.). Use the generic `window.scratchDesktop.showNativeContextMenu(items, onClick)` API exposed via preload, which sends items to the main process `scratch:show-native-context-menu` IPC handler and returns the clicked item id via callback.
+
 ## Performance (agent guidelines)
 
 When generating or changing `scratch-desktop` code, follow these constraints unless the user explicitly asks otherwise.

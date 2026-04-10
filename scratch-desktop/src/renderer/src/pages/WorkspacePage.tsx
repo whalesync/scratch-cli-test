@@ -257,8 +257,6 @@ export function WorkspacePage() {
       )}
       <WorkspaceHeader
         workspace={workspace}
-        localPath={localPath}
-        selectedFolderPath={selectedFolderPath}
         isDownloaded={localPath !== null}
         downloading={downloading}
         onDownload={() => void handleDownload()}

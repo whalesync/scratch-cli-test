@@ -1,9 +1,8 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
-import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
-import { Group, Menu, Tooltip } from '@mantine/core';
+import { Group, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
-import { ChevronDown, Download, HardDriveDownload as DownloadIcon, FolderOpen, Terminal, Upload } from 'lucide-react';
+import { Download, HardDriveDownload as DownloadIcon, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
@@ -11,8 +10,6 @@ import { Workspace } from '../../types/workspace';
 
 interface WorkspaceHeaderProps {
   workspace: Workspace;
-  localPath: string | null;
-  selectedFolderPath: string | null;
   isDownloaded: boolean;
   downloading: boolean;
   onDownload: () => void;
@@ -22,8 +19,6 @@ interface WorkspaceHeaderProps {
 
 export function WorkspaceHeader({
   workspace,
-  localPath,
-  selectedFolderPath,
   isDownloaded,
   downloading,
   onDownload,
@@ -33,7 +28,6 @@ export function WorkspaceHeader({
   const navigate = useNavigate();
   const { width } = useViewportSize();
   const compact = width > 0 && width < 800;
-  const targetPath = selectedFolderPath ?? localPath;
 
   return (
     <Group
@@ -78,40 +72,6 @@ export function WorkspaceHeader({
               Download
             </ButtonPrimaryLight>
           ))}
-        <Menu shadow="md" position="bottom-end">
-          <Menu.Target>
-            {compact ? (
-              <Tooltip label="Open in...">
-                <IconButtonGhost size="compact-xs" disabled={!targetPath}>
-                  <FolderOpen size={12} />
-                </IconButtonGhost>
-              </Tooltip>
-            ) : (
-              <ButtonSecondaryGhost
-                size="compact-xs"
-                leftSection={<FolderOpen size={12} />}
-                rightSection={<ChevronDown size={10} />}
-                disabled={!targetPath}
-              >
-                Open in...
-              </ButtonSecondaryGhost>
-            )}
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item
-              leftSection={<StyledLucideIcon Icon={FolderOpen} size="sm" />}
-              onClick={() => void (targetPath && window.scratchDesktop.showInFolder(targetPath))}
-            >
-              {window.electron?.process?.platform === 'darwin' ? 'Open in Finder' : 'Open in File Explorer'}
-            </Menu.Item>
-            <Menu.Item
-              leftSection={<StyledLucideIcon Icon={Terminal} size="sm" />}
-              onClick={() => void (targetPath && window.scratchDesktop.openInTerminal(targetPath))}
-            >
-              Open in Terminal
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
         {compact ? (
           <Tooltip label="Pull All">
             <IconButtonGhost size="compact-xs" disabled={!isDownloaded} onClick={() => void onPullAll()}>
