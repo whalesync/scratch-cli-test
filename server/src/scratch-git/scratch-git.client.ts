@@ -417,6 +417,63 @@ export class ScratchGitClient {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Staging API — used by V2 pull job for two-phase fetch/process
+  // ---------------------------------------------------------------------------
+
+  async stageFiles(
+    jobId: string,
+    folder: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<{ count: number }> {
+    return this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/files`, 'POST', {
+      folder,
+      files,
+    }) as Promise<{ count: number }>;
+  }
+
+  async readStagedFiles(
+    jobId: string,
+    folder: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ files: Array<{ path: string; content: string }>; total: number }> {
+    const params = new URLSearchParams({
+      folder,
+      offset: String(offset),
+      limit: String(limit),
+    });
+    return this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/files?${params}`, 'GET') as Promise<{
+      files: Array<{ path: string; content: string }>;
+      total: number;
+    }>;
+  }
+
+  async commitStagedFiles(
+    jobId: string,
+    repoId: string,
+    branch: string,
+    folder: string,
+    message: string,
+  ): Promise<CommitFilesResult> {
+    const result = await this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/commit`, 'POST', {
+      repoId,
+      branch,
+      folder,
+      message,
+    });
+    const data = result as Record<string, unknown>;
+    return {
+      created: (data.created as string[]) ?? [],
+      updated: (data.updated as string[]) ?? [],
+      unchanged: (data.unchanged as string[]) ?? [],
+    };
+  }
+
+  async cleanupStaging(jobId: string): Promise<void> {
+    await this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}`, 'DELETE');
+  }
+
   /**
    * Generic proxy for Git service requests.
    * Path should be the full path in the git service but with a ':repoId' placeholder.

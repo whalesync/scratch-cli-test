@@ -37,6 +37,10 @@ const logFormatPlain =
       )
     : winston.format.combine(expandedErrorsFormat(), winston.format.simple());
 
+const devLogFile = process.env.LOG_FILE
+  ? new winston.transports.File({ filename: process.env.LOG_FILE, format: logFormatPlain })
+  : null;
+
 export class WSLogger {
   private static logger = winston.createLogger({
     level: 'info',
@@ -44,6 +48,7 @@ export class WSLogger {
       new winston.transports.Console({
         format: runningInCloud ? logFormatGcp : logFormatPlain,
       }),
+      ...(devLogFile ? [devLogFile] : []),
     ],
   });
 

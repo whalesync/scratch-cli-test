@@ -6,5 +6,6 @@ pub mod manage;
 pub mod plan_publish;
 pub mod read;
 pub mod smart_http;
+pub mod staging;
 pub mod system;
 pub mod write;

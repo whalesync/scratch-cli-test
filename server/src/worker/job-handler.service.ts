@@ -25,6 +25,7 @@ import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data
 import { PublishFromGitJobHandler } from './jobs/job-definitions/publish-from-git.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
+import { PullLinkedFolderFilesV2JobHandler } from './jobs/job-definitions/pull-linked-folder-files-v2.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
 import { RehostAssetsJobHandler } from './jobs/job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobHandler } from './jobs/job-definitions/sync-data-folders.job';
@@ -62,8 +63,14 @@ export class JobHandlerService {
     });
 
     switch (data.type) {
-      case JobType.PullLinkedFolderFiles:
-        return new PullLinkedFolderFilesJobHandler(
+      case JobType.PullLinkedFolderFiles: {
+        const useV2 = process.env.PULL_JOB_V2 === 'true';
+        WSLogger.info({
+          source: 'JobHandlerService',
+          message: `Creating pull handler: ${useV2 ? 'V2' : 'V1'} (PULL_JOB_V2=${process.env.PULL_JOB_V2})`,
+        });
+        const HandlerClass = useV2 ? PullLinkedFolderFilesV2JobHandler : PullLinkedFolderFilesJobHandler;
+        return new HandlerClass(
           prisma,
           this.connectorService,
           this.connectorAccountService,
@@ -75,6 +82,7 @@ export class JobHandlerService {
           this.assetIndexService,
           this.postHogService,
         ) as JobHandler<JobDefinition>;
+      }
 
       case JobType.RefreshRecords:
         return new PullFilesJobHandler(

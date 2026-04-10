@@ -186,12 +186,17 @@ if [ -d "$SCRIPT_DIR/scratch-git/repos" ]; then
     echo ""
 fi
 
+# Log files — raw (uncolorized) output for easy grepping
+CLIENT_LOG="/tmp/scratch-client.log"
+SERVER_LOG="/tmp/scratch-server.log"
+SCRATCH_GIT_LOG="/tmp/scratch-git.log"
+
 # Start Client (Next.js on port 3000)
 echo -e "${BLUE}[CLIENT]${NC} Starting Next.js dev server on port 3000..."
 (
     cd "$SCRIPT_DIR/client"
     # Prevent Next.js from clearing the terminal
-    NEXT_PRIVATE_SKIP_TERMINAL_CLEAR=1 yarn run dev 2>&1 | while IFS= read -r line; do echo -e "${BLUE}[CLIENT]${NC} $line"; done
+    NEXT_PRIVATE_SKIP_TERMINAL_CLEAR=1 yarn run dev 2>&1 | tee "$CLIENT_LOG" | while IFS= read -r line; do echo -e "${BLUE}[CLIENT]${NC} $line"; done
 ) &
 CLIENT_PID=$!
 
@@ -200,7 +205,10 @@ echo -e "${GREEN}[SERVER]${NC} Starting NestJS dev server on port 3010..."
 (
     cd "$SCRIPT_DIR/server"
     # Filter out ANSI clear screen sequences ([2J, [3J, [H) that TypeScript watch mode emits
-    yarn run start:dev 2>&1 | sed $'s/\033\\[2J//g; s/\033\\[3J//g; s/\033\\[H//g' | while IFS= read -r line; do echo -e "${GREEN}[SERVER]${NC} $line"; done
+    # Load server/.env into the environment so all vars are available to the process
+    set -a; source .env 2>/dev/null; set +a
+    # stdbuf -oL forces line-buffered output so tee and sed flush each line immediately
+    yarn run start:dev 2>&1 | stdbuf -oL sed $'s/\033\\[2J//g; s/\033\\[3J//g; s/\033\\[H//g' | stdbuf -oL tee "$SERVER_LOG" | while IFS= read -r line; do echo -e "${GREEN}[SERVER]${NC} $line"; done
 ) &
 SERVER_PID=$!
 
@@ -208,7 +216,7 @@ SERVER_PID=$!
 echo -e "${YELLOW}[SCRATCH-GIT]${NC} Starting scratch-git-2 on port 3100..."
 (
     cd "$SCRIPT_DIR/scratch-git-2"
-    GIT_REPOS_DIR="$SCRIPT_DIR/local/scratch-git-repos" cargo run 2>&1 | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
+    GIT_REPOS_DIR="$SCRIPT_DIR/local/scratch-git-repos" cargo run 2>&1 | tee "$SCRATCH_GIT_LOG" | while IFS= read -r line; do echo -e "${YELLOW}[SCRATCH-GIT]${NC} $line"; done
 ) &
 SCRATCH_GIT_PID=$!
 
@@ -218,6 +226,10 @@ echo -e "  ${BLUE}Client${NC}:       http://localhost:3000"
 echo -e "  ${GREEN}Server${NC}:       http://localhost:3010"
 echo -e "  ${YELLOW}scratch-git-2${NC}: http://localhost:3100 (API) + :3101 (HTTP backend)"
 echo -e "${YELLOW}========================================${NC}"
+echo ""
+echo -e "  Logs: ${BLUE}$CLIENT_LOG${NC}"
+echo -e "        ${GREEN}$SERVER_LOG${NC}"
+echo -e "        ${YELLOW}$SCRATCH_GIT_LOG${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
 echo ""

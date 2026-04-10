@@ -405,4 +405,35 @@ export class ScratchGitService {
   async proxyToGitService(repoId: string, path: string, method: string, body?: Record<string, unknown>) {
     return this.scratchGitClient.proxyRequest(repoId, path, method, body);
   }
+
+  // ---------------------------------------------------------------------------
+  // Staging API — used by V2 pull job for two-phase fetch/process
+  // ---------------------------------------------------------------------------
+
+  async stageFiles(jobId: string, folder: string, files: Array<{ path: string; content: string }>): Promise<void> {
+    await this.scratchGitClient.stageFiles(jobId, folder, files);
+  }
+
+  async readStagedFiles(
+    jobId: string,
+    folder: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ files: Array<{ path: string; content: string }>; total: number }> {
+    return this.scratchGitClient.readStagedFiles(jobId, folder, offset, limit);
+  }
+
+  async commitStagedFiles(
+    jobId: string,
+    repoId: string,
+    branch: string,
+    folder: string,
+    message: string,
+  ): Promise<{ created: string[]; updated: string[]; unchanged: string[] }> {
+    return this.scratchGitClient.commitStagedFiles(jobId, repoId, branch, folder, message);
+  }
+
+  async cleanupStaging(jobId: string): Promise<void> {
+    await this.scratchGitClient.cleanupStaging(jobId);
+  }
 }

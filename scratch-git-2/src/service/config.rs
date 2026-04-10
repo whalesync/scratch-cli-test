@@ -7,6 +7,7 @@ pub struct Config {
     pub git_backend_port: u16,
     pub repos_dir: PathBuf,
     pub index_dir: PathBuf,
+    pub staging_dir: PathBuf,
     pub build_version: String,
 }
 
@@ -36,6 +37,10 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| repos_dir.clone());
 
+        let staging_dir = env::var("GIT_STAGING_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| repos_dir.parent().unwrap_or(&repos_dir).join("staging"));
+
         let build_version = env::var("BUILD_VERSION").unwrap_or_else(|_| "0.0.0-local".to_string());
 
         Self {
@@ -43,6 +48,7 @@ impl Config {
             git_backend_port,
             repos_dir,
             index_dir,
+            staging_dir,
             build_version,
         }
     }

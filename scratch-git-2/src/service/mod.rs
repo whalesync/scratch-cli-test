@@ -57,6 +57,7 @@ pub async fn run() {
         config.repos_dir.exists()
     );
     tracing::info!("[API] Index directory: {}", config.index_dir.display());
+    tracing::info!("[API] Staging directory: {}", config.staging_dir.display());
 
     let app = Router::new()
         // System
@@ -168,6 +169,19 @@ pub async fn run() {
         .route(
             "/api/repo/publish-plan/{id}/build",
             post(routes::plan_publish::build_plan),
+        )
+        // Staging
+        .route(
+            "/api/staging/{jobId}/files",
+            post(routes::staging::stage_files).get(routes::staging::read_staged_files),
+        )
+        .route(
+            "/api/staging/{jobId}/commit",
+            post(routes::staging::commit_staged),
+        )
+        .route(
+            "/api/staging/{jobId}",
+            delete(routes::staging::cleanup_staging),
         )
         // Debug
         .route("/api/repo/debug/{id}/graph", get(routes::debug::graph))
