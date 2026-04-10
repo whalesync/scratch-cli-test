@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ClassSerializerInterceptor,
   Controller,
@@ -22,6 +23,8 @@ import type {
   PreviewRecordResponse,
   SaveSyncBody,
   SyncId,
+  SyncOneRecordBody,
+  SyncOneRecordResponse,
   ValidateMappingBody,
   ValidateMappingTypeBody,
   ValidateSyncMappingTypesResponse,
@@ -166,6 +169,30 @@ export class SyncController {
       message: 'Sync job queued successfully',
     };
   }
+  @Post(':syncId/sync-one-record')
+  async syncOneRecord(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('syncId') syncId: SyncId,
+    @Body() body: SyncOneRecordBody,
+    @Req() req: RequestWithUser,
+  ): Promise<SyncOneRecordResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+
+    if (!body.sourceFilePath || !body.sourceDataFolderId) {
+      throw new BadRequestException('sourceFilePath and sourceDataFolderId are required');
+    }
+
+    const result = await this.syncService.syncOneRecord(
+      syncId,
+      workbookId,
+      body.sourceFilePath,
+      body.sourceDataFolderId,
+      actor,
+    );
+    return { success: !result.error, result };
+  }
+
   @Delete(':syncId')
   async deleteSync(
     @Param('workbookId') workbookId: WorkbookId,

@@ -772,6 +772,12 @@ export class SyncService {
     workbookId: WorkbookId,
     actor: Actor,
     phase: SyncPhase = 'DATA',
+    /**
+     * Optional filter: if set, Pass 2 only transforms and writes the source record at this file path.
+     * Pass 1 still builds full caches (necessary for accurate matching and FK resolution).
+     * Used by syncOneRecord to scope a sync run to a single record.
+     */
+    onlySourceFilePath?: string,
   ): Promise<SyncTableMappingResult> {
     const result: SyncTableMappingResult = {
       recordsCreated: 0,
@@ -957,13 +963,24 @@ export class SyncService {
 
       // Parse this batch of source records
       const batchRecords = page.files.map((file) => parseFileToRecord(file, sourceIdColumn));
-      const batchRecordsById = new Map(batchRecords.map((r) => [r.id, r]));
+      let batchRecordsById = new Map(batchRecords.map((r) => [r.id, r]));
+
+      // When scoped to a single source file, drop everything else from the batch.
+      // Skip the entire batch if it doesn't contain the target file.
+      if (onlySourceFilePath !== undefined) {
+        batchRecordsById = new Map([...batchRecordsById].filter(([, r]) => r.filePath === onlySourceFilePath));
+        if (batchRecordsById.size === 0) {
+          sourceCursor = page.nextCursor;
+          batchCounter++;
+          continue;
+        }
+      }
 
       WSLogger.info({
         source: 'SyncService.syncTableMapping',
         message: `Pass 2: source batch`,
         syncId,
-        records: batchRecords.length,
+        records: batchRecordsById.size,
         cursor: sourceCursor ?? 'initial',
         batch: batchCounter,
       });
@@ -1149,6 +1166,53 @@ export class SyncService {
     }
 
     return result;
+  }
+
+  /**
+   * Syncs a single source record to the destination folder. Thin wrapper around `syncTableMapping`
+   * that scopes Pass 2 to one source file. Pass 1 still builds full caches (necessary for accurate
+   * record matching and FK resolution).
+   */
+  async syncOneRecord(
+    syncId: SyncId,
+    workbookId: WorkbookId,
+    sourceFilePath: string,
+    sourceDataFolderId: DataFolderId,
+    actor: Actor,
+  ): Promise<{ created: boolean; updated: boolean; destinationPath: string | null; error: string | null }> {
+    const sync = await this.db.client.sync.findFirst({ where: { id: syncId } });
+    if (!sync) {
+      throw new NotFoundException(`Sync ${syncId} not found`);
+    }
+
+    const syncMapping = sync.mappings as unknown as SyncMapping;
+    const tableMapping = syncMapping.tableMappings.find((tm) => tm.sourceDataFolderId === sourceDataFolderId);
+    if (!tableMapping) {
+      throw new NotFoundException(`No table mapping found for source folder ${sourceDataFolderId} in sync ${syncId}`);
+    }
+
+    // Run DATA phase scoped to this one source file
+    const dataResult = await this.syncTableMapping(syncId, tableMapping, workbookId, actor, 'DATA', sourceFilePath);
+
+    // Run FK phase if any column mappings need it (reuses caches built by DATA phase)
+    const hasFkMappings = tableMapping.columnMappings.some((m) => getColumnMappingPhase(m) === 'FOREIGN_KEY_MAPPING');
+    const fkResult = hasFkMappings
+      ? await this.syncTableMapping(syncId, tableMapping, workbookId, actor, 'FOREIGN_KEY_MAPPING', sourceFilePath)
+      : null;
+
+    // Translate batch result to single-record response shape
+    const created = dataResult.recordsCreated > 0;
+    const updated = dataResult.recordsUpdated > 0 || (fkResult?.recordsUpdated ?? 0) > 0;
+    const destinationPath =
+      dataResult.createdPaths[0] ?? dataResult.updatedPaths[0] ?? fkResult?.updatedPaths[0] ?? null;
+    const errorEntry = dataResult.errors[0] ?? fkResult?.errors[0];
+
+    return {
+      created,
+      updated,
+      destinationPath,
+      error: errorEntry?.error ?? null,
+    };
   }
 
   /**

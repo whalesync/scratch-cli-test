@@ -125,3 +125,20 @@ export interface SyncMappingValidationError {
 export interface ValidateSyncMappingTypesResponse {
   errors: SyncMappingValidationError[];
 }
+
+/** POST body for sync-one-record endpoint */
+export interface SyncOneRecordBody {
+  sourceFilePath: string;
+  sourceDataFolderId: DataFolderId;
+}
+
+/** Response from sync-one-record endpoint */
+export interface SyncOneRecordResponse {
+  success: boolean;
+  result: {
+    created: boolean;
+    updated: boolean;
+    destinationPath: string | null;
+    error: string | null;
+  };
+}

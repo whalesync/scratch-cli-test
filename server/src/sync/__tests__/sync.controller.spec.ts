@@ -1,6 +1,13 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { NotFoundException } from '@nestjs/common';
-import type { DataFolderId, PreviewRecordBody, SyncId, ValidateMappingBody, WorkbookId } from '@spinner/shared-types';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import type {
+  DataFolderId,
+  PreviewRecordBody,
+  SyncId,
+  SyncOneRecordBody,
+  ValidateMappingBody,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { Job } from 'bullmq';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
@@ -54,6 +61,7 @@ describe('SyncController', () => {
       previewRecord: jest.fn(),
       validateFolderMapping: jest.fn(),
       generateAiContext: jest.fn(),
+      syncOneRecord: jest.fn(),
     } as unknown as jest.Mocked<SyncService>;
 
     bullEnqueuerService = {
@@ -392,6 +400,57 @@ describe('SyncController', () => {
         'dfd_dest' as DataFolderId,
         [{ sourceColumnId: 'col1', destinationColumnId: 'col2' }],
         expect.objectContaining({ userId: USER_ID }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // syncOneRecord
+  // ---------------------------------------------------------------------------
+  describe('syncOneRecord', () => {
+    const body: SyncOneRecordBody = {
+      sourceFilePath: 'folder/record.json',
+      sourceDataFolderId: 'dfd_src' as DataFolderId,
+    };
+
+    it('delegates to syncService.syncOneRecord and returns success response', async () => {
+      const serviceResult = { created: true, updated: false, destinationPath: 'dest/record.json', error: null };
+      syncService.syncOneRecord.mockResolvedValue(serviceResult);
+
+      const result = await controller.syncOneRecord(WORKBOOK_ID, SYNC_ID, body, makeReqWithUser());
+
+      expect(syncService.syncOneRecord).toHaveBeenCalledWith(
+        SYNC_ID,
+        WORKBOOK_ID,
+        'folder/record.json',
+        'dfd_src',
+        expect.objectContaining({ userId: USER_ID }),
+      );
+      expect(result).toEqual({ success: true, result: serviceResult });
+    });
+
+    it('returns success: false when service returns an error', async () => {
+      const serviceResult = { created: false, updated: false, destinationPath: null, error: 'Transform failed' };
+      syncService.syncOneRecord.mockResolvedValue(serviceResult);
+
+      const result = await controller.syncOneRecord(WORKBOOK_ID, SYNC_ID, body, makeReqWithUser());
+
+      expect(result).toEqual({ success: false, result: serviceResult });
+    });
+
+    it('throws BadRequestException when sourceFilePath is missing', async () => {
+      const invalidBody = { sourceFilePath: '', sourceDataFolderId: 'dfd_src' as DataFolderId };
+
+      await expect(controller.syncOneRecord(WORKBOOK_ID, SYNC_ID, invalidBody, makeReqWithUser())).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('throws BadRequestException when sourceDataFolderId is missing', async () => {
+      const invalidBody = { sourceFilePath: 'folder/record.json', sourceDataFolderId: '' as DataFolderId };
+
+      await expect(controller.syncOneRecord(WORKBOOK_ID, SYNC_ID, invalidBody, makeReqWithUser())).rejects.toThrow(
+        BadRequestException,
       );
     });
   });

@@ -7,6 +7,7 @@ import {
   SaveSyncBody,
   Sync,
   SyncId,
+  SyncOneRecordResponse,
   ValidateMappingTypeBody,
   ValidateSyncMappingTypesResponse,
   WhalesyncImportPreviewBody,
@@ -109,6 +110,24 @@ export const syncApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to preview Whalesync import');
+    }
+  },
+
+  syncOneRecord: async (
+    workbookId: WorkbookId,
+    syncId: SyncId,
+    sourceFilePath: string,
+    sourceDataFolderId: DataFolderId,
+  ): Promise<SyncOneRecordResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<SyncOneRecordResponse>(
+        `/workbooks/${workbookId}/syncs/${syncId}/sync-one-record`,
+        { sourceFilePath, sourceDataFolderId },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to sync record');
     }
   },
 

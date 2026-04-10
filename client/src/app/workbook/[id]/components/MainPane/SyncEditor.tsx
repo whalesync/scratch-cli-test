@@ -59,6 +59,7 @@ import {
   Circle,
   CircleCheck,
   CornerDownRight,
+  Play,
   Plus,
   Search,
   Settings,
@@ -374,6 +375,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [recordMatchingWarning, setRecordMatchingWarning] = useState<string | null>(null);
+
+  // Sync one record
+  const [syncingOneRecord, setSyncingOneRecord] = useState(false);
 
   // JSON editor mode
   type EditorMode = 'visual' | 'json';
@@ -737,6 +741,52 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   };
 
+  const handleSyncOneRecord = async () => {
+    if (!selectedPreviewFile || !activePair?.sourceId || isNew) return;
+
+    setSyncingOneRecord(true);
+    try {
+      // Auto-save if there are unsaved changes
+      if (hasUnsavedChanges) {
+        try {
+          await handleSave();
+        } catch {
+          return; // Save failed — stop
+        }
+      }
+
+      const response = await syncApi.syncOneRecord(
+        workbookId,
+        syncId as SyncId,
+        selectedPreviewFile,
+        activePair.sourceId as DataFolderId,
+      );
+
+      if (response.success) {
+        const action = response.result.created ? 'Created' : response.result.updated ? 'Updated' : 'No changes to';
+        notifications.show({
+          title: 'Record synced',
+          message: `${action} ${response.result.destinationPath ?? 'destination record'}`,
+          color: 'green',
+        });
+      } else {
+        notifications.show({
+          title: 'Sync failed',
+          message: response.result.error ?? 'Unknown error',
+          color: 'red',
+        });
+      }
+    } catch (error) {
+      notifications.show({
+        title: 'Sync failed',
+        message: getHumanReadableErrorMessage(error),
+        color: 'red',
+      });
+    } finally {
+      setSyncingOneRecord(false);
+    }
+  };
+
   // Cmd+S / Ctrl+S keyboard shortcut to save
   const handleSaveRef = useRef(handleSave);
   handleSaveRef.current = handleSave;
@@ -1029,34 +1079,15 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                           width: '33.333%',
                           padding: '8px 12px',
                           display: 'flex',
-                          alignItems: 'center',
+                          flexDirection: 'column',
+                          justifyContent: 'center',
+                          gap: 6,
                         }}
                       >
-                        <Group gap={8} wrap="nowrap" style={{ flex: 1 }}>
+                        <Group gap={8} wrap="nowrap">
                           <Text12Regular c="dimmed" tt="uppercase" style={{ whiteSpace: 'nowrap' }}>
                             Record preview
                           </Text12Regular>
-                          <Select
-                            size="xs"
-                            placeholder="Select file"
-                            data={
-                              hasMorePreviewFiles
-                                ? [...previewFileOptions, { value: '__load_more__', label: 'Load more files...' }]
-                                : previewFileOptions
-                            }
-                            value={selectedPreviewFile}
-                            onChange={(value) => {
-                              if (value === '__load_more__') {
-                                loadMorePreviewFiles();
-                                return;
-                              }
-                              setSelectedPreviewFile(value);
-                            }}
-                            searchable
-                            allowDeselect={false}
-                            nothingFoundMessage="No JSON files"
-                            style={{ flex: 1 }}
-                          />
                           {(() => {
                             const matchStatus = getMatchStatus();
                             return (
@@ -1080,6 +1111,42 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                             );
                           })()}
                           {previewLoading && <Loader size={14} />}
+                        </Group>
+                        <Group gap={8} wrap="nowrap">
+                          <Select
+                            size="xs"
+                            placeholder="Select file"
+                            data={
+                              hasMorePreviewFiles
+                                ? [...previewFileOptions, { value: '__load_more__', label: 'Load more files...' }]
+                                : previewFileOptions
+                            }
+                            value={selectedPreviewFile}
+                            onChange={(value) => {
+                              if (value === '__load_more__') {
+                                loadMorePreviewFiles();
+                                return;
+                              }
+                              setSelectedPreviewFile(value);
+                            }}
+                            searchable
+                            allowDeselect={false}
+                            nothingFoundMessage="No JSON files"
+                            style={{ flex: 1 }}
+                          />
+                          {!isNew && selectedPreviewFile && activePair?.sourceId && (
+                            <Tooltip label="Run sync for one record">
+                              <ButtonSecondaryOutline
+                                size="compact-xs"
+                                onClick={handleSyncOneRecord}
+                                disabled={syncingOneRecord || previewLoading || saving}
+                                loading={syncingOneRecord}
+                                leftSection={<StyledLucideIcon Icon={Play} size="sm" />}
+                              >
+                                Test Sync
+                              </ButtonSecondaryOutline>
+                            </Tooltip>
+                          )}
                         </Group>
                       </Box>
                     </Box>
