@@ -1,7 +1,7 @@
 import { Alert, Box, Center, Loader, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
@@ -20,12 +20,11 @@ function isNoConnectionsScratchmdError(message: string): boolean {
 
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [publishFilePath, setPublishFilePath] = useState<string | null>(null);
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
@@ -122,34 +121,6 @@ export function WorkspacePage() {
       setDownloading(false);
     }
   }, [workspace]);
-
-  const handleDelete = useCallback(async () => {
-    if (!workspace) return;
-
-    const confirmed = window.confirm(
-      'This will remove the local files only. The remote repo and remote workspace will stay. Continue?',
-    );
-    if (!confirmed) return;
-
-    try {
-      setDeleting(true);
-      await window.scratchDesktop.removeWorkspace(workspace.id);
-      notifications.show({
-        title: 'Local copy deleted',
-        message: `${workspace.name || 'Workspace'} was removed from this machine.`,
-        color: 'green',
-      });
-      void navigate('/');
-    } catch (err) {
-      notifications.show({
-        title: 'Delete failed',
-        message: err instanceof Error ? err.message : 'Failed to remove local workspace',
-        color: 'red',
-      });
-    } finally {
-      setDeleting(false);
-    }
-  }, [workspace, navigate]);
 
   const handleDataRefresh = useCallback(() => {
     setDataRefreshKey((current) => current + 1);
@@ -291,8 +262,6 @@ export function WorkspacePage() {
         isDownloaded={localPath !== null}
         downloading={downloading}
         onDownload={() => void handleDownload()}
-        deleting={deleting}
-        onDelete={() => void handleDelete()}
         onPublishAll={() => setPublishModalOpen(true)}
         onPullAll={() => setPullAllModalOpen(true)}
       />

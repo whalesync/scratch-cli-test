@@ -1,18 +1,12 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
+import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
-import { Group, Tooltip } from '@mantine/core';
+import { Group, Menu, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
-import {
-  Download,
-  HardDriveDownload as DownloadIcon,
-  FolderOpen,
-  HomeIcon,
-  Terminal,
-  Trash2,
-  Upload,
-} from 'lucide-react';
+import { ChevronDown, Download, HardDriveDownload as DownloadIcon, FolderOpen, Terminal, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ButtonDangerLight, ButtonSecondaryGhost } from '../../components/base/buttons';
+import logoColor from '../../assets/logo-color.svg';
+import { ButtonSecondaryGhost } from '../../components/base/buttons';
 import { Workspace } from '../../types/workspace';
 
 interface WorkspaceHeaderProps {
@@ -22,8 +16,6 @@ interface WorkspaceHeaderProps {
   isDownloaded: boolean;
   downloading: boolean;
   onDownload: () => void;
-  deleting: boolean;
-  onDelete: () => void;
   onPublishAll: () => void;
   onPullAll: () => void;
 }
@@ -35,8 +27,6 @@ export function WorkspaceHeader({
   isDownloaded,
   downloading,
   onDownload,
-  deleting,
-  onDelete,
   onPublishAll,
   onPullAll,
 }: WorkspaceHeaderProps) {
@@ -55,10 +45,10 @@ export function WorkspaceHeader({
         flexShrink: 0,
       }}
     >
-      {/* Back button + Workspace selector */}
+      {/* Back button (logo) + Workspace selector */}
       <Group gap="xs">
-        <IconButtonGhost onClick={() => void navigate('/')}>
-          <HomeIcon size={12} />
+        <IconButtonGhost onClick={() => void navigate('/')} px="6" w={48}>
+          <img src={logoColor} alt="Scratch" width={32} height={32} />
         </IconButtonGhost>
         <WorkspaceSwitcher currentWorkspaceId={workspace.id} currentWorkspaceName={workspace.name} />
       </Group>
@@ -88,46 +78,40 @@ export function WorkspaceHeader({
               Download
             </ButtonPrimaryLight>
           ))}
-        {compact ? (
-          <Tooltip label="Show in Finder">
-            <IconButtonGhost
-              size="compact-xs"
-              disabled={!targetPath}
+        <Menu shadow="md" position="bottom-end">
+          <Menu.Target>
+            {compact ? (
+              <Tooltip label="Open in...">
+                <IconButtonGhost size="compact-xs" disabled={!targetPath}>
+                  <FolderOpen size={12} />
+                </IconButtonGhost>
+              </Tooltip>
+            ) : (
+              <ButtonSecondaryGhost
+                size="compact-xs"
+                leftSection={<FolderOpen size={12} />}
+                rightSection={<ChevronDown size={10} />}
+                disabled={!targetPath}
+              >
+                Open in...
+              </ButtonSecondaryGhost>
+            )}
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              leftSection={<StyledLucideIcon Icon={FolderOpen} size="sm" />}
               onClick={() => void (targetPath && window.scratchDesktop.showInFolder(targetPath))}
             >
-              <FolderOpen size={12} />
-            </IconButtonGhost>
-          </Tooltip>
-        ) : (
-          <ButtonSecondaryGhost
-            size="compact-xs"
-            leftSection={<FolderOpen size={12} />}
-            disabled={!targetPath}
-            onClick={() => void (targetPath && window.scratchDesktop.showInFolder(targetPath))}
-          >
-            Show in Finder
-          </ButtonSecondaryGhost>
-        )}
-        {compact ? (
-          <Tooltip label="Open in Terminal">
-            <IconButtonGhost
-              size="compact-xs"
-              disabled={!targetPath}
+              {window.electron?.process?.platform === 'darwin' ? 'Open in Finder' : 'Open in File Explorer'}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<StyledLucideIcon Icon={Terminal} size="sm" />}
               onClick={() => void (targetPath && window.scratchDesktop.openInTerminal(targetPath))}
             >
-              <Terminal size={12} />
-            </IconButtonGhost>
-          </Tooltip>
-        ) : (
-          <ButtonSecondaryGhost
-            size="compact-xs"
-            leftSection={<Terminal size={12} />}
-            disabled={!targetPath}
-            onClick={() => void (targetPath && window.scratchDesktop.openInTerminal(targetPath))}
-          >
-            Open in Terminal
-          </ButtonSecondaryGhost>
-        )}
+              Open in Terminal
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
         {compact ? (
           <Tooltip label="Pull All">
             <IconButtonGhost size="compact-xs" disabled={!isDownloaded} onClick={() => void onPullAll()}>
@@ -159,29 +143,6 @@ export function WorkspaceHeader({
             >
               Publish All
             </ButtonSecondaryGhost>
-          ))}
-        {isDownloaded &&
-          (compact ? (
-            <Tooltip label="Remove Local Copy">
-              <IconButtonGhost
-                size="compact-xs"
-                color="red.6"
-                c="red.6"
-                loading={deleting}
-                onClick={() => void onDelete()}
-              >
-                <Trash2 size={12} />
-              </IconButtonGhost>
-            </Tooltip>
-          ) : (
-            <ButtonDangerLight
-              size="compact-xs"
-              leftSection={<Trash2 size={12} />}
-              loading={deleting}
-              onClick={() => void onDelete()}
-            >
-              Remove Local Copy
-            </ButtonDangerLight>
           ))}
       </Group>
     </Group>

@@ -1,8 +1,8 @@
 import { Box, Group, Loader, ScrollArea, Stack } from '@mantine/core';
-import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Braces, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
-import { Text12Medium, Text12Regular, TextMono12Regular, TextTitle2 } from '../../components/base/text';
+import { Text12Regular, TextMono12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { flattenObject } from '../../utils/flatten-object';
 import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
@@ -351,9 +351,50 @@ export const RecordDetailView = memo(function RecordDetailView({
           backgroundColor: 'var(--bg-panel)',
         }}
       >
-        <Box style={{ padding: '8px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
-          <Text12Medium c="var(--fg-muted)">Name</Text12Medium>
-        </Box>
+        <Group
+          gap={4}
+          align="center"
+          wrap="nowrap"
+          style={{ padding: '6px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}
+        >
+          <Text12Regular c="var(--fg-muted)" style={{ flex: 1 }}>
+            {selectedIndex + 1} of {rows.length}
+          </Text12Regular>
+          <IconButtonGhost
+            size="compact-xs"
+            onClick={handlePrev}
+            disabled={selectedIndex === 0}
+            styles={{
+              root: {
+                background: 'none',
+                '&:disabled': { background: 'none', border: 'none' },
+              },
+            }}
+          >
+            <StyledLucideIcon
+              Icon={ChevronUp}
+              size="sm"
+              c={selectedIndex === 0 ? 'var(--fg-divider)' : 'var(--fg-muted)'}
+            />
+          </IconButtonGhost>
+          <IconButtonGhost
+            size="compact-xs"
+            onClick={handleNext}
+            disabled={selectedIndex === rows.length - 1}
+            styles={{
+              root: {
+                background: 'none',
+                '&:disabled': { background: 'none', border: 'none' },
+              },
+            }}
+          >
+            <StyledLucideIcon
+              Icon={ChevronDown}
+              size="sm"
+              c={selectedIndex === rows.length - 1 ? 'var(--fg-divider)' : 'var(--fg-muted)'}
+            />
+          </IconButtonGhost>
+        </Group>
         <ScrollArea style={{ flex: 1 }}>
           {rows.map((row, i) => (
             <Box
@@ -384,27 +425,6 @@ export const RecordDetailView = memo(function RecordDetailView({
       <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
         {/* Header */}
         <Box style={{ padding: '8px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
-          <Group
-            justify="flex-end"
-            align="center"
-            wrap="nowrap"
-            gap={6}
-            style={{ paddingBottom: 8, marginBottom: 8, borderBottom: '0.5px solid var(--fg-divider)' }}
-          >
-            <Text12Regular c="var(--fg-muted)">
-              {selectedIndex + 1} of {rows.length}
-            </Text12Regular>
-            <IconButtonGhost onClick={handlePrev} disabled={selectedIndex === 0}>
-              <StyledLucideIcon Icon={ChevronUp} size="sm" />
-            </IconButtonGhost>
-            <IconButtonGhost onClick={handleNext} disabled={selectedIndex === rows.length - 1}>
-              <StyledLucideIcon Icon={ChevronDown} size="sm" />
-            </IconButtonGhost>
-            <IconButtonGhost onClick={onClose}>
-              <StyledLucideIcon Icon={X} size="sm" />
-            </IconButtonGhost>
-          </Group>
-
           <Group justify="space-between" align="center" wrap="nowrap">
             <TextTitle2 lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
               {recordName}
@@ -416,14 +436,14 @@ export const RecordDetailView = memo(function RecordDetailView({
                 onClick={handleAccept}
                 disabled={!currentRecordCliPath || !hasUnreviewedChanges}
               >
-                Accept
+                Accept all
               </ButtonSecondaryOutline>
               <ButtonSecondaryOutline
                 size="compact-xs"
                 onClick={handleReject}
                 disabled={!currentRecordCliPath || !hasUnreviewedChanges}
               >
-                Reject
+                Reject all
               </ButtonSecondaryOutline>
               {onPublishFile && (
                 <ButtonSecondaryOutline
@@ -431,20 +451,26 @@ export const RecordDetailView = memo(function RecordDetailView({
                   onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
                   disabled={!currentRecordCliPath || !hasPublishableChanges}
                 >
-                  Publish
+                  Publish record
                 </ButtonSecondaryOutline>
               )}
-              <ButtonSecondaryOutline
+              <IconButtonGhost
                 size="compact-xs"
                 onClick={() => setViewRaw((v) => !v)}
                 style={
                   viewRaw
-                    ? { backgroundColor: 'var(--mantine-color-blue-0)', borderColor: 'var(--mantine-color-blue-4)' }
+                    ? {
+                        backgroundColor: 'var(--highlight-fill)',
+                        outline: '1px solid var(--highlight-border)',
+                      }
                     : undefined
                 }
               >
-                View Raw
-              </ButtonSecondaryOutline>
+                <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
+              </IconButtonGhost>
+              <IconButtonGhost onClick={onClose}>
+                <StyledLucideIcon Icon={X} size="md" />
+              </IconButtonGhost>
             </Group>
           </Group>
         </Box>
