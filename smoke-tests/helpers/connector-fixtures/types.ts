@@ -11,6 +11,30 @@ export interface SeedResult {
   records: Array<{ id?: string; fields: Record<string, unknown> }>;
 }
 
+/**
+ * A column mapping in the smoke-test sync fixture format.
+ * `sourceColumnId` and `destinationColumnId` are dot-notation paths into the
+ * data folder schema (e.g. "fields.Name" for Airtable, "properties.email" for HubSpot).
+ */
+export interface SyncFixtureColumnMapping {
+  sourceColumnId: string;
+  destinationColumnId: string;
+}
+
+/**
+ * Result of seeding a source/destination pair for sync tests.
+ * The destination is described as a SeedResult so we can link a data folder to it,
+ * but it is typically empty (no records pre-seeded).
+ */
+export interface SyncPairSeed {
+  source: SeedResult;
+  destination: SeedResult;
+  /** Column mappings to use when creating the sync, using schema dot-paths. */
+  columnMappings: SyncFixtureColumnMapping[];
+  /** Record matching key — required for incremental update tests. */
+  recordMatching: SyncFixtureColumnMapping;
+}
+
 export interface ExpectedPublishState {
   /** Total expected record count after publish */
   totalRecords: number;
@@ -45,6 +69,15 @@ export interface ConnectorFixture {
 
   /** Seed the fake with a table that has linked-record fields (for FK tests) */
   seedWithReferences?(admin: FakeAdminClient): Promise<SeedResult>;
+
+  /**
+   * Seed the fake with a source table (with records) and a destination table (empty)
+   * suitable for sync tests, plus the column mappings to use.
+   */
+  seedSyncPair?(
+    admin: FakeAdminClient,
+    opts?: { recordCount?: number },
+  ): Promise<SyncPairSeed>;
 
   /** Dump all records from the fake for a given table */
   dumpRecords(

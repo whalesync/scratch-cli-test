@@ -1,5 +1,5 @@
 import { FakeAdminClient } from "../test-api-client";
-import { ConnectorFixture, SeedResult } from "./types";
+import { ConnectorFixture, SeedResult, SyncPairSeed } from "./types";
 
 const FAKE_HUBSPOT_URL =
   process.env.FAKE_HUBSPOT_URL ?? "http://localhost:4663";
@@ -59,6 +59,73 @@ export const hubspotFixture: ConnectorFixture = {
       tableName: "Contacts",
       recordCount,
       records,
+    };
+  },
+
+  async seedSyncPair(
+    admin: FakeAdminClient,
+    opts?: { recordCount?: number },
+  ): Promise<SyncPairSeed> {
+    const recordCount = opts?.recordCount ?? 5;
+
+    await admin.reset();
+
+    const sourceRecords: Array<{ fields: Record<string, unknown> }> = [];
+    const seedRecords: Array<{ properties: Record<string, string> }> = [];
+
+    for (let i = 0; i < recordCount; i++) {
+      const properties = {
+        email: `sync-contact${i + 1}@example.com`,
+        firstname: `Sync${i + 1}`,
+        lastname: `Last${i + 1}`,
+        company: `Sync Co ${i + 1}`,
+      };
+      seedRecords.push({ properties });
+      sourceRecords.push({
+        fields: {
+          "properties.email": properties.email,
+          "properties.firstname": properties.firstname,
+          "properties.lastname": properties.lastname,
+          "properties.company": properties.company,
+        },
+      });
+    }
+
+    // Seed contacts (source) with records, leave companies (destination) empty.
+    await admin.setup({
+      objectTypes: [
+        { objectType: "contacts", records: seedRecords },
+        { objectType: "companies", records: [] },
+      ],
+    });
+
+    return {
+      source: {
+        remoteTableId: ["contacts"],
+        tableName: "Contacts",
+        recordCount,
+        records: sourceRecords,
+      },
+      destination: {
+        remoteTableId: ["companies"],
+        tableName: "Companies",
+        recordCount: 0,
+        records: [],
+      },
+      columnMappings: [
+        {
+          sourceColumnId: "properties.firstname",
+          destinationColumnId: "properties.name",
+        },
+        {
+          sourceColumnId: "properties.email",
+          destinationColumnId: "properties.domain",
+        },
+      ],
+      recordMatching: {
+        sourceColumnId: "properties.email",
+        destinationColumnId: "properties.domain",
+      },
     };
   },
 

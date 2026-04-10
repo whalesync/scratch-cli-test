@@ -1,10 +1,12 @@
 import { FakeAdminClient } from "../test-api-client";
-import { ConnectorFixture, SeedResult } from "./types";
+import { ConnectorFixture, SeedResult, SyncPairSeed } from "./types";
 
 const FAKE_AIRTABLE_URL =
   process.env.FAKE_AIRTABLE_URL ?? "http://localhost:4656";
 const TEST_BASE_ID = "appSmokeTestBase";
 const TEST_TABLE_ID = "tblSmokeTestTable";
+const SYNC_SOURCE_TABLE_ID = "tblSyncSource";
+const SYNC_DEST_TABLE_ID = "tblSyncDest";
 
 export const airtableFixture: ConnectorFixture = {
   service: "AIRTABLE",
@@ -153,6 +155,93 @@ export const airtableFixture: ConnectorFixture = {
         { fields: { Name: "Author A" } },
         { fields: { Name: "Author B" } },
       ],
+    };
+  },
+
+  async seedSyncPair(
+    admin: FakeAdminClient,
+    opts?: { recordCount?: number },
+  ): Promise<SyncPairSeed> {
+    const recordCount = opts?.recordCount ?? 5;
+
+    await admin.reset();
+
+    const records: Array<{ fields: Record<string, unknown> }> = [];
+    for (let i = 0; i < recordCount; i++) {
+      records.push({
+        fields: {
+          Name: `Sync Record ${i + 1}`,
+          Status: i % 2 === 0 ? "Active" : "Inactive",
+          Count: i * 10,
+        },
+      });
+    }
+
+    const tableFields = [
+      { id: "fldName", name: "Name", type: "singleLineText" },
+      { id: "fldStatus", name: "Status", type: "singleLineText" },
+      { id: "fldCount", name: "Count", type: "number" },
+    ];
+
+    await admin.setup({
+      bases: [
+        {
+          id: TEST_BASE_ID,
+          name: "Smoke Test Base",
+          permissionLevel: "create",
+        },
+      ],
+      tables: [
+        {
+          baseId: TEST_BASE_ID,
+          tables: [
+            {
+              id: SYNC_SOURCE_TABLE_ID,
+              name: "Sync Source",
+              primaryFieldId: "fldName",
+              fields: tableFields,
+              views: [{ id: "viwDefault", name: "Grid view", type: "grid" }],
+            },
+            {
+              id: SYNC_DEST_TABLE_ID,
+              name: "Sync Dest",
+              primaryFieldId: "fldName",
+              fields: tableFields,
+              views: [{ id: "viwDefault", name: "Grid view", type: "grid" }],
+            },
+          ],
+        },
+      ],
+      records: [
+        { baseId: TEST_BASE_ID, tableId: SYNC_SOURCE_TABLE_ID, records },
+      ],
+    });
+
+    return {
+      source: {
+        remoteTableId: [TEST_BASE_ID, SYNC_SOURCE_TABLE_ID],
+        tableName: "Sync Source",
+        recordCount,
+        records,
+      },
+      destination: {
+        remoteTableId: [TEST_BASE_ID, SYNC_DEST_TABLE_ID],
+        tableName: "Sync Dest",
+        recordCount: 0,
+        records: [],
+      },
+      columnMappings: [
+        { sourceColumnId: "fields.Name", destinationColumnId: "fields.Name" },
+        {
+          sourceColumnId: "fields.Status",
+          destinationColumnId: "fields.Status",
+        },
+        { sourceColumnId: "fields.Count", destinationColumnId: "fields.Count" },
+      ],
+      recordMatching: {
+        sourceColumnId: "fields.Name",
+        destinationColumnId: "fields.Name",
+      },
     };
   },
 
