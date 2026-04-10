@@ -70,10 +70,10 @@ gitlab-runner start
 
 Add your GitLab username to the regex in **both** of these files:
 
-1. **`gitlab-ci/local-runners.yml`** — `.rules.local_runner_users` (routes MR jobs to your local runner):
+1. **`gitlab-ci/local-runners.yml`** — `.rules.local_runner_users_mr` (routes MR jobs to your local runner):
 
    ```yaml
-   - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|YOUR_USERNAME)$/'
+   local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|YOUR_USERNAME)$/'
    ```
 
 2. **`gitlab-ci/stages/01-build-and-test.yml`** — `.rules.skip_for_local_runner_users` (disables the shared-runner duplicates):
@@ -133,7 +133,7 @@ The `local integration test server` job runs identically to the shared-runner ve
 
 ## Opting out
 
-Remove your username from both opt-in lists (`.rules.local_runner_users` in `local-runners.yml` and `.rules.skip_for_local_runner_users` in `01-build-and-test.yml`) and your MR jobs will go back to shared runners.
+Remove your username from both opt-in lists (`.rules.local_runner_users_mr` in `local-runners.yml` and `.rules.skip_for_local_runner_users` in `01-build-and-test.yml`) and your MR jobs will go back to shared runners.
 
 ## Troubleshooting
 

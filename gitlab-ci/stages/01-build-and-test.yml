@@ -47,7 +47,7 @@ include:
 # =============================================================================
 
 # ✏️  ADD YOUR USERNAME HERE (2 of 2 — you must also update
-#    .rules.local_runner_users in gitlab-ci/local-runners.yml)
+#    .rules.local_runner_users_mr in gitlab-ci/local-runners.yml)
 .rules:
   skip_for_local_runner_users:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'

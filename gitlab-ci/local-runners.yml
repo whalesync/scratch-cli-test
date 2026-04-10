@@ -11,7 +11,7 @@
 # To opt in:
 # 1. Register a local runner (see docs/local-gitlab-runner.md)
 # 2. Add your username to BOTH regexes (see step 6 in the doc):
-#    a. .rules.local_runner_users below (routes jobs to your runner)
+#    a. .rules.local_runner_users_mr below (routes jobs to your runner)
 #    b. .rules.skip_for_local_runner_users in 01-build-and-test.yml
 #       (disables shared-runner duplicates)
 #
@@ -52,7 +52,6 @@ include:
   - "/gitlab-ci/stages/01-build-and-test.yml"
   - "/gitlab-ci/stages/01-smoke-tests.yml"
   - "/gitlab-ci/stages/01-cli-integration-tests.yml"
-  - "/scratch-desktop/.gitlab-ci-release.yml"
 
 .local-runner-defaults:
   tags:
@@ -126,14 +125,11 @@ include:
 
 # ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
 #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
-#    Note: update BOTH regexes below (local_runner_users and local_runner_users_master)
+#    NOTE: update the list of users in ALL rules below.
 .rules:
-  local_runner_users:
-    - if: &local-user-if '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
-  local_runner_users_master:
-    - if: &local-user-if-master '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
-  local_runner_users_prod:
-    - if: &local-user-if-prod '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_master: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_prod: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
 
 # -----------------------------------------------------------------------------
 # Client
@@ -146,7 +142,7 @@ local build and test client:
   artifacts:
     paths: []
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, client]
 
 local build client docker image for test:
@@ -155,7 +151,7 @@ local build client docker image for test:
     - .local-runner-defaults
     - .local-docker-build
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, client-docker]
 
 # -----------------------------------------------------------------------------
@@ -167,7 +163,7 @@ local build and test server:
     - .build-and-test-server
     - .local-runner-defaults
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, server]
 
 local integration test server:
@@ -175,7 +171,7 @@ local integration test server:
     - .integration-test-server
     - .local-runner-defaults
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, server]
 
 local build server docker image:
@@ -184,7 +180,7 @@ local build server docker image:
     - .local-runner-defaults
     - .local-docker-build
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, server-docker]
 
 # -----------------------------------------------------------------------------
@@ -196,7 +192,7 @@ local build and test scratch-git:
     - .build-and-test-scratch-git
     - .local-runner-defaults
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, scratch-git]
 
 local build scratch-git docker image:
@@ -205,7 +201,7 @@ local build scratch-git docker image:
     - .local-runner-defaults
     - .local-docker-build
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, scratch-git-docker]
 
 # -----------------------------------------------------------------------------
@@ -217,7 +213,7 @@ local build and test scratch-desktop:
     - .build-and-test-scratch-desktop
     - .local-runner-defaults
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, scratch-desktop]
 
 # -----------------------------------------------------------------------------
@@ -230,7 +226,7 @@ local smoke tests:
     - .local-runner-defaults
     - .local-docker-build
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, smoke-tests]
 
 # -----------------------------------------------------------------------------
@@ -242,166 +238,6 @@ local dummy job:
     - .dummy-job
     - .local-runner-defaults
   rules:
-    - if: *local-user-if
+    - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, dummy]
 
-# -----------------------------------------------------------------------------
-# Build CLI for Desktop (macOS only — native aarch64-apple-darwin build)
-# -----------------------------------------------------------------------------
-
-local build-cli-for-desktop-test:
-  extends:
-    - .build_cli_for_desktop
-    - .local-runner-defaults
-  variables:
-    SCRATCH_DEFAULT_URL: "https://test-api.scratch.md"
-  rules:
-    - if: *local-user-if
-      changes:
-        - scratch-git-2/**/*
-        - scratch-desktop/**/*
-
-# -----------------------------------------------------------------------------
-# Desktop Prod Releases — macOS (builds .dmg + .zip, no Linux)
-#
-# These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
-# See docs/local-gitlab-runner.md for setup instructions.
-# -----------------------------------------------------------------------------
-
-"Release desktop macOS app [Local Runner] (patch version)":
-  extends:
-    - .release_desktop_prod_job
-    - .local-macos-runner-defaults
-  needs:
-    - job: local build-cli-for-desktop-test
-      artifacts: true
-      optional: true
-  before_script:
-    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
-  variables:
-    RELEASE_TYPE: "patch"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
-  rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
-    - if: *local-user-if-master
-      when: manual
-      allow_failure: true
-    - if: *local-user-if-prod
-      when: manual
-      allow_failure: true
-
-"Release desktop macOS app [Local Runner] (minor version)":
-  extends:
-    - .release_desktop_prod_job
-    - .local-macos-runner-defaults
-  needs:
-    - job: local build-cli-for-desktop-test
-      artifacts: true
-      optional: true
-  before_script:
-    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
-  variables:
-    RELEASE_TYPE: "minor"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
-  rules:
-    - if: *local-user-if-master
-      when: manual
-      allow_failure: true
-    - if: *local-user-if-prod
-      when: manual
-      allow_failure: true
-
-"Release desktop macOS app [Local Runner] (major version)":
-  extends:
-    - .release_desktop_prod_job
-    - .local-macos-runner-defaults
-  needs:
-    - job: local build-cli-for-desktop-test
-      artifacts: true
-      optional: true
-  before_script:
-    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
-  variables:
-    RELEASE_TYPE: "major"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
-  rules:
-    - if: *local-user-if-master
-      when: manual
-      allow_failure: true
-    - if: *local-user-if-prod
-      when: manual
-      allow_failure: true
-
-# -----------------------------------------------------------------------------
-# Desktop Test Releases — macOS (builds .dmg + .zip, no Linux)
-#
-# These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
-# See docs/local-gitlab-runner.md for setup instructions.
-# -----------------------------------------------------------------------------
-
-"TEST: Release desktop macOS app [Local Runner] (patch version)":
-  extends:
-    - .release_desktop_test_job
-    - .local-macos-runner-defaults
-  needs:
-    - job: local build-cli-for-desktop-test
-      artifacts: true
-      optional: true
-  before_script:
-    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
-  variables:
-    RELEASE_TYPE: "patch"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
-  rules:
-    - if: *local-user-if
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
-    - if: *local-user-if-master
-      when: manual
-      allow_failure: true
-
-"TEST: Release desktop macOS app [Local Runner] (minor version)":
-  extends:
-    - .release_desktop_test_job
-    - .local-macos-runner-defaults
-  needs:
-    - job: local build-cli-for-desktop-test
-      artifacts: true
-      optional: true
-  before_script:
-    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
-  variables:
-    RELEASE_TYPE: "minor"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
-  rules:
-    - if: *local-user-if-master
-      when: manual
-      allow_failure: true
-
-"TEST: Release desktop macOS app [Local Runner] (major version)":
-  extends:
-    - .release_desktop_test_job
-    - .local-macos-runner-defaults
-  needs:
-    - job: local build-cli-for-desktop-test
-      artifacts: true
-      optional: true
-  before_script:
-    - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
-  variables:
-    RELEASE_TYPE: "major"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
-  rules:
-    - if: *local-user-if-master
-      when: manual
-      allow_failure: true
