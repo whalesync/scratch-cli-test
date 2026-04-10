@@ -469,6 +469,45 @@ export async function readSchema(workspacePath: string, folderName: string): Pro
 // ── Internal helpers ──
 
 /**
+ * Extracts flattened dot-separated property keys from a JSON Schema in declaration order.
+ * Recurses into nested `object` type schemas so that e.g. `{ properties: { id: …, fields: { properties: { Name: … } } } }`
+ * yields `['id', 'fields.Name']`.
+ */
+function flattenSchemaPropertyKeys(schema: Record<string, unknown>, prefix = ''): string[] {
+  const props = schema?.properties as Record<string, Record<string, unknown>> | undefined;
+  if (!props || typeof props !== 'object') return [];
+  const keys: string[] = [];
+  for (const [key, value] of Object.entries(props)) {
+    const flatKey = prefix ? `${prefix}.${key}` : key;
+    const nested = value?.properties as Record<string, unknown> | undefined;
+    if (nested && typeof nested === 'object' && value?.type === 'object') {
+      keys.push(...flattenSchemaPropertyKeys(value, flatKey));
+    } else {
+      keys.push(flatKey);
+    }
+  }
+  return keys;
+}
+
+/**
+ * Orders columns according to schema property declaration order.
+ * Columns present in the schema come first (in schema order), followed by any
+ * remaining columns sorted alphabetically.
+ */
+function orderColumnsBySchema(columnSet: Set<string>, schema: Record<string, unknown> | null): string[] {
+  if (!schema) return Array.from(columnSet).sort((a, b) => a.localeCompare(b));
+  const schemaKeys = flattenSchemaPropertyKeys(schema);
+  const ordered: string[] = [];
+  for (const key of schemaKeys) {
+    if (columnSet.has(key)) ordered.push(key);
+  }
+  const remaining = Array.from(columnSet)
+    .filter((k) => !ordered.includes(k))
+    .sort((a, b) => a.localeCompare(b));
+  return [...ordered, ...remaining];
+}
+
+/**
  * Flattens a nested object into dot-separated keys.
  * `{ id: "a", fields: { field1: "b" } }` → `{ id: "a", "fields.field1": "b" }`
  * Arrays and non-plain-object values are kept as leaf values (not recursed into).
@@ -932,10 +971,12 @@ export async function readDiffGridDataPage(
   const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
   const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
 
-  const [workingFiles, dirtyFiles, masterFiles] = await Promise.all([
+  const relPath = relative(workspacePath, folderPath);
+  const [workingFiles, dirtyFiles, masterFiles, schema] = await Promise.all([
     readFolderFiles(workingPath),
     readFolderFiles(dirtyPath),
     readFolderFiles(masterPath),
+    readConnectionSchema(workspacePath, relPath),
   ]);
 
   // Include master-only files so approved deletions (dirty removed, master still has it) remain visible.
@@ -981,7 +1022,7 @@ export async function readDiffGridDataPage(
 
   return {
     rows: pagedRows,
-    columns: Array.from(columnSet),
+    columns: orderColumnsBySchema(columnSet, (schema?.schema as Record<string, unknown>) ?? null),
     total: filteredRows.length,
     summary,
     filterCounts,

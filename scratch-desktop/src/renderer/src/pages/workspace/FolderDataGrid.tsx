@@ -14,10 +14,11 @@ import DataEditor, {
 import '@glideapps/glide-data-grid/dist/index.css';
 import { Box, Group, Loader, Portal, Stack, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { Maximize2 } from 'lucide-react';
+import { Columns3, Maximize2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { FolderGridHeaderMenu } from './FolderGridHeaderMenu';
@@ -283,6 +284,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [editingCell, setEditingCell] = useState<Item | null>(null);
   const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [visibleColumnIds, setVisibleColumnIds] = useState<string[] | null>(null);
+  const [columnPickerRect, setColumnPickerRect] = useState<DOMRect | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -362,6 +365,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setCellPopover(null);
     setPage(1);
     setReloadKey(0);
+    setVisibleColumnIds(null);
+    setColumnPickerRect(null);
   }, [selectedFolderPath]);
 
   useEffect(() => {
@@ -471,20 +476,54 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return null;
   }, [schema]);
 
-  const columns: GridColumn[] = useMemo(() => {
+  /** All column IDs in schema order, with title column first. */
+  const allColumnIds: string[] = useMemo(() => {
     const cols = diffData?.columns ?? [];
-    let ordered = cols;
     if (titleColumnId && cols.includes(titleColumnId)) {
-      ordered = [titleColumnId, ...cols.filter((c) => c !== titleColumnId)];
+      return [titleColumnId, ...cols.filter((c) => c !== titleColumnId)];
     }
-    return ordered.map((name) => ({
-      id: name,
-      title: name,
-      width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
-      hasMenu: true,
-      menuIcon: GridColumnMenuIcon.Dots,
-    }));
-  }, [columnWidths, diffData?.columns, titleColumnId]);
+    return cols;
+  }, [diffData?.columns, titleColumnId]);
+
+  /** The effective list of visible column IDs (defaults to all when picker hasn't been used yet). */
+  const effectiveVisibleColumns: string[] = useMemo(
+    () => visibleColumnIds ?? allColumnIds,
+    [visibleColumnIds, allColumnIds],
+  );
+
+  const columns: GridColumn[] = useMemo(() => {
+    const visibleSet = new Set(effectiveVisibleColumns);
+    const ordered = effectiveVisibleColumns.filter((c) => allColumnIds.includes(c));
+    return ordered
+      .filter((name) => visibleSet.has(name))
+      .map((name) => ({
+        id: name,
+        title: name,
+        width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
+        hasMenu: true,
+        menuIcon: GridColumnMenuIcon.Dots,
+      }));
+  }, [allColumnIds, columnWidths, effectiveVisibleColumns]);
+
+  /** Column IDs that have unreviewed changes in at least one row. */
+  const unreviewedColumnIds: string[] = useMemo(() => {
+    if (!diffData) return [];
+    const set = new Set<string>();
+    for (const row of diffData.rows) {
+      for (const field of row.__changedFields) set.add(field);
+    }
+    return allColumnIds.filter((c) => set.has(c));
+  }, [allColumnIds, diffData]);
+
+  /** Column IDs that have approved (unpublished) changes in at least one row. */
+  const approvedColumnIds: string[] = useMemo(() => {
+    if (!diffData) return [];
+    const set = new Set<string>();
+    for (const row of diffData.rows) {
+      for (const field of row.__unpublishedFields) set.add(field);
+    }
+    return allColumnIds.filter((c) => set.has(c));
+  }, [allColumnIds, diffData]);
 
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
@@ -1025,7 +1064,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }}
     >
       {showFilterBar && (
-        <Box style={{ padding: '6px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
+        <Box
+          style={{
+            padding: '6px 12px',
+            borderBottom: '0.5px solid var(--fg-divider)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <Group gap={6} align="center">
             <Text12Medium c="var(--fg-muted)" style={{ marginRight: 4 }}>
               Filter
@@ -1050,7 +1097,47 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               />
             ))}
           </Group>
+          <Box
+            component="button"
+            type="button"
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+              if (columnPickerRect) {
+                setColumnPickerRect(null);
+              } else {
+                setColumnPickerRect(e.currentTarget.getBoundingClientRect());
+              }
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '2px 8px',
+              borderRadius: 10,
+              border: columnPickerRect ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
+              backgroundColor: columnPickerRect ? 'var(--mantine-color-blue-0)' : 'transparent',
+              cursor: 'pointer',
+              lineHeight: 1,
+            }}
+          >
+            <StyledLucideIcon Icon={Columns3} size="xs" c="var(--fg-muted)" />
+            <Text12Medium c={columnPickerRect ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
+              Columns
+              {visibleColumnIds && visibleColumnIds.length < allColumnIds.length ? ` (${visibleColumnIds.length})` : ''}
+            </Text12Medium>
+          </Box>
         </Box>
+      )}
+      {columnPickerRect && (
+        <ColumnPickerMenu
+          allColumns={allColumnIds}
+          visibleColumns={effectiveVisibleColumns}
+          titleColumnId={titleColumnId}
+          unreviewedColumnIds={unreviewedColumnIds}
+          approvedColumnIds={approvedColumnIds}
+          anchorRect={columnPickerRect}
+          onChangeVisible={setVisibleColumnIds}
+          onClose={() => setColumnPickerRect(null)}
+        />
       )}
 
       {!selectedFolderPath && (
