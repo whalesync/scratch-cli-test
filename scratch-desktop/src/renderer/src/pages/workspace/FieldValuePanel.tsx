@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Group, Stack } from '@mantine/core';
+import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
 import { Check, RotateCcw } from 'lucide-react';
 import { memo } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -36,10 +36,9 @@ function IconActionButton({
   const styles =
     tone === 'approve'
       ? {
-          backgroundColor: 'var(--highlight-fill)',
-          color: 'var(--highlight-text)',
-          border: '1.5px solid var(--highlight-border)',
-          fontWeight: 500,
+          backgroundColor: 'var(--mantine-color-green-1)',
+          color: 'var(--mantine-color-green-8)',
+          border: '1px solid var(--mantine-color-green-3)',
         }
       : tone === 'undo'
         ? {
@@ -54,30 +53,32 @@ function IconActionButton({
           };
 
   return (
-    <ActionIcon
-      variant="transparent"
-      size={ACTION_BUTTON_SIZE}
-      radius={3}
-      aria-label={label}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={onClick}
-      styles={{
-        root: {
-          ...styles,
-          minWidth: ACTION_BUTTON_SIZE,
-          minHeight: ACTION_BUTTON_SIZE,
-          padding: 3,
-          boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
-          '&:hover': {
-            filter: 'brightness(0.97)',
+    <Tooltip label={label} position="left" withArrow zIndex={10020}>
+      <ActionIcon
+        variant="transparent"
+        size={ACTION_BUTTON_SIZE}
+        radius={3}
+        aria-label={label}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onClick}
+        styles={{
+          root: {
+            ...styles,
+            minWidth: ACTION_BUTTON_SIZE,
+            minHeight: ACTION_BUTTON_SIZE,
+            padding: 3,
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
+            '&:hover': {
+              filter: 'brightness(0.97)',
+            },
           },
-        },
-      }}
-    >
-      <span style={{ display: 'inline-flex', pointerEvents: 'none' }}>
-        <StyledLucideIcon Icon={icon} size={14} strokeWidth={2.25} />
-      </span>
-    </ActionIcon>
+        }}
+      >
+        <span style={{ display: 'inline-flex', pointerEvents: 'none' }}>
+          <StyledLucideIcon Icon={icon} size={14} strokeWidth={2.25} />
+        </span>
+      </ActionIcon>
+    </Tooltip>
   );
 }
 
@@ -195,7 +196,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
           style={{ flexShrink: 0, width: ACTION_BUTTON_SIZE + 4, padding: '2px 0' }}
         >
           {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
-          {onUndo && <IconActionButton label="Undo" onClick={onUndo} tone="undo" icon={RotateCcw} />}
+          {onUndo && <IconActionButton label="Reject" onClick={onUndo} tone="undo" icon={RotateCcw} />}
         </Stack>
       )}
     </Group>

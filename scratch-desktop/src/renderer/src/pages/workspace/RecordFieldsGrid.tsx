@@ -69,7 +69,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
         styles={{
           table: { tableLayout: 'fixed' },
           th: { backgroundColor: 'var(--bg-panel)', position: 'sticky', top: 0, zIndex: 1 },
-          td: { verticalAlign: 'top', paddingTop: 0, paddingBottom: 0 },
+          td: { verticalAlign: 'top', paddingTop: 4, paddingBottom: 4 },
         }}
       >
         <Table.Thead>
@@ -85,7 +85,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
         <Table.Tbody>
           {rows.map((row) => (
             <Table.Tr key={row.fieldName}>
-              <Table.Td style={{ width: 280 }}>
+              <Table.Td style={{ width: 280, height: 40 }} py="xs">
                 <Text12Medium
                   c="var(--fg-primary)"
                   style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
@@ -114,6 +114,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                           minRows={1}
                           value={row.editValue ?? row.value}
                           onChange={(e) => row.onEditValueChange?.(e.currentTarget.value)}
+                          onFocus={(e) => e.currentTarget.select()}
                           onBlur={() => row.onEditCommit?.()}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' && !e.shiftKey) {
@@ -127,13 +128,16 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                             }
                           }}
                           styles={{
+                            wrapper: { margin: 0 },
                             input: {
                               backgroundColor: 'var(--bg-base)',
                               borderRadius: 0,
-                              padding: '12px 16px',
+                              border: 'none',
+                              outline: '2px solid var(--highlight-border)',
+                              padding: '8px 12px',
                               fontFamily: 'monospace',
                               fontSize: 13,
-                              lineHeight: 1.6,
+                              lineHeight: 1.5,
                             },
                           }}
                         />
@@ -171,7 +175,11 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
               maxWidth: Math.max(280, window.innerWidth - 24),
             }}
           >
-            <FieldReferenceStrip value={editingRow.referenceValue} onUndo={editingRow.onUndo} />
+            <FieldReferenceStrip
+              value={editingRow.referenceValue}
+              label={editingRow.diffKind === 'unpublished' ? 'Last published' : 'Last approved'}
+              onUndo={editingRow.onUndo}
+            />
           </Box>
         </Portal>
       )}

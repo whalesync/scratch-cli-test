@@ -1,7 +1,7 @@
-import { Box, Group, Loader, ScrollArea, Stack } from '@mantine/core';
-import { Braces, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Box, Button, Group, Loader, ScrollArea, Stack } from '@mantine/core';
+import { Braces, Check, ChevronDown, ChevronUp, RotateCcw, Upload, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
+import { IconButtonGhost } from '../../components/base/buttons';
 import { Text12Regular, TextMono12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { flattenObject } from '../../utils/flatten-object';
@@ -431,28 +431,50 @@ export const RecordDetailView = memo(function RecordDetailView({
             </TextTitle2>
 
             <Group gap={6} align="center" wrap="nowrap">
-              <ButtonSecondaryOutline
+              <Button
                 size="compact-xs"
+                variant="filled"
+                color="green.1"
+                c="green.8"
+                leftSection={<Check size={12} />}
                 onClick={handleAccept}
                 disabled={!currentRecordCliPath || !hasUnreviewedChanges}
+                styles={{ root: { '&[data-disabled]': { opacity: 0.4 } } }}
               >
-                Accept all
-              </ButtonSecondaryOutline>
-              <ButtonSecondaryOutline
+                Approve all
+              </Button>
+              <Button
                 size="compact-xs"
+                variant="filled"
+                color="red.1"
+                c="red.8"
+                leftSection={<RotateCcw size={12} />}
                 onClick={handleReject}
                 disabled={!currentRecordCliPath || !hasUnreviewedChanges}
+                styles={{ root: { '&[data-disabled]': { opacity: 0.4 } } }}
               >
                 Reject all
-              </ButtonSecondaryOutline>
+              </Button>
               {onPublishFile && (
-                <ButtonSecondaryOutline
+                <Button
                   size="compact-xs"
+                  variant="filled"
+                  color="var(--highlight-fill)"
+                  c="var(--highlight-text)"
+                  leftSection={<Upload size={12} />}
                   onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
                   disabled={!currentRecordCliPath || !hasPublishableChanges}
+                  styles={{
+                    root: {
+                      border: '1.5px solid var(--highlight-border)',
+                      fontWeight: 500,
+                      '--button-hover': 'var(--highlight-fill-hover)',
+                      '&[data-disabled]': { opacity: 0.4 },
+                    },
+                  }}
                 >
                   Publish record
-                </ButtonSecondaryOutline>
+                </Button>
               )}
               <IconButtonGhost
                 size="compact-xs"

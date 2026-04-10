@@ -1405,7 +1405,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                     onUndo={undoAction}
                   />
                 ) : (
-                  <FieldReferenceStrip value={fromValue} onUndo={undoAction} />
+                  <FieldReferenceStrip
+                    value={fromValue}
+                    label={diffKind === 'unpublished' ? 'Last published' : 'Last approved'}
+                    onUndo={undoAction}
+                  />
                 )}
               </Box>
             </Portal>
