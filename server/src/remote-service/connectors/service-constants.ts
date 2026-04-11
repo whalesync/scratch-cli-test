@@ -27,4 +27,5 @@ export const Service = {
   BREVO: 'BREVO',
   INTERCOM: 'INTERCOM',
   STRIPE: 'STRIPE',
+  AFFINITY: 'AFFINITY',
 } as const;

@@ -1,5 +1,6 @@
 import { getAuthToken } from "@spinner/test-utils";
 import { TestApiClient } from "../helpers/test-api-client";
+import { affinityFixture } from "../helpers/connector-fixtures/affinity.fixture";
 import { airtableFixture } from "../helpers/connector-fixtures/airtable.fixture";
 import { hubspotFixture } from "../helpers/connector-fixtures/hubspot.fixture";
 import { ConnectorFixture } from "../helpers/connector-fixtures/types";
@@ -7,7 +8,7 @@ import { createTestWorkspace, pullAndWait } from "../helpers/test-fixtures";
 
 const SERVER_URL = process.env.SMOKE_TEST_SERVER_URL ?? "http://localhost:3020";
 
-const fixtures: ConnectorFixture[] = [airtableFixture, hubspotFixture];
+const fixtures: ConnectorFixture[] = [airtableFixture, hubspotFixture, affinityFixture];
 
 describe.each(fixtures)("Pull: $displayName", (fixture) => {
   let api: TestApiClient;

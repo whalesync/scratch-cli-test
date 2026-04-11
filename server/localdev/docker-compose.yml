@@ -44,6 +44,10 @@ services:
     build: ../../test-api-fakes/hubspot
     ports:
       - '4653:4653'
+  fake-affinity:
+    build: ../../test-api-fakes/affinity
+    ports:
+      - '4654:4654'
 
 volumes:
   mongodb_data:

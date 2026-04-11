@@ -160,7 +160,7 @@ cleanup() {
 
     # Stop fake API containers
     echo -e "${MAGENTA}Stopping fake API containers...${NC}"
-    (cd "$SCRIPT_DIR/server/localdev" && docker compose stop fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful fake-memberstack fake-hubspot 2>/dev/null) || true
+    (cd "$SCRIPT_DIR/server/localdev" && docker compose stop fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful fake-memberstack fake-hubspot fake-affinity 2>/dev/null) || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -186,7 +186,7 @@ fi
 
 # Start fake connector APIs
 echo -e "${MAGENTA}[FAKES]${NC} Starting fake connector APIs..."
-(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d --build fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful fake-memberstack fake-hubspot 2>&1) || {
+(cd "$SCRIPT_DIR/server/localdev" && docker compose up -d --build fake-airtable fake-wordpress fake-quickbooks fake-moco fake-audienceful fake-memberstack fake-hubspot fake-affinity 2>&1) || {
     echo -e "${RED}Failed to start fake API containers${NC}"
     exit 1
 }
@@ -194,7 +194,7 @@ echo -e "${GREEN}Fake connector APIs started${NC}"
 
 # Wait for all fakes to be ready
 echo -e "${MAGENTA}[FAKES]${NC} Waiting for fake APIs to be ready..."
-for port in 4646 4647 4648 4649 4651 4652 4653; do
+for port in 4646 4647 4648 4649 4651 4652 4653 4654; do
     for i in $(seq 1 30); do
         if curl -s -o /dev/null "http://localhost:$port/test/health" 2>/dev/null; then
             break
@@ -450,10 +450,96 @@ curl -s -X POST http://localhost:4653/test/setup -H 'Content-Type: application/j
   ]
 }' > /dev/null
 echo -e "${GREEN}Fake HubSpot seeded (3 contacts, 2 companies, 2 deals)${NC}"
+
+# Seed fake Affinity with starter data — 3 lists (one per entity type),
+# with realistic field metadata and a few entries each. Designed to exercise:
+#   - All three entity types (company / person / opportunity)
+#   - Multiple field type categories (list / enriched / global)
+#   - A non-trivial valueType (dropdown) so the schema builder is exercised
+#   - The array→keyed-object transform on real-shaped fields
+echo -e "${MAGENTA}[FAKE-AFFINITY]${NC} Seeding starter data..."
+curl -s -X POST http://localhost:4654/test/setup -H 'Content-Type: application/json' -d '{
+  "lists": [
+    { "id": 1001, "name": "Companies (Pipeline)", "type": "company", "ownerId": 1, "creatorId": 1 },
+    { "id": 1002, "name": "People (Network)",     "type": "person",  "ownerId": 1, "creatorId": 1 },
+    { "id": 1003, "name": "Deals",                "type": "opportunity", "ownerId": 1, "creatorId": 1 }
+  ],
+  "fieldsByList": {
+    "1001": [
+      { "id": "field-1001-stage",     "name": "Stage",     "type": "list",     "valueType": "dropdown",       "enrichmentSource": null },
+      { "id": "field-1001-owner",     "name": "Owner",     "type": "list",     "valueType": "person",         "enrichmentSource": null },
+      { "id": "affinity-data-location","name": "Location", "type": "enriched", "valueType": "location",       "enrichmentSource": "affinity-data" }
+    ],
+    "1002": [
+      { "id": "field-1002-role",      "name": "Role",      "type": "list",     "valueType": "filterable-text","enrichmentSource": null },
+      { "id": "field-1002-priority",  "name": "Priority",  "type": "list",     "valueType": "dropdown",       "enrichmentSource": null }
+    ],
+    "1003": [
+      { "id": "field-1003-amount",    "name": "Amount",    "type": "list",     "valueType": "number",         "enrichmentSource": null },
+      { "id": "field-1003-stage",     "name": "Stage",     "type": "list",     "valueType": "dropdown",       "enrichmentSource": null }
+    ]
+  },
+  "entriesByList": {
+    "1001": [
+      {
+        "id": 5001, "type": "company", "listId": 1001, "createdAt": "2025-01-15T10:00:00Z", "creatorId": 1,
+        "entity": {
+          "id": 7001, "name": "Acme Corp", "domain": "acme.example.com", "domains": ["acme.example.com"], "isGlobal": true,
+          "fields": [
+            { "id": "field-1001-stage", "name": "Stage", "type": "list", "enrichmentSource": null, "value": { "type": "dropdown", "data": { "id": 1, "text": "Active" } } },
+            { "id": "affinity-data-location", "name": "Location", "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "location", "data": { "city": "San Francisco", "country": "United States" } } }
+          ]
+        }
+      },
+      {
+        "id": 5002, "type": "company", "listId": 1001, "createdAt": "2025-02-01T14:30:00Z", "creatorId": 1,
+        "entity": {
+          "id": 7002, "name": "Globex Inc", "domain": "globex.example.com", "domains": ["globex.example.com"], "isGlobal": true,
+          "fields": [
+            { "id": "field-1001-stage", "name": "Stage", "type": "list", "enrichmentSource": null, "value": { "type": "dropdown", "data": { "id": 2, "text": "Pending" } } }
+          ]
+        }
+      }
+    ],
+    "1002": [
+      {
+        "id": 5101, "type": "person", "listId": 1002, "createdAt": "2025-01-20T09:00:00Z", "creatorId": 1,
+        "entity": {
+          "id": 7101, "firstName": "Alice", "lastName": "Chen", "primaryEmailAddress": "alice@acme.example.com", "emailAddresses": ["alice@acme.example.com"], "type": "external",
+          "fields": [
+            { "id": "field-1002-role", "name": "Role", "type": "list", "enrichmentSource": null, "value": { "type": "filterable-text", "data": "CTO" } }
+          ]
+        }
+      },
+      {
+        "id": 5102, "type": "person", "listId": 1002, "createdAt": "2025-02-10T11:15:00Z", "creatorId": 1,
+        "entity": {
+          "id": 7102, "firstName": "Bob", "lastName": "Smith", "primaryEmailAddress": "bob@globex.example.com", "emailAddresses": ["bob@globex.example.com"], "type": "external",
+          "fields": [
+            { "id": "field-1002-role", "name": "Role", "type": "list", "enrichmentSource": null, "value": { "type": "filterable-text", "data": "PM" } }
+          ]
+        }
+      }
+    ],
+    "1003": [
+      {
+        "id": 5201, "type": "opportunity", "listId": 1003, "createdAt": "2025-03-01T08:00:00Z", "creatorId": 1,
+        "entity": {
+          "id": 7201, "name": "Acme Upsell $50k", "listId": 1003,
+          "fields": [
+            { "id": "field-1003-amount", "name": "Amount", "type": "list", "enrichmentSource": null, "value": { "type": "number", "data": 50000 } },
+            { "id": "field-1003-stage", "name": "Stage", "type": "list", "enrichmentSource": null, "value": { "type": "dropdown", "data": { "id": 1, "text": "Negotiation" } } }
+          ]
+        }
+      }
+    ]
+  }
+}' > /dev/null
+echo -e "${GREEN}Fake Affinity seeded (3 lists, 7 fields, 5 entries)${NC}"
 echo ""
 
 # Set URL overrides so the server redirects connector API calls to fakes
-export API_URL_OVERRIDES="https://api.airtable.com=http://localhost:4646,https://test.wp.local=http://localhost:4647,https://quickbooks.api.intuit.com=http://localhost:4648,https://sandbox-quickbooks.api.intuit.com=http://localhost:4648,https://test.mocoapp.com=http://localhost:4649,https://app.audienceful.com=http://localhost:4651,https://admin.memberstack.com=http://localhost:4652,https://api.hubapi.com=http://localhost:4653"
+export API_URL_OVERRIDES="https://api.airtable.com=http://localhost:4646,https://test.wp.local=http://localhost:4647,https://quickbooks.api.intuit.com=http://localhost:4648,https://sandbox-quickbooks.api.intuit.com=http://localhost:4648,https://test.mocoapp.com=http://localhost:4649,https://app.audienceful.com=http://localhost:4651,https://admin.memberstack.com=http://localhost:4652,https://api.hubapi.com=http://localhost:4653,https://api.affinity.co=http://localhost:4654"
 
 # Start Client (Next.js on port 3000)
 echo -e "${BLUE}[CLIENT]${NC} Starting Next.js dev server on port 3000..."

@@ -84,6 +84,18 @@ services:
       timeout: 5s
       retries: 10
 
+  fake-affinity:
+    build:
+      context: ../test-api-fakes/affinity
+    ports:
+      - "4664:4654"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget -qO- http://localhost:4654/test/health || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
   # Run migrations before starting the server
   migrate:
     build:
@@ -114,7 +126,7 @@ services:
       REDIS_PORT: 6379
       SCRATCH_GIT_API_URL: http://scratch-git-2:3100
       SCRATCH_GIT_BACKEND_URL: http://scratch-git-2:3101
-      API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646,https://admin.memberstack.com=http://fake-memberstack:4652,https://api.hubapi.com=http://fake-hubspot:4653"
+      API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646,https://admin.memberstack.com=http://fake-memberstack:4652,https://api.hubapi.com=http://fake-hubspot:4653,https://api.affinity.co=http://fake-affinity:4654"
       ENCRYPTION_MASTER_KEY: "12345678901234567890123456789012"
       USE_JOBS: "true"
       # Clerk auth — override these via .env or environment
@@ -155,6 +167,8 @@ services:
         condition: service_healthy
       fake-hubspot:
         condition: service_healthy
+      fake-affinity:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     healthcheck:
@@ -176,6 +190,7 @@ services:
       FAKE_AIRTABLE_URL: http://fake-airtable:4646
       FAKE_MEMBERSTACK_URL: http://fake-memberstack:4652
       FAKE_HUBSPOT_URL: http://fake-hubspot:4653
+      FAKE_AFFINITY_URL: http://fake-affinity:4654
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set CLERK_SECRET_KEY for smoke tests}
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:?Set CLERK_PUBLISHABLE_KEY for smoke tests}
       INTEGRATION_TEST_USER_ID: ${INTEGRATION_TEST_USER_ID:?Set INTEGRATION_TEST_USER_ID for smoke tests}
@@ -187,4 +202,6 @@ services:
       fake-memberstack:
         condition: service_healthy
       fake-hubspot:
+        condition: service_healthy
+      fake-affinity:
         condition: service_healthy

@@ -1,6 +1,7 @@
 // Barrel import — triggers connector self-registration via side effects.
 // Import this file once (e.g. in connectors.module.ts) to populate the connector registry.
 
+import './affinity/affinity-connector';
 import './airtable/airtable-connector';
 import './audienceful/audienceful-connector';
 import './brevo/brevo-connector';
