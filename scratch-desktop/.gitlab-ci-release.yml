@@ -39,11 +39,21 @@ Build production CLI for desktop app:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
-    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: "$CI_MERGE_REQUEST_IID"
       when: manual
       allow_failure: true
-    - if: "$CI_MERGE_REQUEST_IID"
-      changes: !reference [.changes, scratch-desktop]
+
+Local build production CLI for desktop app:
+  extends:
+    - .build_cli_for_desktop
+    - .local-runner-defaults
+  variables:
+    SCRATCH_DEFAULT_URL: "https://api.scratch.md"
+  rules:
+    - if: !reference [.rules, local_runner_users_prod]
+      when: manual
+      allow_failure: true
+    - if: !reference [.rules, local_runner_users_mr]
       when: manual
       allow_failure: true
 
@@ -58,15 +68,19 @@ Build test CLI for desktop app:
     - if: "$CI_MERGE_REQUEST_IID"
       when: manual
 
-Local Build test CLI for desktop app:
+Local build test CLI for desktop app:
   extends:
     - .build_cli_for_desktop
     - .local-runner-defaults
   variables:
     SCRATCH_DEFAULT_URL: "https://test-api.scratch.md"
   rules:
+    - if: !reference [.rules, local_runner_users_master]
+      when: manual
+      allow_failure: true
     - if: !reference [.rules, local_runner_users_mr]
       when: manual
+      allow_failure: true
 
 # PROD RELEASE JOBS (prod branch)
 .release_desktop_prod_job:
@@ -90,10 +104,6 @@ Local Build test CLI for desktop app:
   script:
     - chmod +x scripts/release_public.sh
     - ./scripts/release_public.sh $RELEASE_TYPE
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod"'
-      when: manual
-      allow_failure: true
 
 Release desktop Linux and Windows apps:
   extends: .release_desktop_prod_job
@@ -109,11 +119,7 @@ Release desktop Linux and Windows apps:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
-    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: manual
-      allow_failure: true
     - if: "$CI_MERGE_REQUEST_IID"
-      changes: !reference [.changes, scratch-desktop]
       when: manual
       allow_failure: true
 
@@ -139,13 +145,8 @@ Release desktop Linux and Windows apps:
   script:
     - chmod +x scripts/release_test.sh
     - ./scripts/release_test.sh $RELEASE_TYPE
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: manual
-      allow_failure: true
-    - !reference [.rules, skip_for_local_runner_users]
 
-"TEST: Release desktop Linux and Windows apps":
+Release test desktop Linux and Windows apps:
   extends: .release_desktop_test_job
   inputs:
     RELEASE_TYPE:
@@ -156,27 +157,27 @@ Release desktop Linux and Windows apps:
         - "minor"
         - "major"
   rules:
+    - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
-    - !reference [.rules, skip_for_local_runner_users]
     - if: "$CI_MERGE_REQUEST_IID"
       when: manual
       allow_failure: true
 
 # -----------------------------------------------------------------------------
-# Local Runner: Desktop Prod Releases — macOS (builds .dmg + .zip, no Linux)
+# Local runner: Desktop Prod Releases — macOS (builds .dmg + .zip, no Linux)
 #
 # These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
 # See docs/local-gitlab-runner.md for setup instructions.
 # -----------------------------------------------------------------------------
 
-Local Release desktop macOS app:
+Local release desktop macOS app:
   extends:
     - .release_desktop_prod_job
     - .local-macos-runner-defaults
   needs:
-    - job: Local Build test CLI for desktop app
+    - job: Local build production CLI for desktop app
       artifacts: true
       optional: false
   before_script:
@@ -194,30 +195,26 @@ Local Release desktop macOS app:
         - "minor"
         - "major"
   rules:
-    - if: !reference [.rules, local_runner_users_mr]
-      changes: !reference [.changes, scratch-desktop]
-      when: manual
-      allow_failure: true
-    - if: !reference [.rules, local_runner_users_master]
-      when: manual
-      allow_failure: true
     - if: !reference [.rules, local_runner_users_prod]
+      when: manual
+      allow_failure: true
+    - if: !reference [.rules, local_runner_users_mr]
       when: manual
       allow_failure: true
 
 # -----------------------------------------------------------------------------
-# Local Runner: Desktop Test Releases — macOS (builds .dmg + .zip, no Linux)
+# Local runner: Desktop Test Releases — macOS (builds .dmg + .zip, no Linux)
 #
 # These require a shell-executor runner tagged local-macos-$GITLAB_USER_LOGIN.
 # See docs/local-gitlab-runner.md for setup instructions.
 # -----------------------------------------------------------------------------
 
-"TEST: Local Release desktop macOS app":
+Local release test desktop macOS app:
   extends:
     - .release_desktop_test_job
     - .local-macos-runner-defaults
   needs:
-    - job: Local Build test CLI for desktop app
+    - job: Local build test CLI for desktop app
       artifacts: true
       optional: false
   before_script:
@@ -235,10 +232,9 @@ Local Release desktop macOS app:
         - "minor"
         - "major"
   rules:
-    - if: !reference [.rules, local_runner_users_mr]
-      changes: !reference [.changes, scratch-desktop]
+    - if: !reference [.rules, local_runner_users_master]
       when: manual
       allow_failure: true
-    - if: !reference [.rules, local_runner_users_master]
+    - if: !reference [.rules, local_runner_users_mr]
       when: manual
       allow_failure: true
