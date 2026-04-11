@@ -1,6 +1,8 @@
-import { Text12Regular, Text13Regular } from '@/components/base/text';
+import { ButtonSecondaryOutline } from '@/components/base/buttons';
+import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
+import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
-import { Bug, Settings } from 'lucide-react';
+import { Bug, LinkIcon, Settings, SettingsIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
 import { useDevTools } from '../../hooks/use-dev-tools';
@@ -58,9 +60,26 @@ export function WorkspaceSidebar({
         ) : (
           <>
             {localFolders.length === 0 && (
-              <Text12Regular c="dimmed" px="sm" py="xs">
-                No folders yet
-              </Text12Regular>
+              <Stack align="center" gap="xs" px="sm" py="xl">
+                <Box style={{ opacity: 0.3 }}>
+                  <StyledLucideIcon Icon={LinkIcon} size="lg" c="var(--fg-muted)" />
+                </Box>
+                <Text13Medium c="var(--fg-primary)">No connections yet</Text13Medium>
+                <Text12Regular c="var(--fg-secondary)" ta="center" maw={200}>
+                  Connect a service to see your data.
+                </Text12Regular>
+                <ButtonSecondaryOutline
+                  size="xs"
+                  mt={4}
+                  leftSection={<StyledLucideIcon Icon={SettingsIcon} size="sm" />}
+                  onClick={() => {
+                    const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
+                    void window.scratchAuth.openExternal(`${webUrl}/workspace/${workspace.id}/connections`);
+                  }}
+                >
+                  Manage connections
+                </ButtonSecondaryOutline>
+              </Stack>
             )}
             <FolderTree
               localFolders={localFolders}

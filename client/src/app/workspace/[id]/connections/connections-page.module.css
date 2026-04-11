@@ -1,0 +1,244 @@
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.5rem 2rem 2rem;
+  padding-bottom: 68px; /* clear sticky bottom bar */
+}
+
+/* ── Top bar ── */
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+}
+
+/* ── Service block (card) ── */
+.serviceBlock {
+  border: 1px solid var(--fg-divider);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-panel);
+  margin-bottom: 8px;
+}
+
+.serviceBlockError {
+  border-color: var(--mantine-color-red-3);
+}
+
+/* ── Service header row ── */
+.serviceRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  min-height: 48px;
+  transition: background 0.1s;
+}
+
+.serviceRowWithTables {
+  border-bottom: 1px solid var(--fg-divider);
+}
+
+.serviceRow:hover {
+  background: var(--bg-selected);
+}
+
+.serviceRow:hover .rowActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Service icon wrapper ── */
+.serviceIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ── Name + dot group ── */
+.serviceNameGroup {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Status dot ── */
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusDotGreen {
+  background: var(--mantine-color-green-6);
+}
+
+.statusDotRed {
+  background: var(--mantine-color-red-6);
+}
+
+/* ── Error label ── */
+.errorLabel {
+  font-size: 12px;
+  color: var(--mantine-color-red-6);
+  flex: 1;
+}
+
+/* ── Row actions (hover-to-reveal) ── */
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+
+/* ── Action button (tiny inline) ── */
+.actionBtn {
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 400;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--fg-divider);
+  background: var(--bg-panel);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.actionBtn:hover {
+  background: var(--bg-selected);
+  color: var(--fg-primary);
+}
+
+.actionBtnDanger {
+  color: var(--mantine-color-red-6);
+  border-color: var(--mantine-color-red-3);
+}
+
+.actionBtnDanger:hover {
+  background: var(--mantine-color-red-0);
+}
+
+/* ── Group separator row ── */
+.groupRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--fg-divider);
+  background: var(--bg-base);
+}
+
+/* ── Table row ── */
+.tableRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px 8px 40px;
+  border-bottom: 1px solid var(--fg-divider);
+  min-height: 38px;
+  transition: background 0.1s;
+}
+
+.tableRowNested {
+  padding-left: 56px;
+}
+
+.tableRow:last-child {
+  border-bottom: none;
+}
+
+.tableRow:hover {
+  background: var(--bg-selected);
+}
+
+.tableRow:hover .rowActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Empty connection "no tables" row ── */
+.emptyTablesRow {
+  padding: 10px 14px 10px 40px;
+}
+
+/* ── Zero/empty state ── */
+.zeroState {
+  text-align: center;
+  padding: 4.5rem 2rem;
+  border: 1.5px dashed var(--fg-divider);
+  border-radius: 12px;
+}
+
+.zeroIcon {
+  margin-bottom: 14px;
+  opacity: 0.3;
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Sticky bottom bar ── */
+.bottomBar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 52px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--fg-divider);
+  display: flex;
+  align-items: center;
+  z-index: 10;
+}
+
+.bottomBarInner {
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settingsLink {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--fg-secondary);
+  transition: color 0.1s;
+}
+
+.settingsLink:hover {
+  color: var(--fg-primary);
+}
+
+.userPill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition: color 0.1s;
+  position: relative;
+}
+
+.userPill:hover {
+  color: var(--fg-primary);
+}
