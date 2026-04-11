@@ -21,7 +21,7 @@ export default function ConnectionsPage() {
   const isLoading = isLoadingConnections || isLoadingFolders;
 
   // Build a map of connectorAccountId -> data folders for nesting
-  const foldersByConnection = new Map<string, typeof dataFolderGroups[number]['dataFolders']>();
+  const foldersByConnection = new Map<string, (typeof dataFolderGroups)[number]['dataFolders']>();
   for (const group of dataFolderGroups) {
     for (const folder of group.dataFolders) {
       if (folder.connectorAccountId) {
@@ -38,9 +38,7 @@ export default function ConnectionsPage() {
         title="Connections"
         actions={
           <Group gap="sm" align="center">
-            {workbook && (
-              <Text13Regular c="var(--fg-secondary)">{workbook.name}</Text13Regular>
-            )}
+            {workbook && <Text13Regular c="var(--fg-secondary)">{workbook.name}</Text13Regular>}
             <ButtonPrimarySolid
               leftSection={<StyledLucideIcon Icon={PlusIcon} size="sm" />}
               onClick={() => {
@@ -54,9 +52,7 @@ export default function ConnectionsPage() {
       />
       <MainContent.Body>
         <Box p="md">
-          {isLoading && (
-            <Text13Regular c="dimmed">Loading connections...</Text13Regular>
-          )}
+          {isLoading && <Text13Regular c="dimmed">Loading connections...</Text13Regular>}
 
           {!isLoading && (!connectorAccounts || connectorAccounts.length === 0) && (
             <Text13Regular c="dimmed">No connections yet. Connect a service to get started.</Text13Regular>
@@ -86,9 +82,7 @@ export default function ConnectionsPage() {
                     >
                       <Group gap="xs" wrap="nowrap">
                         <Text13Medium>{connection.displayName || serviceName}</Text13Medium>
-                        {connection.displayName && (
-                          <Text13Regular c="dimmed">{serviceName}</Text13Regular>
-                        )}
+                        {connection.displayName && <Text13Regular c="dimmed">{serviceName}</Text13Regular>}
                       </Group>
                       <ConnectionMenu />
                     </Group>

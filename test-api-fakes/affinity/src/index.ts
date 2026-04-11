@@ -23,7 +23,9 @@ export function createApp(): express.Express {
     if (retryAfter !== null) {
       res.set("Retry-After", String(retryAfter));
       res.status(429).json({
-        errors: [{ code: "rate_limited", message: "Too many requests (simulated)" }],
+        errors: [
+          { code: "rate_limited", message: "Too many requests (simulated)" },
+        ],
       });
       return;
     }

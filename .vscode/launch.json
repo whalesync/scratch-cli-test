@@ -18,29 +18,20 @@
       "request": "launch",
       "cwd": "${workspaceFolder}/scratch-desktop",
       "runtimeExecutable": "${workspaceFolder}/scratch-desktop/node_modules/.bin/electron",
-      "args": [
-        "."
-      ],
+      "args": ["."],
       "outputCapture": "std",
       "showAsyncStacks": true,
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/scratch-desktop/out/**/*.js"
-      ]
+      "outFiles": ["${workspaceFolder}/scratch-desktop/out/**/*.js"]
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "Debug scratchmd CLI",
       "program": "${workspaceFolder}/scratch-git-2/target/debug/scratchmd",
-      "args": [
-        "workspaces",
-        "list"
-      ],
+      "args": ["workspaces", "list"],
       "cwd": "${workspaceFolder}/scratch-local-data",
-      "sourceLanguages": [
-        "rust"
-      ]
-    },
+      "sourceLanguages": ["rust"]
+    }
   ]
 }

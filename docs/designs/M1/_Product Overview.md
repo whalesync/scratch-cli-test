@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Vision doc covers *why* we're building Scratch. This doc is the product overview for the **Scratch Desktop milestone** — what we're building, what we're shipping, and what the product looks like. A designer can sketch wireframes and an engineer can architect the local data model from this doc. 
+The Vision doc covers _why_ we're building Scratch. This doc is the product overview for the **Scratch Desktop milestone** — what we're building, what we're shipping, and what the product looks like. A designer can sketch wireframes and an engineer can architect the local data model from this doc.
 
 ## Milestone
 
@@ -53,25 +53,24 @@ flowchart LR
     style D fill:#d4edda,stroke:#198754
 ```
 
-
 ### Key Concepts
 
 These are the nouns of the product. Mostly the same as current Scratch except as noted.
 
-| Concept | Changes | Client / Server | Description |
-|---------|---------|-----------------|-------------|
-| Workspace | — | Both | Top-level container. Owns a git repo. User switches between workspaces. |
-| Local Workspace | ⚠️ Updated | Client | A folder on disk where the workspace's dirty branch is cloned |
-| ConnectorAccount | — | Server | Stored credentials + config for an external service connection. |
-| Git filestore | ⚠️ Branch model changed | Both | Still a git repo with record files. No changes to the filestore itself. Branch usage changes slightly, see **Branch Model** section above. |
-| Record File | — | Both | A JSON file representing one record. Still JSON format. |
-| Jobs | — | Server | Async background tasks (pull, publish, sync). |
-| Schedule | 🚫 N/A | Server | Automated scheduling for Pull, Publish, or Sync actions. Out of scope for Desktop. |
-| Sync / SyncMapping | 🚫 N/A | Server | Config for syncing between folders. Keeps existing, not working on it. No client-side support. |
-
+| Concept            | Changes                 | Client / Server | Description                                                                                                                                |
+| ------------------ | ----------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Workspace          | —                       | Both            | Top-level container. Owns a git repo. User switches between workspaces.                                                                    |
+| Local Workspace    | ⚠️ Updated              | Client          | A folder on disk where the workspace's dirty branch is cloned                                                                              |
+| ConnectorAccount   | —                       | Server          | Stored credentials + config for an external service connection.                                                                            |
+| Git filestore      | ⚠️ Branch model changed | Both            | Still a git repo with record files. No changes to the filestore itself. Branch usage changes slightly, see **Branch Model** section above. |
+| Record File        | —                       | Both            | A JSON file representing one record. Still JSON format.                                                                                    |
+| Jobs               | —                       | Server          | Async background tasks (pull, publish, sync).                                                                                              |
+| Schedule           | 🚫 N/A                  | Server          | Automated scheduling for Pull, Publish, or Sync actions. Out of scope for Desktop.                                                         |
+| Sync / SyncMapping | 🚫 N/A                  | Server          | Config for syncing between folders. Keeps existing, not working on it. No client-side support.                                             |
 
 ### Desktop App
-*Wireframes are WIP and should clarify this. Diff views will sound pretty similar to what we had this fall, picture that or Joel's demos until we work through details*
+
+_Wireframes are WIP and should clarify this. Diff views will sound pretty similar to what we had this fall, picture that or Joel's demos until we work through details_
 
 #### Main Screen: Data & Diff View
 
@@ -82,6 +81,7 @@ The main screen is a **data table that is also the diff viewer.** There's no sep
 **With changes (agent has edited files):** Same grid, but proposed records and columns are visually highlighted. Defaults to showing modified records and columns only, with a toggle to show everything.
 
 **Folder summary view:**
+
 - Grid view of the records in the folder
 - Visual indicators: modified, added, deleted
 - Filter controls: all records / modified only / added only / deleted only
@@ -90,6 +90,7 @@ The main screen is a **data table that is also the diff viewer.** There's no sep
 - Also buttons to 'discard accepted changes'
 
 **Record detail view:**
+
 - Column-style detail view showing all fields for one record
 - Before/after for each changed field
 - Can accept or reject changes per-field
@@ -98,14 +99,15 @@ The main screen is a **data table that is also the diff viewer.** There's no sep
 - Free text editing still available — user can manually tweak before accepting
 
 **Diff bases:**
+
 - We have three versions of each text: proposed, accepted, published.
 - Proposed vs accepted is the main diff we care about. This is where you're reviewing and accumulating changes, and your actions are accept vs discard.
 - Accepted vs published is also visualized, but less loudly. We will need to provide visualizations and actions on both (TBD)
 
 **What's out this milestone:**
+
 - Offline mode. You need a network connection for anything to work for now.
 - [controversial] Manually editing the cells in the record detail page
-
 
 #### Toolbar
 
@@ -128,6 +130,7 @@ The local workspace at `~/Documents/Scratch/{workspace name}/` contains record f
 How to get started with an agent: open the workspace in a terminal or point Claude at the directory. That's it.
 
 **What's out this milestone:**
+
 - "Advertising to agents" (MCP server, tool descriptions, etc.)
 - Automated feedback loops back to the agent for validation
 - Manually specifying the local directory to store the workspace
@@ -137,15 +140,16 @@ How to get started with an agent: open the workspace in a terminal or point Clau
 **"Check against schema" button** — validates records against the JSON schema and flags violations. These are just mechanical checks (field types, required fields, etc.) with plenty of false positives and negatives. That's acceptable for this milestone.
 
 **What's out this milestone**
+
 - Better jsonpath validators
 - Automated fixing of validation errors
 - User-defined validation rules
 - deeper schema enforcement
 
-
 ### Publish Flow
 
 **Standard publish (all accepted changes):**
+
 1. User clicks Publish in toolbar
 2. If there are proposed-but-not-accepted changes, show an alert: "You have X unreviewed changes that won't be included"
 3. Push accepted changes to remote dirty branch
@@ -156,16 +160,17 @@ How to get started with an agent: open the workspace in a terminal or point Clau
 **Single-record publish:**
 Same flow as above, but scoped to one record. This builds confidence; the user can publish one record first to verify everything works before pushing hundreds. The UI needs a per-record "Publish just this one" action.
 
-
 ### Web App (This Milestone)
 
 The web app is not the focus but it doesn't go away and needs some adjustments. No big rework of primitives or endpoints should keep this cheap — but we should flag early if Desktop work forces breaking changes.
 
 **Stays as-is:**
+
 - Server-side endpoints and primitives unchanged, unless it would make our work easier
 - Existing UI stays the same for current users (hidden from new users by default)
 - Current users keep the same experience
 
 **New for this milestone:**
+
 - New home page for new users: limited to a link to install the desktop app and an advanced button to see the current UI.
 - Dedicated focused screen for connection setup and editing. It can use all the same dialogs, but pared down to a dedicated page. We can put off dealing with oauth etc in the desktop client. This covers connections auth, reauth, picking the tables to link, and configuring the table link settings.

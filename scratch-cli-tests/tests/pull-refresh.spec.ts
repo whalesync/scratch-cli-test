@@ -111,7 +111,9 @@ describeIfPostgres("Pull refresh — remote changes appear after re-pull", () =>
   afterAll(async () => {
     const shouldPreserve = preserveOnFailure && hasFailed;
     if (shouldPreserve) {
-      console.log(`[preserve] Keeping workbook ${workspaceId} and local dir ${workspaceDir} for inspection`);
+      console.log(
+        `[preserve] Keeping workbook ${workspaceId} and local dir ${workspaceDir} for inspection`,
+      );
     }
     if (workspaceId && !shouldPreserve) deleteWorkspace(cli, workspaceId);
     if (workspaceDir && !shouldPreserve) {
@@ -126,70 +128,73 @@ describeIfPostgres("Pull refresh — remote changes appear after re-pull", () =>
 
   it("should reflect remote database changes after re-pull and re-download", async () => {
     try {
-    // --- Verify initial state ---
-    const jsonFilesBefore = findJsonFiles(workspaceDir);
-    expect(jsonFilesBefore).toHaveLength(3);
+      // --- Verify initial state ---
+      const jsonFilesBefore = findJsonFiles(workspaceDir);
+      expect(jsonFilesBefore).toHaveLength(3);
 
-    const recordsBefore = jsonFilesBefore.map((f) =>
-      JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
-    );
-    const aiPost = recordsBefore.find(
-      (r) => r.title === "The Rise of AI-Powered Development Tools",
-    );
-    expect(aiPost).toBeDefined();
-    expect(aiPost!.author).toBe("Sarah Chen");
+      const recordsBefore = jsonFilesBefore.map(
+        (f) =>
+          JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
+      );
+      const aiPost = recordsBefore.find(
+        (r) => r.title === "The Rise of AI-Powered Development Tools",
+      );
+      expect(aiPost).toBeDefined();
+      expect(aiPost!.author).toBe("Sarah Chen");
 
-    // --- Mutate the database directly ---
-    const client = new Client({ connectionString: postgresUrl });
-    await client.connect();
-    try {
-      await client.query(
-        `UPDATE integration_blog_posts
+      // --- Mutate the database directly ---
+      const client = new Client({ connectionString: postgresUrl });
+      await client.connect();
+      try {
+        await client.query(
+          `UPDATE integration_blog_posts
          SET author = 'Sarah Chen-Updated', updated_dt = NOW()
          WHERE title = 'The Rise of AI-Powered Development Tools'`,
+        );
+      } finally {
+        await client.end();
+      }
+
+      // --- Re-pull from the server (fetches latest from Postgres) ---
+      const pullResult = cli.run(
+        ["linked", "--workspace", workspaceId, "pull", linkedFolderId],
+        { cwd: workspaceDir },
       );
-    } finally {
-      await client.end();
-    }
+      expect(pullResult.exitCode).toBe(0);
 
-    // --- Re-pull from the server (fetches latest from Postgres) ---
-    const pullResult = cli.run(
-      ["linked", "--workspace", workspaceId, "pull", linkedFolderId],
-      { cwd: workspaceDir },
-    );
-    expect(pullResult.exitCode).toBe(0);
+      // --- Re-download files ---
+      const downloadResult = cli.run(["files", "download"], {
+        cwd: workspaceDir,
+      });
+      expect(downloadResult.exitCode).toBe(0);
 
-    // --- Re-download files ---
-    const downloadResult = cli.run(["files", "download"], {
-      cwd: workspaceDir,
-    });
-    expect(downloadResult.exitCode).toBe(0);
+      // --- Verify the updated data appears locally ---
+      const jsonFilesAfter = findJsonFiles(workspaceDir);
+      expect(jsonFilesAfter).toHaveLength(3);
 
-    // --- Verify the updated data appears locally ---
-    const jsonFilesAfter = findJsonFiles(workspaceDir);
-    expect(jsonFilesAfter).toHaveLength(3);
+      const recordsAfter = jsonFilesAfter.map(
+        (f) =>
+          JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
+      );
+      const updatedPost = recordsAfter.find(
+        (r) => r.title === "The Rise of AI-Powered Development Tools",
+      );
+      expect(updatedPost).toBeDefined();
+      expect(updatedPost!.author).toBe("Sarah Chen-Updated");
 
-    const recordsAfter = jsonFilesAfter.map((f) =>
-      JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
-    );
-    const updatedPost = recordsAfter.find(
-      (r) => r.title === "The Rise of AI-Powered Development Tools",
-    );
-    expect(updatedPost).toBeDefined();
-    expect(updatedPost!.author).toBe("Sarah Chen-Updated");
+      // --- Verify the other records are unchanged ---
+      const debtPost = recordsAfter.find(
+        (r) =>
+          r.title === "Why Software Companies Are Rethinking Technical Debt",
+      );
+      expect(debtPost).toBeDefined();
+      expect(debtPost!.author).toBe("Marcus Rivera");
 
-    // --- Verify the other records are unchanged ---
-    const debtPost = recordsAfter.find(
-      (r) => r.title === "Why Software Companies Are Rethinking Technical Debt",
-    );
-    expect(debtPost).toBeDefined();
-    expect(debtPost!.author).toBe("Marcus Rivera");
-
-    const startupPost = recordsAfter.find(
-      (r) => r.title === "Small Teams and Big AI: The New Startup Advantage",
-    );
-    expect(startupPost).toBeDefined();
-    expect(startupPost!.author).toBe("Priya Kapoor");
+      const startupPost = recordsAfter.find(
+        (r) => r.title === "Small Teams and Big AI: The New Startup Advantage",
+      );
+      expect(startupPost).toBeDefined();
+      expect(startupPost!.author).toBe("Priya Kapoor");
     } catch (err) {
       hasFailed = true;
       throw err;

@@ -11,7 +11,8 @@ import { store } from "../store";
  * Smoke fixtures use `fake-smoke-test-key` and pre-baked seed scripts use
  * arbitrary tokens — none of those match this pattern, so they pass.
  */
-const OBVIOUSLY_INVALID_TOKEN = /(^|[-_])(not-?a-?real|invalid|bad-token)([-_]|$)/i;
+const OBVIOUSLY_INVALID_TOKEN =
+  /(^|[-_])(not-?a-?real|invalid|bad-token)([-_]|$)/i;
 
 /**
  * Validate `Authorization: Bearer <non-empty-token>` and decrement live quota

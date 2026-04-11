@@ -13,12 +13,12 @@ Everything in Scratch serves this loop:
 **Ingest:** Connect to a source of truth (Shopify, Airtable, etc.) and pull data into a local sandbox where agents can work without breaking production.
 
 **Edit → Review → Repeat** (this is where users live):
+
 - **Edit:** An agent makes changes — rewrites, reclassifications, bulk updates.
 - **Review:** The user reviews the diff, batch-approving or tweaking the agent's work.
 - Repeat until confident. This loop should be fast enough to run many times, not once.
 
 **Publish:** Push the verified data back to the source of truth.
-
 
 ## Examples
 
@@ -29,7 +29,6 @@ With Scratch: Ingest your Shopify catalog. Point an agent at the titles and desc
 **Merging scraped LinkedIn data into HubSpot.** Your sales team scraped 2,000 LinkedIn profiles and you need to merge them into your HubSpot CRM — matching against existing contacts, filling in missing fields, and flagging duplicates. Today this is a nightmare of spreadsheet VLOOKUPs, manual deduplication, and a terrifying CSV import where you find out what went wrong after it's already in your CRM.
 
 With Scratch: Ingest your HubSpot contacts as the source of truth. Import the LinkedIn CSV as a set of proposed changes. An agent matches records, merges fields, and flags conflicts. You review the diff — which contacts are new, which are updates, which are duplicates the agent resolved. You adjust the ones that look wrong, run another review pass, and publish when you're confident.
-
 
 ## Pillars
 
@@ -49,8 +48,8 @@ The core loop is between the agent and the review, so they need to be next to ea
 
 ## What's out
 
- - Our own agent. We integrate with them, we don't build our own.
- - Rich manual editing or data entry. The editing focus is always in the context of reviewing changes.
- - Ongoing live syncing. That's whalesync. We can build toward it, but it's an emergent feature, not day 1 selling point.
- - Web based editing scenario. It's not part of the core loop.
- - Real-time multi-user scenarios. A workspace can share connections, credentials and data hubs, but the editing experience is solo.
+- Our own agent. We integrate with them, we don't build our own.
+- Rich manual editing or data entry. The editing focus is always in the context of reviewing changes.
+- Ongoing live syncing. That's whalesync. We can build toward it, but it's an emergent feature, not day 1 selling point.
+- Web based editing scenario. It's not part of the core loop.
+- Real-time multi-user scenarios. A workspace can share connections, credentials and data hubs, but the editing experience is solo.

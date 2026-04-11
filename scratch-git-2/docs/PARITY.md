@@ -34,15 +34,15 @@ subdirectory). The positional argument is not supported.
 
 These are additions, not regressions.
 
-| Command                | Purpose                                             |
-| ---------------------- | --------------------------------------------------- |
-| `files force-upload`   | Force-push dirty branch without three-way merge     |
-| `syncs run-local`      | Run a sync entirely against local files (no server) |
-| `syncs validate-local` | Validate local sync config files                    |
-| `plan-publish`         | Build a publish plan by diffing dirty vs master     |
-| `publish-from-git`     | Trigger server-side publish from local plan         |
-| `build-index`          | Rebuild SQLite file index for the workspace         |
-| `dump-index`           | Print index contents (debugging)                    |
+| Command                      | Purpose                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------- |
+| `files force-upload`         | Force-push dirty branch without three-way merge                                          |
+| `syncs run-local`            | Run a sync entirely against local files (no server)                                      |
+| `syncs validate-local`       | Validate local sync config files                                                         |
+| `plan-publish`               | Build a publish plan by diffing dirty vs master                                          |
+| `publish-from-git`           | Trigger server-side publish from local plan                                              |
+| `build-index`                | Rebuild SQLite file index for the workspace                                              |
+| `dump-index`                 | Print index contents (debugging)                                                         |
 | `files download --on-delete` | Workspace sync on download: detects added/removed connections and reconciles local state |
 
 V2 `workspaces init` is also richer in Rust — it auto-creates master worktrees

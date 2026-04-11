@@ -8,7 +8,11 @@ import { createTestWorkspace, pullAndWait } from "../helpers/test-fixtures";
 
 const SERVER_URL = process.env.SMOKE_TEST_SERVER_URL ?? "http://localhost:3020";
 
-const fixtures: ConnectorFixture[] = [airtableFixture, hubspotFixture, affinityFixture];
+const fixtures: ConnectorFixture[] = [
+  airtableFixture,
+  hubspotFixture,
+  affinityFixture,
+];
 
 describe.each(fixtures)("Pull: $displayName", (fixture) => {
   let api: TestApiClient;

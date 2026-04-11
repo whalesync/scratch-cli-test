@@ -4,8 +4,8 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { Text13Medium, Text13Regular, Text16Regular, TextTitle2 } from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbooks } from '@/hooks/use-workbooks';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
 import { isExperimentEnabled } from '@/types/server-entities/users';
@@ -70,11 +70,7 @@ function DesktopLandingPage({ displayName, lastWorkbookId }: { displayName: stri
       )}
 
       {/* Bottom-left user menu */}
-      <Stack
-        gap={0}
-        style={{ position: 'fixed', bottom: 0, left: 0, width: 220 }}
-        py="xs"
-      >
+      <Stack gap={0} style={{ position: 'fixed', bottom: 0, left: 0, width: 220 }} py="xs">
         <Link href={RouteUrls.settingsPageUrl} style={{ textDecoration: 'none' }}>
           <UnstyledButton px="sm" py={8} style={{ width: '100%' }}>
             <Group gap={8} wrap="nowrap">

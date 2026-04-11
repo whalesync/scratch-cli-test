@@ -39,7 +39,8 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--pause") {
-      args.pause = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
+      args.pause =
+        argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
       continue;
     }
     if (arg.startsWith("--pause=")) {
@@ -47,7 +48,8 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--stop") {
-      args.stop = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
+      args.stop =
+        argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
       continue;
     }
     if (arg.startsWith("--stop=")) {
@@ -527,12 +529,29 @@ function changeRemoteDirty(workspaceDir, recordNumber, apiToken) {
   // Strip the connection dir prefix — the bare repo stores files without it.
   const repoRelPath = relPath.split(path.sep).slice(1).join(path.sep);
 
-  const remoteUrl = runCommand("git", ["--git-dir", bareRepo, "remote", "get-url", "origin"]).stdout.trim();
-  const tmpClone = fs.mkdtempSync(path.join(os.tmpdir(), "driver-remote-dirty-"));
+  const remoteUrl = runCommand("git", [
+    "--git-dir",
+    bareRepo,
+    "remote",
+    "get-url",
+    "origin",
+  ]).stdout.trim();
+  const tmpClone = fs.mkdtempSync(
+    path.join(os.tmpdir(), "driver-remote-dirty-"),
+  );
 
   try {
     // Clone the remote dirty branch directly — nothing local is touched.
-    runCommand("git", ["-c", `http.extraHeader=Authorization: API-Token ${apiToken}`, "clone", "--branch", "dirty", "--single-branch", remoteUrl, tmpClone]);
+    runCommand("git", [
+      "-c",
+      `http.extraHeader=Authorization: API-Token ${apiToken}`,
+      "clone",
+      "--branch",
+      "dirty",
+      "--single-branch",
+      remoteUrl,
+      tmpClone,
+    ]);
 
     const cloneFile = path.join(tmpClone, repoRelPath);
     const record = JSON.parse(fs.readFileSync(cloneFile, "utf8"));
@@ -541,15 +560,30 @@ function changeRemoteDirty(workspaceDir, recordNumber, apiToken) {
 
     runCommand("git", ["-C", tmpClone, "add", repoRelPath]);
     runCommand("git", [
-      "-C", tmpClone,
-      "-c", "user.name=External User",
-      "-c", "user.email=external@driver.test",
-      "commit", "-m", `External edit: record ${recordNumber}`,
+      "-C",
+      tmpClone,
+      "-c",
+      "user.name=External User",
+      "-c",
+      "user.email=external@driver.test",
+      "commit",
+      "-m",
+      `External edit: record ${recordNumber}`,
     ]);
 
-    runCommand("git", ["-C", tmpClone, "-c", `http.extraHeader=Authorization: API-Token ${apiToken}`, "push", "origin", "dirty"]);
+    runCommand("git", [
+      "-C",
+      tmpClone,
+      "-c",
+      `http.extraHeader=Authorization: API-Token ${apiToken}`,
+      "push",
+      "origin",
+      "dirty",
+    ]);
 
-    console.log(`Remote dirty commit pushed to origin: record ${recordNumber} → "Remote Edit ${record.id} (external)"`);
+    console.log(
+      `Remote dirty commit pushed to origin: record ${recordNumber} → "Remote Edit ${record.id} (external)"`,
+    );
   } finally {
     fs.rmSync(tmpClone, { recursive: true, force: true });
   }
@@ -593,15 +627,18 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
   while (Date.now() - start < JOB_POLL_TIMEOUT_MS) {
     let response;
     try {
-      response = await fetch(`${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `API-Token ${apiToken}`,
-          "User-Agent": "Scratch-cli/1.0",
+      response = await fetch(
+        `${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `API-Token ${apiToken}`,
+            "User-Agent": "Scratch-cli/1.0",
+          },
+          body: JSON.stringify({ jobIds }),
         },
-        body: JSON.stringify({ jobIds }),
-      });
+      );
       consecutiveNetworkFailures = 0;
     } catch (error) {
       consecutiveNetworkFailures += 1;
@@ -716,9 +753,14 @@ async function main() {
   const recordCount = Number(
     cliArgs.recordCount || process.env.DRIVER_RECORD_COUNT || "3",
   );
-  const editCount = cliArgs.editCount != null ? Number(cliArgs.editCount) : recordCount;
-  const acceptCount = cliArgs.acceptCount != null ? Number(cliArgs.acceptCount) : editCount;
-  const remoteDirtyRecord = cliArgs.remoteDirtyRecord != null ? Number(cliArgs.remoteDirtyRecord) : null;
+  const editCount =
+    cliArgs.editCount != null ? Number(cliArgs.editCount) : recordCount;
+  const acceptCount =
+    cliArgs.acceptCount != null ? Number(cliArgs.acceptCount) : editCount;
+  const remoteDirtyRecord =
+    cliArgs.remoteDirtyRecord != null
+      ? Number(cliArgs.remoteDirtyRecord)
+      : null;
   const binary = resolveBinary(
     cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
   );
@@ -742,13 +784,24 @@ async function main() {
     throw new Error(`Invalid --accept-count: ${acceptCount}`);
   }
   if (editCount > recordCount) {
-    throw new Error(`--edit-count (${editCount}) cannot exceed --count (${recordCount})`);
+    throw new Error(
+      `--edit-count (${editCount}) cannot exceed --count (${recordCount})`,
+    );
   }
   if (acceptCount > editCount) {
-    throw new Error(`--accept-count (${acceptCount}) cannot exceed --edit-count (${editCount})`);
+    throw new Error(
+      `--accept-count (${acceptCount}) cannot exceed --edit-count (${editCount})`,
+    );
   }
-  if (remoteDirtyRecord !== null && (!Number.isFinite(remoteDirtyRecord) || remoteDirtyRecord < 1 || remoteDirtyRecord > recordCount)) {
-    throw new Error(`--change-remote-dirty must be a record number between 1 and ${recordCount}`);
+  if (
+    remoteDirtyRecord !== null &&
+    (!Number.isFinite(remoteDirtyRecord) ||
+      remoteDirtyRecord < 1 ||
+      remoteDirtyRecord > recordCount)
+  ) {
+    throw new Error(
+      `--change-remote-dirty must be a record number between 1 and ${recordCount}`,
+    );
   }
 
   const runName = makeRunName();
@@ -777,7 +830,8 @@ async function main() {
   console.log(`Record count:   ${recordCount}`);
   console.log(`Edit count:     ${editCount}`);
   console.log(`Accept count:   ${acceptCount}`);
-  if (remoteDirtyRecord !== null) console.log(`Remote dirty:   record ${remoteDirtyRecord}`);
+  if (remoteDirtyRecord !== null)
+    console.log(`Remote dirty:   record ${remoteDirtyRecord}`);
   console.log(`Workspace root: ${workspaceRoot}`);
   console.log(`Cleanup:        ${cliArgs.noCleanup ? "disabled" : "enabled"}`);
 
@@ -827,14 +881,18 @@ async function main() {
     );
     console.log(`Connection ID: ${connection.id}`);
 
-    stopIfNeeded(cliArgs.stop, "workbook-created", "Workbook and connection created", [
-      `Workbook ID: ${state.workbookId}`,
-      `Connection ID: ${connection.id}`,
-    ]);
-    await pauseIfNeeded(cliArgs.pause, "workbook-created", "Workbook and connection created", [
-      `Workbook ID: ${state.workbookId}`,
-      `Connection ID: ${connection.id}`,
-    ]);
+    stopIfNeeded(
+      cliArgs.stop,
+      "workbook-created",
+      "Workbook and connection created",
+      [`Workbook ID: ${state.workbookId}`, `Connection ID: ${connection.id}`],
+    );
+    await pauseIfNeeded(
+      cliArgs.pause,
+      "workbook-created",
+      "Workbook and connection created",
+      [`Workbook ID: ${state.workbookId}`, `Connection ID: ${connection.id}`],
+    );
 
     printSection("Init local workspace");
     const initResult = sanitizeJsonOutput(
@@ -897,25 +955,38 @@ async function main() {
     const downloadedFiles = listRecordFiles(state.workspaceDir);
     console.log(`Downloaded ${downloadedFiles.length} local record files.`);
 
-    stopIfNeeded(cliArgs.stop, "records-downloaded", "Records downloaded locally", [
-      `Workspace: ${state.workspaceDir}`,
-      `Files: ${downloadedFiles.length}`,
-    ]);
-    await pauseIfNeeded(cliArgs.pause, "records-downloaded", "Records downloaded locally", [
-      `Workspace: ${state.workspaceDir}`,
-      `Files: ${downloadedFiles.length}`,
-    ]);
+    stopIfNeeded(
+      cliArgs.stop,
+      "records-downloaded",
+      "Records downloaded locally",
+      [`Workspace: ${state.workspaceDir}`, `Files: ${downloadedFiles.length}`],
+    );
+    await pauseIfNeeded(
+      cliArgs.pause,
+      "records-downloaded",
+      "Records downloaded locally",
+      [`Workspace: ${state.workspaceDir}`, `Files: ${downloadedFiles.length}`],
+    );
 
     printSection("Edit local records");
-    const editedFiles = editLocalRecords(state.workspaceDir, runName, editCount);
-    console.log(`Edited ${editedFiles.length} of ${downloadedFiles.length} record files.`);
+    const editedFiles = editLocalRecords(
+      state.workspaceDir,
+      runName,
+      editCount,
+    );
+    console.log(
+      `Edited ${editedFiles.length} of ${downloadedFiles.length} record files.`,
+    );
 
     stopIfNeeded(cliArgs.stop, "records-edited", "Local records edited", [
       `Edited files: ${editedFiles.length}`,
     ]);
-    await pauseIfNeeded(cliArgs.pause, "records-edited", "Local records edited", [
-      `Edited files: ${editedFiles.length}`,
-    ]);
+    await pauseIfNeeded(
+      cliArgs.pause,
+      "records-edited",
+      "Local records edited",
+      [`Edited files: ${editedFiles.length}`],
+    );
 
     printSection("Accept local changes");
     if (acceptCount === editedFiles.length) {
@@ -925,12 +996,16 @@ async function main() {
       });
     } else {
       const filesToAccept = editedFiles.slice(0, acceptCount);
-      const relPaths = filesToAccept.map((file) => path.relative(state.workspaceDir, file));
+      const relPaths = filesToAccept.map((file) =>
+        path.relative(state.workspaceDir, file),
+      );
       runCli(binary, serverUrl, ["files", "accept", ...relPaths], {
         cwd: state.workspaceDir,
         noJson: true,
       });
-      console.log(`Accepted ${filesToAccept.length} of ${editedFiles.length} edited files (${editedFiles.length - filesToAccept.length} left unreviewed).`);
+      console.log(
+        `Accepted ${filesToAccept.length} of ${editedFiles.length} edited files (${editedFiles.length - filesToAccept.length} left unreviewed).`,
+      );
     }
 
     if (remoteDirtyRecord !== null) {
@@ -947,9 +1022,12 @@ async function main() {
     stopIfNeeded(cliArgs.stop, "publish-plan-created", "Publish plan created", [
       `Workspace: ${state.workspaceDir}`,
     ]);
-    await pauseIfNeeded(cliArgs.pause, "publish-plan-created", "Publish plan created", [
-      `Workspace: ${state.workspaceDir}`,
-    ]);
+    await pauseIfNeeded(
+      cliArgs.pause,
+      "publish-plan-created",
+      "Publish plan created",
+      [`Workspace: ${state.workspaceDir}`],
+    );
 
     printSection("Upload reviewed changes");
     runCli(binary, serverUrl, ["files", "upload"], {
@@ -981,10 +1059,12 @@ async function main() {
 
     printSection("Verify remote database state");
     const finalRows = await readRows(databaseUrl);
-    const acceptedIds = new Set(editedFiles.slice(0, acceptCount).map((f) => {
-      const record = JSON.parse(fs.readFileSync(f, "utf8"));
-      return record.id;
-    }));
+    const acceptedIds = new Set(
+      editedFiles.slice(0, acceptCount).map((f) => {
+        const record = JSON.parse(fs.readFileSync(f, "utf8"));
+        return record.id;
+      }),
+    );
     let mismatches = 0;
     for (const row of finalRows) {
       let expected;
@@ -994,14 +1074,20 @@ async function main() {
         expected = `Record ${row.id}`;
       }
       if (row.name !== expected) {
-        console.warn(`  Row ${row.id}: expected "${expected}", got "${row.name}"`);
+        console.warn(
+          `  Row ${row.id}: expected "${expected}", got "${row.name}"`,
+        );
         mismatches += 1;
       }
     }
     if (mismatches > 0) {
-      throw new Error(`${mismatches} row(s) did not match expected state after publish.`);
+      throw new Error(
+        `${mismatches} row(s) did not match expected state after publish.`,
+      );
     }
-    console.log(`Verified ${finalRows.length} rows in Postgres (${acceptedIds.size} edited, ${finalRows.length - acceptedIds.size} unchanged).`);
+    console.log(
+      `Verified ${finalRows.length} rows in Postgres (${acceptedIds.size} edited, ${finalRows.length - acceptedIds.size} unchanged).`,
+    );
 
     console.log("\nDriver completed successfully.");
     console.log(`Workbook ID: ${state.workbookId}`);

@@ -121,10 +121,10 @@ export const syncApi = {
   ): Promise<SyncOneRecordResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<SyncOneRecordResponse>(
-        `/workbooks/${workbookId}/syncs/${syncId}/sync-one-record`,
-        { sourceFilePath, sourceDataFolderId },
-      );
+      const res = await axios.post<SyncOneRecordResponse>(`/workbooks/${workbookId}/syncs/${syncId}/sync-one-record`, {
+        sourceFilePath,
+        sourceDataFolderId,
+      });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to sync record');

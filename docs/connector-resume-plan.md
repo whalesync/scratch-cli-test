@@ -178,6 +178,7 @@ Shopify has child entity pulling (`pullChildRecords`) that iterates parents then
 ## Smoke Test (done)
 
 Smoke test added at `smoke-tests/pull/pull-stall-resume.spec.ts`. Verifies:
+
 - 250 records pulled across 3 pages (pagination works end-to-end)
 - `completedFolderIds` tracked in `jobProgress`
 

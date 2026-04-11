@@ -36,9 +36,7 @@ async function scratchApi<T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `API ${method} ${urlPath} failed (${res.status}): ${text}`,
-    );
+    throw new Error(`API ${method} ${urlPath} failed (${res.status}): ${text}`);
   }
   return (await res.json()) as T;
 }
@@ -84,13 +82,8 @@ describeIfPostgres(
       const client = new Client({ connectionString: postgresUrl });
       await client.connect();
       try {
-        await client.query(
-          `DROP TABLE IF EXISTS integration_products CASCADE`,
-        );
-        const sqlPath = path.resolve(
-          __dirname,
-          "../test_table_products.sql",
-        );
+        await client.query(`DROP TABLE IF EXISTS integration_products CASCADE`);
+        const sqlPath = path.resolve(__dirname, "../test_table_products.sql");
         const createSql = fs.readFileSync(sqlPath, "utf-8");
         await client.query(createSql);
       } finally {
@@ -123,10 +116,7 @@ describeIfPostgres(
           displayName: string;
           disabled: boolean;
         }>;
-      }>(
-        "GET",
-        `/workbooks/${workspaceId}/connections/${connectionId}/tables`,
-      );
+      }>("GET", `/workbooks/${workspaceId}/connections/${connectionId}/tables`);
 
       const blogTable = tableList.tables.find(
         (t) => t.displayName === "integration_blog_posts",
@@ -171,10 +161,9 @@ describeIfPostgres(
       console.log("[debug] workspaceDir:", workspaceDir);
 
       // 7. Pull data via CLI (handles repo + git operations reliably)
-      cli.run(
-        ["linked", "--workspace", workspaceId, "pull", blogFolderId],
-        { cwd: workspaceDir },
-      );
+      cli.run(["linked", "--workspace", workspaceId, "pull", blogFolderId], {
+        cwd: workspaceDir,
+      });
       cli.run(
         ["linked", "--workspace", workspaceId, "pull", productsFolderId],
         { cwd: workspaceDir },
@@ -182,7 +171,6 @@ describeIfPostgres(
 
       // 8. Download files
       cli.run(["files", "download"], { cwd: workspaceDir });
-
     });
 
     afterAll(async () => {
@@ -486,12 +474,12 @@ describeIfPostgres(
 
           const folders = ws.connectorAccounts[0].dataFolders;
           expect(folders).toHaveLength(2);
-          expect(
-            folders.some((f) => f.name === "integration_blog_posts"),
-          ).toBe(true);
-          expect(
-            folders.some((f) => f.name === "integration_products"),
-          ).toBe(true);
+          expect(folders.some((f) => f.name === "integration_blog_posts")).toBe(
+            true,
+          );
+          expect(folders.some((f) => f.name === "integration_products")).toBe(
+            true,
+          );
         } catch (err) {
           hasFailed = true;
           throw err;

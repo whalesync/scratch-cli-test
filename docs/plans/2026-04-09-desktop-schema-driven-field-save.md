@@ -94,7 +94,14 @@ Add a helper in `scratch-desktop/src/main/local-files.ts` that:
 Suggested helper shape:
 
 ```ts
-type JsonRuntimeKind = 'string' | 'number' | 'boolean' | 'null' | 'object' | 'array' | 'unknown';
+type JsonRuntimeKind =
+  | "string"
+  | "number"
+  | "boolean"
+  | "null"
+  | "object"
+  | "array"
+  | "unknown";
 
 function resolveFieldRuntimeKind(
   folderSchema: Record<string, unknown> | null,
@@ -114,16 +121,16 @@ Notes:
 
 Recommended initial coercion matrix:
 
-| Schema kind | Input handling |
-| --- | --- |
-| `string` | Save the exact text as typed. No trim. |
-| `number` / `integer` | Parse as a number. Reject invalid input. |
-| `boolean` | Accept exact `true` or `false`. Reject anything else. |
-| `null` | Accept exact `null`. Reject anything else. |
-| `object` | Parse as JSON object text. Reject invalid JSON or non-object JSON. |
-| `array` | Parse as JSON array text. Reject invalid JSON or non-array JSON. |
-| `T \\| null` | Accept `null` or parse as `T`. |
-| `unknown` | Save exact text as string. |
+| Schema kind          | Input handling                                                     |
+| -------------------- | ------------------------------------------------------------------ | ------------------------------ |
+| `string`             | Save the exact text as typed. No trim.                             |
+| `number` / `integer` | Parse as a number. Reject invalid input.                           |
+| `boolean`            | Accept exact `true` or `false`. Reject anything else.              |
+| `null`               | Accept exact `null`. Reject anything else.                         |
+| `object`             | Parse as JSON object text. Reject invalid JSON or non-object JSON. |
+| `array`              | Parse as JSON array text. Reject invalid JSON or non-array JSON.   |
+| `T \\                | null`                                                              | Accept `null` or parse as `T`. |
+| `unknown`            | Save exact text as string.                                         |
 
 This gives the safe behavior we want:
 
@@ -170,7 +177,7 @@ export async function acceptCellInputText(
   filename: string,
   fieldName: string,
   inputText: string,
-): Promise<void>
+): Promise<void>;
 
 export async function acceptCellValue(
   folderPath: string,
@@ -178,7 +185,7 @@ export async function acceptCellValue(
   filename: string,
   fieldName: string,
   value: unknown,
-): Promise<void>
+): Promise<void>;
 ```
 
 Keep the shared patch-and-commit logic behind a private helper:
@@ -190,7 +197,7 @@ async function applyCellValue(
   filename: string,
   fieldName: string,
   value: unknown,
-): Promise<void>
+): Promise<void>;
 ```
 
 ### Renderer

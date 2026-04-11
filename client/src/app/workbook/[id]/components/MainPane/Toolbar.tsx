@@ -1,9 +1,9 @@
 'use client';
 
 import { IconButtonToolbar } from '@/app/components/base/buttons';
-import { OpenInDesktopButton } from '@/app/components/open-in-desktop-button';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { OpenInDesktopButton } from '@/app/components/open-in-desktop-button';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { trackToggleDisplayMode } from '@/lib/posthog';
 import { useLayoutManagerStore } from '@/stores/layout-manager-store';

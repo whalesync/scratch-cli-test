@@ -60,31 +60,31 @@ Fields logged per batch:
 
 **Per-batch averages (20 batches, 100 records each):**
 
-| Step | Avg | % of batch | % of wall |
-|------|-----|------------|-----------|
-| Connector fetch (Stripe API) | 5,102ms | — | **95.7%** |
-| commitBatch (scratch-git-2) | 123ms | 54% of processing | 2.3% |
-| fileIndex (DB upsert) | 60ms | 26% | 1.1% |
-| fileReferences (DB update) | 29ms | 13% | 0.5% |
-| filenamesByRecordIds (DB query) | 11ms | 5% | 0.2% |
-| checkpoint (DB write) | 3ms | 1% | <0.1% |
-| buildFiles (CPU) | 2ms | 1% | <0.1% |
-| assetIndex (DB upsert) | 0ms | 0% | <0.1% |
-| **Total processing per batch** | **227ms** | **100%** | **4.3%** |
+| Step                            | Avg       | % of batch        | % of wall |
+| ------------------------------- | --------- | ----------------- | --------- |
+| Connector fetch (Stripe API)    | 5,102ms   | —                 | **95.7%** |
+| commitBatch (scratch-git-2)     | 123ms     | 54% of processing | 2.3%      |
+| fileIndex (DB upsert)           | 60ms      | 26%               | 1.1%      |
+| fileReferences (DB update)      | 29ms      | 13%               | 0.5%      |
+| filenamesByRecordIds (DB query) | 11ms      | 5%                | 0.2%      |
+| checkpoint (DB write)           | 3ms       | 1%                | <0.1%     |
+| buildFiles (CPU)                | 2ms       | 1%                | <0.1%     |
+| assetIndex (DB upsert)          | 0ms       | 0%                | <0.1%     |
+| **Total processing per batch**  | **227ms** | **100%**          | **4.3%**  |
 
 **Total wall time: 106.6s** — 102s fetching from Stripe, 4.5s processing.
 
 **Raw Stripe API benchmarks (curl, no connector overhead):**
 
-| Entity | Time (100 records) | Payload |
-|--------|-------------------|---------|
-| customers | 1,403ms | 92 KB |
-| products | 673ms | 66 KB |
-| prices | 431ms | 74 KB |
-| subscriptions | 1,850ms | 553 KB |
-| invoices | **5,395ms** | 928 KB |
-| payment_intents | **3,693ms** | 203 KB |
-| charges | **4,838ms** | 345 KB |
+| Entity          | Time (100 records) | Payload |
+| --------------- | ------------------ | ------- |
+| customers       | 1,403ms            | 92 KB   |
+| products        | 673ms              | 66 KB   |
+| prices          | 431ms              | 74 KB   |
+| subscriptions   | 1,850ms            | 553 KB  |
+| invoices        | **5,395ms**        | 928 KB  |
+| payment_intents | **3,693ms**        | 203 KB  |
+| charges         | **4,838ms**        | 345 KB  |
 
 Charges pagination (3 sequential pages): 5.4s, 5.5s, 6.0s per page. Consistent with the pull job measurements — the Stripe API is the bottleneck, not our code.
 
@@ -106,9 +106,10 @@ Charges pagination (3 sequential pages): 5.4s, 5.5s, 6.0s per page. Consistent w
 
 ### 1. Sequential folder processing (all connectors) — **PRIMARY**
 
-Folders are pulled one at a time. For Stripe with 7 entity types, the total pull time is the *sum* of all entity pull times. If we pulled them in parallel, it would be the *max* of the slowest entity type × its page count.
+Folders are pulled one at a time. For Stripe with 7 entity types, the total pull time is the _sum_ of all entity pull times. If we pulled them in parallel, it would be the _max_ of the slowest entity type × its page count.
 
 **Example:** A Stripe account with moderate data might take:
+
 - Sequential (V1): customers(3s) + products(2s) + prices(1s) + subscriptions(10s) + invoices(30s) + payment_intents(20s) + charges(50s) = **116s**
 - Parallel (V2): max(charges) = **50s** (2.3x faster)
 
@@ -179,6 +180,7 @@ Phase 2 — PROCESS (sequential, one folder at a time)
 **Phase 2** reads staged files back from scratch-git-2 one batch at a time, runs all DB index updates, then commits to git. Memory stays flat — each batch is loaded, processed, and discarded. Reading files from scratch-git-2's local SSD over HTTP is fast (~ms per batch vs. ~5s per batch from Stripe).
 
 **Why two phases?**
+
 - **Clean separation of concerns** — Phase 1 only cares about getting data. Phase 2 only cares about processing it.
 - Git commits are serial per repo — can't parallelize them across folders anyway
 - Completely decouples the slow part (API) from the fast part (disk + DB + git)
@@ -193,9 +195,9 @@ Connectors declare their parallelism capabilities. The job orchestrator uses thi
 // Connector registry — existing rateLimiterSpec + new pullConcurrency
 connectorRegistry.register({
   service: Service.STRIPE,
-  rateLimiterSpec: { points: 90, duration: 1 },       // existing
+  rateLimiterSpec: { points: 90, duration: 1 }, // existing
   pullConcurrency: {
-    maxParallelFolders: 7,     // pull all entity types at once
+    maxParallelFolders: 7, // pull all entity types at once
   },
 });
 
@@ -203,7 +205,7 @@ connectorRegistry.register({
   service: Service.AIRTABLE,
   rateLimiterSpec: { points: 5, duration: 1 },
   pullConcurrency: {
-    maxParallelFolders: 3,     // conservative — tighter rate limits
+    maxParallelFolders: 3, // conservative — tighter rate limits
   },
 });
 
@@ -212,6 +214,7 @@ connectorRegistry.register({
 ```
 
 **Why this is good:**
+
 - Safe by default — unknown connectors fall back to sequential behavior
 - The existing rate limiter (per connector account) throttles across all parallel streams
 - Easy to tune per-connector based on observed API behavior
@@ -230,6 +233,7 @@ V2 (parallel fetch, then commit):
 ```
 
 **Stripe API limits (verified 2026-04-09):**
+
 - Live mode: 100 ops/sec (25 in test/sandbox)
 - No published concurrent request cap for list/read endpoints
 - Read API calls must average ≤ 500 per transaction over 30 days (generous for pull jobs)
@@ -252,6 +256,7 @@ Each folder checkpoints its connector cursor independently during Phase 1. The s
 ```
 
 On resume after crash:
+
 - **completed** folders: skip entirely (staged files already written)
 - **fetching** folders: resume from cursor, keep appending to staging directory
 - **pending** folders: start from the beginning
@@ -263,12 +268,12 @@ This is actually **better resume than V1** — in V1, a crash mid-batch loses ev
 
 The Cloud Run worker has no persistent disk, so staged files need to go somewhere durable.
 
-| Option | Pros | Cons |
-|--------|------|------|
-| **scratch-git-2 staging API** | Same disk as git repos, low latency, simple new endpoint (`POST /staging/{jobId}/files`) | Adds load to scratch-git instance, need cleanup logic |
-| **GCS bucket** | Cheap, durable, no size limits, natural for Cloud Run | Network hop for every write, higher latency than local disk |
-| **Co-locate worker on GCE** | Direct disk access, eliminates all network hops for both staging and git | Infra change, loses Cloud Run scaling |
-| **In-memory buffers** | Zero I/O, fastest possible | Lost on crash (no resume), memory-limited (512MB on Cloud Run) |
+| Option                        | Pros                                                                                     | Cons                                                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **scratch-git-2 staging API** | Same disk as git repos, low latency, simple new endpoint (`POST /staging/{jobId}/files`) | Adds load to scratch-git instance, need cleanup logic          |
+| **GCS bucket**                | Cheap, durable, no size limits, natural for Cloud Run                                    | Network hop for every write, higher latency than local disk    |
+| **Co-locate worker on GCE**   | Direct disk access, eliminates all network hops for both staging and git                 | Infra change, loses Cloud Run scaling                          |
+| **In-memory buffers**         | Zero I/O, fastest possible                                                               | Lost on crash (no resume), memory-limited (512MB on Cloud Run) |
 
 **Recommendation:** Start with **scratch-git-2 staging API** — it keeps the architecture simple (staging and git on the same disk), and scratch-git-2 already handles file writes.
 
@@ -298,6 +303,7 @@ DELETE /api/staging/{jobId}
 ```
 
 **Key design points:**
+
 - The staging write (`POST /files`) is cheap — just disk writes, no git overhead
 - The staging read (`GET /files`) is fast — SSD reads, ~ms per batch vs ~5s from Stripe
 - The commit (`POST /commit`) reads from local disk — no data transfer from Cloud Run
@@ -309,7 +315,12 @@ DELETE /api/staging/{jobId}
 // Read staged files in batches — memory stays flat
 let offset = 0;
 while (true) {
-  const batch = await this.scratchGitService.getStagedFiles(jobId, folder, offset, 100);
+  const batch = await this.scratchGitService.getStagedFiles(
+    jobId,
+    folder,
+    offset,
+    100,
+  );
   if (batch.files.length === 0) break;
 
   // DB index updates — we have the content in hand

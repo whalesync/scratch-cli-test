@@ -155,7 +155,9 @@ describeIfPostgres("Workspace sync on download", () => {
         "add",
         "--connection-id",
         connectionId2,
-        ...productsTable.id.split(",").flatMap((p: string) => ["--table-id", p]),
+        ...productsTable.id
+          .split(",")
+          .flatMap((p: string) => ["--table-id", p]),
         "--name",
         productsTable.displayName,
       ],
@@ -356,10 +358,9 @@ describeIfPostgres("Workspace sync on download", () => {
       );
 
       // Pull data for the new connection
-      cli.run(
-        ["linked", "--workspace", workspaceId, "pull", linked.id],
-        { cwd: workspaceDir },
-      );
+      cli.run(["linked", "--workspace", workspaceId, "pull", linked.id], {
+        cwd: workspaceDir,
+      });
 
       // Download — should pick up the new connection
       const result = cli.json<{

@@ -157,8 +157,15 @@ export const affinityFixture: ConnectorFixture = {
       for (const field of entry.entity.fields) {
         // Mirror the dot-path shape used in seed() so equality comparisons work.
         const value = field.value?.data;
-        if (field.id === STAGE_FIELD_ID && value && typeof value === "object" && "text" in value) {
-          fields[`entity.fields.${field.id}.value.data.text`] = (value as { text: unknown }).text;
+        if (
+          field.id === STAGE_FIELD_ID &&
+          value &&
+          typeof value === "object" &&
+          "text" in value
+        ) {
+          fields[`entity.fields.${field.id}.value.data.text`] = (
+            value as { text: unknown }
+          ).text;
         } else {
           fields[`entity.fields.${field.id}.value.data`] = value;
         }

@@ -3,11 +3,12 @@
 ## Quick Start
 
 Install the VS Code extension:
+
 ```bash
 code --install-extension pomdtr.excalidraw-editor
 ```
 
-Then just open any `.excalidraw` file in VS Code — it renders in the full Excalidraw editor. Cmd+S saves in place. 
+Then just open any `.excalidraw` file in VS Code — it renders in the full Excalidraw editor. Cmd+S saves in place.
 **BEWARE:** Changes made by the agent don't appear until you reopen the file.
 
 ## Workflow
@@ -30,22 +31,24 @@ Then just open any `.excalidraw` file in VS Code — it renders in the full Exca
   "elements": [
     {
       "id": "unique-id",
-      "type": "rectangle",       // rectangle, ellipse, diamond, text, line, arrow, freedraw
-      "x": 100, "y": 100,       // position (top-left origin, x right, y down)
-      "width": 200, "height": 80,
+      "type": "rectangle", // rectangle, ellipse, diamond, text, line, arrow, freedraw
+      "x": 100,
+      "y": 100, // position (top-left origin, x right, y down)
+      "width": 200,
+      "height": 80,
       "strokeColor": "#1e1e1e",
       "backgroundColor": "#a5d8ff",
-      "fillStyle": "solid",      // solid, hashed, cross-hatch, dots
+      "fillStyle": "solid", // solid, hashed, cross-hatch, dots
       "strokeWidth": 2,
-      "roughness": 1,            // 0=architect, 1=artist, 2=cartoonist
+      "roughness": 1, // 0=architect, 1=artist, 2=cartoonist
       "roundness": { "type": 3 }, // null=sharp, type 3=rounded
-      "text": "Label",           // for type=text only
+      "text": "Label", // for type=text only
       "fontSize": 20,
-      "fontFamily": 1,           // 1=Virgil(hand), 2=Helvetica, 3=Cascadia(code)
+      "fontFamily": 1, // 1=Virgil(hand), 2=Helvetica, 3=Cascadia(code)
       "angle": 0,
-      "seed": 12345,             // random seed for hand-drawn look
+      "seed": 12345, // random seed for hand-drawn look
       "groupIds": [],
-      "boundElements": [],       // links to arrows/text bound to this element
+      "boundElements": [], // links to arrows/text bound to this element
       "isDeleted": false
     }
   ],
@@ -69,6 +72,7 @@ Then just open any `.excalidraw` file in VS Code — it renders in the full Exca
 ### Binding text to shapes
 
 To put a label inside a rectangle:
+
 1. Create the rectangle with a `boundElements` entry: `[{"id": "text-id", "type": "text"}]`
 2. Create a text element with `"containerId": "rectangle-id"` and matching id
 
@@ -79,6 +83,7 @@ Set the same group ID in `groupIds` array on multiple elements to group them.
 ### Colors for wireframes
 
 Use a limited palette for clarity:
+
 - `#1e1e1e` — default stroke (near-black)
 - `#a5d8ff` — light blue fill (interactive elements, buttons)
 - `#fff3cd` — yellow fill (proposed/warning state)

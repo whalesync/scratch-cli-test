@@ -30,11 +30,7 @@ describe("Workspaces", () => {
   describe("show", () => {
     it("should retrieve a workspace by ID", () => {
       const name = uniqueName("ws");
-      const created = cli.json<{ id: string }>([
-        "workspaces",
-        "create",
-        name,
-      ]);
+      const created = cli.json<{ id: string }>(["workspaces", "create", name]);
       workspaceId = created.id;
 
       const shown = cli.json<{ id: string; name: string; version: number }>([
@@ -58,11 +54,7 @@ describe("Workspaces", () => {
   describe("list", () => {
     it("should include the created workspace in the list", () => {
       const name = uniqueName("ws");
-      const created = cli.json<{ id: string }>([
-        "workspaces",
-        "create",
-        name,
-      ]);
+      const created = cli.json<{ id: string }>(["workspaces", "create", name]);
       workspaceId = created.id;
 
       const list = cli.json<{ workbooks: Array<{ id: string; name: string }> }>(
@@ -75,11 +67,7 @@ describe("Workspaces", () => {
   describe("delete", () => {
     it("should delete a workspace", () => {
       const name = uniqueName("ws");
-      const created = cli.json<{ id: string }>([
-        "workspaces",
-        "create",
-        name,
-      ]);
+      const created = cli.json<{ id: string }>(["workspaces", "create", name]);
       const id = created.id;
 
       cli.run(["workspaces", "delete", id], { noJson: true });

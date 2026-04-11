@@ -48,9 +48,7 @@ async function scratchApi<T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `API ${method} ${urlPath} failed (${res.status}): ${text}`,
-    );
+    throw new Error(`API ${method} ${urlPath} failed (${res.status}): ${text}`);
   }
   return (await res.json()) as T;
 }
@@ -69,10 +67,7 @@ async function waitForJob(
   const start = Date.now();
   const terminalStates = ["completed", "failed", "canceled"];
   while (Date.now() - start < timeoutMs) {
-    const job = await scratchApi<JobEntity>(
-      "GET",
-      `/jobs/${jobId}/progress`,
-    );
+    const job = await scratchApi<JobEntity>("GET", `/jobs/${jobId}/progress`);
     if (terminalStates.includes(job.state)) {
       return job;
     }
@@ -154,10 +149,9 @@ describeIfPostgres(
       linkedFolderId = linked.id;
 
       // 6. Initial pull (via CLI) + download
-      cli.run(
-        ["linked", "--workspace", workspaceId, "pull", linkedFolderId],
-        { cwd: workspaceDir },
-      );
+      cli.run(["linked", "--workspace", workspaceId, "pull", linkedFolderId], {
+        cwd: workspaceDir,
+      });
       cli.run(["files", "download"], { cwd: workspaceDir });
     });
 
@@ -185,8 +179,9 @@ describeIfPostgres(
         const jsonFilesBefore = findJsonFiles(workspaceDir);
         expect(jsonFilesBefore).toHaveLength(3);
 
-        const recordsBefore = jsonFilesBefore.map((f) =>
-          JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
+        const recordsBefore = jsonFilesBefore.map(
+          (f) =>
+            JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
         );
         const aiPost = recordsBefore.find(
           (r) => r.title === "The Rise of AI-Powered Development Tools",
@@ -216,7 +211,9 @@ describeIfPostgres(
         });
 
         // Wait for the pull job(s) to complete
-        const jobIds = pullResponse.jobIds ?? (pullResponse.jobId ? [pullResponse.jobId] : []);
+        const jobIds =
+          pullResponse.jobIds ??
+          (pullResponse.jobId ? [pullResponse.jobId] : []);
         expect(jobIds.length).toBeGreaterThan(0);
 
         for (const jobId of jobIds) {
@@ -235,8 +232,9 @@ describeIfPostgres(
         const jsonFilesAfter = findJsonFiles(workspaceDir);
         expect(jsonFilesAfter).toHaveLength(3);
 
-        const recordsAfter = jsonFilesAfter.map((f) =>
-          JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
+        const recordsAfter = jsonFilesAfter.map(
+          (f) =>
+            JSON.parse(fs.readFileSync(f, "utf-8")) as Record<string, unknown>,
         );
         const updatedPost = recordsAfter.find(
           (r) => r.title === "The Rise of AI-Powered Development Tools",
@@ -247,16 +245,14 @@ describeIfPostgres(
         // --- Verify the other records are unchanged ---
         const debtPost = recordsAfter.find(
           (r) =>
-            r.title ===
-            "Why Software Companies Are Rethinking Technical Debt",
+            r.title === "Why Software Companies Are Rethinking Technical Debt",
         );
         expect(debtPost).toBeDefined();
         expect(debtPost!.author).toBe("Marcus Rivera");
 
         const startupPost = recordsAfter.find(
           (r) =>
-            r.title ===
-            "Small Teams and Big AI: The New Startup Advantage",
+            r.title === "Small Teams and Big AI: The New Startup Advantage",
         );
         expect(startupPost).toBeDefined();
         expect(startupPost!.author).toBe("Priya Kapoor");

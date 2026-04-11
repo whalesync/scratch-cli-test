@@ -88,25 +88,22 @@ describe.each(fixtures)("Sync incremental: $displayName", (fixture) => {
     expect(pullJob.state).toBe("completed");
 
     // 3. Create the sync
-    const syncRes = await api.post(
-      `/workbooks/${workspace.workbookId}/syncs`,
-      {
-        displayName: "Smoke Test Incremental Sync",
-        validateMappings: false,
-        mappings: {
-          version: 1,
-          tableMappings: [
-            {
-              sourceDataFolderId: workspace.dataFolderId,
-              destinationDataFolderId: destFolder.dataFolderId,
-              columnMappings: seed.columnMappings,
-              recordMatching: seed.recordMatching,
-            },
-          ],
-        },
-        schedule: "",
+    const syncRes = await api.post(`/workbooks/${workspace.workbookId}/syncs`, {
+      displayName: "Smoke Test Incremental Sync",
+      validateMappings: false,
+      mappings: {
+        version: 1,
+        tableMappings: [
+          {
+            sourceDataFolderId: workspace.dataFolderId,
+            destinationDataFolderId: destFolder.dataFolderId,
+            columnMappings: seed.columnMappings,
+            recordMatching: seed.recordMatching,
+          },
+        ],
       },
-    );
+      schedule: "",
+    });
     expect(syncRes.status).toBe(201);
     const syncId = syncRes.data.id;
 

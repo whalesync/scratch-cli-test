@@ -145,11 +145,14 @@ function canExecuteBinary(candidate) {
 
 function resolveBinary(binaryArg) {
   const repoBinary = path.resolve(__dirname, "../../../target/debug/scratchmd");
-  const repoBinaryReady = fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
+  const repoBinaryReady =
+    fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
 
   if (binaryArg) {
     const looksLikePath =
-      binaryArg.includes("/") || binaryArg.startsWith(".") || path.isAbsolute(binaryArg);
+      binaryArg.includes("/") ||
+      binaryArg.startsWith(".") ||
+      path.isAbsolute(binaryArg);
 
     if (looksLikePath && canExecuteBinary(binaryArg)) {
       return binaryArg;
@@ -188,7 +191,9 @@ function runCommand(command, args, options = {}) {
     const full = [command, ...args].join(" ");
     const stderr = (result.stderr || "").trim();
     throw new Error(
-      stderr ? `Command failed with exit ${result.status}: ${full}\n${stderr}` : `Command failed with exit ${result.status}: ${full}`,
+      stderr
+        ? `Command failed with exit ${result.status}: ${full}\n${stderr}`
+        : `Command failed with exit ${result.status}: ${full}`,
     );
   }
 
@@ -223,7 +228,9 @@ async function dropDatabase(adminDbUrl, dbName) {
       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
       [dbName],
     );
-    await client.query(`DROP DATABASE IF EXISTS "${dbName.replace(/"/g, "\"\"")}"`);
+    await client.query(
+      `DROP DATABASE IF EXISTS "${dbName.replace(/"/g, '""')}"`,
+    );
   } finally {
     await client.end();
   }
@@ -253,12 +260,16 @@ async function main() {
   const serverUrl =
     cliArgs.serverUrl || process.env.SCRATCH_API_URL || "http://localhost:3010";
   const databasePrefix =
-    cliArgs.databaseUrl || process.env.DATABASE_URL || process.env.DATABASE_URL_PREFIX;
+    cliArgs.databaseUrl ||
+    process.env.DATABASE_URL ||
+    process.env.DATABASE_URL_PREFIX;
   const workspaceRoot =
     cliArgs.workspaceRoot ||
     process.env.DRIVER_WORKSPACE_ROOT ||
     path.join(os.tmpdir(), "scratchmd-cli-driver");
-  const binary = resolveBinary(cliArgs.binary || process.env.SCRATCH_CLI_BINARY);
+  const binary = resolveBinary(
+    cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
+  );
   const namePattern = new RegExp(cliArgs.pattern);
 
   if (!databasePrefix) {
@@ -283,8 +294,12 @@ async function main() {
   const listOutput = sanitizeJsonOutput(
     runCli(binary, serverUrl, ["workspaces", "list"]).stdout,
   );
-  const workbooks = Array.isArray(listOutput.workbooks) ? listOutput.workbooks : [];
-  const matches = workbooks.filter((workbook) => namePattern.test(workbook.name || ""));
+  const workbooks = Array.isArray(listOutput.workbooks)
+    ? listOutput.workbooks
+    : [];
+  const matches = workbooks.filter((workbook) =>
+    namePattern.test(workbook.name || ""),
+  );
 
   console.log(`\nFound ${matches.length} matching workspace(s).`);
   if (matches.length === 0) {
@@ -308,7 +323,9 @@ async function main() {
   for (const workbook of matches) {
     const localPath = path.join(workspaceRoot, workbook.name);
 
-    console.log(`\n=== ${cliArgs.dryRun ? "Would clean" : "Cleaning"} ${workbook.name} ===`);
+    console.log(
+      `\n=== ${cliArgs.dryRun ? "Would clean" : "Cleaning"} ${workbook.name} ===`,
+    );
     console.log(`Remote workspace: ${workbook.id}`);
     console.log(`Database: ${workbook.name}`);
     console.log(`Local folder: ${localPath}`);
@@ -318,11 +335,18 @@ async function main() {
     }
 
     try {
-      runCli(binary, serverUrl, ["workspaces", "unsync", workbook.id, "--yes"], {
-        noJson: true,
-      });
+      runCli(
+        binary,
+        serverUrl,
+        ["workspaces", "unsync", workbook.id, "--yes"],
+        {
+          noJson: true,
+        },
+      );
     } catch (error) {
-      console.warn(`[cleanup] Unsync skipped for ${workbook.id}: ${error.message}`);
+      console.warn(
+        `[cleanup] Unsync skipped for ${workbook.id}: ${error.message}`,
+      );
     }
 
     try {
@@ -330,7 +354,9 @@ async function main() {
         fs.rmSync(localPath, { recursive: true, force: true });
       }
     } catch (error) {
-      console.warn(`[cleanup] Failed to remove local folder ${localPath}: ${error.message}`);
+      console.warn(
+        `[cleanup] Failed to remove local folder ${localPath}: ${error.message}`,
+      );
     }
 
     try {
@@ -338,13 +364,17 @@ async function main() {
         noJson: true,
       });
     } catch (error) {
-      console.warn(`[cleanup] Failed to delete remote workspace ${workbook.id}: ${error.message}`);
+      console.warn(
+        `[cleanup] Failed to delete remote workspace ${workbook.id}: ${error.message}`,
+      );
     }
 
     try {
       await dropDatabase(adminDbUrl, workbook.name);
     } catch (error) {
-      console.warn(`[cleanup] Failed to drop database ${workbook.name}: ${error.message}`);
+      console.warn(
+        `[cleanup] Failed to drop database ${workbook.name}: ${error.message}`,
+      );
     }
   }
 }

@@ -240,4 +240,3 @@ local dummy job:
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, dummy]
-

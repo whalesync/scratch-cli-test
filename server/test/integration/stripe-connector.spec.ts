@@ -88,351 +88,351 @@ jest.setTimeout(30_000);
 // ---------------------------------------------------------------------------
 
 describeIfKey('StripeConnector — live API', () => {
-    let connector: StripeConnector;
+  let connector: StripeConnector;
 
-    beforeAll(() => {
-      connector = createConnector();
+  beforeAll(() => {
+    connector = createConnector();
+  });
+
+  // -------------------------------------------------------------------------
+  // Connection
+  // -------------------------------------------------------------------------
+
+  describe('testConnection', () => {
+    it('validates credentials against the live API', async () => {
+      await expect(connector.testConnection()).resolves.toBeUndefined();
     });
 
-    // -------------------------------------------------------------------------
-    // Connection
-    // -------------------------------------------------------------------------
+    it('rejects invalid credentials', async () => {
+      const badConnector = new StripeConnector({ apiKey: 'sk_test_invalid_key_123' });
+      await expect(badConnector.testConnection()).rejects.toThrow();
+    });
+  });
 
-    describe('testConnection', () => {
-      it('validates credentials against the live API', async () => {
-        await expect(connector.testConnection()).resolves.toBeUndefined();
-      });
+  // -------------------------------------------------------------------------
+  // Table discovery
+  // -------------------------------------------------------------------------
 
-      it('rejects invalid credentials', async () => {
-        const badConnector = new StripeConnector({ apiKey: 'sk_test_invalid_key_123' });
-        await expect(badConnector.testConnection()).rejects.toThrow();
-      });
+  describe('listTables', () => {
+    it('returns all 7 entity types', async () => {
+      const tables = await connector.listTables();
+      const ids = tables.map((t) => t.id.wsId);
+
+      expect(ids).toContain('customers');
+      expect(ids).toContain('products');
+      expect(ids).toContain('prices');
+      expect(ids).toContain('subscriptions');
+      expect(ids).toContain('invoices');
+      expect(ids).toContain('payment_intents');
+      expect(ids).toContain('charges');
     });
 
-    // -------------------------------------------------------------------------
-    // Table discovery
-    // -------------------------------------------------------------------------
+    it('marks all tables as read-only', async () => {
+      const tables = await connector.listTables();
+      for (const table of tables) {
+        expect(table.disabledCreates).toBe(true);
+      }
+    });
+  });
 
-    describe('listTables', () => {
-      it('returns all 7 entity types', async () => {
-        const tables = await connector.listTables();
-        const ids = tables.map((t) => t.id.wsId);
+  // -------------------------------------------------------------------------
+  // Read-only enforcement
+  // -------------------------------------------------------------------------
 
-        expect(ids).toContain('customers');
-        expect(ids).toContain('products');
-        expect(ids).toContain('prices');
-        expect(ids).toContain('subscriptions');
-        expect(ids).toContain('invoices');
-        expect(ids).toContain('payment_intents');
-        expect(ids).toContain('charges');
-      });
+  describe('read-only enforcement', () => {
+    let customersSpec: BaseJsonTableSpec;
 
-      it('marks all tables as read-only', async () => {
-        const tables = await connector.listTables();
-        for (const table of tables) {
-          expect(table.disabledCreates).toBe(true);
-        }
-      });
+    beforeAll(async () => {
+      customersSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.customers);
     });
 
-    // -------------------------------------------------------------------------
-    // Read-only enforcement
-    // -------------------------------------------------------------------------
-
-    describe('read-only enforcement', () => {
-      let customersSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        customersSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.customers);
-      });
-
-      it('throws on createRecords', () => {
-        expect(() => connector.createRecords(customersSpec, [{ name: 'Test' }])).toThrow('read-only');
-      });
-
-      it('throws on updateRecords', () => {
-        expect(() => connector.updateRecords(customersSpec, [{ id: 'cus_123' }])).toThrow('read-only');
-      });
-
-      it('throws on deleteRecords', () => {
-        expect(() => connector.deleteRecords(customersSpec, [{ id: 'cus_123' }])).toThrow('read-only');
-      });
+    it('throws on createRecords', () => {
+      expect(() => connector.createRecords(customersSpec, [{ name: 'Test' }])).toThrow('read-only');
     });
 
-    // -------------------------------------------------------------------------
-    // Customers
-    // -------------------------------------------------------------------------
-
-    describe('customers', () => {
-      let customersSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        customersSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.customers);
-      });
-
-      it('builds a schema with customer fields', () => {
-        expect(customersSpec.name).toBe('Customers');
-        expect(customersSpec.idColumnRemoteId).toBe('id');
-        expect(customersSpec.titleColumnRemoteId).toEqual(['name']);
-
-        const props = customersSpec.schema.properties;
-        expect(props).toHaveProperty('id');
-        expect(props).toHaveProperty('name');
-        expect(props).toHaveProperty('email');
-        expect(props).toHaveProperty('metadata');
-        expect(props.id[READONLY_FLAG]).toBe(true);
-        expect(props.created[READONLY_FLAG]).toBe(true);
-      });
-
-      it('pulls customers from the live API', async () => {
-        const files = await collectPulledFiles(connector, customersSpec);
-
-        // Test accounts should have at least some data; if empty that's still valid
-        expect(Array.isArray(files)).toBe(true);
-
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string };
-          expect(first.id).toMatch(/^cus_/);
-          expect(first.object).toBe('customer');
-        }
-      });
-
-      it('fetches a customer by ID', async () => {
-        const allCustomers = await collectPulledFiles(connector, customersSpec);
-        if (allCustomers.length === 0) {
-          // No customers to fetch — skip gracefully
-          return;
-        }
-
-        const customerId = String((allCustomers[0] as unknown as { id: string }).id);
-
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(customersSpec, [customerId], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-
-        expect(fetched).toHaveLength(1);
-        expect((fetched[0] as unknown as { id: string }).id).toBe(customerId);
-      });
-
-      it('returns empty for non-existent customer ID', async () => {
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(customersSpec, ['cus_nonexistent_999999'], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-
-        expect(fetched).toHaveLength(0);
-      });
+    it('throws on updateRecords', () => {
+      expect(() => connector.updateRecords(customersSpec, [{ id: 'cus_123' }])).toThrow('read-only');
     });
 
-    // -------------------------------------------------------------------------
-    // Products
-    // -------------------------------------------------------------------------
+    it('throws on deleteRecords', () => {
+      expect(() => connector.deleteRecords(customersSpec, [{ id: 'cus_123' }])).toThrow('read-only');
+    });
+  });
 
-    describe('products', () => {
-      let productsSpec: BaseJsonTableSpec;
+  // -------------------------------------------------------------------------
+  // Customers
+  // -------------------------------------------------------------------------
 
-      beforeAll(async () => {
-        productsSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.products);
-      });
+  describe('customers', () => {
+    let customersSpec: BaseJsonTableSpec;
 
-      it('builds a schema with product fields', () => {
-        expect(productsSpec.name).toBe('Products');
-        expect(productsSpec.titleColumnRemoteId).toEqual(['name']);
-
-        const props = productsSpec.schema.properties;
-        expect(props).toHaveProperty('name');
-        expect(props).toHaveProperty('description');
-        expect(props).toHaveProperty('active');
-        expect(props).toHaveProperty('default_price');
-      });
-
-      it('pulls products from the live API', async () => {
-        const files = await collectPulledFiles(connector, productsSpec);
-        expect(Array.isArray(files)).toBe(true);
-
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string };
-          expect(first.id).toMatch(/^prod_/);
-          expect(first.object).toBe('product');
-        }
-      });
+    beforeAll(async () => {
+      customersSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.customers);
     });
 
-    // -------------------------------------------------------------------------
-    // Prices
-    // -------------------------------------------------------------------------
+    it('builds a schema with customer fields', () => {
+      expect(customersSpec.name).toBe('Customers');
+      expect(customersSpec.idColumnRemoteId).toBe('id');
+      expect(customersSpec.titleColumnRemoteId).toEqual(['name']);
 
-    describe('prices', () => {
-      let pricesSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        pricesSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.prices);
-      });
-
-      it('builds a schema with price fields', () => {
-        expect(pricesSpec.name).toBe('Prices');
-        expect(pricesSpec.titleColumnRemoteId).toEqual(['nickname']);
-
-        const props = pricesSpec.schema.properties;
-        expect(props).toHaveProperty('product');
-        expect(props).toHaveProperty('currency');
-        expect(props).toHaveProperty('unit_amount');
-        expect(props).toHaveProperty('type');
-        expect(props).toHaveProperty('recurring');
-      });
-
-      it('pulls prices from the live API', async () => {
-        const files = await collectPulledFiles(connector, pricesSpec);
-        expect(Array.isArray(files)).toBe(true);
-
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string; currency: string };
-          expect(first.id).toMatch(/^price_/);
-          expect(first.object).toBe('price');
-          expect(first.currency).toBeDefined();
-        }
-      });
+      const props = customersSpec.schema.properties;
+      expect(props).toHaveProperty('id');
+      expect(props).toHaveProperty('name');
+      expect(props).toHaveProperty('email');
+      expect(props).toHaveProperty('metadata');
+      expect(props.id[READONLY_FLAG]).toBe(true);
+      expect(props.created[READONLY_FLAG]).toBe(true);
     });
 
-    // -------------------------------------------------------------------------
-    // Subscriptions
-    // -------------------------------------------------------------------------
+    it('pulls customers from the live API', async () => {
+      const files = await collectPulledFiles(connector, customersSpec);
 
-    describe('subscriptions', () => {
-      let subscriptionsSpec: BaseJsonTableSpec;
+      // Test accounts should have at least some data; if empty that's still valid
+      expect(Array.isArray(files)).toBe(true);
 
-      beforeAll(async () => {
-        subscriptionsSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.subscriptions);
-      });
-
-      it('builds a schema with subscription fields', () => {
-        expect(subscriptionsSpec.name).toBe('Subscriptions');
-
-        const props = subscriptionsSpec.schema.properties;
-        expect(props).toHaveProperty('customer');
-        expect(props).toHaveProperty('status');
-        expect(props).toHaveProperty('current_period_start');
-        expect(props).toHaveProperty('current_period_end');
-        expect(props).toHaveProperty('items');
-      });
-
-      it('pulls subscriptions from the live API', async () => {
-        const files = await collectPulledFiles(connector, subscriptionsSpec);
-        expect(Array.isArray(files)).toBe(true);
-
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string; status: string };
-          expect(first.id).toMatch(/^sub_/);
-          expect(first.object).toBe('subscription');
-          expect(first.status).toBeDefined();
-        }
-      });
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string };
+        expect(first.id).toMatch(/^cus_/);
+        expect(first.object).toBe('customer');
+      }
     });
 
-    // -------------------------------------------------------------------------
-    // Invoices
-    // -------------------------------------------------------------------------
+    it('fetches a customer by ID', async () => {
+      const allCustomers = await collectPulledFiles(connector, customersSpec);
+      if (allCustomers.length === 0) {
+        // No customers to fetch — skip gracefully
+        return;
+      }
 
-    describe('invoices', () => {
-      let invoicesSpec: BaseJsonTableSpec;
+      const customerId = String((allCustomers[0] as unknown as { id: string }).id);
 
-      beforeAll(async () => {
-        invoicesSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.invoices);
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(customersSpec, [customerId], async ({ files: batch }) => {
+        fetched.push(...batch);
       });
 
-      it('builds a schema with invoice fields', () => {
-        expect(invoicesSpec.name).toBe('Invoices');
-        expect(invoicesSpec.titleColumnRemoteId).toEqual(['number']);
-
-        const props = invoicesSpec.schema.properties;
-        expect(props).toHaveProperty('customer');
-        expect(props).toHaveProperty('amount_due');
-        expect(props).toHaveProperty('amount_paid');
-        expect(props).toHaveProperty('total');
-        expect(props).toHaveProperty('status');
-        expect(props).toHaveProperty('hosted_invoice_url');
-      });
-
-      it('pulls invoices from the live API', async () => {
-        const files = await collectPulledFiles(connector, invoicesSpec);
-        expect(Array.isArray(files)).toBe(true);
-
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string };
-          expect(first.id).toMatch(/^in_/);
-          expect(first.object).toBe('invoice');
-        }
-      });
+      expect(fetched).toHaveLength(1);
+      expect((fetched[0] as unknown as { id: string }).id).toBe(customerId);
     });
 
-    // -------------------------------------------------------------------------
-    // Payment Intents
-    // -------------------------------------------------------------------------
-
-    describe('payment_intents', () => {
-      let paymentIntentsSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        paymentIntentsSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.payment_intents);
+    it('returns empty for non-existent customer ID', async () => {
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(customersSpec, ['cus_nonexistent_999999'], async ({ files: batch }) => {
+        fetched.push(...batch);
       });
 
-      it('builds a schema with payment intent fields', () => {
-        expect(paymentIntentsSpec.name).toBe('Payment Intents');
+      expect(fetched).toHaveLength(0);
+    });
+  });
 
-        const props = paymentIntentsSpec.schema.properties;
-        expect(props).toHaveProperty('amount');
-        expect(props).toHaveProperty('amount_received');
-        expect(props).toHaveProperty('currency');
-        expect(props).toHaveProperty('status');
-        expect(props).toHaveProperty('payment_method');
-      });
+  // -------------------------------------------------------------------------
+  // Products
+  // -------------------------------------------------------------------------
 
-      it('pulls payment intents from the live API', async () => {
-        const files = await collectPulledFiles(connector, paymentIntentsSpec);
-        expect(Array.isArray(files)).toBe(true);
+  describe('products', () => {
+    let productsSpec: BaseJsonTableSpec;
 
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string };
-          expect(first.id).toMatch(/^pi_/);
-          expect(first.object).toBe('payment_intent');
-        }
-      });
+    beforeAll(async () => {
+      productsSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.products);
     });
 
-    // -------------------------------------------------------------------------
-    // Charges
-    // -------------------------------------------------------------------------
+    it('builds a schema with product fields', () => {
+      expect(productsSpec.name).toBe('Products');
+      expect(productsSpec.titleColumnRemoteId).toEqual(['name']);
 
-    describe('charges', () => {
-      let chargesSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        chargesSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.charges);
-      });
-
-      it('builds a schema with charge fields', () => {
-        expect(chargesSpec.name).toBe('Charges');
-
-        const props = chargesSpec.schema.properties;
-        expect(props).toHaveProperty('amount');
-        expect(props).toHaveProperty('currency');
-        expect(props).toHaveProperty('status');
-        expect(props).toHaveProperty('paid');
-        expect(props).toHaveProperty('captured');
-        expect(props).toHaveProperty('billing_details');
-        expect(props).toHaveProperty('receipt_url');
-      });
-
-      it('pulls charges from the live API', async () => {
-        const files = await collectPulledFiles(connector, chargesSpec);
-        expect(Array.isArray(files)).toBe(true);
-
-        if (files.length > 0) {
-          const first = files[0] as unknown as { id: string; object: string };
-          expect(first.id).toMatch(/^ch_/);
-          expect(first.object).toBe('charge');
-        }
-      });
+      const props = productsSpec.schema.properties;
+      expect(props).toHaveProperty('name');
+      expect(props).toHaveProperty('description');
+      expect(props).toHaveProperty('active');
+      expect(props).toHaveProperty('default_price');
     });
+
+    it('pulls products from the live API', async () => {
+      const files = await collectPulledFiles(connector, productsSpec);
+      expect(Array.isArray(files)).toBe(true);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string };
+        expect(first.id).toMatch(/^prod_/);
+        expect(first.object).toBe('product');
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Prices
+  // -------------------------------------------------------------------------
+
+  describe('prices', () => {
+    let pricesSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      pricesSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.prices);
+    });
+
+    it('builds a schema with price fields', () => {
+      expect(pricesSpec.name).toBe('Prices');
+      expect(pricesSpec.titleColumnRemoteId).toEqual(['nickname']);
+
+      const props = pricesSpec.schema.properties;
+      expect(props).toHaveProperty('product');
+      expect(props).toHaveProperty('currency');
+      expect(props).toHaveProperty('unit_amount');
+      expect(props).toHaveProperty('type');
+      expect(props).toHaveProperty('recurring');
+    });
+
+    it('pulls prices from the live API', async () => {
+      const files = await collectPulledFiles(connector, pricesSpec);
+      expect(Array.isArray(files)).toBe(true);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string; currency: string };
+        expect(first.id).toMatch(/^price_/);
+        expect(first.object).toBe('price');
+        expect(first.currency).toBeDefined();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Subscriptions
+  // -------------------------------------------------------------------------
+
+  describe('subscriptions', () => {
+    let subscriptionsSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      subscriptionsSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.subscriptions);
+    });
+
+    it('builds a schema with subscription fields', () => {
+      expect(subscriptionsSpec.name).toBe('Subscriptions');
+
+      const props = subscriptionsSpec.schema.properties;
+      expect(props).toHaveProperty('customer');
+      expect(props).toHaveProperty('status');
+      expect(props).toHaveProperty('current_period_start');
+      expect(props).toHaveProperty('current_period_end');
+      expect(props).toHaveProperty('items');
+    });
+
+    it('pulls subscriptions from the live API', async () => {
+      const files = await collectPulledFiles(connector, subscriptionsSpec);
+      expect(Array.isArray(files)).toBe(true);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string; status: string };
+        expect(first.id).toMatch(/^sub_/);
+        expect(first.object).toBe('subscription');
+        expect(first.status).toBeDefined();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Invoices
+  // -------------------------------------------------------------------------
+
+  describe('invoices', () => {
+    let invoicesSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      invoicesSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.invoices);
+    });
+
+    it('builds a schema with invoice fields', () => {
+      expect(invoicesSpec.name).toBe('Invoices');
+      expect(invoicesSpec.titleColumnRemoteId).toEqual(['number']);
+
+      const props = invoicesSpec.schema.properties;
+      expect(props).toHaveProperty('customer');
+      expect(props).toHaveProperty('amount_due');
+      expect(props).toHaveProperty('amount_paid');
+      expect(props).toHaveProperty('total');
+      expect(props).toHaveProperty('status');
+      expect(props).toHaveProperty('hosted_invoice_url');
+    });
+
+    it('pulls invoices from the live API', async () => {
+      const files = await collectPulledFiles(connector, invoicesSpec);
+      expect(Array.isArray(files)).toBe(true);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string };
+        expect(first.id).toMatch(/^in_/);
+        expect(first.object).toBe('invoice');
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Payment Intents
+  // -------------------------------------------------------------------------
+
+  describe('payment_intents', () => {
+    let paymentIntentsSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      paymentIntentsSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.payment_intents);
+    });
+
+    it('builds a schema with payment intent fields', () => {
+      expect(paymentIntentsSpec.name).toBe('Payment Intents');
+
+      const props = paymentIntentsSpec.schema.properties;
+      expect(props).toHaveProperty('amount');
+      expect(props).toHaveProperty('amount_received');
+      expect(props).toHaveProperty('currency');
+      expect(props).toHaveProperty('status');
+      expect(props).toHaveProperty('payment_method');
+    });
+
+    it('pulls payment intents from the live API', async () => {
+      const files = await collectPulledFiles(connector, paymentIntentsSpec);
+      expect(Array.isArray(files)).toBe(true);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string };
+        expect(first.id).toMatch(/^pi_/);
+        expect(first.object).toBe('payment_intent');
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Charges
+  // -------------------------------------------------------------------------
+
+  describe('charges', () => {
+    let chargesSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      chargesSpec = await connector.fetchJsonTableSpec(ENTITY_IDS.charges);
+    });
+
+    it('builds a schema with charge fields', () => {
+      expect(chargesSpec.name).toBe('Charges');
+
+      const props = chargesSpec.schema.properties;
+      expect(props).toHaveProperty('amount');
+      expect(props).toHaveProperty('currency');
+      expect(props).toHaveProperty('status');
+      expect(props).toHaveProperty('paid');
+      expect(props).toHaveProperty('captured');
+      expect(props).toHaveProperty('billing_details');
+      expect(props).toHaveProperty('receipt_url');
+    });
+
+    it('pulls charges from the live API', async () => {
+      const files = await collectPulledFiles(connector, chargesSpec);
+      expect(Array.isArray(files)).toBe(true);
+
+      if (files.length > 0) {
+        const first = files[0] as unknown as { id: string; object: string };
+        expect(first.id).toMatch(/^ch_/);
+        expect(first.object).toBe('charge');
+      }
+    });
+  });
 });

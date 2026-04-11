@@ -21,6 +21,7 @@ The current three-way merge uses the **local dirty ref as the merge base**. Afte
 **Impact**: Unreviewed local changes (edits in the working copy not yet committed to the dirty ref) may not survive the merge correctly if the dirty branch was significantly rewritten.
 
 **Next step**: Replace the post-publish three-way merge with a content-delta strategy:
+
 1. Before pulling, snapshot `unreviewed_delta = diff(local_dirty_ref, working_copy)`
 2. Completely override local dirty ref from remote
 3. Rematerialize working copy from new dirty ref

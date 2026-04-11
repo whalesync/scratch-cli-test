@@ -97,25 +97,22 @@ describe.each(fixtures)("Sync basic: $displayName", (fixture) => {
     expect(destFileCountBefore).toBe(0);
 
     // 4. Create a sync from source folder to destination folder
-    const syncRes = await api.post(
-      `/workbooks/${workspace.workbookId}/syncs`,
-      {
-        displayName: "Smoke Test Sync",
-        validateMappings: false,
-        mappings: {
-          version: 1,
-          tableMappings: [
-            {
-              sourceDataFolderId: workspace.dataFolderId,
-              destinationDataFolderId: destFolder.dataFolderId,
-              columnMappings: seed.columnMappings,
-              recordMatching: seed.recordMatching,
-            },
-          ],
-        },
-        schedule: "",
+    const syncRes = await api.post(`/workbooks/${workspace.workbookId}/syncs`, {
+      displayName: "Smoke Test Sync",
+      validateMappings: false,
+      mappings: {
+        version: 1,
+        tableMappings: [
+          {
+            sourceDataFolderId: workspace.dataFolderId,
+            destinationDataFolderId: destFolder.dataFolderId,
+            columnMappings: seed.columnMappings,
+            recordMatching: seed.recordMatching,
+          },
+        ],
       },
-    );
+      schedule: "",
+    });
     expect(syncRes.status).toBe(201);
     const syncId = syncRes.data.id;
     expect(syncId).toBeDefined();

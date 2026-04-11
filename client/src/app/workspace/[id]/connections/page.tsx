@@ -2,31 +2,30 @@
 
 import { ActionIconThreeDots } from '@/app/components/base/action-icons';
 import { ButtonPrimaryLight } from '@/app/components/base/buttons';
-import { OpenInDesktopButton } from '@/app/components/open-in-desktop-button';
-import { Text12Medium, Text12Regular, Text13Regular } from '@/app/components/base/text';
+import { Text12Medium, Text12Regular, Text13Regular, TextTitle2 } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { TextTitle2 } from '@/app/components/base/text';
-import { SidebarFooter } from '@/app/workbook/[id]/components/Sidebar/SidebarFooter';
-import { ChevronToggle, INDENT_PX } from '@/app/workbook/[id]/components/Sidebar/tree-node-primitives';
-import { useConnectorAccounts } from '@/hooks/use-connector-account';
-import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
-import { useDataFolders } from '@/hooks/use-data-folders';
-import { useWorkbook } from '@/hooks/use-workbook';
-import { Box, Collapse, Group, Menu, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import type { ConnectorAccount, DataFolder, DataFolderGroup, WorkbookId } from '@spinner/shared-types';
-import { FolderIcon, PlusIcon } from 'lucide-react';
-import { useParams } from 'next/navigation';
+import { OpenInDesktopButton } from '@/app/components/open-in-desktop-button';
 import { AdvancedFolderSettingsModal } from '@/app/workbook/[id]/components/shared/AdvancedFolderSettingsModal';
 import { ChooseTablesModal } from '@/app/workbook/[id]/components/shared/ChooseTablesModal';
 import { CreateConnectionModal } from '@/app/workbook/[id]/components/shared/CreateConnectionModal';
 import { RemoveConnectionModal } from '@/app/workbook/[id]/components/shared/RemoveConnectionModal';
 import { RemoveTableModal } from '@/app/workbook/[id]/components/shared/RemoveTableModal';
 import { UpdateConnectionModal } from '@/app/workbook/[id]/components/shared/UpdateConnectionModal';
+import { SidebarFooter } from '@/app/workbook/[id]/components/Sidebar/SidebarFooter';
+import { ChevronToggle, INDENT_PX } from '@/app/workbook/[id]/components/Sidebar/tree-node-primitives';
+import { useConnectorAccounts } from '@/hooks/use-connector-account';
+import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
+import { useDataFolders } from '@/hooks/use-data-folders';
+import { useWorkbook } from '@/hooks/use-workbook';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { initiateOAuth } from '@/utils/oauth';
+import { Box, Collapse, Group, Menu, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
+import type { ConnectorAccount, DataFolder, DataFolderGroup, WorkbookId } from '@spinner/shared-types';
 import { AuthType } from '@spinner/shared-types';
+import { FolderIcon, PlusIcon } from 'lucide-react';
+import { useParams } from 'next/navigation';
 import {
   useCallback,
   useEffect,
@@ -212,7 +211,10 @@ export default function ConnectionsPage() {
           >
             Back to Scratch Desktop
           </OpenInDesktopButton>
-          <ButtonPrimaryLight leftSection={<StyledLucideIcon Icon={PlusIcon} size="sm" />} onClick={openConnectionModal}>
+          <ButtonPrimaryLight
+            leftSection={<StyledLucideIcon Icon={PlusIcon} size="sm" />}
+            onClick={openConnectionModal}
+          >
             Connect service
           </ButtonPrimaryLight>
         </Group>
@@ -319,7 +321,13 @@ interface ConnectionTreeNodeProps {
   toggleNode: (nodeId: string) => void;
 }
 
-function ConnectionTreeNode({ group, workbookId, connectorAccount, expandedNodes, toggleNode }: ConnectionTreeNodeProps) {
+function ConnectionTreeNode({
+  group,
+  workbookId,
+  connectorAccount,
+  expandedNodes,
+  toggleNode,
+}: ConnectionTreeNodeProps) {
   const nodeId = `connection-${group.name}`;
   const isExpanded = expandedNodes.has(nodeId);
   const [chooseTablesOpen, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
@@ -465,7 +473,12 @@ interface EmptyConnectionTreeNodeProps {
   toggleNode: (nodeId: string) => void;
 }
 
-function EmptyConnectionTreeNode({ connectorAccount, workbookId, expandedNodes, toggleNode }: EmptyConnectionTreeNodeProps) {
+function EmptyConnectionTreeNode({
+  connectorAccount,
+  workbookId,
+  expandedNodes,
+  toggleNode,
+}: EmptyConnectionTreeNodeProps) {
   const { metadata } = useConnectorsMetadata();
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const nodeId = `connection-empty-${connectorAccount.id}`;
@@ -613,7 +626,14 @@ interface FolderTreeRendererProps {
   toggleNode: (nodeId: string) => void;
 }
 
-function FolderTreeRenderer({ tree, depth, groupName, workbookId, expandedNodes, toggleNode }: FolderTreeRendererProps) {
+function FolderTreeRenderer({
+  tree,
+  depth,
+  groupName,
+  workbookId,
+  expandedNodes,
+  toggleNode,
+}: FolderTreeRendererProps) {
   return (
     <>
       {Array.from(tree.children.entries()).map(([segName, childNode]) => {
@@ -658,7 +678,14 @@ interface IntermediateFolderNodeProps {
   children: ReactNode;
 }
 
-function IntermediateFolderNode({ name, nodeId, depth, expandedNodes, toggleNode, children }: IntermediateFolderNodeProps) {
+function IntermediateFolderNode({
+  name,
+  nodeId,
+  depth,
+  expandedNodes,
+  toggleNode,
+  children,
+}: IntermediateFolderNodeProps) {
   const isExpanded = expandedNodes.has(nodeId);
 
   const handleToggle = useCallback(() => {
@@ -753,7 +780,13 @@ interface ConnectionMenuProps {
   onRemove?: () => void;
 }
 
-function ConnectionMenu({ connectorAccount, onChooseTables, onReauthorize, onEditConnection, onRemove }: ConnectionMenuProps) {
+function ConnectionMenu({
+  connectorAccount,
+  onChooseTables,
+  onReauthorize,
+  onEditConnection,
+  onRemove,
+}: ConnectionMenuProps) {
   const isOAuth = connectorAccount.authType === AuthType.OAUTH;
 
   return (

@@ -58,5 +58,6 @@ querying git for files committed since the job started. This lets deletion work 
 on resumed runs.
 
 Approaches:
+
 - Store the pre-pull file list (just paths) in `jobProgress` at the start of each folder
 - Or: union `pulledPaths` with files committed since the job's start timestamp (from git log)

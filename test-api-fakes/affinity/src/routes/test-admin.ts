@@ -46,7 +46,13 @@ router.post("/reset", (_req, res) => {
  */
 router.post("/setup", (req, res) => {
   const body = req.body as {
-    lists?: Array<Partial<AffinityList> & { id: number; name: string; type: AffinityList["type"] }>;
+    lists?: Array<
+      Partial<AffinityList> & {
+        id: number;
+        name: string;
+        type: AffinityList["type"];
+      }
+    >;
     fieldsByList?: Record<string, AffinityFieldMetadata[]>;
     entriesByList?: Record<string, AffinityListEntry[]>;
   };
@@ -96,7 +102,10 @@ router.post("/simulate-rate-limit", (req, res) => {
 });
 
 router.post("/simulate-error", (req, res) => {
-  const { statusCode, body } = req.body as { statusCode: number; body: unknown };
+  const { statusCode, body } = req.body as {
+    statusCode: number;
+    body: unknown;
+  };
   store.queueError(statusCode, body);
   res.status(200).json({ ok: true });
 });

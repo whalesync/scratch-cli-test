@@ -34,12 +34,12 @@
 Build production CLI for desktop app:
   extends: .build_cli_for_desktop
   variables:
-    SCRATCH_DEFAULT_URL: "https://api.scratch.md"
+    SCRATCH_DEFAULT_URL: 'https://api.scratch.md'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
-    - if: "$CI_MERGE_REQUEST_IID"
+    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
       allow_failure: true
 
@@ -48,7 +48,7 @@ Local build production CLI for desktop app:
     - .build_cli_for_desktop
     - .local-runner-defaults
   variables:
-    SCRATCH_DEFAULT_URL: "https://api.scratch.md"
+    SCRATCH_DEFAULT_URL: 'https://api.scratch.md'
   rules:
     - if: !reference [.rules, local_runner_users_prod]
       when: manual
@@ -60,12 +60,12 @@ Local build production CLI for desktop app:
 Build test CLI for desktop app:
   extends: .build_cli_for_desktop
   variables:
-    SCRATCH_DEFAULT_URL: "https://test-api.scratch.md"
+    SCRATCH_DEFAULT_URL: 'https://test-api.scratch.md'
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: on_success
-    - if: "$CI_MERGE_REQUEST_IID"
+    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
 
 Local build test CLI for desktop app:
@@ -73,7 +73,7 @@ Local build test CLI for desktop app:
     - .build_cli_for_desktop
     - .local-runner-defaults
   variables:
-    SCRATCH_DEFAULT_URL: "https://test-api.scratch.md"
+    SCRATCH_DEFAULT_URL: 'https://test-api.scratch.md'
   rules:
     - if: !reference [.rules, local_runner_users_master]
       when: manual
@@ -88,7 +88,7 @@ Local build test CLI for desktop app:
   image: node:22
   variables:
     GIT_DEPTH: 0
-    RELEASE_TYPE: "patch"
+    RELEASE_TYPE: 'patch'
   needs:
     - job: Build production CLI for desktop app
       artifacts: true
@@ -109,17 +109,17 @@ Release desktop Linux and Windows apps:
   extends: .release_desktop_prod_job
   inputs:
     RELEASE_TYPE:
-      description: "Release version type"
-      default: "patch"
+      description: 'Release version type'
+      default: 'patch'
       options:
-        - "patch"
-        - "minor"
-        - "major"
+        - 'patch'
+        - 'minor'
+        - 'major'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
-    - if: "$CI_MERGE_REQUEST_IID"
+    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
       allow_failure: true
 
@@ -129,7 +129,7 @@ Release desktop Linux and Windows apps:
   image: node:22
   variables:
     GIT_DEPTH: 0
-    RELEASE_TYPE: "patch"
+    RELEASE_TYPE: 'patch'
   needs:
     - job: Build test CLI for desktop app
       artifacts: true
@@ -150,18 +150,18 @@ Release test desktop Linux and Windows apps:
   extends: .release_desktop_test_job
   inputs:
     RELEASE_TYPE:
-      description: "Release version type"
-      default: "patch"
+      description: 'Release version type'
+      default: 'patch'
       options:
-        - "patch"
-        - "minor"
-        - "major"
+        - 'patch'
+        - 'minor'
+        - 'major'
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
-    - if: "$CI_MERGE_REQUEST_IID"
+    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
       allow_failure: true
 
@@ -183,17 +183,17 @@ Local release desktop macOS app:
   before_script:
     - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
   variables:
-    RELEASE_TYPE: "patch"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
+    RELEASE_TYPE: 'patch'
+    MAC_TARGETS: 'dmg zip'
+    BUILD_LINUX: 'false'
   inputs:
     RELEASE_TYPE:
-      description: "Release version type"
-      default: "patch"
+      description: 'Release version type'
+      default: 'patch'
       options:
-        - "patch"
-        - "minor"
-        - "major"
+        - 'patch'
+        - 'minor'
+        - 'major'
   rules:
     - if: !reference [.rules, local_runner_users_prod]
       when: manual
@@ -220,17 +220,17 @@ Local release test desktop macOS app:
   before_script:
     - cd scratch-desktop && yarn install --frozen-lockfile --ignore-engines
   variables:
-    RELEASE_TYPE: "patch"
-    MAC_TARGETS: "dmg zip"
-    BUILD_LINUX: "false"
+    RELEASE_TYPE: 'patch'
+    MAC_TARGETS: 'dmg zip'
+    BUILD_LINUX: 'false'
   inputs:
     RELEASE_TYPE:
-      description: "Release version type"
-      default: "patch"
+      description: 'Release version type'
+      default: 'patch'
       options:
-        - "patch"
-        - "minor"
-        - "major"
+        - 'patch'
+        - 'minor'
+        - 'major'
   rules:
     - if: !reference [.rules, local_runner_users_master]
       when: manual

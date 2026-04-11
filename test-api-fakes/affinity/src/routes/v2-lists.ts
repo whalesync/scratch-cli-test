@@ -27,12 +27,18 @@ const VALID_FIELD_TYPES: ReadonlySet<AffinityFieldType> = new Set([
 function paginate<T>(
   req: Request,
   items: T[],
-): { data: T[]; pagination: { prevUrl: string | null; nextUrl: string | null } } {
+): {
+  data: T[];
+  pagination: { prevUrl: string | null; nextUrl: string | null };
+} {
   let startIndex = 0;
   const cursorParam = req.query.cursor;
   if (typeof cursorParam === "string") {
     try {
-      startIndex = parseInt(Buffer.from(cursorParam, "base64").toString("utf-8"), 10);
+      startIndex = parseInt(
+        Buffer.from(cursorParam, "base64").toString("utf-8"),
+        10,
+      );
       if (isNaN(startIndex) || startIndex < 0) startIndex = 0;
     } catch {
       startIndex = 0;
@@ -40,7 +46,10 @@ function paginate<T>(
   }
 
   const requestedLimit = parseInt(String(req.query.limit ?? PAGE_SIZE), 10);
-  const limit = Math.min(isNaN(requestedLimit) ? PAGE_SIZE : requestedLimit, PAGE_SIZE);
+  const limit = Math.min(
+    isNaN(requestedLimit) ? PAGE_SIZE : requestedLimit,
+    PAGE_SIZE,
+  );
 
   const page = items.slice(startIndex, startIndex + limit);
 
@@ -127,7 +136,9 @@ router.get("/v2/lists/:listId", (req, res) => {
   const listId = parseInt(req.params.listId, 10);
   const list = store.getList(listId);
   if (!list) {
-    res.status(404).json({ errors: [{ code: "not_found", message: `List ${listId} not found` }] });
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `List ${listId} not found` }],
+    });
     return;
   }
   res.json(list);
@@ -138,7 +149,9 @@ router.get("/v2/lists/:listId", (req, res) => {
 router.get("/v2/lists/:listId/fields", (req, res) => {
   const listId = parseInt(req.params.listId, 10);
   if (!store.getList(listId)) {
-    res.status(404).json({ errors: [{ code: "not_found", message: `List ${listId} not found` }] });
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `List ${listId} not found` }],
+    });
     return;
   }
   const fields = store.getFieldsForList(listId);
@@ -151,12 +164,16 @@ router.get("/v2/lists/:listId/fields", (req, res) => {
 router.get("/v2/lists/:listId/list-entries", (req, res) => {
   const listId = parseInt(req.params.listId, 10);
   if (!store.getList(listId)) {
-    res.status(404).json({ errors: [{ code: "not_found", message: `List ${listId} not found` }] });
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `List ${listId} not found` }],
+    });
     return;
   }
 
   const fieldTypeFilter = parseFieldTypeFilter(req);
-  const entries = store.getEntries(listId).map((e) => filterEntryFields(e, fieldTypeFilter));
+  const entries = store
+    .getEntries(listId)
+    .map((e) => filterEntryFields(e, fieldTypeFilter));
   const result = paginate(req, entries);
   res.json(result);
 });
@@ -167,14 +184,21 @@ router.get("/v2/lists/:listId/list-entries/:entryId", (req, res) => {
   const listId = parseInt(req.params.listId, 10);
   const entryId = parseInt(req.params.entryId, 10);
   if (!store.getList(listId)) {
-    res.status(404).json({ errors: [{ code: "not_found", message: `List ${listId} not found` }] });
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `List ${listId} not found` }],
+    });
     return;
   }
   const entry = store.getEntry(listId, entryId);
   if (!entry) {
-    res
-      .status(404)
-      .json({ errors: [{ code: "not_found", message: `List entry ${entryId} not found in list ${listId}` }] });
+    res.status(404).json({
+      errors: [
+        {
+          code: "not_found",
+          message: `List entry ${entryId} not found in list ${listId}`,
+        },
+      ],
+    });
     return;
   }
   const fieldTypeFilter = parseFieldTypeFilter(req);
@@ -186,8 +210,17 @@ router.get("/v2/lists/:listId/list-entries/:entryId", (req, res) => {
 router.get("/v2/auth/whoami", (_req, res) => {
   res.json({
     tenant: { id: 99999, name: "Fake Tenant", subdomain: "fake" },
-    user: { id: 1, firstName: "Fake", lastName: "User", email: "fake@example.com" },
-    grant: { type: "api_key", scope: "api", createdAt: "2025-01-01T00:00:00.000-08:00" },
+    user: {
+      id: 1,
+      firstName: "Fake",
+      lastName: "User",
+      email: "fake@example.com",
+    },
+    grant: {
+      type: "api_key",
+      scope: "api",
+      createdAt: "2025-01-01T00:00:00.000-08:00",
+    },
   });
 });
 

@@ -60,7 +60,8 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--pause") {
-      args.pause = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
+      args.pause =
+        argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
       continue;
     }
     if (arg.startsWith("--pause=")) {
@@ -80,7 +81,8 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--stop") {
-      args.stop = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
+      args.stop =
+        argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "everywhere";
       continue;
     }
     if (arg.startsWith("--stop=")) {
@@ -152,11 +154,14 @@ function canExecuteBinary(candidate) {
 
 function resolveBinary(binaryArg) {
   const repoBinary = path.resolve(__dirname, "../../../target/debug/scratchmd");
-  const repoBinaryReady = fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
+  const repoBinaryReady =
+    fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
 
   if (binaryArg) {
     const looksLikePath =
-      binaryArg.includes("/") || binaryArg.startsWith(".") || path.isAbsolute(binaryArg);
+      binaryArg.includes("/") ||
+      binaryArg.startsWith(".") ||
+      path.isAbsolute(binaryArg);
 
     if (looksLikePath && canExecuteBinary(binaryArg)) return binaryArg;
     if (!looksLikePath && repoBinaryReady) return repoBinary;
@@ -219,7 +224,10 @@ async function pauseIfNeeded(pause, step, label, details = []) {
   console.log(`\n[pause] ${label}`);
   for (const detail of details) console.log(`  ${detail}`);
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
   try {
     await rl.question("Press Enter to continue...");
   } finally {
@@ -290,7 +298,9 @@ function readApiToken(serverUrl) {
     );
   }
 
-  const tokenMatch = blockMatch[1].match(/^\s{4}apiToken:\s*"?([^"\n]+)"?\s*$/m);
+  const tokenMatch = blockMatch[1].match(
+    /^\s{4}apiToken:\s*"?([^"\n]+)"?\s*$/m,
+  );
   if (!tokenMatch) {
     throw new Error(`apiToken missing for ${hostname} in ${credsPath}.`);
   }
@@ -306,15 +316,18 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
   while (Date.now() - start < JOB_POLL_TIMEOUT_MS) {
     let response;
     try {
-      response = await fetch(`${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `API-Token ${apiToken}`,
-          "User-Agent": "Scratch-cli/1.0",
+      response = await fetch(
+        `${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `API-Token ${apiToken}`,
+            "User-Agent": "Scratch-cli/1.0",
+          },
+          body: JSON.stringify({ jobIds }),
         },
-        body: JSON.stringify({ jobIds }),
-      });
+      );
       consecutiveNetworkFailures = 0;
     } catch (error) {
       consecutiveNetworkFailures += 1;
@@ -340,7 +353,9 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
     const hydrated = jobIds.map(
       (jobId) => byId.get(jobId) || { bullJobId: jobId, state: "created" },
     );
-    const summary = hydrated.map((job) => `${job.bullJobId}:${job.state}`).join(", ");
+    const summary = hydrated
+      .map((job) => `${job.bullJobId}:${job.state}`)
+      .join(", ");
 
     if (summary !== lastSummary) {
       console.log(`[jobs] ${summary}`);
@@ -349,7 +364,11 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
 
     if (hydrated.every((job) => job.state === "completed")) return hydrated;
 
-    if (hydrated.some((job) => ["failed", "canceled", "unknown"].includes(job.state))) {
+    if (
+      hydrated.some((job) =>
+        ["failed", "canceled", "unknown"].includes(job.state),
+      )
+    ) {
       throw new Error(`One or more jobs failed: ${summary}`);
     }
 
@@ -385,7 +404,9 @@ async function main() {
 
   const workspaceDir = cliArgs.workspace;
   if (!workspaceDir) {
-    throw new Error("--workspace <path> is required. Pass the path to the local workspace directory.");
+    throw new Error(
+      "--workspace <path> is required. Pass the path to the local workspace directory.",
+    );
   }
   if (!fs.existsSync(workspaceDir)) {
     throw new Error(`Workspace directory does not exist: ${workspaceDir}`);
@@ -393,7 +414,9 @@ async function main() {
 
   const serverUrl =
     cliArgs.serverUrl || process.env.SCRATCH_API_URL || "http://localhost:3010";
-  const binary = resolveBinary(cliArgs.binary || process.env.SCRATCH_CLI_BINARY);
+  const binary = resolveBinary(
+    cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
+  );
   const apiToken = readApiToken(serverUrl);
   const runName = makeRunName();
 
@@ -412,7 +435,9 @@ async function main() {
     printSection("Re-edit local records");
     const editedFiles = editLocalRecords(workspaceDir, runName);
     if (editedFiles.length === 0) {
-      throw new Error("No record files found in workspace. Is the workspace path correct?");
+      throw new Error(
+        "No record files found in workspace. Is the workspace path correct?",
+      );
     }
     console.log(`Edited ${editedFiles.length} record files.`);
 
@@ -421,11 +446,16 @@ async function main() {
       `Edited files: ${editedFiles.length}`,
       `Run name: ${runName}`,
     ]);
-    await pauseIfNeeded(cliArgs.pause, "records-edited", "Local records re-edited", [
-      `Workspace: ${workspaceDir}`,
-      `Edited files: ${editedFiles.length}`,
-      `Run name: ${runName}`,
-    ]);
+    await pauseIfNeeded(
+      cliArgs.pause,
+      "records-edited",
+      "Local records re-edited",
+      [
+        `Workspace: ${workspaceDir}`,
+        `Edited files: ${editedFiles.length}`,
+        `Run name: ${runName}`,
+      ],
+    );
   }
 
   printSection("Accept local changes");
@@ -443,9 +473,12 @@ async function main() {
   stopIfNeeded(cliArgs.stop, "publish-plan-created", "Publish plan created", [
     `Workspace: ${workspaceDir}`,
   ]);
-  await pauseIfNeeded(cliArgs.pause, "publish-plan-created", "Publish plan created", [
-    `Workspace: ${workspaceDir}`,
-  ]);
+  await pauseIfNeeded(
+    cliArgs.pause,
+    "publish-plan-created",
+    "Publish plan created",
+    [`Workspace: ${workspaceDir}`],
+  );
 
   printSection("Upload reviewed changes");
   runCli(binary, serverUrl, ["files", "upload"], {

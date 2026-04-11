@@ -87,25 +87,22 @@ describe.each(fixtures)("Sync one record: $displayName", (fixture) => {
     expect(pullJob.state).toBe("completed");
 
     // 4. Create the sync
-    const syncRes = await api.post(
-      `/workbooks/${workspace.workbookId}/syncs`,
-      {
-        displayName: "Smoke Test Sync One Record",
-        validateMappings: false,
-        mappings: {
-          version: 1,
-          tableMappings: [
-            {
-              sourceDataFolderId: workspace.dataFolderId,
-              destinationDataFolderId: destFolder.dataFolderId,
-              columnMappings: seed.columnMappings,
-              recordMatching: seed.recordMatching,
-            },
-          ],
-        },
-        schedule: "",
+    const syncRes = await api.post(`/workbooks/${workspace.workbookId}/syncs`, {
+      displayName: "Smoke Test Sync One Record",
+      validateMappings: false,
+      mappings: {
+        version: 1,
+        tableMappings: [
+          {
+            sourceDataFolderId: workspace.dataFolderId,
+            destinationDataFolderId: destFolder.dataFolderId,
+            columnMappings: seed.columnMappings,
+            recordMatching: seed.recordMatching,
+          },
+        ],
       },
-    );
+      schedule: "",
+    });
     expect(syncRes.status).toBe(201);
     const syncId = syncRes.data.id;
 
@@ -188,8 +185,9 @@ describe.each(fixtures)("Sync one record: $displayName", (fixture) => {
       `/workbooks/${workspace.workbookId}/files/list/by-folder`,
       { folderId: destFolder.dataFolderId },
     );
-    const destFilesFinalCount = listRecordFiles(destFilesFinal.data.items)
-      .length;
+    const destFilesFinalCount = listRecordFiles(
+      destFilesFinal.data.items,
+    ).length;
     expect(destFilesFinalCount).toBe(2);
   });
 });
