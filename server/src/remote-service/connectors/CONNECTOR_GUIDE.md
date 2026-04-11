@@ -793,15 +793,52 @@ async createConnector(ctx) {
 
 ### EntityId Conventions
 
-| Connector  | `wsId`                               | `remoteId`               |
-| ---------- | ------------------------------------ | ------------------------ |
-| Airtable   | `sanitizeForTableWsId(tableId)`      | `[baseId, tableId]`      |
-| Webflow    | `sanitizeForTableWsId(collectionId)` | `[siteId, collectionId]` |
-| Notion     | `sanitizeForTableWsId(databaseId)`   | `[databaseId]`           |
-| Shopify    | `entityType` (e.g., `'products'`)    | `[entityType]`           |
-| WordPress  | `tableId` (e.g., `'posts'`)          | `[tableId]`              |
-| PostgreSQL | `sanitizeForTableWsId(tableName)`    | `['public', tableName]`  |
-| Intercom   | `tableType` (e.g., `'articles'`)     | `[tableType]`            |
+#### Fixed vs. user-defined tables
+
+Connectors fall into two camps based on what their source system models:
+
+- **Fixed-table connectors** expose a known set of resource types defined by the source API itself — `contacts`, `companies`, `deals` for HubSpot; `products`, `orders` for Shopify; `posts`, `pages` for WordPress. The user can't create new types of records, only new instances of the existing types. For these, **use a hardcoded string in `remoteId[0]`** that names the resource type. The string is what the connector uses internally to dispatch to the right API endpoint, and it's stable across deploys.
+
+- **User-defined-table connectors** expose tables/databases/collections that the user creates inside the source system — Airtable bases, Notion databases, Postgres tables, Webflow collections. The set of tables is determined at runtime, and the natural identifier is whatever id the source system assigns. For these, **use the source system's id (sanitized for the `wsId` slot, raw for `remoteId`)**.
+
+- **Hybrid connectors** have both. Affinity is the canonical example: it has three fixed tenant-wide resource types (`/v2/persons`, `/v2/companies`, `/v2/opportunities`) _and_ user-created lists with numeric ids. The dispatch handles both by checking for the fixed strings first, then falling through to the numeric parser:
+
+  ```typescript
+  function parseAffinityTableId(id: EntityId): AffinityTableKind {
+    const raw = id.remoteId[0];
+    switch (raw) {
+      case 'persons':
+        return { kind: 'tenant-persons' };
+      case 'companies':
+        return { kind: 'tenant-companies' };
+      case 'opportunities':
+        return { kind: 'tenant-opportunities' };
+    }
+    const parsed = parseInt(raw, 10);
+    if (isNaN(parsed)) throw new ConnectorError(`Invalid table id: ${raw}`);
+    return { kind: 'list', listId: parsed };
+  }
+  ```
+
+  This pattern is safe as long as the source system's user-defined ids can never collide with the fixed strings. For Affinity that's guaranteed because list ids are always numeric.
+
+**Why `remoteId` and not `metadata`?** The `remoteId` is the canonical, persisted identifier — once the user creates a DataFolder for a table, `remoteId` is what gets stored in the database and replayed back to the connector on every subsequent `pullRecordFiles` / `fetchJsonTableSpec` / `pullRecordFilesByIds` call. Picker `metadata` is informational and isn't reliably plumbed through. Dispatch logic _must_ live in `remoteId` to survive a round-trip through the database.
+
+#### Per-connector reference
+
+| Connector  | Style           | `wsId`                               | `remoteId`               |
+| ---------- | --------------- | ------------------------------------ | ------------------------ |
+| Airtable   | User-defined    | `sanitizeForTableWsId(tableId)`      | `[baseId, tableId]`      |
+| Webflow    | User-defined    | `sanitizeForTableWsId(collectionId)` | `[siteId, collectionId]` |
+| Notion     | User-defined    | `sanitizeForTableWsId(databaseId)`   | `[databaseId]`           |
+| PostgreSQL | User-defined    | `sanitizeForTableWsId(tableName)`    | `['public', tableName]`  |
+| HubSpot    | Fixed (+custom) | `objectType` (e.g., `'contacts'`)    | `[objectType]`           |
+| Brevo      | Fixed           | `tableType` (e.g., `'contacts'`)     | `[tableType]`            |
+| Shopify    | Fixed           | `entityType` (e.g., `'products'`)    | `[entityType]`           |
+| WordPress  | Fixed           | `tableId` (e.g., `'posts'`)          | `[tableId]`              |
+| Intercom   | Fixed           | `tableType` (e.g., `'articles'`)     | `[tableType]`            |
+
+HubSpot is "fixed + custom" because standard CRM object types use the fixed-string convention (`'contacts'`, `'companies'`, …) while custom objects use HubSpot's own `fullyQualifiedName` (e.g., `'p12345_MyObject'`) — both still strings in `remoteId[0]`, just sourced differently.
 
 ### Partial Field Updates (`changedFields`)
 
