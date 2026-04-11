@@ -226,16 +226,17 @@ pub async fn commit_staged(
                     tokio::task::spawn_blocking(move || {
                         let git_repo = GitRepo::open(&repos_dir, &repo_id)?;
 
-                        if !folder_dir.exists() {
-                            return Err(AppError::not_found(format!(
-                                "Staging folder not found: {}",
-                                folder_dir.display()
-                            )));
-                        }
-
-                        // Read all staged files from disk
-                        let base_dir = folder_dir.clone();
-                        let entries = collect_files_recursive(&folder_dir, &base_dir)?;
+                        // A missing staging folder is treated as an empty commit, matching
+                        // `read_staged_files`. This happens when phase 1 of a pull job had
+                        // nothing to stage (e.g. an empty list from a read-only connector),
+                        // and lets the caller still finalize stale-file deletion + GC
+                        // without a spurious 404.
+                        let entries = if folder_dir.exists() {
+                            let base_dir = folder_dir.clone();
+                            collect_files_recursive(&folder_dir, &base_dir)?
+                        } else {
+                            Vec::new()
+                        };
 
                         // Prepend the folder name to each path so git commits
                         // files at the correct location (e.g., "Products/file.json")
@@ -406,5 +407,148 @@ mod tests {
         let committed_path = format!("{}/{}", folder_name, rel_path);
 
         assert_eq!(committed_path, "Products/sub/nested/item.json");
+    }
+
+    // -----------------------------------------------------------------------
+    // Handler-level tests for `commit_staged`. These exercise the full route
+    // function (AppState + axum extractors + a real git repo) so the
+    // missing-folder fallback and the happy path are pinned end-to-end.
+    // -----------------------------------------------------------------------
+
+    use crate::service::git::lock::WriteLockManager;
+    use crate::service::git::repo::GitRepo;
+    use crate::service::state::AppState;
+    use axum::body::to_bytes;
+    use axum::extract::{Path as AxumPath, State};
+    use axum::http::StatusCode;
+    use axum::Json;
+    use dashmap::DashMap;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// Build an `AppState` backed by fresh temp dirs and an initialized bare
+    /// repo at `repo_id`. The temp dirs are returned so the caller can keep
+    /// them alive for the duration of the test (dropping them deletes the
+    /// underlying directories).
+    fn make_state_with_repo(repo_id: &str) -> (AppState, TempDir, TempDir, TempDir) {
+        let repos_dir = TempDir::new().unwrap();
+        let staging_dir = TempDir::new().unwrap();
+        let index_dir = TempDir::new().unwrap();
+
+        GitRepo::init(repos_dir.path(), repo_id).unwrap();
+
+        let state = AppState {
+            repos_dir: repos_dir.path().to_path_buf(),
+            index_dir: index_dir.path().to_path_buf(),
+            staging_dir: staging_dir.path().to_path_buf(),
+            build_version: "test".to_string(),
+            gc_state: Arc::new(DashMap::new()),
+            write_locks: Arc::new(WriteLockManager::new()),
+        };
+
+        (state, repos_dir, staging_dir, index_dir)
+    }
+
+    /// Read an axum response body and parse it as JSON. The handlers in this
+    /// module always return JSON envelopes, so this is safe.
+    async fn response_json(response: axum::response::Response) -> serde_json::Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn commit_staged_missing_folder_returns_empty_success() {
+        // Regression test for the V2 pull job 404: when phase 1 had nothing to
+        // stage, the staging dir for the job is never created on disk, and
+        // commit_staged should return an empty success rather than 404.
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let response = commit_staged(
+            State(state),
+            AxumPath("job_does_not_exist".to_string()),
+            Json(CommitStagedBody {
+                repo_id: repo_id.clone(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: "Empty Folder".to_string(),
+                message: Some("test".to_string()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["created"], serde_json::json!([]));
+        assert_eq!(json["data"]["updated"], serde_json::json!([]));
+        assert_eq!(json["data"]["unchanged"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn commit_staged_empty_existing_folder_returns_empty_success() {
+        // Adjacent case: the staging folder *exists* on disk but contains no
+        // files (e.g. a previous run cleaned up content but not the dir).
+        // This already worked pre-fix via `changes.is_empty()`, but pinning it
+        // here means future refactors can't quietly regress it.
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_empty_dir";
+        let folder = "Empty Folder";
+        let folder_dir = state.staging_job_path(job_id).join(folder);
+        std::fs::create_dir_all(&folder_dir).unwrap();
+
+        let response = commit_staged(
+            State(state),
+            AxumPath(job_id.to_string()),
+            Json(CommitStagedBody {
+                repo_id: repo_id.clone(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: folder.to_string(),
+                message: Some("test".to_string()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["created"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn commit_staged_with_files_commits_under_folder_prefix() {
+        // Happy-path regression: make sure the missing-folder fallback didn't
+        // accidentally break the normal case where files actually exist.
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_with_files";
+        let folder = "Products";
+        let folder_dir = state.staging_job_path(job_id).join(folder);
+        std::fs::create_dir_all(&folder_dir).unwrap();
+        std::fs::write(folder_dir.join("a.json"), r#"{"id":1}"#).unwrap();
+        std::fs::write(folder_dir.join("b.json"), r#"{"id":2}"#).unwrap();
+
+        let response = commit_staged(
+            State(state),
+            AxumPath(job_id.to_string()),
+            Json(CommitStagedBody {
+                repo_id: repo_id.clone(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: folder.to_string(),
+                message: Some("Add products".to_string()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["success"], true);
+
+        let created = json["data"]["created"].as_array().unwrap();
+        let mut paths: Vec<&str> = created.iter().map(|v| v.as_str().unwrap()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["Products/a.json", "Products/b.json"]);
     }
 }
