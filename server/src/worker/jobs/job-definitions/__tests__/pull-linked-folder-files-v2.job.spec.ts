@@ -402,7 +402,7 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         expect(mockScratchGitService.cleanupStaging).toHaveBeenCalledWith('test-job-id');
       });
 
-      it('should call cleanupStaging even when Phase 2 throws', async () => {
+      it('should call cleanupStaging and continue when Phase 2 folder fails', async () => {
         const { mockConnector, params } = setupStandardMocks();
 
         mockConnector.pullRecordFiles.mockResolvedValue(undefined);
@@ -411,7 +411,8 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockRejectedValue(new Error('commit failed'));
 
-        await expect(handler.run(params)).rejects.toThrow();
+        // Phase 2 no longer re-throws — the error is caught per-folder and run() completes
+        await handler.run(params);
 
         expect(mockScratchGitService.cleanupStaging).toHaveBeenCalledWith('test-job-id');
       });

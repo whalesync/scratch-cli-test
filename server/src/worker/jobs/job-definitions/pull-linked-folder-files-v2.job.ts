@@ -13,7 +13,6 @@ import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import type { Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
-import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WSLogger } from '../../../logger';
@@ -131,11 +130,41 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
     await this.scratchGitService.initRepo(repoId);
 
-    // Load all folder contexts upfront
+    // Load all folder contexts upfront — per-folder failures are non-fatal
     const folderContexts: FolderContext[] = [];
+    const failedFolderIds: DataFolderId[] = [];
     for (const dataFolderId of data.dataFolderIds) {
-      const folderCtx = await this.loadFolderAndConnector({ dataFolderId, repoId, data, jobId });
-      folderContexts.push(folderCtx);
+      try {
+        const folderCtx = await this.loadFolderAndConnector({ dataFolderId, repoId, data, jobId });
+        folderContexts.push(folderCtx);
+      } catch (error) {
+        failedFolderIds.push(dataFolderId);
+
+        WSLogger.error({
+          source: LOG_SOURCE,
+          message: 'Failed to load folder context',
+          workbookId: data.workbookId,
+          dataFolderId,
+          error,
+        });
+
+        // Clear any lock so the folder can be re-pulled
+        await this.prisma.dataFolder.update({ where: { id: dataFolderId }, data: { lock: null } }).catch(() => {});
+
+        this.workbookEventService.sendWorkbookEvent(data.workbookId, {
+          type: 'job-failed',
+          data: {
+            entityId: dataFolderId,
+            source: 'job',
+            message: 'Pull failed for data folder',
+            jobId,
+          },
+        });
+      }
+    }
+
+    if (folderContexts.length === 0) {
+      throw new Error('All folders failed to load — nothing to pull');
     }
 
     // Determine max concurrency from connector's rate limiter spec
@@ -157,6 +186,12 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       folderCursors: progress.jobProgress?.folderCursors ?? {},
     };
 
+    // Mark folders that failed during context loading
+    for (const folderId of failedFolderIds) {
+      jobProgress.folderFetchStatus![folderId] = 'failed';
+    }
+    const pullFailed = failedFolderIds.length > 0;
+
     const publicProgress: PullLinkedFolderFilesPublicProgress = {
       totalFiles: 0,
       folderCount,
@@ -174,7 +209,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       deletedCount: 0,
     };
 
-    const pullStats = { created: 0, updated: 0, deleted: 0, failed: false };
+    const pullStats = { created: 0, updated: 0, deleted: 0, failed: pullFailed };
 
     try {
       // =====================================================================
@@ -200,63 +235,16 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       jobProgress.phase = 'process';
       await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
 
-      for (const folderCtx of folderContexts) {
-        if (abortSignal.aborted) break;
-
-        const fetchResult = fetchResults.get(folderCtx.dataFolder.id);
-        if (!fetchResult || jobProgress.folderFetchStatus?.[folderCtx.dataFolder.id] === 'failed') {
-          continue;
-        }
-
-        if (jobProgress.completedFolderIds?.includes(folderCtx.dataFolder.id)) {
-          continue;
-        }
-
-        try {
-          const result = await this.processFolder({
-            folderCtx,
-            fetchResult,
-            jobId,
-            publicProgress,
-            jobProgress,
-            checkpoint,
-          });
-
-          pullStats.created += result.created;
-          pullStats.updated += result.updated;
-          pullStats.deleted += result.deleted;
-
-          jobProgress.completedFolderIds = jobProgress.completedFolderIds ?? [];
-          jobProgress.completedFolderIds.push(folderCtx.dataFolder.id);
-        } catch (error) {
-          pullStats.failed = true;
-
-          WSLogger.error({
-            source: LOG_SOURCE,
-            message: 'Failed to process folder in Phase 2',
-            workbookId: folderCtx.dataFolder.workbookId,
-            dataFolderId: folderCtx.dataFolder.id,
-            errorDetails: folderCtx.connector.extractConnectorErrorDetails(error),
-          });
-
-          await this.prisma.dataFolder.update({
-            where: { id: folderCtx.dataFolder.id },
-            data: { lock: null },
-          });
-
-          this.workbookEventService.sendWorkbookEvent(folderCtx.dataFolder.workbookId as WorkbookId, {
-            type: 'job-failed',
-            data: {
-              entityId: folderCtx.dataFolder.id,
-              source: 'job',
-              message: 'Pull failed for data folder',
-              jobId,
-            },
-          });
-
-          throw exceptionForConnectorError(error, folderCtx.connector);
-        }
-      }
+      await this.runPhase2Process({
+        folderContexts,
+        fetchResults,
+        jobId,
+        publicProgress,
+        jobProgress,
+        pullStats,
+        checkpoint,
+        abortSignal,
+      });
     } finally {
       // Defensive backstop: clear locks on any folder that still has lock='pull'.
       // The per-error-path cleanup should have handled this, but this catches any
@@ -293,13 +281,37 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
           error: err,
         });
       }
-    }
 
-    // Checkpoint before finalization
+      // Post-processing: rebase, GC, index rebuild, tracking.
+      // Runs even if some folders failed so successful folders get finalized.
+      await this.postProcess({ repoId, data, publicProgress, jobProgress, pullStats, folderCount, checkpoint });
+    }
+  }
+
+  private async postProcess(params: {
+    repoId: string;
+    data: PullLinkedFolderFilesJobDefinition['data'];
+    publicProgress: PullLinkedFolderFilesPublicProgress;
+    jobProgress: PullLinkedFolderFilesV2JobProgress;
+    pullStats: { created: number; updated: number; deleted: number; failed: boolean };
+    folderCount: number;
+    checkpoint: CheckpointFn;
+  }) {
+    const { repoId, data, publicProgress, jobProgress, pullStats, folderCount, checkpoint } = params;
+
     await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
 
     // Rebase and GC once after all folders are processed (not per-folder)
-    await this.scratchGitService.rebaseDirty(repoId);
+    try {
+      await this.scratchGitService.rebaseDirty(repoId);
+    } catch (err) {
+      WSLogger.warn({
+        source: LOG_SOURCE,
+        message: 'Failed to rebase dirty branch',
+        workbookId: data.workbookId,
+        error: err,
+      });
+    }
 
     try {
       await this.scratchGitService.runGitGc(repoId);
@@ -313,14 +325,16 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     }
 
     // Rebuild the index once after all folders are done
-    await this.scratchGitService.buildIndex(repoId).catch((err) => {
+    try {
+      await this.scratchGitService.buildIndex(repoId);
+    } catch (err) {
       WSLogger.warn({
         source: LOG_SOURCE,
         message: 'Failed to rebuild index after pull',
         workbookId: data.workbookId,
         error: err,
       });
-    });
+    }
 
     try {
       this.postHogService.trackPullCompleted(data.userId, {
@@ -469,12 +483,19 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       jobProgress.folderFetchStatus[folderId] = 'fetching';
 
       try {
+        const resumeProgress = jobProgress.folderCursors?.[folderId] ?? {};
         const result = await this.fetchFolder({
           folderCtx,
           jobId,
-          publicProgress,
-          jobProgress,
-          checkpoint,
+          resumeProgress,
+          onBatchCheckpoint: async (update) => {
+            publicProgress.totalFiles += update.fileCount;
+            if (update.cursor) {
+              jobProgress.folderCursors = jobProgress.folderCursors ?? {};
+              jobProgress.folderCursors[folderId] = update.cursor;
+            }
+            await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
+          },
           abortSignal,
         });
         results.set(folderId, result);
@@ -515,15 +536,107 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     return results;
   }
 
-  private async fetchFolder(params: {
-    folderCtx: FolderContext;
+  // ---------------------------------------------------------------------------
+  // Phase 2: Sequential process — index, commit, delete stale, finalize
+  // ---------------------------------------------------------------------------
+
+  private async runPhase2Process(params: {
+    folderContexts: FolderContext[];
+    fetchResults: Map<DataFolderId, FolderFetchResult>;
     jobId: string;
     publicProgress: PullLinkedFolderFilesPublicProgress;
     jobProgress: PullLinkedFolderFilesV2JobProgress;
+    pullStats: { created: number; updated: number; deleted: number; failed: boolean };
     checkpoint: CheckpointFn;
     abortSignal: AbortSignal;
+  }): Promise<void> {
+    const { folderContexts, fetchResults, jobId, publicProgress, jobProgress, pullStats, checkpoint, abortSignal } =
+      params;
+
+    for (const folderCtx of folderContexts) {
+      if (abortSignal.aborted) break;
+
+      const fetchResult = fetchResults.get(folderCtx.dataFolder.id);
+      if (!fetchResult || jobProgress.folderFetchStatus?.[folderCtx.dataFolder.id] === 'failed') {
+        continue;
+      }
+
+      if (jobProgress.completedFolderIds?.includes(folderCtx.dataFolder.id)) {
+        continue;
+      }
+
+      try {
+        // Update publicProgress to show current folder
+        publicProgress.folderId = folderCtx.dataFolder.id;
+        publicProgress.folderName = folderCtx.dataFolder.name;
+
+        const result = await this.processFolder({ folderCtx, fetchResult, jobId });
+
+        // Merge results into shared progress state
+        pullStats.created += result.created;
+        pullStats.updated += result.updated;
+        pullStats.deleted += result.deleted;
+
+        publicProgress.createdCount += result.created;
+        publicProgress.updatedCount += result.updated;
+        publicProgress.deletedCount += result.deleted;
+        for (const path of result.createdPaths) {
+          if (publicProgress.createdPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.createdPaths.push(path);
+          }
+        }
+        for (const path of result.updatedPaths) {
+          if (publicProgress.updatedPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.updatedPaths.push(path);
+          }
+        }
+        for (const path of result.deletedPaths) {
+          if (publicProgress.deletedPaths.length < MAX_PROGRESS_PATHS) {
+            publicProgress.deletedPaths.push(path);
+          }
+        }
+
+        publicProgress.status = 'completed';
+        jobProgress.completedFolderIds = jobProgress.completedFolderIds ?? [];
+        jobProgress.completedFolderIds.push(folderCtx.dataFolder.id);
+        await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
+      } catch (error) {
+        pullStats.failed = true;
+
+        WSLogger.error({
+          source: LOG_SOURCE,
+          message: 'Failed to process folder in Phase 2',
+          workbookId: folderCtx.dataFolder.workbookId,
+          dataFolderId: folderCtx.dataFolder.id,
+          errorDetails: folderCtx.connector.extractConnectorErrorDetails(error),
+        });
+
+        await this.prisma.dataFolder.update({
+          where: { id: folderCtx.dataFolder.id },
+          data: { lock: null },
+        });
+
+        this.workbookEventService.sendWorkbookEvent(folderCtx.dataFolder.workbookId as WorkbookId, {
+          type: 'job-failed',
+          data: {
+            entityId: folderCtx.dataFolder.id,
+            source: 'job',
+            message: 'Pull failed for data folder',
+            jobId,
+          },
+        });
+      }
+    }
+  }
+
+  private async fetchFolder(params: {
+    folderCtx: FolderContext;
+    jobId: string;
+    resumeProgress: JsonSafeObject;
+    onBatchCheckpoint: (update: { fileCount: number; cursor?: JsonSafeObject }) => Promise<void>;
+    abortSignal: AbortSignal;
   }): Promise<FolderFetchResult> {
-    const { folderCtx, jobId, publicProgress, jobProgress, checkpoint, abortSignal } = params;
+    const { folderCtx, jobId, onBatchCheckpoint, abortSignal } = params;
     const { dataFolder, connector, tableSpec, pullOptions } = folderCtx;
     const folderId = dataFolder.id;
 
@@ -531,8 +644,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     const usedFileNames = new Set<string>();
     let fileCount = 0;
 
-    // Resume from per-folder cursor if available
-    const resumeProgress = jobProgress.folderCursors?.[folderId] ?? {};
+    const resumeProgress = params.resumeProgress;
     const isResuming = Object.keys(resumeProgress).length > 0;
 
     const stagingFolder = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
@@ -581,15 +693,8 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       }
 
       fileCount += files.length;
-      publicProgress.totalFiles += files.length;
 
-      // Save per-folder cursor for resume
-      if (connectorProgress) {
-        jobProgress.folderCursors = jobProgress.folderCursors ?? {};
-        jobProgress.folderCursors[folderId] = connectorProgress;
-      }
-
-      await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
+      await onBatchCheckpoint({ fileCount: files.length, cursor: connectorProgress });
     };
 
     this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
@@ -615,20 +720,17 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     folderCtx: FolderContext;
     fetchResult: FolderFetchResult;
     jobId: string;
-    publicProgress: PullLinkedFolderFilesPublicProgress;
-    jobProgress: PullLinkedFolderFilesV2JobProgress;
-    checkpoint: CheckpointFn;
-  }): Promise<{ created: number; updated: number; deleted: number }> {
-    const { folderCtx, fetchResult, jobId, publicProgress, jobProgress, checkpoint } = params;
+  }): Promise<{
+    created: number;
+    updated: number;
+    deleted: number;
+    createdPaths: string[];
+    updatedPaths: string[];
+    deletedPaths: string[];
+  }> {
+    const { folderCtx, fetchResult, jobId } = params;
     const { dataFolder, tableSpec, repoId } = folderCtx;
     const stagingFolder = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
-    let created = 0;
-    let updated = 0;
-    let deleted = 0;
-
-    // Update publicProgress to show current folder
-    publicProgress.folderId = dataFolder.id;
-    publicProgress.folderName = dataFolder.name;
 
     // --- Read staged files and update DB indexes ---
     let offset = 0;
@@ -671,32 +773,18 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       `Sync ${stagingFolder} (${offset} files)`,
     );
 
-    created = commitResult.created.length;
-    updated = commitResult.updated.length;
-
-    publicProgress.createdCount += created;
-    publicProgress.updatedCount += updated;
-    for (const path of commitResult.created) {
-      if (publicProgress.createdPaths.length < MAX_PROGRESS_PATHS) {
-        publicProgress.createdPaths.push(path);
-      }
-    }
-    for (const path of commitResult.updated) {
-      if (publicProgress.updatedPaths.length < MAX_PROGRESS_PATHS) {
-        publicProgress.updatedPaths.push(path);
-      }
-    }
+    const created = commitResult.created.length;
+    const updated = commitResult.updated.length;
 
     // --- Delete stale files ---
-    deleted = await this.deleteStaleFiles({
+    const deleteResult = await this.deleteStaleFiles({
       folderCtx,
-      publicProgress,
       pulledPaths: fetchResult.pulledPaths,
       isResuming: fetchResult.isResuming,
     });
 
-    // --- Finalize (rebase, GC, events) ---
-    await this.finalizeFolder({ folderCtx, jobId, publicProgress, checkpoint, jobProgress });
+    // --- Finalize (clear lock, send events) ---
+    await this.finalizeFolder({ folderCtx, jobId });
 
     this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
       type: 'folder-contents-changed',
@@ -708,7 +796,14 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       },
     });
 
-    return { created, updated, deleted };
+    return {
+      created,
+      updated,
+      deleted: deleteResult.deleted,
+      createdPaths: commitResult.created,
+      updatedPaths: commitResult.updated,
+      deletedPaths: deleteResult.deletedPaths,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -717,11 +812,10 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
 
   private async deleteStaleFiles(params: {
     folderCtx: FolderContext;
-    publicProgress: PullLinkedFolderFilesPublicProgress;
     pulledPaths: Set<string>;
     isResuming: boolean;
-  }): Promise<number> {
-    const { folderCtx, publicProgress, pulledPaths, isResuming } = params;
+  }): Promise<{ deleted: number; deletedPaths: string[] }> {
+    const { folderCtx, pulledPaths, isResuming } = params;
     const { dataFolder, repoId } = folderCtx;
     const folderPath = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
 
@@ -732,7 +826,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
       });
-      return 0;
+      return { deleted: 0, deletedPaths: [] };
     }
 
     try {
@@ -743,13 +837,6 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         .map((f) => f.path);
 
       if (filesToDelete.length > 0) {
-        publicProgress.deletedCount += filesToDelete.length;
-        for (const path of filesToDelete) {
-          if (publicProgress.deletedPaths.length < MAX_PROGRESS_PATHS) {
-            publicProgress.deletedPaths.push(path);
-          }
-        }
-
         await this.scratchGitService.deleteFilesFromBranch(
           repoId,
           MAIN_BRANCH,
@@ -757,7 +844,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
           `Remove ${filesToDelete.length} deleted files from ${folderPath}`,
         );
 
-        return filesToDelete.length;
+        return { deleted: filesToDelete.length, deletedPaths: filesToDelete };
       }
     } catch (err) {
       if (!(err instanceof ScratchGitNotFoundError)) {
@@ -770,22 +857,12 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       }
     }
 
-    return 0;
+    return { deleted: 0, deletedPaths: [] };
   }
 
-  private async finalizeFolder(params: {
-    folderCtx: FolderContext;
-    jobId: string;
-    publicProgress: PullLinkedFolderFilesPublicProgress;
-    checkpoint: CheckpointFn;
-    jobProgress: PullLinkedFolderFilesV2JobProgress;
-  }): Promise<void> {
-    const { folderCtx, jobId, publicProgress, checkpoint, jobProgress } = params;
+  private async finalizeFolder(params: { folderCtx: FolderContext; jobId: string }): Promise<void> {
+    const { folderCtx, jobId } = params;
     const { dataFolder } = folderCtx;
-
-    publicProgress.status = 'completed';
-
-    await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
 
     await this.prisma.dataFolder.update({
       where: { id: dataFolder.id },
@@ -930,8 +1007,13 @@ export async function runWithConcurrency<T>(items: T[], limit: number, fn: (item
       () => {
         executing.delete(p);
       },
-      () => {
+      (err) => {
         executing.delete(p);
+        WSLogger.error({
+          source: LOG_SOURCE,
+          message: 'Unhandled error in runWithConcurrency task',
+          error: err,
+        });
       },
     );
     executing.add(p);
