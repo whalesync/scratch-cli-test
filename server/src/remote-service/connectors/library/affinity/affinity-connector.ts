@@ -3,6 +3,7 @@ import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { assertUnreachable } from 'src/utils/asserts';
+import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
@@ -112,8 +113,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
           type: 'password',
           label: 'API Key',
           placeholder: 'Affinity v2 API key',
-          description:
-            'Generate an API key in Affinity at Settings → API. The key needs the v2 export permissions for the lists you want to sync.',
+          description: 'Generate an API key in Affinity at Settings → Manage Apps → New App.',
           required: true,
         },
       ],
@@ -130,6 +130,17 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
 
   async testConnection(): Promise<void> {
     await this.client.testConnection();
+  }
+
+  /**
+   * Returns the raw `GET /rate-limit` response from Affinity, which includes
+   * both the per-minute user bucket and the monthly org bucket. Surfaced in
+   * the client's "View API Quota" dialog so users can keep an eye on their
+   * monthly cap (Affinity org plans have notably tight monthly quotas).
+   */
+  async getApiQuota(): Promise<JsonSafeObject> {
+    const quota = await this.client.getQuota();
+    return quota as unknown as JsonSafeObject;
   }
 
   /**

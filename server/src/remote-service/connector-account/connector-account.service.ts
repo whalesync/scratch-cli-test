@@ -34,6 +34,7 @@ import { Connector } from '../connectors/connector';
 import { ConnectorsService } from '../connectors/connectors.service';
 import { getServiceAdvancedSettings, getServiceDisplayName } from '../connectors/display-names';
 import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
+import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
 import { TestConnectionResponse } from './entities/test-connection.entity';
@@ -625,5 +626,26 @@ export class ConnectorAccountService {
 
       return { health: 'error', error: errorMessage };
     }
+  }
+
+  /**
+   * Fetch the current API quota / rate-limit state for a connection. Returns
+   * `{ supported: false }` when the underlying connector does not expose a
+   * quota endpoint. Errors from the connector bubble up so the controller
+   * surfaces them to the client (the dialog renders an error state).
+   */
+  async getApiQuota(workbookId: WorkbookId, id: string, actor: Actor): Promise<ApiQuotaResponse> {
+    const account = await this.findOne(workbookId, id, actor);
+    const connector = await this.connectorsService.getConnector({
+      service: account.service,
+      connectorAccount: account,
+      decryptedCredentials: account,
+    });
+
+    const quota = await connector.getApiQuota();
+    if (quota === null) {
+      return { supported: false };
+    }
+    return { supported: true, quota };
   }
 }

@@ -63,6 +63,20 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   abstract testConnection(): Promise<void>;
 
   /**
+   * Fetch the current API quota / rate-limit state for this connector account.
+   *
+   * Connectors that expose a quota or rate-limit endpoint should override this
+   * and return the raw response as a JSON-safe object. The shape is intentionally
+   * connector-specific — the client renders it as raw pretty-printed JSON.
+   *
+   * Returns `null` (the default) when the connector has no concept of an API
+   * quota endpoint, in which case the client shows an "unsupported" message.
+   */
+  getApiQuota(): Promise<JsonSafeObject | null> {
+    return Promise.resolve(null);
+  }
+
+  /**
    * List the tables available in the data source that can be used for snapshots
    * @returns A list of table previews.
    * @throws Error if the tables cannot be listed.

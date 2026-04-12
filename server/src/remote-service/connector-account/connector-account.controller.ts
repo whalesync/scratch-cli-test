@@ -25,6 +25,7 @@ import type { RequestWithUser } from '../../auth/types';
 import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { ConnectorAccountService } from './connector-account.service';
+import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { ConnectorAccount } from './entities/connector-account.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
@@ -114,6 +115,17 @@ export class ConnectorAccountController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     return this.service.testConnection(workbookId as WorkbookId, id, actor);
+  }
+
+  @Get(':id/quota')
+  async getApiQuota(
+    @Param('workbookId') workbookId: string,
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+  ): Promise<ApiQuotaResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.getApiQuota(workbookId as WorkbookId, id, actor);
   }
 
   @Patch(':id')

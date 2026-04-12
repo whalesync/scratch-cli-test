@@ -1,4 +1,4 @@
-import { TestConnectionResponse } from '@/types/server-entities/connector-accounts';
+import { ApiQuotaResponse, TestConnectionResponse } from '@/types/server-entities/connector-accounts';
 import { ConnectorAccount, CreateConnectorAccountDto, UpdateConnectorAccountDto } from '@spinner/shared-types';
 import { TableList, TableSchemaPreview, TableSearchResult } from '../../types/server-entities/table-list';
 import { API_CONFIG } from './config';
@@ -113,6 +113,17 @@ export const connectorAccountsApi = {
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to test connection');
+    }
+  },
+
+  // GET the current API quota / rate-limit state for a connection
+  getQuota: async (workbookId: string, id: string): Promise<ApiQuotaResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<ApiQuotaResponse>(`/workbooks/${workbookId}/connections/${id}/quota`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch API quota');
     }
   },
 

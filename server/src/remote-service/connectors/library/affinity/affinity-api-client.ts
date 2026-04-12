@@ -172,8 +172,8 @@ export class AffinityApiClient {
    * v2 response as `x-ratelimit-*` headers, so prefer reading those if you're
    * already making a call; this endpoint is for explicit "check my quota" flows.
    *
-   * Not yet exposed via the `Connector` interface — this is a low-level helper
-   * intended for diagnostics, integration tests, and future UI surfacing.
+   * Surfaced through `AffinityConnector.getApiQuota()` for the "View API Quota"
+   * dialog in the client; also used directly for diagnostics and integration tests.
    */
   async getQuota(): Promise<AffinityQuota> {
     const response = await this.withRetry(async () => this.http.get<AffinityQuota>('/rate-limit'));

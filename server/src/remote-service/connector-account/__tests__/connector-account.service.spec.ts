@@ -46,6 +46,7 @@ function createMockAccount(overrides: Partial<ConnectorAccount> = {}): Connector
 describe('ConnectorAccountService', () => {
   let service: ConnectorAccountService;
   let dbService: jest.Mocked<DbService>;
+  let connectorsService: jest.Mocked<ConnectorsService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let posthogService: jest.Mocked<PostHogService>;
   let auditLogService: jest.Mocked<AuditLogService>;
@@ -96,7 +97,9 @@ describe('ConnectorAccountService', () => {
       sendWorkbookEvent: jest.fn(),
     } as unknown as jest.Mocked<WorkbookEventService>;
 
-    const connectorsService = {} as jest.Mocked<ConnectorsService>;
+    connectorsService = {
+      getConnector: jest.fn(),
+    } as unknown as jest.Mocked<ConnectorsService>;
     const oauthService = {} as jest.Mocked<OAuthService>;
 
     service = new ConnectorAccountService(
@@ -208,6 +211,55 @@ describe('ConnectorAccountService', () => {
         message: 'Deleted connection Test Connection',
         entityId: ACCOUNT_ID,
       });
+    });
+  });
+
+  describe('getApiQuota', () => {
+    it('returns supported: true with quota when connector provides quota data', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      const mockQuota = { rate: { api_key_per_minute: { limit: 900, remaining: 850, used: 50, reset: 30 } } };
+      const mockConnector = { getApiQuota: jest.fn().mockResolvedValue(mockQuota) };
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      const result = await service.getApiQuota(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result).toEqual({ supported: true, quota: mockQuota });
+      expect(mockConnector.getApiQuota).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns supported: false when connector returns null', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      const mockConnector = { getApiQuota: jest.fn().mockResolvedValue(null) };
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      const result = await service.getApiQuota(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result).toEqual({ supported: false });
+    });
+
+    it('throws NotFoundException when account is not found', async () => {
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.getApiQuota(WORKBOOK_ID, ACCOUNT_ID, ACTOR)).rejects.toThrow(NotFoundException);
+
+      expect(connectorsService.getConnector).not.toHaveBeenCalled();
+    });
+
+    it('propagates errors from the connector', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      const mockConnector = { getApiQuota: jest.fn().mockRejectedValue(new Error('API key expired')) };
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      await expect(service.getApiQuota(WORKBOOK_ID, ACCOUNT_ID, ACTOR)).rejects.toThrow('API key expired');
     });
   });
 });

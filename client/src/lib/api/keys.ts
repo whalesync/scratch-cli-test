@@ -21,6 +21,7 @@ export const SWR_KEYS = {
       connectorAccountId,
       searchTerm,
     ],
+    quota: (workbookId: string, id: string) => ['connector-accounts', 'quota', workbookId, id] as const,
   },
   workbook: {
     list: (sortBy?: string, sortOrder?: string) => ['workbook', 'list', sortBy ?? 'all', sortOrder ?? 'all'],

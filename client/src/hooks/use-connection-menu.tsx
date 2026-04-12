@@ -1,6 +1,7 @@
 'use client';
 
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
+import { ApiQuotaDialog } from '@/app/workbook/[id]/components/Sidebar/ApiQuotaDialog';
 import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
 import { GitGcModal } from '@/app/workbook/[id]/components/modals/GitGcModal';
 import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
@@ -17,6 +18,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AuthType, type WorkbookId } from '@spinner/shared-types';
 import {
+  ActivityIcon,
   CloudCogIcon,
   FileCodeIcon,
   GitGraphIcon,
@@ -80,6 +82,7 @@ export function useConnectionMenu(
   const [removeModalOpened, { open: openRemoveModal, close: closeRemoveModal }] = useDisclosure(false);
   const [updateConnectionModalOpened, { open: openUpdateConnectionModal, close: closeUpdateConnectionModal }] =
     useDisclosure(false);
+  const [apiQuotaOpened, { open: openApiQuota, close: closeApiQuota }] = useDisclosure(false);
   const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
 
   // --- Handlers ---
@@ -212,6 +215,7 @@ export function useConnectionMenu(
   const items: ContextMenuItem[] = [
     ...(extraItemsBefore ?? []),
     ...(fullConnectorAccount ? [{ label: 'Choose tables', icon: TableIcon, onClick: openChooseTables }] : []),
+    { label: 'View API Quota', icon: ActivityIcon, onClick: openApiQuota },
     ...authItem,
     ...(extraItemsAfter ?? []),
     { type: 'divider' as const },
@@ -257,6 +261,13 @@ export function useConnectionMenu(
         />
       )}
       <GitIndexModal opened={git.indexModalOpen} onClose={() => git.setIndexModalOpen(false)} data={git.indexData} />
+      <ApiQuotaDialog
+        opened={apiQuotaOpened}
+        onClose={closeApiQuota}
+        workbookId={workbookId}
+        connectionId={cId}
+        connectionName={cName}
+      />
     </>
   );
 

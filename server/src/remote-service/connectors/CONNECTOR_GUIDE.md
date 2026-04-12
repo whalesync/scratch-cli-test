@@ -87,18 +87,19 @@ export abstract class Connector<
 
 ### Optional Methods & Properties
 
-| Member                                              | Purpose                                                                                                                                                                                                          |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `getNewFile(tableSpec)`                             | Return a default template for new records. Default: `{}`. Override to pre-populate fields (e.g., Webflow sets `isDraft: true`).                                                                                  |
-| `validateFiles?(tableSpec, files)`                  | Optional pre-publish validation. Return validation results with `publishable` boolean and optional `errors`, or `undefined` if unsupported.                                                                      |
-| `tableDiscoveryMode`                                | Getter returning `TableDiscoveryMode.LIST` (default) or `TableDiscoveryMode.SEARCH`. Use SEARCH for slow list APIs (e.g. Notion).                                                                                |
-| `searchTables(searchTerm)`                          | Search tables by name. Required when `tableDiscoveryMode` is `SEARCH`. Returns `{ tables: TablePreview[]; hasMore: boolean }`.                                                                                   |
-| `supportsFilters()`                                 | Whether the connector supports filter expressions for pulling records. Default: `false`.                                                                                                                         |
-| `supportsFieldSelection()`                          | Whether the connector supports field/column selection when adding tables. Default: `false`.                                                                                                                      |
-| `supportsFileUpload`                                | Property indicating whether the connector supports `uploadFile()`. Default: `false`.                                                                                                                             |
-| `uploadFile(buffer, filename, mimeType, metadata?)` | Upload a file to the remote service and return asset metadata. Default: throws. Override alongside `supportsFileUpload = true`.                                                                                  |
-| `extractAssets(input)`                              | Extract asset metadata from a record's content and schema. Default: `[]`. Override for connectors with asset fields. See [Asset Extraction](#asset-extraction).                                                  |
-| `fallbackErrorDetails(error)`                       | Protected helper that returns a `ConnectorErrorDetails` including the actual error message. Use as the final fallback in `extractConnectorErrorDetails()` (see [Error Handling](#extractconnectorerrordetails)). |
+| Member                                              | Purpose                                                                                                                                                                                                                 |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getNewFile(tableSpec)`                             | Return a default template for new records. Default: `{}`. Override to pre-populate fields (e.g., Webflow sets `isDraft: true`).                                                                                         |
+| `validateFiles?(tableSpec, files)`                  | Optional pre-publish validation. Return validation results with `publishable` boolean and optional `errors`, or `undefined` if unsupported.                                                                             |
+| `tableDiscoveryMode`                                | Getter returning `TableDiscoveryMode.LIST` (default) or `TableDiscoveryMode.SEARCH`. Use SEARCH for slow list APIs (e.g. Notion).                                                                                       |
+| `searchTables(searchTerm)`                          | Search tables by name. Required when `tableDiscoveryMode` is `SEARCH`. Returns `{ tables: TablePreview[]; hasMore: boolean }`.                                                                                          |
+| `getApiQuota()`                                     | Fetch the current API quota / rate-limit state. Return a `JsonSafeObject` with the raw API response, or `null` (default) if unsupported. Surfaced in the client's "View API Quota" dialog. See [API Quota](#api-quota). |
+| `supportsFilters()`                                 | Whether the connector supports filter expressions for pulling records. Default: `false`.                                                                                                                                |
+| `supportsFieldSelection()`                          | Whether the connector supports field/column selection when adding tables. Default: `false`.                                                                                                                             |
+| `supportsFileUpload`                                | Property indicating whether the connector supports `uploadFile()`. Default: `false`.                                                                                                                                    |
+| `uploadFile(buffer, filename, mimeType, metadata?)` | Upload a file to the remote service and return asset metadata. Default: throws. Override alongside `supportsFileUpload = true`.                                                                                         |
+| `extractAssets(input)`                              | Extract asset metadata from a record's content and schema. Default: `[]`. Override for connectors with asset fields. See [Asset Extraction](#asset-extraction).                                                         |
+| `fallbackErrorDetails(error)`                       | Protected helper that returns a `ConnectorErrorDetails` including the actual error message. Use as the final fallback in `extractConnectorErrorDetails()` (see [Error Handling](#extractconnectorerrordetails)).        |
 
 ### Key Types
 
@@ -475,6 +476,22 @@ Available templates in `error.ts`:
 - `ErrorMessageTemplates.UNKNOWN_ERROR(serviceName)` — catch-all
 
 For Axios-based connectors, `extractCommonDetailsFromAxiosError(connector, error)` handles 401/403, 408/504, and timeout errors automatically. Use `extractErrorMessageFromAxiosError(service, error)` to pull error messages from response bodies.
+
+### API Quota
+
+Override `getApiQuota()` to let users view their current API quota / rate-limit state from the sidebar's "View API Quota" dialog. The method should return the raw response from the service's rate-limit or quota endpoint as a `JsonSafeObject`. The client renders it as pretty-printed JSON — no transformation needed.
+
+The base class returns `null` (= unsupported), so connectors without a quota endpoint don't need to do anything. The dialog handles both cases: it shows the raw JSON when supported, and an "unsupported" message when not.
+
+```typescript
+// Affinity: return the raw /rate-limit response (per-minute + monthly buckets)
+async getApiQuota(): Promise<JsonSafeObject> {
+  const quota = await this.client.getQuota();
+  return quota as unknown as JsonSafeObject;
+}
+```
+
+The server exposes this via `GET /workbooks/:workbookId/connections/:id/quota`, which returns either `{ supported: true, quota: <raw JSON> }` or `{ supported: false }`. No caching — the endpoint fetches fresh on every request since quota values are time-sensitive.
 
 ## 5. JSON Schema Extensions
 
