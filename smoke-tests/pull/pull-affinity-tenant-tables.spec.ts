@@ -453,4 +453,123 @@ describe("Affinity tenant tables (pull)", () => {
     expect(userList?.parentPath).toBe("Lists");
     expect(userList?.id.remoteId).toEqual(["4242"]);
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 1 failure recovery — the scenario that originally surfaced the
+  // error handling bugs documented in pull-job-v2-error-handling-bugs.md.
+  //
+  // Simulates what happened in production: a connector API call returns
+  // HTTP 400 during the pull. Before the fix, this left the DataFolder
+  // locked forever and the job reported success. After the fix, the lock
+  // should be cleared and the job should complete (not hang).
+  // -------------------------------------------------------------------------
+  it("clears the data folder lock and completes the job when a Phase 1 fetch returns 400", async () => {
+    const workspace = await createTestWorkspace(api, {
+      service: "AFFINITY",
+      credentials: affinityFixture.createConnectionCredentials(),
+      remoteTableId: TENANT_PERSONS_REMOTE_ID,
+      tableName: "People",
+    });
+
+    // Queue a 400 error targeting the /v2/persons listing endpoint.
+    // The pathPattern ensures the error fires on the pull request, not
+    // the earlier /v2/persons/fields schema fetch.
+    const admin = affinityFixture.createAdminClient();
+    await admin.simulateError(
+      400,
+      {
+        errors: [
+          {
+            code: "invalid_parameter",
+            message:
+              "'list' is not a valid field type for this endpoint (simulated)",
+          },
+        ],
+      },
+      "/v2/persons?",
+    );
+
+    const job = await pullAndWait(api, workspace.workbookId, [
+      workspace.dataFolderId,
+    ]);
+
+    // Job should complete (not hang waiting for a stuck folder).
+    expect(job.state).toBe("completed");
+
+    // The DataFolder's lock should be cleared — not stuck at 'pull'.
+    const folderRes = await api.get(
+      `/data-folder/${workspace.dataFolderId}`,
+    );
+    expect(folderRes.status).toBe(200);
+    expect(folderRes.data.lock).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Partial failure: one folder fails in Phase 1, another succeeds.
+  // The succeeding folder should commit its files normally. The failing
+  // folder should have its lock cleared. Neither should block the other.
+  // -------------------------------------------------------------------------
+  it("processes the succeeding folder and cleans up the failing folder in a partial Phase 1 failure", async () => {
+    // Set up two folders: People (will fail) and Companies (will succeed).
+    const workspace = await createTestWorkspace(api, {
+      service: "AFFINITY",
+      credentials: affinityFixture.createConnectionCredentials(),
+      remoteTableId: TENANT_PERSONS_REMOTE_ID,
+      tableName: "People",
+    });
+    const companies = await addLinkedDataFolder(api, {
+      workbookId: workspace.workbookId,
+      connectorAccountId: workspace.connectorAccountId,
+      remoteTableId: TENANT_COMPANIES_REMOTE_ID,
+      tableName: "Companies",
+    });
+
+    // Queue a 400 targeting the persons listing so People fails but
+    // Companies (which hits /v2/companies) is unaffected.
+    const admin = affinityFixture.createAdminClient();
+    await admin.simulateError(
+      400,
+      {
+        errors: [
+          {
+            code: "invalid_parameter",
+            message: "Simulated 400 for persons endpoint",
+          },
+        ],
+      },
+      "/v2/persons?",
+    );
+
+    const job = await pullAndWait(api, workspace.workbookId, [
+      workspace.dataFolderId,
+      companies.dataFolderId,
+    ]);
+
+    // Job should complete (not hang).
+    expect(job.state).toBe("completed");
+
+    // Failed folder (People) should have its lock cleared.
+    const peopleFolderRes = await api.get(
+      `/data-folder/${workspace.dataFolderId}`,
+    );
+    expect(peopleFolderRes.status).toBe(200);
+    expect(peopleFolderRes.data.lock).toBeNull();
+
+    // Succeeding folder (Companies) should have committed its 2 records.
+    const companiesFolderRes = await api.get(
+      `/data-folder/${companies.dataFolderId}`,
+    );
+    expect(companiesFolderRes.status).toBe(200);
+    expect(companiesFolderRes.data.lock).toBeNull();
+
+    const filesRes = await api.get(
+      `/workbooks/${workspace.workbookId}/files/list/by-folder`,
+      { folderId: companies.dataFolderId },
+    );
+    const files = filesRes.data.items.filter(
+      (item: any) =>
+        item.type === "file" && item.name !== ".schema.json",
+    );
+    expect(files).toHaveLength(2);
+  });
 });

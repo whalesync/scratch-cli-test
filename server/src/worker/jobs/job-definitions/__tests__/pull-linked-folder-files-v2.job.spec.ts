@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/unbound-method */
+/* eslint-disable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-assignment */
 import { PrismaClient } from '@prisma/client';
 import { Type } from '@sinclair/typebox';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
@@ -480,6 +480,156 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         expect(mockScratchGitService.rebaseDirty).toHaveBeenCalledTimes(1);
         expect(mockScratchGitService.runGitGc).toHaveBeenCalledTimes(1);
         expect(mockScratchGitService.buildIndex).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('Phase 1 failure cleanup', () => {
+      it('should clear lock, send job-failed event, and report failure when Phase 1 fetch throws', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+
+        // Phase 1 fetch fails
+        mockConnector.pullRecordFiles.mockRejectedValue(new Error('API rate limit'));
+
+        // Phase 2 won't process the failed folder
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await handler.run(params);
+
+        // Bug 1: lock should be cleared
+        expect(mockPrisma.dataFolder.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'dfld_123' },
+            data: { lock: null },
+          }),
+        );
+
+        // Bug 2: job-failed event should be sent
+        expect(mockWorkbookEventService.sendWorkbookEvent).toHaveBeenCalledWith(
+          'wkb_123',
+          expect.objectContaining({
+            type: 'job-failed',
+            data: expect.objectContaining({
+              entityId: 'dfld_123',
+              message: 'Pull failed for data folder',
+            }),
+          }),
+        );
+
+        // Bug 3: PostHog should report failure, not success
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          'usr_123',
+          expect.objectContaining({
+            result: 'failure',
+          }),
+        );
+      });
+    });
+
+    describe('partial failure resilience', () => {
+      it('should process succeeding folders and clean up failing folders independently', async () => {
+        const folder1 = createMockDataFolder({ id: 'dfld_1' as DataFolderId, name: 'Products', path: '/Products' });
+        const folder2 = createMockDataFolder({ id: 'dfld_2' as DataFolderId, name: 'Orders', path: '/Orders' });
+
+        const connectorAccount = createMockConnectorAccount();
+        const mockConnector = createMockConnector();
+
+        const params = createMockParams({
+          data: {
+            workbookId: 'wkb_123' as WorkbookId,
+            dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
+            userId: 'usr_123',
+            organizationId: 'org_123',
+          },
+        });
+
+        (mockPrisma.dataFolder.findMany as jest.Mock).mockResolvedValue([
+          { id: 'dfld_1', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Test Connection' } },
+          { id: 'dfld_2', connectorAccountId: 'coa_123', connectorAccount: { displayName: 'Test Connection' } },
+        ]);
+
+        (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValueOnce(folder1).mockResolvedValueOnce(folder2);
+        (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(folder1);
+        (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+        (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+        jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
+
+        // Folder 1 fails in Phase 1, folder 2 succeeds
+        let callCount = 0;
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          callCount++;
+          if (callCount === 1) {
+            throw new Error('API rate limit');
+          }
+          await callback({
+            files: [{ id: 'rec1', slug: 'order-1', title: 'Order 1' }],
+            connectorProgress: {},
+          });
+        });
+
+        (mockScratchGitService.readStagedFiles as jest.Mock)
+          .mockResolvedValueOnce({
+            files: [
+              {
+                path: 'order-1.json',
+                content: JSON.stringify({ id: 'rec1', slug: 'order-1', title: 'Order 1' }),
+              },
+            ],
+            total: 1,
+          })
+          .mockResolvedValueOnce({ files: [], total: 0 });
+
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          created: ['Orders/order-1.json'],
+          updated: [],
+          unchanged: [],
+        });
+
+        await handler.run(params);
+
+        // Failing folder should have lock cleared and job-failed event sent
+        expect(mockWorkbookEventService.sendWorkbookEvent).toHaveBeenCalledWith(
+          'wkb_123',
+          expect.objectContaining({
+            type: 'job-failed',
+            data: expect.objectContaining({
+              entityId: 'dfld_1',
+            }),
+          }),
+        );
+
+        // Succeeding folder should have been committed normally
+        expect(mockScratchGitService.commitStagedFiles).toHaveBeenCalledWith(
+          'test-job-id',
+          'org/wkb/coa',
+          'main',
+          'Orders',
+          expect.stringContaining('Orders'),
+        );
+
+        // Succeeding folder should have job-completed event
+        expect(mockWorkbookEventService.sendWorkbookEvent).toHaveBeenCalledWith(
+          'wkb_123',
+          expect.objectContaining({
+            type: 'job-completed',
+            data: expect.objectContaining({
+              entityId: 'dfld_2',
+            }),
+          }),
+        );
+
+        // Job-level should report failure (because one folder failed)
+        expect(mockPostHogService.trackPullCompleted).toHaveBeenCalledWith(
+          'usr_123',
+          expect.objectContaining({
+            result: 'failure',
+            filesCreated: 1,
+          }),
+        );
       });
     });
 

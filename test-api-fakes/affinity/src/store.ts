@@ -111,6 +111,7 @@ export interface AffinityListEntry {
 interface QueuedError {
   statusCode: number;
   body: unknown;
+  pathPattern?: string;
 }
 
 class Store {
@@ -271,8 +272,8 @@ class Store {
 
   // ---- Error simulation ----
 
-  queueError(statusCode: number, body: unknown): void {
-    this.errorQueue.push({ statusCode, body });
+  queueError(statusCode: number, body: unknown, pathPattern?: string): void {
+    this.errorQueue.push({ statusCode, body, pathPattern });
   }
 
   queueRateLimit(count: number, retryAfterSeconds: number = 30): void {
@@ -280,9 +281,13 @@ class Store {
     this.rateLimitRetryAfterSeconds = retryAfterSeconds;
   }
 
-  checkErrorQueue(): QueuedError | null {
+  checkErrorQueue(requestPath: string): QueuedError | null {
     if (this.errorQueue.length === 0) return null;
-    return this.errorQueue.shift()!;
+    const idx = this.errorQueue.findIndex(
+      (e) => !e.pathPattern || requestPath.includes(e.pathPattern),
+    );
+    if (idx === -1) return null;
+    return this.errorQueue.splice(idx, 1)[0];
   }
 
   checkRateLimit(): number | null {

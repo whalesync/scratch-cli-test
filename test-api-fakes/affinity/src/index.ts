@@ -30,7 +30,7 @@ export function createApp(): express.Express {
       return;
     }
 
-    const queuedError = store.checkErrorQueue();
+    const queuedError = store.checkErrorQueue(req.path);
     if (queuedError !== null) {
       res.status(queuedError.statusCode).json(queuedError.body);
       return;

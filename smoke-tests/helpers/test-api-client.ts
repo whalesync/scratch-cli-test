@@ -107,8 +107,16 @@ export class FakeAdminClient {
     });
   }
 
-  async simulateError(statusCode: number, body: any): Promise<void> {
-    await this.client.post("/test/simulate-error", { statusCode, body });
+  async simulateError(
+    statusCode: number,
+    body: any,
+    pathPattern?: string,
+  ): Promise<void> {
+    await this.client.post("/test/simulate-error", {
+      statusCode,
+      body,
+      pathPattern,
+    });
   }
 
   async setResponseDelay(delayMs: number): Promise<void> {

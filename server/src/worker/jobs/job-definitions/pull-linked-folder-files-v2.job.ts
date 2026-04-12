@@ -189,6 +189,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         jobId,
         publicProgress,
         jobProgress,
+        pullStats,
         checkpoint,
         abortSignal,
       });
@@ -257,6 +258,30 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         }
       }
     } finally {
+      // Defensive backstop: clear locks on any folder that still has lock='pull'.
+      // The per-error-path cleanup should have handled this, but this catches any
+      // future code path that forgets to clear a lock.
+      for (const folderCtx of folderContexts) {
+        const folderId = folderCtx.dataFolder.id;
+        const wasCompleted = jobProgress.completedFolderIds?.includes(folderId);
+        const wasFailed = jobProgress.folderFetchStatus?.[folderId] === 'failed';
+        if (!wasCompleted && !wasFailed) {
+          try {
+            await this.prisma.dataFolder.update({
+              where: { id: folderId },
+              data: { lock: null },
+            });
+          } catch (err) {
+            WSLogger.warn({
+              source: LOG_SOURCE,
+              message: 'Failed to clear lock in finally backstop',
+              dataFolderId: folderId,
+              error: err,
+            });
+          }
+        }
+      }
+
       // Always clean up staging, even on failure
       try {
         await this.scratchGitService.cleanupStaging(jobId);
@@ -413,10 +438,12 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     jobId: string;
     publicProgress: PullLinkedFolderFilesPublicProgress;
     jobProgress: PullLinkedFolderFilesV2JobProgress;
+    pullStats: { created: number; updated: number; deleted: number; failed: boolean };
     checkpoint: CheckpointFn;
     abortSignal: AbortSignal;
   }): Promise<Map<DataFolderId, FolderFetchResult>> {
-    const { folderContexts, maxConcurrency, jobId, publicProgress, jobProgress, checkpoint, abortSignal } = params;
+    const { folderContexts, maxConcurrency, jobId, publicProgress, jobProgress, pullStats, checkpoint, abortSignal } =
+      params;
 
     const results = new Map<DataFolderId, FolderFetchResult>();
 
@@ -454,11 +481,31 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         jobProgress.folderFetchStatus[folderId] = 'fetched';
       } catch (error) {
         jobProgress.folderFetchStatus[folderId] = 'failed';
+        pullStats.failed = true;
+
         WSLogger.error({
           source: LOG_SOURCE,
           message: 'Phase 1 fetch failed for folder',
+          workbookId: folderCtx.dataFolder.workbookId,
           dataFolderId: folderId,
           errorDetails: folderCtx.connector.extractConnectorErrorDetails(error),
+        });
+
+        // Clear the lock so the folder can be re-pulled
+        await this.prisma.dataFolder.update({
+          where: { id: folderId },
+          data: { lock: null },
+        });
+
+        // Notify workbook clients about the per-folder failure
+        this.workbookEventService.sendWorkbookEvent(folderCtx.dataFolder.workbookId as WorkbookId, {
+          type: 'job-failed',
+          data: {
+            entityId: folderId,
+            source: 'job',
+            message: 'Pull failed for data folder',
+            jobId,
+          },
         });
       }
 

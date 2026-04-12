@@ -142,11 +142,12 @@ router.post("/simulate-rate-limit", (req, res) => {
 });
 
 router.post("/simulate-error", (req, res) => {
-  const { statusCode, body } = req.body as {
+  const { statusCode, body, pathPattern } = req.body as {
     statusCode: number;
     body: unknown;
+    pathPattern?: string;
   };
-  store.queueError(statusCode, body);
+  store.queueError(statusCode, body, pathPattern);
   res.status(200).json({ ok: true });
 });
 
