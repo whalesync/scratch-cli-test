@@ -76,7 +76,10 @@ function ReviewIntermediateFolderNode({ name, nodeId, depth, children }: ReviewI
 
   return (
     <>
-      <TreeRow onClick={handleToggle} indent={depth}>
+      {/* `selectable` reserves the 3px selection-indicator space so this row
+          aligns horizontally with sibling ReviewTableNode rows. Intermediate
+          folders never become selected — see TreeRowProps.selectable docs. */}
+      <TreeRow onClick={handleToggle} indent={depth} selectable>
         <Group gap={6} wrap="nowrap">
           <ChevronToggle isExpanded={isExpanded} />
           <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-secondary)" />
@@ -111,30 +114,64 @@ function ReviewFolderTreeRenderer({
   dirtyFilePaths,
   idPrefix,
 }: ReviewFolderTreeRendererProps) {
+  // Same merge-and-sort approach as `FolderTreeRenderer` in TreeNode.tsx — see
+  // the comment there for the rationale. Without this, intermediate folders
+  // sort before terminal tables regardless of name, which produces a confusing
+  // order for connectors that mix the two shapes (e.g. Affinity).
+  type RenderEntry =
+    | { kind: 'folder'; name: string; childNode: FolderTreeNode; index: number }
+    | { kind: 'table'; name: string; folder: DataFolder; index: number };
+
+  const entries: RenderEntry[] = [
+    ...Array.from(tree.children.entries()).map(
+      ([segName, childNode], index): RenderEntry => ({
+        kind: 'folder',
+        name: segName,
+        childNode,
+        index,
+      }),
+    ),
+    ...tree.folders.map(
+      (folder, index): RenderEntry => ({
+        kind: 'table',
+        name: folder.name,
+        folder,
+        index,
+      }),
+    ),
+  ];
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
   return (
     <>
-      {Array.from(tree.children.entries()).map(([segName, childNode], childIndex) => {
-        const childId = `${idPrefix}/${segName}`;
-        const nodeId = `intermediate-${childId}`;
-        const key = childId || `intermediate-${childIndex}`;
+      {entries.map((entry) => {
+        if (entry.kind === 'folder') {
+          const childId = `${idPrefix}/${entry.name}`;
+          const nodeId = `intermediate-${childId}`;
+          const key = childId || `intermediate-${entry.index}`;
+          return (
+            <ReviewIntermediateFolderNode key={key} name={entry.name} nodeId={nodeId} depth={depth}>
+              <ReviewFolderTreeRenderer
+                tree={entry.childNode}
+                depth={depth + 1}
+                groupName={groupName}
+                workbookId={workbookId}
+                dirtyFilePaths={dirtyFilePaths}
+                idPrefix={childId}
+              />
+            </ReviewIntermediateFolderNode>
+          );
+        }
         return (
-          <ReviewIntermediateFolderNode key={key} name={segName} nodeId={nodeId} depth={depth}>
-            <ReviewFolderTreeRenderer
-              tree={childNode}
-              depth={depth + 1}
-              groupName={groupName}
-              workbookId={workbookId}
-              dirtyFilePaths={dirtyFilePaths}
-              idPrefix={childId}
-            />
-          </ReviewIntermediateFolderNode>
+          <ReviewTableNode
+            key={entry.folder.id ?? `folder-${entry.index}`}
+            folder={entry.folder}
+            workbookId={workbookId}
+            dirtyFilePaths={dirtyFilePaths}
+            depth={depth}
+          />
         );
       })}
-      {tree.folders.map((folder, folderIndex) => (
-        <Box key={folder.id ?? `folder-${folderIndex}`} component="span" style={{ display: 'contents' }}>
-          <ReviewTableNode folder={folder} workbookId={workbookId} dirtyFilePaths={dirtyFilePaths} />
-        </Box>
-      ))}
     </>
   );
 }
@@ -228,9 +265,11 @@ interface ReviewTableNodeProps {
   folder: DataFolder;
   workbookId: WorkbookId;
   dirtyFilePaths: Map<string, FileDiffStatus>;
+  /** Depth in the tree, controls left indentation. Mirrors `TableNode` in TreeNode.tsx. */
+  depth: number;
 }
 
-function ReviewTableNode({ folder, workbookId, dirtyFilePaths }: ReviewTableNodeProps) {
+function ReviewTableNode({ folder, workbookId, dirtyFilePaths, depth }: ReviewTableNodeProps) {
   const router = useRouter();
   const pathname = usePathname();
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
@@ -285,7 +324,7 @@ function ReviewTableNode({ folder, workbookId, dirtyFilePaths }: ReviewTableNode
 
   return (
     <>
-      <TreeRow onClick={handleRowClick} indent={1} selectable isSelected={isSelected}>
+      <TreeRow onClick={handleRowClick} indent={depth} selectable isSelected={isSelected}>
         <Group gap={6} wrap="nowrap" justify="space-between">
           <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
             <ChevronToggle isExpanded={isExpanded} onClick={handleChevronClick} />

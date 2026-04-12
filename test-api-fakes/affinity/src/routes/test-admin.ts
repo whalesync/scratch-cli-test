@@ -1,8 +1,11 @@
 import { Router } from "express";
 import {
+  AffinityCompany,
   AffinityFieldMetadata,
   AffinityList,
   AffinityListEntry,
+  AffinityOpportunity,
+  AffinityPerson,
   store,
 } from "../store";
 
@@ -20,6 +23,13 @@ router.get("/dump", (_req, res) => {
   }));
   res.json({
     lists,
+    tenant: {
+      personFields: store.getTenantPersonFields(),
+      companyFields: store.getTenantCompanyFields(),
+      persons: store.listTenantPersons(),
+      companies: store.listTenantCompanies(),
+      opportunities: store.listTenantOpportunities(),
+    },
     quota: {
       userMinuteUsed: store.userMinuteUsed,
       orgMonthlyUsed: store.orgMonthlyUsed,
@@ -33,16 +43,25 @@ router.post("/reset", (_req, res) => {
 });
 
 /**
- * Seed the fake with lists, per-list fields, and per-list entries.
+ * Seed the fake with lists, per-list fields, per-list entries, and the
+ * tenant-wide People / Companies / Opportunities tables.
  *
  * Body shape:
  * ```
  * {
- *   "lists": [{ id, name, type, isPublic?, ownerId?, creatorId? }, ...],
- *   "fieldsByList": { "<listId>": [{ id, name, type, valueType, enrichmentSource? }, ...] },
- *   "entriesByList": { "<listId>": [{ id, type, listId, createdAt?, creatorId?, entity }, ...] }
+ *   "lists":          [{ id, name, type, isPublic?, ownerId?, creatorId? }, ...],
+ *   "fieldsByList":   { "<listId>": [{ id, name, type, valueType, enrichmentSource? }, ...] },
+ *   "entriesByList":  { "<listId>": [{ id, type, listId, createdAt?, creatorId?, entity }, ...] },
+ *   "tenantPersonFields":   [{ id, name, type, valueType, enrichmentSource? }, ...],
+ *   "tenantCompanyFields":  [{ id, name, type, valueType, enrichmentSource? }, ...],
+ *   "tenantPersons":        [{ id, firstName, lastName, primaryEmailAddress, emailAddresses, type, fields }, ...],
+ *   "tenantCompanies":      [{ id, name, domain, domains, isGlobal, fields }, ...],
+ *   "tenantOpportunities":  [{ id, name, listId }, ...]
  * }
  * ```
+ *
+ * All sections are optional — pass only what you want to seed. Each section
+ * replaces (not merges with) any existing data of that kind.
  */
 router.post("/setup", (req, res) => {
   const body = req.body as {
@@ -55,6 +74,11 @@ router.post("/setup", (req, res) => {
     >;
     fieldsByList?: Record<string, AffinityFieldMetadata[]>;
     entriesByList?: Record<string, AffinityListEntry[]>;
+    tenantPersonFields?: AffinityFieldMetadata[];
+    tenantCompanyFields?: AffinityFieldMetadata[];
+    tenantPersons?: AffinityPerson[];
+    tenantCompanies?: AffinityCompany[];
+    tenantOpportunities?: AffinityOpportunity[];
   };
 
   if (body.lists) {
@@ -87,6 +111,22 @@ router.post("/setup", (req, res) => {
       }));
       store.setEntriesForList(listId, normalized);
     }
+  }
+
+  if (body.tenantPersonFields) {
+    store.setTenantPersonFields(body.tenantPersonFields);
+  }
+  if (body.tenantCompanyFields) {
+    store.setTenantCompanyFields(body.tenantCompanyFields);
+  }
+  if (body.tenantPersons) {
+    store.setTenantPersons(body.tenantPersons);
+  }
+  if (body.tenantCompanies) {
+    store.setTenantCompanies(body.tenantCompanies);
+  }
+  if (body.tenantOpportunities) {
+    store.setTenantOpportunities(body.tenantOpportunities);
   }
 
   res.status(200).json({ ok: true });

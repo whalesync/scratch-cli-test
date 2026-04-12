@@ -425,7 +425,7 @@ export class WebflowConnector extends Connector {
     const items: { id: string; fieldData: Webflow.CollectionItemFieldData }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const source = (changedFields?.[i] ?? file) as ConnectorFile;
+      const source = changedFields?.[i] ?? file;
       const fieldData = await this.extractFieldDataForApi(source, tableSpec);
       items.push({
         id: file.id as string,

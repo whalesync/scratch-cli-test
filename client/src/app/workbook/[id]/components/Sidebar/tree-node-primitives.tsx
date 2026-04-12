@@ -17,7 +17,14 @@ interface TreeRowProps {
   onClick: (e: MouseEvent) => void;
   onContextMenu?: (e: MouseEvent) => void;
   indent?: number;
-  /** When true, reserves space for the selection indicator border (3px left). */
+  /**
+   * Reserves a 3px left border slot. Set this on EVERY row in a tree where any
+   * row is selectable — otherwise siblings drift horizontally by 3px because
+   * `box-sizing: border-box` shrinks the content area of bordered rows but not
+   * unbordered ones. Despite the name, intermediate / non-navigable rows that
+   * sit alongside selectable rows still need this set to `true`; they just
+   * never get the colored variant because `isSelected` stays false.
+   */
   selectable?: boolean;
   isSelected?: boolean;
   children: ReactNode;

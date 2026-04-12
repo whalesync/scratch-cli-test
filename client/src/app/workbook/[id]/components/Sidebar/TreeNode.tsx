@@ -154,6 +154,10 @@ function IntermediateFolderNode({ name, nodeId, depth, children }: IntermediateF
           width: `calc(100% - ${INDENT_PX * depth}px)`,
           marginLeft: INDENT_PX * depth,
           backgroundColor: 'transparent',
+          // Reserve the same 3px the TableNode selection indicator uses, so
+          // intermediate folders and tables align horizontally as siblings.
+          // Intermediate folders aren't selectable, so this is always transparent.
+          borderLeft: '3px solid transparent',
         }}
         __vars={{ '--hover-bg': 'var(--mantine-color-gray-1)' }}
         styles={{ root: { '&:hover': { backgroundColor: 'var(--hover-bg)' } } }}
@@ -185,29 +189,65 @@ interface FolderTreeRendererProps {
 }
 
 function FolderTreeRenderer({ tree, depth, groupName, workbookId, idPrefix }: FolderTreeRendererProps) {
+  // Merge intermediate folders and terminal tables into one list at each level
+  // and sort alphabetically by name. Without this, intermediate folders would
+  // always render before tables (purely from iteration order), which gives a
+  // counter-intuitive sort for connectors that mix the two shapes — e.g.
+  // Affinity has tenant-wide tables (Companies/People/Opportunities) at the
+  // root *and* a "Lists/" intermediate folder containing user-created lists.
+  type RenderEntry =
+    | { kind: 'folder'; name: string; childNode: FolderTreeNode; index: number }
+    | { kind: 'table'; name: string; folder: DataFolder; index: number };
+
+  const entries: RenderEntry[] = [
+    ...Array.from(tree.children.entries()).map(
+      ([segName, childNode], index): RenderEntry => ({
+        kind: 'folder',
+        name: segName,
+        childNode,
+        index,
+      }),
+    ),
+    ...tree.folders.map(
+      (folder, index): RenderEntry => ({
+        kind: 'table',
+        name: folder.name,
+        folder,
+        index,
+      }),
+    ),
+  ];
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
   return (
     <>
-      {Array.from(tree.children.entries()).map(([segName, childNode], childIndex) => {
-        const childId = `${idPrefix}/${segName}`;
-        const nodeId = `intermediate-${childId}`;
-        const key = childId || `intermediate-${childIndex}`;
+      {entries.map((entry) => {
+        if (entry.kind === 'folder') {
+          const childId = `${idPrefix}/${entry.name}`;
+          const nodeId = `intermediate-${childId}`;
+          const key = childId || `intermediate-${entry.index}`;
+          return (
+            <IntermediateFolderNode key={key} name={entry.name} nodeId={nodeId} depth={depth}>
+              <FolderTreeRenderer
+                tree={entry.childNode}
+                depth={depth + 1}
+                groupName={groupName}
+                workbookId={workbookId}
+                idPrefix={childId}
+              />
+            </IntermediateFolderNode>
+          );
+        }
         return (
-          <IntermediateFolderNode key={key} name={segName} nodeId={nodeId} depth={depth}>
-            <FolderTreeRenderer
-              tree={childNode}
-              depth={depth + 1}
-              groupName={groupName}
-              workbookId={workbookId}
-              idPrefix={childId}
-            />
-          </IntermediateFolderNode>
+          <TableNode
+            key={entry.folder.id ?? `folder-${entry.index}`}
+            folder={entry.folder}
+            workbookId={workbookId}
+            groupName={groupName}
+            depth={depth}
+          />
         );
       })}
-      {tree.folders.map((folder, folderIndex) => (
-        <Box key={folder.id ?? `folder-${folderIndex}`} component="span" style={{ display: 'contents' }}>
-          <TableNode folder={folder} workbookId={workbookId} groupName={groupName} />
-        </Box>
-      ))}
     </>
   );
 }
@@ -473,9 +513,16 @@ interface TableNodeProps {
   folder: DataFolder;
   workbookId: WorkbookId;
   groupName: string;
+  /**
+   * Depth of this node in the folder tree, controlling its left indentation.
+   * 0 = directly at the connection root (no enclosing intermediate folder),
+   * 1 = nested under one intermediate folder, etc. Mirrors how
+   * `IntermediateFolderNode` consumes the same `depth` from `FolderTreeRenderer`.
+   */
+  depth: number;
 }
 
-function TableNode({ folder, workbookId }: TableNodeProps) {
+function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const router = useRouter();
   const pathname = usePathname();
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
@@ -612,8 +659,8 @@ function TableNode({ folder, workbookId }: TableNodeProps) {
         px="sm"
         py={4}
         style={{
-          width: `calc(100% - ${INDENT_PX}px)`,
-          marginLeft: INDENT_PX,
+          width: `calc(100% - ${INDENT_PX * depth}px)`,
+          marginLeft: INDENT_PX * depth,
           backgroundColor: isSelected ? 'var(--bg-selected)' : 'transparent',
           borderLeft: isSelected ? '3px solid var(--mantine-primary-color-filled)' : '3px solid transparent',
         }}

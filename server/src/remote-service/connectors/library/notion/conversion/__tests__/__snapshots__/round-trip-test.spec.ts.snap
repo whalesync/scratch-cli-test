@@ -1,4 +1,4 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`HTML ↔ Notion Blocks Round-Trip Tests Notion Blocks → HTML conversion converts content-marketing notion blocks to HTML: content-marketing-html-to-notion-roundtrip 1`] = `
 [

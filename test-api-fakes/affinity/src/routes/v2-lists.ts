@@ -1,8 +1,10 @@
 import { Request, Response, Router } from "express";
 import {
+  AffinityCompany,
   AffinityField,
   AffinityFieldType,
   AffinityListEntry,
+  AffinityPerson,
   store,
 } from "../store";
 
@@ -14,6 +16,23 @@ const VALID_FIELD_TYPES: ReadonlySet<AffinityFieldType> = new Set([
   "enriched",
   "global",
   "list",
+  "relationship-intelligence",
+]);
+
+/**
+ * Field types accepted by the tenant-wide endpoints (`/v2/persons` and
+ * `/v2/companies`). Real Affinity rejects `'list'` here with HTTP 400 because
+ * tenant-wide records have no list context — empirically verified against
+ * `api.affinity.co` 2026-04-11 with the error message
+ * `value at /fieldTypes is not one of: ['enriched', 'global', 'relationship-intelligence']`.
+ *
+ * The fake mirrors that strict validation so connector code that accidentally
+ * passes `'list'` to a tenant endpoint fails the same way locally as it would
+ * in prod. See `parseTenantFieldTypeFilter` below.
+ */
+const VALID_TENANT_FIELD_TYPES: ReadonlySet<AffinityFieldType> = new Set([
+  "enriched",
+  "global",
   "relationship-intelligence",
 ]);
 
@@ -102,6 +121,40 @@ function parseFieldTypeFilter(req: Request): Set<AffinityFieldType> | null {
   return filter.size > 0 ? filter : null;
 }
 
+/**
+ * Strict variant of `parseFieldTypeFilter` for the tenant-wide endpoints.
+ * Returns the parsed filter on success, or sends a 400 response (matching real
+ * Affinity's error envelope) and returns `null` on the first invalid type. The
+ * caller must early-return on `null` without writing to the response.
+ */
+function parseTenantFieldTypeFilter(
+  req: Request,
+  res: Response,
+): Set<AffinityFieldType> | null {
+  const raw = req.query.fieldTypes;
+  if (raw === undefined) return null;
+  const values = Array.isArray(raw) ? raw : [raw];
+  const filter = new Set<AffinityFieldType>();
+  for (const value of values) {
+    const str = String(value);
+    if (!VALID_TENANT_FIELD_TYPES.has(str as AffinityFieldType)) {
+      res.status(400).json({
+        errors: [
+          {
+            message:
+              "value at `/fieldTypes` is not one of: ['enriched', 'global', 'relationship-intelligence']",
+            code: "validation",
+            param: "fieldTypes",
+          },
+        ],
+      });
+      return null;
+    }
+    filter.add(str as AffinityFieldType);
+  }
+  return filter.size > 0 ? filter : null;
+}
+
 /** Filter the fields array on a list entry's entity to match the requested types. */
 function filterEntryFields(
   entry: AffinityListEntry,
@@ -120,6 +173,21 @@ function filterEntryFields(
     ...entry,
     entity: { ...entry.entity, fields: filtered },
   };
+}
+
+/**
+ * Filter the fields array on a tenant-wide flat record (Person/Company). Mirrors
+ * `filterEntryFields` but operates on the top-level `record.fields` rather than
+ * `record.entity.fields`, since tenant records have no `entity` wrapper.
+ */
+function filterFlatRecordFields<T extends { fields: AffinityField[] }>(
+  record: T,
+  filter: Set<AffinityFieldType> | null,
+): T {
+  if (!filter) {
+    return { ...record, fields: [] as AffinityField[] };
+  }
+  return { ...record, fields: record.fields.filter((f) => filter.has(f.type)) };
 }
 
 // ---- GET /v2/lists ----
@@ -222,6 +290,114 @@ router.get("/v2/auth/whoami", (_req, res) => {
       createdAt: "2025-01-01T00:00:00.000-08:00",
     },
   });
+});
+
+// ---------------------------------------------------------------------------
+// Tenant-wide endpoints — these power the connector's Companies / People /
+// Opportunities top-level tables and are independent of any list.
+// ---------------------------------------------------------------------------
+
+// ---- GET /v2/persons ----
+
+router.get("/v2/persons", (req, res) => {
+  const filter = parseTenantFieldTypeFilter(req, res);
+  // parseTenantFieldTypeFilter writes a 400 envelope on validation failure;
+  // bail out without further response writes if it did.
+  if (res.headersSent) return;
+  const persons = store
+    .listTenantPersons()
+    .map((p) => filterFlatRecordFields(p, filter));
+  res.json(paginate(req, persons));
+});
+
+// ---- GET /v2/persons/fields ----
+//
+// MUST be registered before `/v2/persons/:id` — Express matches routes in
+// registration order, and `/v2/persons/:id` would otherwise greedily match
+// `/fields` as the `:id` parameter, making this handler unreachable.
+//
+// NB: the real Affinity docs claim this endpoint lives at
+// `/v2/persons/metadata/fields`, but that path 404s in production. The actual
+// path is `/v2/persons/fields`. The fake matches the real (working) behavior.
+
+router.get("/v2/persons/fields", (req, res) => {
+  res.json(paginate(req, store.getTenantPersonFields()));
+});
+
+// ---- GET /v2/persons/{id} ----
+
+router.get("/v2/persons/:id", (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const person = store.getTenantPerson(id);
+  if (!person) {
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `Person ${id} not found` }],
+    });
+    return;
+  }
+  const filter = parseTenantFieldTypeFilter(req, res);
+  if (res.headersSent) return;
+  res.json(filterFlatRecordFields(person, filter));
+});
+
+// ---- GET /v2/companies ----
+
+router.get("/v2/companies", (req, res) => {
+  const filter = parseTenantFieldTypeFilter(req, res);
+  if (res.headersSent) return;
+  const companies = store
+    .listTenantCompanies()
+    .map((c) => filterFlatRecordFields(c, filter));
+  res.json(paginate(req, companies));
+});
+
+// ---- GET /v2/companies/fields ----
+//
+// Same registration-order caveat as `/v2/persons/fields` above — must come
+// before `/v2/companies/:id` or the `:id` route would shadow it.
+
+router.get("/v2/companies/fields", (req, res) => {
+  res.json(paginate(req, store.getTenantCompanyFields()));
+});
+
+// ---- GET /v2/companies/{id} ----
+
+router.get("/v2/companies/:id", (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const company = store.getTenantCompany(id);
+  if (!company) {
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `Company ${id} not found` }],
+    });
+    return;
+  }
+  const filter = parseTenantFieldTypeFilter(req, res);
+  if (res.headersSent) return;
+  res.json(filterFlatRecordFields(company, filter));
+});
+
+// ---- GET /v2/opportunities ----
+//
+// Intentionally thin: Affinity v2 returns only id/name/listId here. There is
+// no `fieldTypes` parameter, no field data, and no `/v2/opportunities/fields`
+// metadata endpoint.
+
+router.get("/v2/opportunities", (req, res) => {
+  res.json(paginate(req, store.listTenantOpportunities()));
+});
+
+// ---- GET /v2/opportunities/{id} ----
+
+router.get("/v2/opportunities/:id", (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const opp = store.getTenantOpportunity(id);
+  if (!opp) {
+    res.status(404).json({
+      errors: [{ code: "not_found", message: `Opportunity ${id} not found` }],
+    });
+    return;
+  }
+  res.json(opp);
 });
 
 export default router;

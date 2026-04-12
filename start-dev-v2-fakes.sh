@@ -533,9 +533,70 @@ curl -s -X POST http://localhost:4654/test/setup -H 'Content-Type: application/j
         }
       }
     ]
-  }
+  },
+  "tenantPersonFields": [
+    { "id": "affinity-data-current-organization", "name": "Current Organization", "type": "enriched", "valueType": "company",         "enrichmentSource": "affinity-data" },
+    { "id": "affinity-data-job-titles",           "name": "Job Titles",           "type": "enriched", "valueType": "filterable-text-multi", "enrichmentSource": "affinity-data" }
+  ],
+  "tenantCompanyFields": [
+    { "id": "affinity-data-industry",          "name": "Industry",          "type": "enriched", "valueType": "filterable-text-multi", "enrichmentSource": "affinity-data" },
+    { "id": "affinity-data-number-of-employees","name": "Number of Employees","type": "enriched", "valueType": "number",               "enrichmentSource": "affinity-data" }
+  ],
+  "tenantPersons": [
+    {
+      "id": 7101, "firstName": "Alice", "lastName": "Chen",
+      "primaryEmailAddress": "alice@acme.example.com", "emailAddresses": ["alice@acme.example.com"], "type": "external",
+      "fields": [
+        { "id": "affinity-data-current-organization", "name": "Current Organization", "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "company", "data": { "id": 7001, "name": "Acme Corp", "domain": "acme.example.com" } } },
+        { "id": "affinity-data-job-titles",           "name": "Job Titles",           "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "filterable-text-multi", "data": ["CTO"] } }
+      ]
+    },
+    {
+      "id": 7102, "firstName": "Bob", "lastName": "Smith",
+      "primaryEmailAddress": "bob@globex.example.com", "emailAddresses": ["bob@globex.example.com"], "type": "external",
+      "fields": [
+        { "id": "affinity-data-current-organization", "name": "Current Organization", "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "company", "data": { "id": 7002, "name": "Globex Inc", "domain": "globex.example.com" } } },
+        { "id": "affinity-data-job-titles",           "name": "Job Titles",           "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "filterable-text-multi", "data": ["PM"] } }
+      ]
+    },
+    {
+      "id": 7103, "firstName": "Carol", "lastName": "Diaz",
+      "primaryEmailAddress": "carol@wayne.example.com", "emailAddresses": ["carol@wayne.example.com"], "type": "external",
+      "fields": [
+        { "id": "affinity-data-current-organization", "name": "Current Organization", "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "company", "data": { "id": 7003, "name": "Wayne Enterprises", "domain": "wayne.example.com" } } },
+        { "id": "affinity-data-job-titles",           "name": "Job Titles",           "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "filterable-text-multi", "data": ["VP Engineering"] } }
+      ]
+    }
+  ],
+  "tenantCompanies": [
+    {
+      "id": 7001, "name": "Acme Corp", "domain": "acme.example.com", "domains": ["acme.example.com"], "isGlobal": true,
+      "fields": [
+        { "id": "affinity-data-industry",           "name": "Industry",           "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "filterable-text-multi", "data": ["Software", "SaaS"] } },
+        { "id": "affinity-data-number-of-employees","name": "Number of Employees","type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "number", "data": 250 } }
+      ]
+    },
+    {
+      "id": 7002, "name": "Globex Inc", "domain": "globex.example.com", "domains": ["globex.example.com"], "isGlobal": true,
+      "fields": [
+        { "id": "affinity-data-industry",           "name": "Industry",           "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "filterable-text-multi", "data": ["Manufacturing"] } },
+        { "id": "affinity-data-number-of-employees","name": "Number of Employees","type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "number", "data": 1200 } }
+      ]
+    },
+    {
+      "id": 7003, "name": "Wayne Enterprises", "domain": "wayne.example.com", "domains": ["wayne.example.com"], "isGlobal": false,
+      "fields": [
+        { "id": "affinity-data-industry",           "name": "Industry",           "type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "filterable-text-multi", "data": ["Conglomerate"] } },
+        { "id": "affinity-data-number-of-employees","name": "Number of Employees","type": "enriched", "enrichmentSource": "affinity-data", "value": { "type": "number", "data": 50000 } }
+      ]
+    }
+  ],
+  "tenantOpportunities": [
+    { "id": 7201, "name": "Acme Upsell $50k", "listId": 1003 },
+    { "id": 7202, "name": "Globex Pilot",     "listId": 1003 }
+  ]
 }' > /dev/null
-echo -e "${GREEN}Fake Affinity seeded (3 lists, 7 fields, 5 entries)${NC}"
+echo -e "${GREEN}Fake Affinity seeded (3 lists, 7 list fields, 5 list entries, 3 people, 3 companies, 2 opportunities)${NC}"
 echo ""
 
 # Set URL overrides so the server redirects connector API calls to fakes

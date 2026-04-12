@@ -123,6 +123,20 @@ class Store {
   // List entries per list, keyed by list id → ordered array
   entriesByList: Map<number, AffinityListEntry[]> = new Map();
 
+  // Tenant-wide records (independent of any list).
+  // The connector reads these via GET /v2/persons, /v2/companies, and
+  // /v2/opportunities. Each map is keyed by record id so the per-record
+  // GET /v2/{kind}/{id} endpoints can do O(1) lookups.
+  tenantPersons: Map<number, AffinityPerson> = new Map();
+  tenantCompanies: Map<number, AffinityCompany> = new Map();
+  tenantOpportunities: Map<number, AffinityOpportunity> = new Map();
+
+  // Tenant-wide field metadata. Persons + companies have a /v2/{kind}/fields
+  // endpoint; opportunities does not (Affinity v2 has no per-tenant
+  // opportunity field metadata at all).
+  tenantPersonFields: AffinityFieldMetadata[] = [];
+  tenantCompanyFields: AffinityFieldMetadata[] = [];
+
   // Error simulation
   errorQueue: QueuedError[] = [];
   rateLimitCount: number = 0;
@@ -140,6 +154,11 @@ class Store {
     this.lists.clear();
     this.fieldsByList.clear();
     this.entriesByList.clear();
+    this.tenantPersons.clear();
+    this.tenantCompanies.clear();
+    this.tenantOpportunities.clear();
+    this.tenantPersonFields = [];
+    this.tenantCompanyFields = [];
     this.errorQueue = [];
     this.rateLimitCount = 0;
     this.rateLimitRetryAfterSeconds = 30;
@@ -191,6 +210,63 @@ class Store {
 
   getEntry(listId: number, entryId: number): AffinityListEntry | undefined {
     return this.getEntries(listId).find((e) => e.id === entryId);
+  }
+
+  // ---- Tenant-wide records ----
+
+  setTenantPersons(persons: AffinityPerson[]): void {
+    this.tenantPersons.clear();
+    for (const p of persons) this.tenantPersons.set(p.id, p);
+  }
+
+  setTenantCompanies(companies: AffinityCompany[]): void {
+    this.tenantCompanies.clear();
+    for (const c of companies) this.tenantCompanies.set(c.id, c);
+  }
+
+  setTenantOpportunities(opps: AffinityOpportunity[]): void {
+    this.tenantOpportunities.clear();
+    for (const o of opps) this.tenantOpportunities.set(o.id, o);
+  }
+
+  listTenantPersons(): AffinityPerson[] {
+    return Array.from(this.tenantPersons.values());
+  }
+
+  listTenantCompanies(): AffinityCompany[] {
+    return Array.from(this.tenantCompanies.values());
+  }
+
+  listTenantOpportunities(): AffinityOpportunity[] {
+    return Array.from(this.tenantOpportunities.values());
+  }
+
+  getTenantPerson(id: number): AffinityPerson | undefined {
+    return this.tenantPersons.get(id);
+  }
+
+  getTenantCompany(id: number): AffinityCompany | undefined {
+    return this.tenantCompanies.get(id);
+  }
+
+  getTenantOpportunity(id: number): AffinityOpportunity | undefined {
+    return this.tenantOpportunities.get(id);
+  }
+
+  setTenantPersonFields(fields: AffinityFieldMetadata[]): void {
+    this.tenantPersonFields = fields;
+  }
+
+  setTenantCompanyFields(fields: AffinityFieldMetadata[]): void {
+    this.tenantCompanyFields = fields;
+  }
+
+  getTenantPersonFields(): AffinityFieldMetadata[] {
+    return this.tenantPersonFields;
+  }
+
+  getTenantCompanyFields(): AffinityFieldMetadata[] {
+    return this.tenantCompanyFields;
   }
 
   // ---- Error simulation ----

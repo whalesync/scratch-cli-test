@@ -16,6 +16,16 @@ export type AffinityFieldType = 'enriched' | 'global' | 'list' | 'relationship-i
 /** All field categories — passed to the list-entries endpoint to embed field data inline. */
 export const FIELD_TYPES: readonly AffinityFieldType[] = ['list', 'enriched', 'global', 'relationship-intelligence'];
 
+/**
+ * Field categories valid on the tenant-wide `/v2/persons` and `/v2/companies`
+ * endpoints. Note the absence of `'list'` — Affinity rejects it with HTTP 400
+ * because tenant-wide records have no list context, so list-specific fields
+ * don't apply. Empirically verified against `api.affinity.co` 2026-04-11; the
+ * error message is `value at `/fieldTypes` is not one of:
+ * ['enriched', 'global', 'relationship-intelligence']`.
+ */
+export const TENANT_FIELD_TYPES: readonly AffinityFieldType[] = ['enriched', 'global', 'relationship-intelligence'];
+
 /** The entity types an Affinity list can hold. */
 export type AffinityEntityType = 'company' | 'person' | 'opportunity';
 
@@ -84,6 +94,60 @@ export interface AffinityListEntry {
   createdAt: string;
   creatorId: number | null;
   entity: Record<string, unknown>;
+}
+
+/**
+ * Discriminated union over the four kinds of "tables" the connector exposes:
+ * the three tenant-wide endpoints (`GET /v2/persons`, `/v2/companies`,
+ * `/v2/opportunities`) plus user-created lists. Produced by `parseAffinityTableId`
+ * and used to dispatch in `fetchJsonTableSpec`, `pullRecordFiles`, and
+ * `pullRecordFilesByIds`.
+ */
+export type AffinityTableKind =
+  | { kind: 'list'; listId: number }
+  | { kind: 'tenant-persons' }
+  | { kind: 'tenant-companies' }
+  | { kind: 'tenant-opportunities' };
+
+/**
+ * A single record from `GET /v2/persons` — flat shape, no `entity` wrapper
+ * (unlike list-entries). When `fieldTypes=…` is passed, `fields` is populated
+ * with the same array shape that list-entry `entity.fields` has.
+ */
+export interface AffinityPerson {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  primaryEmailAddress: string | null;
+  emailAddresses: string[];
+  type: string | null;
+  fields?: unknown;
+}
+
+/**
+ * A single record from `GET /v2/companies` — flat shape, no `entity` wrapper.
+ * When `fieldTypes=…` is passed, `fields` is populated with the same array
+ * shape that list-entry `entity.fields` has.
+ */
+export interface AffinityCompany {
+  id: number;
+  name: string | null;
+  domain: string | null;
+  domains: string[];
+  isGlobal: boolean;
+  fields?: unknown;
+}
+
+/**
+ * A single record from `GET /v2/opportunities`. The endpoint is intentionally
+ * thin — Affinity v2 returns only `id`, `name`, `listId` here, with no field
+ * data and no `/v2/opportunities/fields` metadata endpoint. Per-list custom
+ * field data only exists via `GET /v2/lists/{listId}/list-entries`.
+ */
+export interface AffinityOpportunity {
+  id: number;
+  name: string | null;
+  listId: number;
 }
 
 /** Resumable pull progress: just the cursor of the next page. */

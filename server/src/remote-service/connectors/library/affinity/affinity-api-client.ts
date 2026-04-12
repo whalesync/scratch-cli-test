@@ -2,12 +2,16 @@ import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
+  AffinityCompany,
   AffinityFieldMetadata,
   AffinityList,
   AffinityListEntry,
+  AffinityOpportunity,
   AffinityPagedResponse,
+  AffinityPerson,
   AffinityQuota,
   FIELD_TYPES,
+  TENANT_FIELD_TYPES,
 } from './affinity-types';
 
 const BASE_URL = 'https://api.affinity.co';
@@ -196,6 +200,123 @@ export class AffinityApiClient {
         this.http.get<AffinityListEntry>(`/v2/lists/${listId}/list-entries/${listEntryId}`, {
           params: { fieldTypes: FIELD_TYPES },
         }),
+      );
+      return response.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tenant-wide endpoints — return every record in the workspace, regardless of
+  // list membership. Persons and companies embed `fields` data when `fieldTypes`
+  // is passed (same shape as list-entries). Opportunities are intentionally thin
+  // (`id` / `name` / `listId` only) — Affinity v2 has no /v2/opportunities/fields
+  // metadata endpoint, and the per-record endpoint returns no field data either.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Stream every person in the workspace with the three tenant-valid field-type
+   * categories embedded inline. Pass `resumeCursor` to resume from a checkpoint.
+   *
+   * Note: passes `TENANT_FIELD_TYPES` (no `'list'`) — Affinity rejects
+   * `fieldTypes=list` here with HTTP 400 because tenant-wide records have no
+   * list context. Use `listListEntries` if you need list-specific fields.
+   */
+  listAllPersons(resumeCursor?: string): AsyncGenerator<{ data: AffinityPerson[]; nextCursor?: string }, void> {
+    return this.paginate<AffinityPerson>('/v2/persons', { fieldTypes: TENANT_FIELD_TYPES }, resumeCursor);
+  }
+
+  /**
+   * Stream every company in the workspace with the three tenant-valid field-type
+   * categories embedded inline. Pass `resumeCursor` to resume from a checkpoint.
+   *
+   * Same `TENANT_FIELD_TYPES` caveat as `listAllPersons` — `fieldTypes=list` is
+   * rejected by `/v2/companies` with HTTP 400.
+   */
+  listAllCompanies(resumeCursor?: string): AsyncGenerator<{ data: AffinityCompany[]; nextCursor?: string }, void> {
+    return this.paginate<AffinityCompany>('/v2/companies', { fieldTypes: TENANT_FIELD_TYPES }, resumeCursor);
+  }
+
+  /**
+   * Stream every opportunity in the workspace. Note: no `fieldTypes` parameter
+   * — the v2 opportunities endpoint returns only `id` / `name` / `listId` and
+   * has no equivalent of the lists fields-metadata endpoint.
+   */
+  listAllOpportunities(
+    resumeCursor?: string,
+  ): AsyncGenerator<{ data: AffinityOpportunity[]; nextCursor?: string }, void> {
+    return this.paginate<AffinityOpportunity>('/v2/opportunities', {}, resumeCursor);
+  }
+
+  /**
+   * Fetch metadata for non-list-specific person fields used by the tenant-wide
+   * persons table. Note the path is `/v2/persons/fields` — Affinity's docs claim
+   * `/v2/persons/metadata/fields` but that 404s in practice; the docs are wrong.
+   */
+  async listPersonFields(): Promise<AffinityFieldMetadata[]> {
+    const all: AffinityFieldMetadata[] = [];
+    for await (const { data } of this.paginate<AffinityFieldMetadata>('/v2/persons/fields')) {
+      all.push(...data);
+    }
+    return all;
+  }
+
+  /**
+   * Fetch metadata for non-list-specific company fields used by the tenant-wide
+   * companies table. Same `/v2/companies/fields` vs. `/v2/companies/metadata/fields`
+   * caveat as `listPersonFields`.
+   */
+  async listCompanyFields(): Promise<AffinityFieldMetadata[]> {
+    const all: AffinityFieldMetadata[] = [];
+    for await (const { data } of this.paginate<AffinityFieldMetadata>('/v2/companies/fields')) {
+      all.push(...data);
+    }
+    return all;
+  }
+
+  /** Fetch a single person by id. Returns `null` on 404. */
+  async getPerson(personId: number): Promise<AffinityPerson | null> {
+    try {
+      const response = await this.withRetry(async () =>
+        this.http.get<AffinityPerson>(`/v2/persons/${personId}`, {
+          params: { fieldTypes: TENANT_FIELD_TYPES },
+        }),
+      );
+      return response.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Fetch a single company by id. Returns `null` on 404. */
+  async getCompany(companyId: number): Promise<AffinityCompany | null> {
+    try {
+      const response = await this.withRetry(async () =>
+        this.http.get<AffinityCompany>(`/v2/companies/${companyId}`, {
+          params: { fieldTypes: TENANT_FIELD_TYPES },
+        }),
+      );
+      return response.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** Fetch a single opportunity by id. Returns `null` on 404. */
+  async getOpportunity(opportunityId: number): Promise<AffinityOpportunity | null> {
+    try {
+      const response = await this.withRetry(async () =>
+        this.http.get<AffinityOpportunity>(`/v2/opportunities/${opportunityId}`),
       );
       return response.data;
     } catch (error) {

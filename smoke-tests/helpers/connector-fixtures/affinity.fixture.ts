@@ -1,8 +1,13 @@
 import { FakeAdminClient } from "../test-api-client";
 import { ConnectorFixture, SeedResult } from "./types";
 
+// Default to the host port that `smoke-tests/docker-compose.smoke-test.yml`
+// exposes (`4664:4654`), matching the convention used by `airtable.fixture.ts`
+// (4656) and `hubspot.fixture.ts` (4663). For local dev outside docker, set
+// `FAKE_AFFINITY_URL=http://localhost:4654` since `server/localdev/docker-compose.yml`
+// maps the container's 4654 directly through to the host.
 const FAKE_AFFINITY_URL =
-  process.env.FAKE_AFFINITY_URL ?? "http://localhost:4654";
+  process.env.FAKE_AFFINITY_URL ?? "http://localhost:4664";
 
 // One list per smoke test run, with company entities. The Affinity connector
 // models each list as a Scratch table — this fixture exercises a single list

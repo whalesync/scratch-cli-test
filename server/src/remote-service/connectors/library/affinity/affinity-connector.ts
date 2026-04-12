@@ -2,6 +2,7 @@ import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
+import { assertUnreachable } from 'src/utils/asserts';
 import { Connector } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
@@ -13,8 +14,30 @@ import { sanitizeForTableWsId } from '../../ids';
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AffinityApiClient, AffinityError } from './affinity-api-client';
-import { buildAffinityJsonTableSpec } from './affinity-json-schema';
-import { AffinityDownloadProgress, AffinityEntityType, AffinityList, AffinityListEntry } from './affinity-types';
+import {
+  buildAffinityCompaniesTableSpec,
+  buildAffinityJsonTableSpec,
+  buildAffinityOpportunitiesTableSpec,
+  buildAffinityPersonsTableSpec,
+} from './affinity-json-schema';
+import {
+  AffinityCompany,
+  AffinityDownloadProgress,
+  AffinityEntityType,
+  AffinityList,
+  AffinityListEntry,
+  AffinityPerson,
+  AffinityTableKind,
+} from './affinity-types';
+
+// Reserved `remoteId[0]` strings that identify the three tenant-wide tables
+// (vs. user-created lists, which use the numeric Affinity list id). These are
+// safe to use as bare strings because Affinity list ids are always numeric, so
+// `parseInt` would never accept any of these. See CONNECTOR_GUIDE.md →
+// "Fixed vs. user-defined tables" for the broader pattern.
+const TENANT_PERSONS_ID = 'persons';
+const TENANT_COMPANIES_ID = 'companies';
+const TENANT_OPPORTUNITIES_ID = 'opportunities';
 
 const LOG_SOURCE = 'AffinityConnector';
 const READ_ONLY_MESSAGE = 'The Affinity connector is read-only.';
@@ -22,10 +45,21 @@ const READ_ONLY_MESSAGE = 'The Affinity connector is read-only.';
 /**
  * Read-only connector for the Affinity v2 API.
  *
- * Each Affinity list becomes a Scratch table; each list entry becomes a record
- * file. Field data (list-specific + enriched + global + relationship-intelligence)
- * is fetched inline via the v2 list-entries endpoint, avoiding the v1 N+1 problem
- * (~95x fewer API calls for a 10k-record sync — see internal docs/2026-04-10).
+ * Exposes four kinds of tables:
+ *   - **Tenant-wide People** (`GET /v2/persons`) — every person in the workspace,
+ *     regardless of list membership. Flat record shape (no `entity` wrapper).
+ *   - **Tenant-wide Companies** (`GET /v2/companies`) — same idea, for companies.
+ *   - **Tenant-wide Opportunities** (`GET /v2/opportunities`) — fixed three-column
+ *     schema (`id` / `name` / `listId`), no field data (Affinity v2 doesn't expose
+ *     it for this endpoint and there's no `/v2/opportunities/fields` either).
+ *   - **User-created lists** (`GET /v2/lists/{id}/list-entries`) — each list
+ *     becomes its own table, grouped under "Lists/" in the picker, with the
+ *     full list-specific + enriched + global + relationship-intelligence field
+ *     data fetched inline (~95x fewer calls than the v1 N+1 fan-out).
+ *
+ * Tables are dispatched via `parseAffinityTableId`, which checks the three
+ * sentinel strings before falling through to numeric list-id parsing. See
+ * CONNECTOR_GUIDE.md → "Fixed vs. user-defined tables" for the broader pattern.
  *
  * Writes (`createRecords`, `updateRecords`, `deleteRecords`) intentionally throw —
  * publishing back to Affinity is out of scope for the first pass.
@@ -99,17 +133,45 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
   }
 
   /**
-   * List every Affinity list as a Scratch table, grouped in the picker by entity
-   * type ("Company lists", "Person lists", "Opportunity lists").
+   * Build the picker tree:
+   *
+   *   Companies/         ← tenant-wide GET /v2/companies
+   *   People/            ← tenant-wide GET /v2/persons
+   *   Opportunities/     ← tenant-wide GET /v2/opportunities
+   *   Lists/
+   *     <list name>/     ← every user-created list, flat (names are
+   *                        globally unique within a tenant — confirmed
+   *                        empirically against Affinity)
+   *
+   * The three tenant tables are top-level (no `parentPath`); all user-created
+   * lists are grouped under a single `Lists/` folder regardless of entity type.
    */
   async listTables(): Promise<TablePreview[]> {
+    const tenantTables: TablePreview[] = [
+      {
+        id: { wsId: TENANT_COMPANIES_ID, remoteId: [TENANT_COMPANIES_ID] },
+        displayName: 'Companies',
+        metadata: { tableKind: 'tenant-companies' },
+      },
+      {
+        id: { wsId: TENANT_PERSONS_ID, remoteId: [TENANT_PERSONS_ID] },
+        displayName: 'People',
+        metadata: { tableKind: 'tenant-persons' },
+      },
+      {
+        id: { wsId: TENANT_OPPORTUNITIES_ID, remoteId: [TENANT_OPPORTUNITIES_ID] },
+        displayName: 'Opportunities',
+        metadata: { tableKind: 'tenant-opportunities' },
+      },
+    ];
+
     const lists = await this.client.listAllLists();
-    return lists.map((list) => {
+    const listTables: TablePreview[] = lists.map((list) => {
       this.listCache.set(list.id, list);
       return {
         id: { wsId: sanitizeForTableWsId(`list_${list.id}`), remoteId: [String(list.id)] },
         displayName: list.name,
-        parentPath: `${capitalize(list.type)} lists`,
+        parentPath: 'Lists',
         metadata: {
           listId: list.id,
           listType: list.type,
@@ -117,12 +179,26 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
         },
       };
     });
+
+    return [...tenantTables, ...listTables];
   }
 
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
-    const listId = parseListId(id);
-    const list = await this.getOrFetchList(listId);
-    return buildAffinityJsonTableSpec(id, list, this.client);
+    const parsed = parseAffinityTableId(id);
+    switch (parsed.kind) {
+      case 'list': {
+        const list = await this.getOrFetchList(parsed.listId);
+        return buildAffinityJsonTableSpec(id, list, this.client);
+      }
+      case 'tenant-persons':
+        return buildAffinityPersonsTableSpec(id, this.client);
+      case 'tenant-companies':
+        return buildAffinityCompaniesTableSpec(id, this.client);
+      case 'tenant-opportunities':
+        return buildAffinityOpportunitiesTableSpec(id);
+      default:
+        return assertUnreachable(parsed);
+    }
   }
 
   async pullRecordFiles(
@@ -132,15 +208,54 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: ConnectorPullOptions,
   ): Promise<void> {
-    const listId = parseListId(tableSpec.id);
+    const parsed = parseAffinityTableId(tableSpec.id);
     const resumeCursor = progress?.cursor;
 
-    for await (const batch of this.client.listListEntries(listId, resumeCursor)) {
-      const files = batch.data.map((entry) => listEntryToFile(entry));
-      await callback({
-        files,
-        connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
-      });
+    switch (parsed.kind) {
+      case 'list': {
+        for await (const batch of this.client.listListEntries(parsed.listId, resumeCursor)) {
+          const files = batch.data.map((entry) => listEntryToFile(entry));
+          await callback({
+            files,
+            connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
+          });
+        }
+        return;
+      }
+      case 'tenant-persons': {
+        for await (const batch of this.client.listAllPersons(resumeCursor)) {
+          const files = batch.data.map((p) => tenantRecordToFile(p));
+          await callback({
+            files,
+            connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
+          });
+        }
+        return;
+      }
+      case 'tenant-companies': {
+        for await (const batch of this.client.listAllCompanies(resumeCursor)) {
+          const files = batch.data.map((c) => tenantRecordToFile(c));
+          await callback({
+            files,
+            connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
+          });
+        }
+        return;
+      }
+      case 'tenant-opportunities': {
+        for await (const batch of this.client.listAllOpportunities(resumeCursor)) {
+          // Opportunities have no field data — pass through verbatim, no
+          // array→keyed-object transform needed.
+          const files = batch.data as unknown as ConnectorFile[];
+          await callback({
+            files,
+            connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
+          });
+        }
+        return;
+      }
+      default:
+        return assertUnreachable(parsed);
     }
   }
 
@@ -149,26 +264,52 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
-    const listId = parseListId(tableSpec.id);
+    const parsed = parseAffinityTableId(tableSpec.id);
     const BATCH_SIZE = 25;
     const buffer: ConnectorFile[] = [];
 
-    for (const idStr of ids) {
-      const entryId = parseInt(idStr, 10);
-      if (isNaN(entryId)) {
-        WSLogger.warn({
-          source: LOG_SOURCE,
-          message: `Invalid non-numeric list-entry id "${idStr}", skipping`,
-        });
-        continue;
-      }
-      const entry = await this.client.getListEntry(listId, entryId);
-      if (entry) {
-        buffer.push(listEntryToFile(entry));
-      }
+    const flushIfFull = async () => {
       if (buffer.length >= BATCH_SIZE) {
         await callback({ files: buffer.splice(0) });
       }
+    };
+
+    for (const idStr of ids) {
+      const recordId = parseInt(idStr, 10);
+      if (isNaN(recordId)) {
+        WSLogger.warn({
+          source: LOG_SOURCE,
+          message: `Invalid non-numeric Affinity record id "${idStr}", skipping`,
+        });
+        continue;
+      }
+
+      switch (parsed.kind) {
+        case 'list': {
+          const entry = await this.client.getListEntry(parsed.listId, recordId);
+          if (entry) buffer.push(listEntryToFile(entry));
+          break;
+        }
+        case 'tenant-persons': {
+          const person = await this.client.getPerson(recordId);
+          if (person) buffer.push(tenantRecordToFile(person));
+          break;
+        }
+        case 'tenant-companies': {
+          const company = await this.client.getCompany(recordId);
+          if (company) buffer.push(tenantRecordToFile(company));
+          break;
+        }
+        case 'tenant-opportunities': {
+          const opp = await this.client.getOpportunity(recordId);
+          if (opp) buffer.push(opp as unknown as ConnectorFile);
+          break;
+        }
+        default:
+          return assertUnreachable(parsed);
+      }
+
+      await flushIfFull();
     }
 
     if (buffer.length > 0) {
@@ -197,9 +338,20 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
     throw new AffinityError(`${READ_ONLY_MESSAGE} Deleting list entries is not supported.`);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  getSuggestedRecordFileNames(records: ConnectorFile[], _tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return records.map((record) => suggestNameForEntry(record));
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const parsed = parseAffinityTableId(tableSpec.id);
+    switch (parsed.kind) {
+      case 'list':
+        // List entries wrap the entity under `record.entity`.
+        return records.map((record) => suggestNameForListEntry(record));
+      case 'tenant-persons':
+      case 'tenant-companies':
+      case 'tenant-opportunities':
+        // Tenant records are flat — name fields live at the top level.
+        return records.map((record) => suggestNameForTenantRecord(record));
+      default:
+        return assertUnreachable(parsed);
+    }
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
@@ -241,48 +393,90 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
   }
 }
 
-function parseListId(id: EntityId): number {
+/**
+ * Parse an EntityId into one of the four kinds of tables this connector
+ * exposes. The three sentinels (`persons`, `companies`, `opportunities`) are
+ * checked first; anything else falls through to numeric list-id parsing.
+ *
+ * Safe because Affinity list ids are always integers — `parseInt('persons', 10)`
+ * is `NaN`, so a sentinel can never accidentally route to the list path. See
+ * CONNECTOR_GUIDE.md → "Fixed vs. user-defined tables" for the broader pattern.
+ */
+export function parseAffinityTableId(id: EntityId): AffinityTableKind {
   const raw = id.remoteId[0];
+  switch (raw) {
+    case TENANT_PERSONS_ID:
+      return { kind: 'tenant-persons' };
+    case TENANT_COMPANIES_ID:
+      return { kind: 'tenant-companies' };
+    case TENANT_OPPORTUNITIES_ID:
+      return { kind: 'tenant-opportunities' };
+  }
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) {
-    throw new AffinityError(`Invalid Affinity list id in remoteId: ${raw}`);
+    throw new AffinityError(`Invalid Affinity table id in remoteId: ${raw}`);
   }
-  return parsed;
+  return { kind: 'list', listId: parsed };
 }
 
 /**
- * Transform a raw API list entry into the file shape stored in git.
+ * Replace a `fields` *array* on an object with an object keyed by each field's
+ * `id`, in place. Affinity v2 returns fields as `[{id, name, type, value,
+ * enrichmentSource}]`; we re-key for two reasons:
  *
- * The Affinity v2 API returns `entity.fields` as an *array* of `{id, name, type,
- * value, enrichmentSource}` objects. Re-keying it into an object by field id
- * gives two benefits:
  *   1. Stable ordering — git diffs only show real changes, not array reorderings.
- *   2. Each field is addressable by its remote id (`entity.fields.field-1234`),
- *      which is what the json schema describes and what column-level sync needs.
+ *   2. Each field is addressable by its remote id (e.g. `fields.field-1234`),
+ *      which is what the JSON schema describes and what column-level sync needs.
  *
- * The transformation is fully lossless: the inner Field object (including `id`)
- * is preserved verbatim under its key.
+ * The transformation is fully lossless — the inner Field object (including its
+ * `id`) is preserved verbatim under its key.
+ */
+function rekeyFieldsArrayInPlace(target: { fields?: unknown }): void {
+  const rawFields = target.fields;
+  if (!Array.isArray(rawFields)) return;
+  const keyed: Record<string, unknown> = {};
+  for (const field of rawFields as Array<{ id?: unknown }>) {
+    if (field && typeof field.id === 'string') {
+      keyed[field.id] = field;
+    }
+  }
+  target.fields = keyed;
+}
+
+/**
+ * Transform a list entry into the file shape stored in git. The fields array
+ * lives under `entry.entity.fields` (list entries wrap the entity).
  */
 function listEntryToFile(entry: AffinityListEntry): ConnectorFile {
-  const entity = entry.entity;
-  const rawFields = entity?.fields;
-  if (Array.isArray(rawFields)) {
-    const keyed: Record<string, unknown> = {};
-    for (const field of rawFields as Array<{ id?: unknown }>) {
-      if (field && typeof field.id === 'string') {
-        keyed[field.id] = field;
-      }
-    }
-    entity.fields = keyed;
+  if (entry.entity) {
+    rekeyFieldsArrayInPlace(entry.entity as { fields?: unknown });
   }
   return entry as unknown as ConnectorFile;
 }
 
-/** Pull a human-friendly name out of an entity for filename suggestions. */
-function suggestNameForEntry(record: ConnectorFile): string | undefined {
-  const entity = (record as { entity?: Record<string, unknown> }).entity;
-  if (!entity) return undefined;
+/**
+ * Transform a tenant-wide person/company record into the file shape stored in
+ * git. The fields array lives at the top level (no `entity` wrapper). Used for
+ * persons and companies; opportunities have no fields and pass through verbatim.
+ */
+function tenantRecordToFile(record: AffinityPerson | AffinityCompany): ConnectorFile {
+  rekeyFieldsArrayInPlace(record as { fields?: unknown });
+  return record as unknown as ConnectorFile;
+}
 
+/** Filename suggestion for a list entry — looks at `record.entity.{name|firstName|lastName}`. */
+function suggestNameForListEntry(record: ConnectorFile): string | undefined {
+  const entity = (record as { entity?: Record<string, unknown> }).entity;
+  return entity ? suggestNameForEntityShape(entity) : undefined;
+}
+
+/** Filename suggestion for a tenant record — fields live at the top level. */
+function suggestNameForTenantRecord(record: ConnectorFile): string | undefined {
+  return suggestNameForEntityShape(record as unknown as Record<string, unknown>);
+}
+
+/** Pull a human-friendly name out of any object that has Affinity-style name fields. */
+function suggestNameForEntityShape(entity: Record<string, unknown>): string | undefined {
   const name = entity.name;
   if (typeof name === 'string' && name.trim().length > 0) {
     return name.trim();
@@ -296,10 +490,6 @@ function suggestNameForEntry(record: ConnectorFile): string | undefined {
   if (parts.length > 0) return parts.join(' ');
 
   return undefined;
-}
-
-function capitalize(s: string): string {
-  return s.length > 0 ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 connectorRegistry.register({

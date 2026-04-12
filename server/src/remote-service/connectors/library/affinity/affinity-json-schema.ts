@@ -190,6 +190,140 @@ export async function buildAffinityJsonTableSpec(
     schema,
     idColumnRemoteId: 'id',
     titleColumnRemoteId,
+    // Nest user-created lists under a top-level "Lists" folder in the workbook
+    // tree. Mirrors the `parentPath: 'Lists'` grouping in the picker — but the
+    // workbook hierarchy is actually controlled by `basePath`, not `parentPath`,
+    // so both have to be set to keep the picker and the workbook tree consistent.
+    basePath: ['Lists'],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tenant-wide tables — built from `GET /v2/persons` / `/v2/companies` /
+// `/v2/opportunities`. These records are FLAT (no `entity` wrapper, unlike
+// list-entries), so the schema mounts entity properties at the top level
+// instead of under `.entity`.
+//
+// All three live at the workbook tree root (basePath: []), matching their
+// top-level position in the picker.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the table spec for the tenant-wide People table. Field metadata comes
+ * from `/v2/persons/fields` (NB: not `/metadata/fields` despite what Affinity's
+ * docs claim — that path 404s).
+ */
+export async function buildAffinityPersonsTableSpec(
+  id: EntityId,
+  client: AffinityApiClient,
+): Promise<BaseJsonTableSpec> {
+  const fieldMetadata = await client.listPersonFields();
+
+  const fieldsByKey: Record<string, TSchema> = {};
+  for (const fm of fieldMetadata) {
+    fieldsByKey[fm.id] = fieldEntrySchema(fm);
+  }
+
+  const schema = Type.Object(
+    {
+      id: Type.Number({ description: 'Person id', [READONLY_FLAG]: true }),
+      firstName: Type.Union([Type.String(), Type.Null()]),
+      lastName: Type.Union([Type.String(), Type.Null()]),
+      primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
+      emailAddresses: Type.Array(Type.String()),
+      type: Type.Union([Type.String(), Type.Null()], { [READONLY_FLAG]: true }),
+      fields: Type.Object(fieldsByKey, {
+        description: 'Affinity fields keyed by field id',
+        additionalProperties: false,
+      }),
+    },
+    { $id: 'affinity/persons', title: 'People' },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'People',
+    schema,
+    idColumnRemoteId: 'id',
+    // No `entity.` prefix — tenant records are flat. firstName chosen over
+    // lastName because lastName is nullable in Affinity.
+    titleColumnRemoteId: ['firstName'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Build the table spec for the tenant-wide Companies table. Field metadata
+ * comes from `/v2/companies/fields` (same docs caveat as persons).
+ */
+export async function buildAffinityCompaniesTableSpec(
+  id: EntityId,
+  client: AffinityApiClient,
+): Promise<BaseJsonTableSpec> {
+  const fieldMetadata = await client.listCompanyFields();
+
+  const fieldsByKey: Record<string, TSchema> = {};
+  for (const fm of fieldMetadata) {
+    fieldsByKey[fm.id] = fieldEntrySchema(fm);
+  }
+
+  const schema = Type.Object(
+    {
+      id: Type.Number({ description: 'Company id', [READONLY_FLAG]: true }),
+      name: Type.Union([Type.String(), Type.Null()]),
+      domain: Type.Union([Type.String(), Type.Null()]),
+      domains: Type.Array(Type.String()),
+      isGlobal: Type.Boolean({ [READONLY_FLAG]: true }),
+      fields: Type.Object(fieldsByKey, {
+        description: 'Affinity fields keyed by field id',
+        additionalProperties: false,
+      }),
+    },
+    { $id: 'affinity/companies', title: 'Companies' },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Companies',
+    schema,
+    idColumnRemoteId: 'id',
+    titleColumnRemoteId: ['name'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Build the table spec for the tenant-wide Opportunities table. Unlike persons
+ * and companies, this is a fixed three-column schema — Affinity v2's
+ * `/v2/opportunities` endpoint returns only `id` / `name` / `listId` and there
+ * is no metadata-fields endpoint. Per-list custom fields on opportunities are
+ * only available through `GET /v2/lists/{listId}/list-entries`.
+ */
+export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTableSpec {
+  const schema = Type.Object(
+    {
+      id: Type.Number({ description: 'Opportunity id', [READONLY_FLAG]: true }),
+      name: Type.Union([Type.String(), Type.Null()]),
+      listId: Type.Number({
+        description: 'Id of the list this opportunity belongs to',
+        [READONLY_FLAG]: true,
+      }),
+    },
+    { $id: 'affinity/opportunities', title: 'Opportunities' },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Opportunities',
+    schema,
+    idColumnRemoteId: 'id',
+    titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
   };
