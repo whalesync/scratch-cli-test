@@ -121,4 +121,15 @@ export class AirtableApiClient {
       }),
     );
   }
+
+  /**
+   * Fetch base metadata including the workspaceId.
+   * https://airtable.com/developers/web/api/get-base
+   */
+  async getBaseMetadata(baseId: string): Promise<{ id: string; workspaceId: string }> {
+    const r = await this.retryableRequest(() =>
+      this.client.get<{ id: string; workspaceId: string }>(`/meta/bases/${baseId}`),
+    );
+    return r.data;
+  }
 }

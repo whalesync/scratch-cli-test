@@ -66,6 +66,21 @@ export class AirtableConnector extends Connector {
     await this.client.listBases();
   }
 
+  /**
+   * Airtable doesn't expose API quota via its API, but usage is visible in the
+   * workspace billing page. We look up the workspaceId from the first base and
+   * return a dashboard link so the user can check manually.
+   */
+  async getApiQuota(): Promise<{ dashboardUrl: string }> {
+    const bases = await this.client.listBases();
+    const firstBase = bases.bases[0];
+    if (!firstBase) {
+      return { dashboardUrl: 'https://airtable.com' };
+    }
+    const metadata = await this.client.getBaseMetadata(firstBase.id);
+    return { dashboardUrl: `https://airtable.com/${metadata.workspaceId}/workspace/billing` };
+  }
+
   async listTables(): Promise<TablePreview[]> {
     const bases = await this.client.listBases();
     const tables: TablePreview[] = [];

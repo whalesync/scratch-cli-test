@@ -65,14 +65,14 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   /**
    * Fetch the current API quota / rate-limit state for this connector account.
    *
-   * Connectors that expose a quota or rate-limit endpoint should override this
-   * and return the raw response as a JSON-safe object. The shape is intentionally
-   * connector-specific — the client renders it as raw pretty-printed JSON.
-   *
-   * Returns `null` (the default) when the connector has no concept of an API
-   * quota endpoint, in which case the client shows an "unsupported" message.
+   * Return one of three shapes:
+   *   - `{ quota: JsonSafeObject }` — raw quota data (rendered as pretty JSON).
+   *   - `{ dashboardUrl: string }` — no API-level quota, but a link to the
+   *     service's usage dashboard where the user can check manually.
+   *   - `null` — no quota concept at all (the dialog shows a generic
+   *     "unsupported" message).
    */
-  getApiQuota(): Promise<JsonSafeObject | null> {
+  getApiQuota(): Promise<{ quota: JsonSafeObject } | { dashboardUrl: string } | null> {
     return Promise.resolve(null);
   }
 

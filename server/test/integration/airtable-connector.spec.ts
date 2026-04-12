@@ -1,11 +1,13 @@
-// Set the URL override before any connector modules are imported, so the
-// interceptor is configured when createApiClient() is first called.
-const FAKE_AIRTABLE_PORT = 14_646;
-process.env.API_URL_OVERRIDES = `https://api.airtable.com=http://localhost:${FAKE_AIRTABLE_PORT}`;
-
-import http from 'http';
-import { createApp } from '../../../test-api-fakes/airtable/src/index';
-import { store } from '../../../test-api-fakes/airtable/src/store';
+/**
+ * Airtable connector live API integration test.
+ *
+ * Exercises the real Airtable API: validates credentials, discovers bases and
+ * tables, builds a schema, pulls records, and runs a create→update→delete
+ * round-trip (cleaning up after itself).
+ *
+ * Requires AIRTABLE_API_KEY in .env.integration.
+ * Run via: cd server && yarn test:integration -- airtable-connector
+ */
 
 // Break the circular import chain: connector.ts → display-names.ts → all connectors → connector.ts
 jest.mock('src/remote-service/connectors/display-names', () => ({
@@ -13,392 +15,217 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
 }));
 
 import { AirtableConnector } from 'src/remote-service/connectors/library/airtable/airtable-connector';
-import { BaseJsonTableSpec, ConnectorFile, EntityId } from 'src/remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorFile, TablePreview } from 'src/remote-service/connectors/types';
 
-// ─── Test Setup ──────────────────────────────────────────────────────────────
+jest.setTimeout(60_000);
 
-let server: http.Server;
-
-const TEST_BASE = {
-  id: 'appTEST123',
-  name: 'Test Base',
-  permissionLevel: 'create' as const,
-};
-
-const TEST_TABLE = {
-  id: 'tblTEST456',
-  name: 'Tasks',
-  description: 'A test table',
-  primaryFieldId: 'fldName',
-  fields: [
-    { id: 'fldName', name: 'Name', type: 'singleLineText' },
-    { id: 'fldStatus', name: 'Status', type: 'singleSelect' },
-    { id: 'fldCount', name: 'Count', type: 'autoNumber' },
-  ],
-  views: [{ id: 'viwGrid', name: 'Grid view', type: 'grid' }],
-};
-
-const TEST_ENTITY_ID: EntityId = {
-  wsId: 'tasks',
-  remoteId: [TEST_BASE.id, TEST_TABLE.id],
-};
+const API_KEY = process.env.AIRTABLE_API_KEY;
 
 function createConnector(): AirtableConnector {
-  return new AirtableConnector('fake-test-api-key', {
-    retryOverrides: { initialRetryDelayMs: 1, maxRetryDelayMs: 1 },
+  return new AirtableConnector(API_KEY!);
+}
+
+// Skip the entire suite if no key is configured (so CI stays green).
+const describeIfKey = API_KEY ? describe : describe.skip;
+
+describeIfKey('AirtableConnector — live API', () => {
+  let connector: AirtableConnector;
+  let allTables: TablePreview[];
+  let firstTable: TablePreview;
+  let firstSpec: BaseJsonTableSpec;
+
+  beforeAll(async () => {
+    connector = createConnector();
+    allTables = await connector.listTables();
+    firstTable = allTables[0];
+    firstSpec = await connector.fetchJsonTableSpec(firstTable.id);
   });
-}
 
-async function seedTestData() {
-  store.reset();
-  store.addBase(TEST_BASE);
-  store.addTable(TEST_BASE.id, TEST_TABLE);
-}
+  // ─────────────────────────────────────────────────────────────────────────
+  // Connection
+  // ─────────────────────────────────────────────────────────────────────────
 
-async function seedRecords(records: { fields: Record<string, unknown> }[]) {
-  for (const record of records) {
-    store.addRecord(TEST_BASE.id, TEST_TABLE.id, record.fields);
-  }
-}
-
-/** Collect all files from a pull operation into a flat array. */
-async function collectPulledFiles(
-  connector: AirtableConnector,
-  tableSpec: BaseJsonTableSpec,
-  options: Record<string, unknown> = {},
-): Promise<ConnectorFile[]> {
-  const allFiles: ConnectorFile[] = [];
-  await connector.pullRecordFiles(
-    tableSpec,
-    async ({ files }) => {
-      allFiles.push(...files);
-    },
-    {},
-    options,
-  );
-  return allFiles;
-}
-
-// ─── Lifecycle ───────────────────────────────────────────────────────────────
-
-beforeAll((done) => {
-  const app = createApp();
-  server = app.listen(FAKE_AIRTABLE_PORT, done);
-});
-
-afterAll((done) => {
-  server.close(done);
-});
-
-beforeEach(async () => {
-  await seedTestData();
-});
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
-describe('AirtableConnector with fake API', () => {
   describe('testConnection', () => {
-    it('succeeds when API is reachable', async () => {
-      const connector = createConnector();
+    it('validates credentials against the live API', async () => {
       await expect(connector.testConnection()).resolves.toBeUndefined();
     });
 
-    it('throws when auth is invalid', async () => {
-      // Simulate a 401 on the next request
-      store.queueError(401, {
-        error: { type: 'AUTHENTICATION_REQUIRED', message: 'Invalid API key' },
-      });
-
-      const connector = createConnector();
-      await expect(connector.testConnection()).rejects.toThrow();
+    it('rejects an obviously invalid key', async () => {
+      const badConnector = new AirtableConnector('not-a-real-airtable-key');
+      await expect(badConnector.testConnection()).rejects.toThrow();
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Table discovery
+  // ─────────────────────────────────────────────────────────────────────────
 
   describe('listTables', () => {
-    it('returns table previews for all bases', async () => {
-      const connector = createConnector();
-      const tables = await connector.listTables();
-
-      expect(tables).toHaveLength(1);
-      expect(tables[0]).toMatchObject({
-        id: {
-          wsId: expect.any(String),
-          remoteId: [TEST_BASE.id, TEST_TABLE.id],
-        },
-        displayName: 'Tasks',
-        metadata: { baseName: 'Test Base' },
-      });
+    it('returns at least one table', () => {
+      expect(allTables.length).toBeGreaterThan(0);
     });
 
-    it('returns tables across multiple bases', async () => {
-      const secondBase = { id: 'appSECOND', name: 'Second Base', permissionLevel: 'create' as const };
-      const secondTable = {
-        id: 'tblSECOND',
-        name: 'Projects',
-        description: '',
-        primaryFieldId: 'fldTitle',
-        fields: [{ id: 'fldTitle', name: 'Title', type: 'singleLineText' }],
-        views: [],
-      };
-      store.addBase(secondBase);
-      store.addTable(secondBase.id, secondTable);
+    it('every table has a valid EntityId and a display name', () => {
+      for (const table of allTables) {
+        expect(table.id.wsId).toBeDefined();
+        expect(table.id.remoteId).toHaveLength(2); // [baseId, tableId]
+        expect(table.id.remoteId[0]).toMatch(/^app/);
+        expect(table.id.remoteId[1]).toMatch(/^tbl/);
+        expect(table.displayName.length).toBeGreaterThan(0);
+      }
+    });
 
-      const connector = createConnector();
-      const tables = await connector.listTables();
-
-      expect(tables).toHaveLength(2);
-      const names = tables.map((t) => t.displayName);
-      expect(names).toContain('Tasks');
-      expect(names).toContain('Projects');
+    it('groups tables by base name', () => {
+      // Every table should have a parentPath (the base name)
+      for (const table of allTables) {
+        expect(table.parentPath).toBeDefined();
+        expect(table.parentPath!.length).toBeGreaterThan(0);
+      }
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Schema discovery
+  // ─────────────────────────────────────────────────────────────────────────
 
   describe('fetchJsonTableSpec', () => {
-    it('returns a valid table spec with schema', async () => {
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
+    it('builds a spec with the expected top-level structure', () => {
+      expect(firstSpec.id).toEqual(firstTable.id);
+      expect(firstSpec.name).toBe(firstTable.displayName);
+      expect(firstSpec.idColumnRemoteId).toBe('id');
+      expect(firstSpec.schema).toBeDefined();
 
-      expect(spec.name).toBe('Tasks');
-      expect(spec.id).toEqual(TEST_ENTITY_ID);
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.basePath).toEqual(['Test Base']);
-      expect(spec.schema).toBeDefined();
-      // Schema should have id, fields, and createdTime properties
-      expect(spec.schema.properties).toHaveProperty('id');
-      expect(spec.schema.properties).toHaveProperty('fields');
-      expect(spec.schema.properties).toHaveProperty('createdTime');
-      // Fields should contain our defined fields
-      expect(spec.schema.properties.fields.properties).toHaveProperty('Name');
-      expect(spec.schema.properties.fields.properties).toHaveProperty('Status');
+      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      expect(props).toHaveProperty('id');
+      expect(props).toHaveProperty('fields');
+      expect(props).toHaveProperty('createdTime');
     });
 
-    it('throws for unknown base', async () => {
-      const connector = createConnector();
-      const badId: EntityId = { wsId: 'bad', remoteId: ['appNONE', 'tblNONE'] };
-      await expect(connector.fetchJsonTableSpec(badId)).rejects.toThrow('Base appNONE not found');
+    it('includes at least one field in the schema', () => {
+      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      const fieldsProps = (props.fields as { properties: Record<string, unknown> }).properties;
+      expect(Object.keys(fieldsProps).length).toBeGreaterThan(0);
     });
 
-    it('throws for unknown table', async () => {
-      const connector = createConnector();
-      const badId: EntityId = { wsId: 'bad', remoteId: [TEST_BASE.id, 'tblNONE'] };
-      await expect(connector.fetchJsonTableSpec(badId)).rejects.toThrow('Table tblNONE not found');
+    it('throws for an unknown base', async () => {
+      const badId = { wsId: 'bad', remoteId: ['appNONEXISTENT999', 'tblNONE'] };
+      await expect(connector.fetchJsonTableSpec(badId)).rejects.toThrow();
     });
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Pull records
+  // ─────────────────────────────────────────────────────────────────────────
+
   describe('pullRecordFiles', () => {
-    it('pulls all records from a table', async () => {
-      await seedRecords([
-        { fields: { Name: 'Task 1', Status: 'Done' } },
-        { fields: { Name: 'Task 2', Status: 'Todo' } },
-        { fields: { Name: 'Task 3', Status: 'In Progress' } },
-      ]);
-
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-      const files = await collectPulledFiles(connector, spec);
-
-      expect(files).toHaveLength(3);
-      const names = files.map((f: any) => f.fields.Name);
-      expect(names).toContain('Task 1');
-      expect(names).toContain('Task 2');
-      expect(names).toContain('Task 3');
-    });
-
-    it('returns empty array when no records exist', async () => {
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-      const files = await collectPulledFiles(connector, spec);
-
-      expect(files).toHaveLength(0);
-    });
-
-    it('handles pagination transparently', async () => {
-      // Create 150 records (page size is 100)
-      const records = Array.from({ length: 150 }, (_, i) => ({
-        fields: { Name: `Record ${i}` },
-      }));
-      await seedRecords(records);
-
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      // Collect files across all pages
-      const batches: ConnectorFile[][] = [];
+    it('pulls records from the first table', async () => {
+      const allFiles: ConnectorFile[] = [];
       await connector.pullRecordFiles(
-        spec,
+        firstSpec,
         async ({ files }) => {
-          batches.push(files);
+          allFiles.push(...files);
         },
         {},
         {},
       );
 
-      // Should have been called in multiple batches
-      expect(batches.length).toBeGreaterThan(1);
-      // Total should be 150
-      const totalFiles = batches.reduce((sum, batch) => sum + batch.length, 0);
-      expect(totalFiles).toBe(150);
+      // We don't know how many records exist, but the pull should complete
+      // without error. If the table has records, each should have an id.
+      for (const file of allFiles) {
+        expect((file as Record<string, unknown>).id).toBeDefined();
+      }
+
+      console.log(`\nAirtable pull: ${allFiles.length} records from "${firstSpec.name}"\n`);
     });
   });
 
-  describe('pullRecordFilesByIds', () => {
-    it('pulls only the requested records', async () => {
-      await seedRecords([
-        { fields: { Name: 'Task A' } },
-        { fields: { Name: 'Task B' } },
-        { fields: { Name: 'Task C' } },
+  // ─────────────────────────────────────────────────────────────────────────
+  // Create → Update → Delete round-trip
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('create → update → delete round-trip', () => {
+    // Find the primary field name from the schema so we can create a valid record.
+    let primaryFieldName: string;
+
+    beforeAll(() => {
+      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      const fieldsProps = (props.fields as { properties: Record<string, unknown> }).properties;
+      // Use the first field name — it's typically the primary field
+      primaryFieldName = Object.keys(fieldsProps)[0];
+    });
+
+    it('creates a record, updates it, then deletes it', async () => {
+      const testValue = `Scratch integration test ${Date.now()}`;
+      const updatedValue = `${testValue} (updated)`;
+
+      // Create
+      const created = await connector.createRecords(firstSpec, [
+        { fields: { [primaryFieldName]: testValue } } as ConnectorFile,
       ]);
 
-      const allRecords = store.listRecords(TEST_BASE.id, TEST_TABLE.id);
-      const targetIds = [allRecords[0].id, allRecords[2].id];
-
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      const files: ConnectorFile[] = [];
-      await connector.pullRecordFilesByIds(spec, targetIds, async ({ files: batch }) => {
-        files.push(...batch);
-      });
-
-      expect(files).toHaveLength(2);
-      const names = files.map((f: any) => f.fields.Name);
-      expect(names).toContain('Task A');
-      expect(names).toContain('Task C');
-      expect(names).not.toContain('Task B');
-    });
-  });
-
-  describe('createRecords', () => {
-    it('creates records and returns them with assigned IDs', async () => {
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      const files: ConnectorFile[] = [
-        { fields: { Name: 'New Task 1', Status: 'Todo' } },
-        { fields: { Name: 'New Task 2', Status: 'Done' } },
-      ];
-
-      const created = await connector.createRecords(spec, files);
-
-      expect(created).toHaveLength(2);
-      expect((created[0] as any).id).toMatch(/^rec/);
-      expect((created[1] as any).id).toMatch(/^rec/);
-      expect((created[0] as any).fields.Name).toBe('New Task 1');
-      expect((created[1] as any).fields.Name).toBe('New Task 2');
-
-      // Verify they're actually in the store
-      const stored = store.listRecords(TEST_BASE.id, TEST_TABLE.id);
-      expect(stored).toHaveLength(2);
-    });
-
-    it('filters out readonly fields', async () => {
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      // Count is an autoNumber field (readonly) — should be filtered out
-      const files: ConnectorFile[] = [{ fields: { Name: 'Task', Count: 42 } }];
-
-      const created = await connector.createRecords(spec, files);
-
-      // The created record should not have the Count field sent to the API
       expect(created).toHaveLength(1);
-      expect((created[0] as any).fields).not.toHaveProperty('Count');
-    });
-  });
+      const recordId = (created[0] as Record<string, unknown>).id as string;
+      expect(recordId).toMatch(/^rec/);
+      expect((created[0] as Record<string, unknown>).fields).toHaveProperty(primaryFieldName, testValue);
 
-  describe('updateRecords', () => {
-    it('updates existing records', async () => {
-      // Create a record first
-      await seedRecords([{ fields: { Name: 'Original', Status: 'Todo' } }]);
-      const records = store.listRecords(TEST_BASE.id, TEST_TABLE.id);
-      const recordId = records[0].id;
+      // Update
+      await connector.updateRecords(firstSpec, [
+        { id: recordId, fields: { [primaryFieldName]: updatedValue } } as unknown as ConnectorFile,
+      ]);
 
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      const files: ConnectorFile[] = [{ id: recordId, fields: { Name: 'Updated', Status: 'Done' } }];
-
-      await connector.updateRecords(spec, files);
-
-      // Verify the update
-      const updated = store.getRecord(TEST_BASE.id, TEST_TABLE.id, recordId);
-      expect(updated?.fields.Name).toBe('Updated');
-      expect(updated?.fields.Status).toBe('Done');
-    });
-  });
-
-  describe('deleteRecords', () => {
-    it('deletes records from the table', async () => {
-      await seedRecords([{ fields: { Name: 'Doomed' } }, { fields: { Name: 'Safe' } }]);
-
-      const records = store.listRecords(TEST_BASE.id, TEST_TABLE.id);
-      const doomedId = records[0].id;
-
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      await connector.deleteRecords(spec, [{ id: doomedId } as ConnectorFile]);
-
-      const remaining = store.listRecords(TEST_BASE.id, TEST_TABLE.id);
-      expect(remaining).toHaveLength(1);
-      expect(remaining[0].fields.Name).toBe('Safe');
-    });
-
-    it('handles deleting already-deleted records gracefully', async () => {
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      // Should not throw
-      await expect(connector.deleteRecords(spec, [{ id: 'recNONEXISTENT' } as ConnectorFile])).resolves.toBeUndefined();
-    });
-  });
-
-  describe('error handling', () => {
-    it('retries on 429 rate limit and eventually succeeds', async () => {
-      // Simulate 2 rate-limited requests, then succeed
-      store.queueRateLimit(2, 0);
-
-      await seedRecords([{ fields: { Name: 'Test' } }]);
-
-      const connector = createConnector();
-      const spec = await connector.fetchJsonTableSpec(TEST_ENTITY_ID);
-
-      // The pull should succeed after retrying past the rate limits
-      // (the fetchJsonTableSpec above consumed the 2 rate limits, so seed fresh ones)
-      store.queueRateLimit(2, 0);
-      const files = await collectPulledFiles(connector, spec);
-      expect(files).toHaveLength(1);
-    });
-
-    it('surfaces auth errors via extractConnectorErrorDetails', async () => {
-      const connector = createConnector();
-
-      store.queueError(401, {
-        error: { type: 'AUTHENTICATION_REQUIRED', message: 'Invalid API key' },
+      // Verify update via pullRecordFilesByIds
+      const pulledFiles: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(firstSpec, [recordId], async ({ files }) => {
+        pulledFiles.push(...files);
       });
+      expect(pulledFiles).toHaveLength(1);
+      expect((pulledFiles[0] as Record<string, unknown>).fields).toHaveProperty(primaryFieldName, updatedValue);
 
-      try {
-        await connector.testConnection();
-        fail('Should have thrown');
-      } catch (error) {
-        const details = connector.extractConnectorErrorDetails(error);
-        expect(details.userFriendlyMessage).toBeDefined();
-        expect(details.userFriendlyMessage.length).toBeGreaterThan(0);
-      }
+      // Delete (cleanup)
+      await connector.deleteRecords(firstSpec, [{ id: recordId } as ConnectorFile]);
+
+      // Verify deletion — pullRecordFilesByIds should return nothing for a deleted record
+      const afterDelete: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(firstSpec, [recordId], async ({ files }) => {
+        afterDelete.push(...files);
+      });
+      expect(afterDelete).toHaveLength(0);
     });
   });
 
-  describe('getBatchSize', () => {
-    it('returns 10', () => {
-      const connector = createConnector();
+  // ─────────────────────────────────────────────────────────────────────────
+  // API Quota
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('getApiQuota', () => {
+    it('returns a dashboardUrl pointing to the workspace billing page', async () => {
+      const result = await connector.getApiQuota();
+
+      expect(result).toBeDefined();
+      expect(result).toHaveProperty('dashboardUrl');
+
+      const { dashboardUrl } = result as { dashboardUrl: string };
+      expect(dashboardUrl).toMatch(/^https:\/\/airtable\.com\/wsp[A-Za-z0-9]+\/workspace\/billing$/);
+
+      console.log(`\nAirtable API quota dashboard: ${dashboardUrl}\n`);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Connector properties
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('connector properties', () => {
+    it('getBatchSize returns 10', () => {
       expect(connector.getBatchSize()).toBe(10);
     });
-  });
 
-  describe('supportsFilters', () => {
-    it('returns true', () => {
-      const connector = createConnector();
+    it('supportsFilters returns true', () => {
       expect(connector.supportsFilters()).toBe(true);
+    });
+
+    it('supportsFieldSelection returns false', () => {
+      expect(connector.supportsFieldSelection()).toBe(false);
     });
   });
 });

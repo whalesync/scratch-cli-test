@@ -138,9 +138,9 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
    * the client's "View API Quota" dialog so users can keep an eye on their
    * monthly cap (Affinity org plans have notably tight monthly quotas).
    */
-  async getApiQuota(): Promise<JsonSafeObject> {
+  async getApiQuota(): Promise<{ quota: JsonSafeObject }> {
     const quota = await this.client.getQuota();
-    return quota as unknown as JsonSafeObject;
+    return { quota: quota as unknown as JsonSafeObject };
   }
 
   /**

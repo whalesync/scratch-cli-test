@@ -642,10 +642,13 @@ export class ConnectorAccountService {
       decryptedCredentials: account,
     });
 
-    const quota = await connector.getApiQuota();
-    if (quota === null) {
+    const result = await connector.getApiQuota();
+    if (result === null) {
       return { supported: false };
     }
-    return { supported: true, quota };
+    if ('dashboardUrl' in result) {
+      return { supported: false, dashboardUrl: result.dashboardUrl };
+    }
+    return { supported: true, quota: result.quota };
   }
 }

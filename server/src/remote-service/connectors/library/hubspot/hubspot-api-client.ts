@@ -93,6 +93,35 @@ export class HubspotApiClient {
     }
   }
 
+  // --- API Quota ---
+
+  /**
+   * Make a lightweight API call and extract rate-limit headers from the response.
+   *
+   * HubSpot returns these headers on every response:
+   *   - `x-hubspot-ratelimit-daily` / `x-hubspot-ratelimit-daily-remaining`
+   *   - `x-hubspot-ratelimit-secondly` / `x-hubspot-ratelimit-secondly-remaining`
+   */
+  async getApiQuota(): Promise<{
+    daily: { limit: number; remaining: number };
+    secondly: { limit: number; remaining: number };
+  }> {
+    const response = await this.withRetry(async () =>
+      this.http.get('/crm/v3/objects/contacts', { params: { limit: 1 } }),
+    );
+    const headers = response.headers as Record<string, string>;
+    return {
+      daily: {
+        limit: parseInt(headers['x-hubspot-ratelimit-daily'] ?? '0', 10),
+        remaining: parseInt(headers['x-hubspot-ratelimit-daily-remaining'] ?? '0', 10),
+      },
+      secondly: {
+        limit: parseInt(headers['x-hubspot-ratelimit-secondly'] ?? '0', 10),
+        remaining: parseInt(headers['x-hubspot-ratelimit-secondly-remaining'] ?? '0', 10),
+      },
+    };
+  }
+
   // --- Properties API ---
 
   /**

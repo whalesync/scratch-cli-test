@@ -221,13 +221,28 @@ describe('ConnectorAccountService', () => {
       (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
 
       const mockQuota = { rate: { api_key_per_minute: { limit: 900, remaining: 850, used: 50, reset: 30 } } };
-      const mockConnector = { getApiQuota: jest.fn().mockResolvedValue(mockQuota) };
+      const mockConnector = { getApiQuota: jest.fn().mockResolvedValue({ quota: mockQuota }) };
       (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
 
       const result = await service.getApiQuota(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
 
       expect(result).toEqual({ supported: true, quota: mockQuota });
       expect(mockConnector.getApiQuota).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns supported: false with dashboardUrl when connector provides a dashboard link', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findUnique as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      const mockConnector = {
+        getApiQuota: jest.fn().mockResolvedValue({ dashboardUrl: 'https://example.com/billing' }),
+      };
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      const result = await service.getApiQuota(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
+
+      expect(result).toEqual({ supported: false, dashboardUrl: 'https://example.com/billing' });
     });
 
     it('returns supported: false when connector returns null', async () => {

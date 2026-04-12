@@ -39,6 +39,11 @@ export class YouTubeConnector extends Connector {
     await this.apiClient.getChannels();
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async getApiQuota(): Promise<{ dashboardUrl: string }> {
+    return { dashboardUrl: 'https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas' };
+  }
+
   async listTables(): Promise<TablePreview[]> {
     const channelsResponse = await this.apiClient.getChannels();
 

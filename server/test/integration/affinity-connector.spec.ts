@@ -1,8 +1,9 @@
 /**
  * Affinity connector live API integration test (read-only).
  *
- * Exercises the real Affinity v2 API: validates credentials, discovers lists,
- * builds a schema for the first list, and pulls one page of list entries.
+ * Exercises the real Affinity v2 API: validates credentials, discovers
+ * tenant-wide tables and user-created lists, builds schemas, pulls records,
+ * and verifies the v2 inline-fields optimization.
  *
  * Requires AFFINITY_API_KEY in .env.integration.
  * Run via: cd server && yarn test:integration -- affinity-connector
@@ -22,6 +23,8 @@ jest.setTimeout(60_000);
 
 const API_KEY = process.env.AFFINITY_API_KEY;
 
+const TENANT_TABLE_IDS = new Set(['persons', 'companies', 'opportunities']);
+
 function createConnector(): AffinityConnector {
   return new AffinityConnector(API_KEY!);
 }
@@ -32,10 +35,14 @@ const describeIfKey = API_KEY ? describe : describe.skip;
 describeIfKey('AffinityConnector — live API', () => {
   let connector: AffinityConnector;
   let allTables: TablePreview[];
+  let tenantTables: TablePreview[];
+  let listTables: TablePreview[];
 
   beforeAll(async () => {
     connector = createConnector();
     allTables = await connector.listTables();
+    tenantTables = allTables.filter((t) => TENANT_TABLE_IDS.has(t.id.remoteId[0]));
+    listTables = allTables.filter((t) => !TENANT_TABLE_IDS.has(t.id.remoteId[0]));
   });
 
   // -------------------------------------------------------------------------
@@ -54,22 +61,32 @@ describeIfKey('AffinityConnector — live API', () => {
   });
 
   // -------------------------------------------------------------------------
-  // List discovery (each Affinity list = one Scratch table)
+  // Table discovery
   // -------------------------------------------------------------------------
 
   describe('listTables', () => {
-    it('returns at least one list', () => {
-      expect(allTables.length).toBeGreaterThan(0);
+    it('returns the three tenant-wide tables', () => {
+      expect(tenantTables).toHaveLength(3);
+      const ids = new Set(tenantTables.map((t) => t.id.remoteId[0]));
+      expect(ids).toEqual(TENANT_TABLE_IDS);
     });
 
-    it('every table has a numeric remote id and a typed parent path', () => {
-      for (const table of allTables) {
+    it('tenant tables have no parentPath', () => {
+      for (const table of tenantTables) {
+        expect(table.parentPath).toBeUndefined();
+      }
+    });
+
+    it('returns at least one user-created list', () => {
+      expect(listTables.length).toBeGreaterThan(0);
+    });
+
+    it('every user list has a numeric remote id and is grouped under Lists/', () => {
+      for (const table of listTables) {
         expect(table.id.wsId).toMatch(/^list_\d+$/);
         expect(table.id.remoteId).toHaveLength(1);
         expect(Number.isFinite(parseInt(table.id.remoteId[0], 10))).toBe(true);
-
-        // listTables groups by entity type — every parentPath ends in "lists".
-        expect(table.parentPath).toMatch(/lists$/);
+        expect(table.parentPath).toBe('Lists');
 
         const meta = table.metadata as { listType: string; listId: number; isPublic: boolean } | undefined;
         expect(meta).toBeDefined();
@@ -79,22 +96,22 @@ describeIfKey('AffinityConnector — live API', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Schema discovery (per-list field metadata via /v2/lists/{id}/fields)
+  // Schema discovery — user list
   // -------------------------------------------------------------------------
 
-  describe('fetchJsonTableSpec', () => {
-    let firstSpec: BaseJsonTableSpec;
+  describe('fetchJsonTableSpec (user list)', () => {
+    let listSpec: BaseJsonTableSpec;
 
     beforeAll(async () => {
-      firstSpec = await connector.fetchJsonTableSpec(allTables[0].id);
+      listSpec = await connector.fetchJsonTableSpec(listTables[0].id);
     });
 
-    it('builds a spec with the expected top-level fields', () => {
-      expect(firstSpec.id).toEqual(allTables[0].id);
-      expect(firstSpec.name).toBe(allTables[0].displayName);
-      expect(firstSpec.idColumnRemoteId).toBe('id');
+    it('builds a spec with list-entry top-level fields', () => {
+      expect(listSpec.id).toEqual(listTables[0].id);
+      expect(listSpec.name).toBe(listTables[0].displayName);
+      expect(listSpec.idColumnRemoteId).toBe('id');
 
-      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (listSpec.schema as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('type');
       expect(props).toHaveProperty('listId');
@@ -104,19 +121,16 @@ describeIfKey('AffinityConnector — live API', () => {
     });
 
     it('points titleColumnRemoteId at a real entity field', () => {
-      const path = firstSpec.titleColumnRemoteId;
+      const path = listSpec.titleColumnRemoteId;
       expect(path?.[0]).toBe('entity');
       expect(['name', 'firstName']).toContain(path?.[1]);
     });
 
     it('mounts list-specific fields under entity.fields keyed by remote id', () => {
-      const entitySchema = (firstSpec.schema as { properties: { entity: { properties: Record<string, unknown> } } })
+      const entitySchema = (listSpec.schema as { properties: { entity: { properties: Record<string, unknown> } } })
         .properties.entity;
       expect(entitySchema.properties).toHaveProperty('fields');
 
-      // entity.fields is an object whose keys are field ids — even an empty
-      // list passes since the schema is built from /v2/lists/{id}/fields,
-      // not from any record.
       const fieldsSchema = entitySchema.properties.fields as { properties?: Record<string, unknown>; type: string };
       expect(fieldsSchema.type).toBe('object');
       expect(fieldsSchema.properties).toBeDefined();
@@ -124,29 +138,66 @@ describeIfKey('AffinityConnector — live API', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Record pull (one page only — keeps the test cheap on large lists)
+  // Schema discovery — tenant tables
   // -------------------------------------------------------------------------
 
-  describe('pullRecordFiles', () => {
+  describe('fetchJsonTableSpec (tenant tables)', () => {
+    it('builds a spec for Companies', async () => {
+      const table = tenantTables.find((t) => t.id.remoteId[0] === 'companies')!;
+      const spec = await connector.fetchJsonTableSpec(table.id);
+
+      expect(spec.name).toBe('Companies');
+      expect(spec.idColumnRemoteId).toBe('id');
+
+      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      expect(props).toHaveProperty('id');
+      expect(props).toHaveProperty('name');
+    });
+
+    it('builds a spec for People', async () => {
+      const table = tenantTables.find((t) => t.id.remoteId[0] === 'persons')!;
+      const spec = await connector.fetchJsonTableSpec(table.id);
+
+      expect(spec.name).toBe('People');
+      expect(spec.idColumnRemoteId).toBe('id');
+
+      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      expect(props).toHaveProperty('id');
+      expect(props).toHaveProperty('firstName');
+      expect(props).toHaveProperty('lastName');
+    });
+
+    it('builds a spec for Opportunities', async () => {
+      const table = tenantTables.find((t) => t.id.remoteId[0] === 'opportunities')!;
+      const spec = await connector.fetchJsonTableSpec(table.id);
+
+      expect(spec.name).toBe('Opportunities');
+      expect(spec.idColumnRemoteId).toBe('id');
+
+      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      expect(props).toHaveProperty('id');
+      expect(props).toHaveProperty('name');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Record pull — user list (one page only to keep it cheap)
+  // -------------------------------------------------------------------------
+
+  describe('pullRecordFiles (user list)', () => {
     it('streams the first page of list entries with field data inline', async () => {
-      const tableSpec = await connector.fetchJsonTableSpec(allTables[0].id);
+      const tableSpec = await connector.fetchJsonTableSpec(listTables[0].id);
 
       const allFiles: ConnectorFile[] = [];
-      let firstCheckpoint: { cursor?: string } | undefined;
       let callbacks = 0;
 
-      // Throw out of the iterator after the first batch — we don't want to pull
-      // every record on every test run, just confirm the shape is right.
       try {
         await connector.pullRecordFiles(
           tableSpec,
           // eslint-disable-next-line @typescript-eslint/require-await
-          async ({ files, connectorProgress }) => {
+          async ({ files }) => {
             callbacks += 1;
             allFiles.push(...files);
-            if (firstCheckpoint === undefined) {
-              firstCheckpoint = connectorProgress;
-            }
             throw new EarlyExit();
           },
           {},
@@ -158,11 +209,9 @@ describeIfKey('AffinityConnector — live API', () => {
 
       expect(callbacks).toBe(1);
 
-      // Empty lists are valid — just confirm the call returned successfully and
-      // that any records we did get have the expected shape.
       if (allFiles.length === 0) {
         console.warn(
-          `Affinity list "${tableSpec.name}" returned 0 entries — schema/auth still validated, but record-shape assertions skipped.`,
+          `Affinity list "${tableSpec.name}" returned 0 entries — schema/auth validated, record-shape assertions skipped.`,
         );
         return;
       }
@@ -172,7 +221,6 @@ describeIfKey('AffinityConnector — live API', () => {
         type: string;
         listId: number;
         createdAt: string;
-        creatorId: number | null;
         entity: { id: number; fields?: Record<string, unknown> };
       };
 
@@ -183,8 +231,7 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(sample.entity).toBeDefined();
       expect(typeof sample.entity.id).toBe('number');
 
-      // Most importantly: confirm the array → keyed-object transformation ran.
-      // entity.fields must NOT be an array.
+      // Confirm the array → keyed-object transformation ran.
       expect(Array.isArray(sample.entity.fields)).toBe(false);
       if (sample.entity.fields) {
         for (const [key, rawValue] of Object.entries(sample.entity.fields)) {
@@ -198,7 +245,7 @@ describeIfKey('AffinityConnector — live API', () => {
     });
 
     it('produces a non-empty filename suggestion for at least one record', async () => {
-      const tableSpec = await connector.fetchJsonTableSpec(allTables[0].id);
+      const tableSpec = await connector.fetchJsonTableSpec(listTables[0].id);
 
       const sampleFiles: ConnectorFile[] = [];
       try {
@@ -216,101 +263,86 @@ describeIfKey('AffinityConnector — live API', () => {
         if (!(error instanceof EarlyExit)) throw error;
       }
 
-      if (sampleFiles.length === 0) return; // Empty list — nothing to suggest.
+      if (sampleFiles.length === 0) return;
 
       const names = connector.getSuggestedRecordFileNames(sampleFiles, tableSpec);
       expect(names).toHaveLength(sampleFiles.length);
-      // At least one should be a non-empty string (depends on entity having a name).
       expect(names.some((n) => typeof n === 'string' && n.length > 0)).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // API Quota
+  // -------------------------------------------------------------------------
+
+  describe('getApiQuota', () => {
+    it('returns quota data with per-minute and monthly buckets', async () => {
+      const result = await connector.getApiQuota();
+
+      expect(result).toHaveProperty('quota');
+      const quota = (result as { quota: { rate: Record<string, unknown> } }).quota;
+      expect(quota.rate).toBeDefined();
+
+      const rate = quota.rate as {
+        api_key_per_minute: { limit: number; remaining: number; used: number; reset: number };
+        org_monthly: { limit: number; remaining: number; used: number; reset: number };
+      };
+
+      for (const bucket of [rate.api_key_per_minute, rate.org_monthly]) {
+        expect(bucket.limit).toBeGreaterThan(0);
+        expect(bucket.remaining).toBeGreaterThanOrEqual(0);
+        expect(bucket.used).toBeGreaterThanOrEqual(0);
+        expect(Math.abs(bucket.used + bucket.remaining - bucket.limit)).toBeLessThanOrEqual(1);
+      }
+
+      console.log(
+        [
+          '',
+          'Affinity quota snapshot:',
+          `  Per-minute: ${rate.api_key_per_minute.used}/${rate.api_key_per_minute.limit} used` +
+            ` — ${rate.api_key_per_minute.remaining} remaining`,
+          `  Monthly:    ${rate.org_monthly.used}/${rate.org_monthly.limit} used` +
+            ` — ${rate.org_monthly.remaining} remaining, resets in ${Math.round(rate.org_monthly.reset / 86400)}d`,
+          '',
+        ].join('\n'),
+      );
     });
   });
 });
 
-describeIfKey('AffinityApiClient — getQuota (v1 /rate-limit endpoint)', () => {
-  // Not exposed on the Connector interface yet — reach into the private client
-  // the same way the other low-level tests in this file do. Once `getQuota` is
-  // surfaced (e.g. on connection settings UI), this test should switch to
-  // calling the public path.
-  it('returns both per-minute and monthly quota buckets with sane values', async () => {
-    const connector = new AffinityConnector(API_KEY!);
-    const apiClient = (connector as unknown as { client: AffinityApiClient }).client;
+// ---------------------------------------------------------------------------
+// v2 inline-fields verification (separate describe — heavier test)
+// ---------------------------------------------------------------------------
 
-    const quota = await apiClient.getQuota();
-
-    // Shape: two buckets, each with limit/remaining/used/reset.
-    expect(quota.rate).toBeDefined();
-    expect(quota.rate.api_key_per_minute).toBeDefined();
-    expect(quota.rate.org_monthly).toBeDefined();
-
-    for (const bucket of [quota.rate.api_key_per_minute, quota.rate.org_monthly]) {
-      expect(typeof bucket.limit).toBe('number');
-      expect(typeof bucket.remaining).toBe('number');
-      expect(typeof bucket.used).toBe('number');
-      expect(typeof bucket.reset).toBe('number');
-
-      expect(bucket.limit).toBeGreaterThan(0);
-      expect(bucket.remaining).toBeGreaterThanOrEqual(0);
-      expect(bucket.used).toBeGreaterThanOrEqual(0);
-      expect(bucket.reset).toBeGreaterThanOrEqual(0);
-
-      // Internal consistency: used + remaining should equal limit (give or take
-      // 1 for the request we just made not yet being fully accounted for).
-      expect(Math.abs(bucket.used + bucket.remaining - bucket.limit)).toBeLessThanOrEqual(1);
-    }
-
-    // Affinity's documented caps for the standard tier — relax these if you
-    // ever upgrade to Enterprise (unlimited org).
-    expect(quota.rate.api_key_per_minute.limit).toBe(900);
-    expect(quota.rate.org_monthly.limit).toBeGreaterThanOrEqual(100_000);
-
-    console.log(
-      [
-        '',
-        'Affinity quota snapshot (via v1 GET /rate-limit):',
-        `  Per-minute (API key): ${quota.rate.api_key_per_minute.used}/${quota.rate.api_key_per_minute.limit} used` +
-          ` — ${quota.rate.api_key_per_minute.remaining} remaining, resets in ${quota.rate.api_key_per_minute.reset}s`,
-        `  Per-month (org):      ${quota.rate.org_monthly.used}/${quota.rate.org_monthly.limit} used` +
-          ` — ${quota.rate.org_monthly.remaining} remaining, resets in ${Math.round(quota.rate.org_monthly.reset / 86400)}d`,
-        '',
-      ].join('\n'),
-    );
-  });
-});
-
-describeIfKey('AffinityConnector — v1 N+1 vs v2 inline-fields verification', () => {
-  // Hard cap: don't pull more than this many pages from any one list, to keep
-  // the test cheap and avoid burning quota on huge lists.
+describeIfKey('AffinityConnector — v2 inline-fields verification', () => {
   const MAX_PAGES = 5;
   const PAGE_SIZE = 100;
 
   it('fetches list entries with field data inline (no per-record N+1)', async () => {
     const connector = new AffinityConnector(API_KEY!);
 
-    // Reach into the connector to attach an axios interceptor that counts every
-    // outbound HTTP request, bucketed by URL path.
     const apiClient = (connector as unknown as { client: AffinityApiClient }).client;
     const http = (apiClient as unknown as { http: AxiosInstance }).http;
 
     const requestsByPath = new Map<string, number>();
     const interceptorId = http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       const url = config.url ?? '';
-      // Strip the query string and any numeric ids so similar requests bucket together.
       const normalized = url.split('?')[0].replace(/\/\d+/g, '/{id}');
       requestsByPath.set(normalized, (requestsByPath.get(normalized) ?? 0) + 1);
       return config;
     });
 
     try {
-      // Pick the first list that actually has entries — empty lists prove nothing.
-      const tables = await connector.listTables();
+      // Pick the first user list that has entries — skip tenant tables.
+      const allTables = await connector.listTables();
+      const userLists = allTables.filter((t) => !TENANT_TABLE_IDS.has(t.id.remoteId[0]));
+
       let chosenSpec: BaseJsonTableSpec | undefined;
       let chosenName: string | undefined;
       let chosenRecords: ConnectorFile[] = [];
 
-      for (const table of tables) {
+      for (const table of userLists) {
         const spec = await connector.fetchJsonTableSpec(table.id);
-
-        // Reset the counter — we want a clean count for the pull only.
         requestsByPath.clear();
 
         const records: ConnectorFile[] = [];
@@ -344,7 +376,6 @@ describeIfKey('AffinityConnector — v1 N+1 vs v2 inline-fields verification', (
         return;
       }
 
-      // ----- Report ---------------------------------------------------------
       const totalRequests = Array.from(requestsByPath.values()).reduce((a, b) => a + b, 0);
       const breakdown = Array.from(requestsByPath.entries())
         .sort((a, b) => b[1] - a[1])
@@ -370,22 +401,12 @@ describeIfKey('AffinityConnector — v1 N+1 vs v2 inline-fields verification', (
         ].join('\n'),
       );
 
-      // ----- Assertions -----------------------------------------------------
-      // 1. The pull should hit the list-entries endpoint exactly ceil(records / PAGE_SIZE)
-      //    times — one request per page, no per-record fetches.
       const listEntriesCalls = requestsByPath.get('/v2/lists/{id}/list-entries') ?? 0;
       const expectedPages = Math.ceil(chosenRecords.length / PAGE_SIZE);
       expect(listEntriesCalls).toBe(expectedPages);
-
-      // 2. Total requests must be no more than (pages + a small constant), NOT proportional
-      //    to record count. The v1 N+1 path would be ~N requests; we should be ~N/100.
       expect(totalRequests).toBeLessThanOrEqual(expectedPages + 2);
-      expect(totalRequests).toBeLessThan(chosenRecords.length); // sanity: must beat v1 even on tiny lists
+      expect(totalRequests).toBeLessThan(chosenRecords.length);
 
-      // 3. The field data MUST actually be present inline. If `recordsWithFieldData` is 0,
-      //    the connector is silently dropping fields and we'd have a v1-style problem in
-      //    disguise. (Note: an empty `fields` is legitimate if the list has zero defined
-      //    fields, so we only assert > 0 if the schema has any field columns.)
       const fieldsSchema = (
         chosenSpec.schema as {
           properties: { entity: { properties: { fields?: { properties?: Record<string, unknown> } } } };

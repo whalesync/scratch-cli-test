@@ -2,6 +2,7 @@ import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
+import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import {
@@ -67,6 +68,16 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
 
   async testConnection(): Promise<void> {
     await this.client.testConnection();
+  }
+
+  /**
+   * Returns the daily and per-second rate-limit state from HubSpot response
+   * headers. The daily limit is the most useful — it resets at midnight UTC
+   * and varies by plan (e.g., 500k/day for Enterprise).
+   */
+  async getApiQuota(): Promise<{ quota: JsonSafeObject }> {
+    const quota = await this.client.getApiQuota();
+    return { quota: quota as unknown as JsonSafeObject };
   }
 
   /**

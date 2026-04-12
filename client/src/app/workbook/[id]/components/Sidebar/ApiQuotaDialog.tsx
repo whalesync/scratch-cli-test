@@ -6,6 +6,7 @@ import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
   ActionIcon,
+  Anchor,
   Box,
   Button,
   Group,
@@ -17,7 +18,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import CodeMirror from '@uiw/react-codemirror';
-import { CheckIcon, CopyIcon, RefreshCwIcon } from 'lucide-react';
+import { CheckIcon, CopyIcon, ExternalLinkIcon, RefreshCwIcon } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 interface ApiQuotaDialogProps {
@@ -82,10 +83,27 @@ export function ApiQuotaDialog({ opened, onClose, workbookId, connectionId, conn
         </Stack>
       ) : data?.supported === false ? (
         <Stack gap="xs" p="md">
-          <Text13Regular>This connector does not expose API quota information.</Text13Regular>
-          <Text c="dimmed" size="xs">
-            Quota visibility is only available for connectors whose underlying APIs publish a rate-limit endpoint.
-          </Text>
+          {data.dashboardUrl ? (
+            <>
+              <Text13Regular>
+                This connector does not expose API quota via its API, but you can check your usage in the service
+                dashboard.
+              </Text13Regular>
+              <Anchor href={data.dashboardUrl} target="_blank" rel="noopener noreferrer" size="sm">
+                <Group gap={4}>
+                  View usage dashboard
+                  <ExternalLinkIcon size={14} />
+                </Group>
+              </Anchor>
+            </>
+          ) : (
+            <>
+              <Text13Regular>This connector does not expose API quota information.</Text13Regular>
+              <Text c="dimmed" size="xs">
+                Quota visibility is only available for connectors whose underlying APIs publish a rate-limit endpoint.
+              </Text>
+            </>
+          )}
         </Stack>
       ) : data?.supported ? (
         <Stack gap="sm">
