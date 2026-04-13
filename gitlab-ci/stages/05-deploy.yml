@@ -6,6 +6,7 @@ include:
 
 deploy api service to Cloud Run test environment:
   stage: deploy
+  resource_group: environment:test:service:api-service
   extends:
     - .gcp_eu_test_env # sets before_script and variables
   script:
@@ -22,6 +23,7 @@ deploy api service to Cloud Run test environment:
 
 deploy client service to Cloud Run test environment:
   stage: deploy
+  resource_group: environment:test:service:client-service
   extends:
     - .gcp_eu_test_env # sets before_script and variables
   script:
@@ -38,6 +40,7 @@ deploy client service to Cloud Run test environment:
 
 deploy cron service to Cloud Run test environment:
   stage: deploy
+  resource_group: environment:test:service:cron-service
   extends:
     - .gcp_eu_test_env # sets before_script and variables
   script:
@@ -54,6 +57,7 @@ deploy cron service to Cloud Run test environment:
 
 deploy worker service to Cloud Run test environment:
   stage: deploy
+  resource_group: environment:test:service:worker-service
   extends:
     - .gcp_eu_test_env # sets before_script and variables
   script:
@@ -70,6 +74,7 @@ deploy worker service to Cloud Run test environment:
 
 deploy scratch-git to test environment:
   stage: deploy
+  resource_group: environment:test:service:scratch-git
   extends:
     - .gcp_eu_test_env
   script:
@@ -104,8 +109,8 @@ notify slack on failure test environment:
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Test (EU)\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
-      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
+      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Test (EU)\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit> | <https://test-api.scratch.md/health|API Health>\"}" \
+      ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_master]
   when: on_failure
@@ -117,8 +122,8 @@ notify slack on success test environment:
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"✅ Successfully deployed Scratch to GCP - Test (EU)\"}" \
-      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
+      --data "{\"text\":\"✅ Successfully deployed Scratch to GCP - Test (EU)\n>${CI_COMMIT_TITLE}\n<https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit> | <https://test-api.scratch.md/health|API Health>\"}" \
+      ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_master]
   when: on_success
@@ -130,6 +135,7 @@ notify slack on success test environment:
 
 deploy api service to Cloud Run production environment:
   stage: deploy
+  resource_group: environment:production:service:api-service
   extends:
     - .gcp_eu_production_env # sets before_script and variables
   script:
@@ -141,6 +147,7 @@ deploy api service to Cloud Run production environment:
 
 deploy client service to Cloud Run production environment:
   stage: deploy
+  resource_group: environment:production:service:client-service
   extends:
     - .gcp_eu_production_env # sets before_script and variables
   script:
@@ -152,6 +159,7 @@ deploy client service to Cloud Run production environment:
 
 deploy cron service to Cloud Run production environment:
   stage: deploy
+  resource_group: environment:production:service:cron-service
   extends:
     - .gcp_eu_production_env # sets before_script and variables
   script:
@@ -163,6 +171,7 @@ deploy cron service to Cloud Run production environment:
 
 deploy worker service to Cloud Run production environment:
   stage: deploy
+  resource_group: environment:production:service:worker-service
   extends:
     - .gcp_eu_production_env # sets before_script and variables
   script:
@@ -174,6 +183,7 @@ deploy worker service to Cloud Run production environment:
 
 deploy scratch-git to production environment:
   stage: deploy
+  resource_group: environment:production:service:scratch-git
   extends:
     - .gcp_eu_production_env
   script:
@@ -203,7 +213,7 @@ notify slack on failure production environment:
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Production (EU)\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
+      --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Production (EU)\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit> | <https://api.scratch.md/health|API Health>\"}" \
       ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_prod]
@@ -216,7 +226,7 @@ notify slack on success production environment:
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"✅ Successfully deployed Scratch to GCP - Production (EU)\"}" \
+      --data "{\"text\":\"✅ Successfully deployed Scratch to GCP - Production (EU)\n>${CI_COMMIT_TITLE}\n<https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit> | <https://api.scratch.md/health|API Health>\"}" \
       ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_prod]
