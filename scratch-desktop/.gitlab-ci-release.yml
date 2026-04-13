@@ -64,7 +64,7 @@ Build test CLI for desktop app:
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: on_success
+      when: manual
     - if: '$CI_MERGE_REQUEST_IID'
       when: manual
 
