@@ -1,8 +1,8 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
-import { readdir, readFile } from 'fs/promises';
-import { join, resolve } from 'path';
+import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
+import { dirname, join, resolve } from 'path';
 import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
@@ -131,6 +131,22 @@ function registryPath(): string {
   return join(app.getPath('home'), '.scratchmd', 'workspaces.yaml');
 }
 
+/** Decode a YAML scalar from the registry (plain or double/single-quoted). */
+function parseRegistryScalar(raw: string): string {
+  const v = raw.trim();
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    try {
+      return JSON.parse(v) as string;
+    } catch {
+      return v.slice(1, -1).replace(/\\"/g, '"');
+    }
+  }
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) {
+    return v.slice(1, -1).replace(/''/g, "'");
+  }
+  return v;
+}
+
 function parseWorkspaceRegistry(contents: string): LocalWorkspaceEntry[] {
   const lines = contents.split(/\r?\n/);
   const workspaces: LocalWorkspaceEntry[] = [];
@@ -162,9 +178,9 @@ function parseWorkspaceRegistry(contents: string): LocalWorkspaceEntry[] {
       current = {};
       const firstField = trimmed.slice(2);
       if (firstField.startsWith('id:')) {
-        current.id = firstField.slice(3).trim();
+        current.id = parseRegistryScalar(firstField.slice(3).trim());
       } else if (firstField.startsWith('path:')) {
-        current.path = firstField.slice(5).trim();
+        current.path = parseRegistryScalar(firstField.slice(5).trim());
       }
       continue;
     }
@@ -174,12 +190,12 @@ function parseWorkspaceRegistry(contents: string): LocalWorkspaceEntry[] {
     }
 
     if (trimmed.startsWith('id:')) {
-      current.id = trimmed.slice(3).trim();
+      current.id = parseRegistryScalar(trimmed.slice(3).trim());
       continue;
     }
 
     if (trimmed.startsWith('path:')) {
-      current.path = trimmed.slice(5).trim();
+      current.path = parseRegistryScalar(trimmed.slice(5).trim());
     }
   }
 
@@ -201,6 +217,61 @@ async function readWorkspaceRegistry(): Promise<LocalWorkspaceEntry[]> {
     }
     throw error;
   }
+}
+
+/** True when the path is still a valid local checkout (matches scratchmd `config::workspaces::get`). */
+async function isLocalScratchWorkspaceRoot(workspacePath: string): Promise<boolean> {
+  try {
+    const st = await stat(workspacePath);
+    if (!st.isDirectory()) {
+      return false;
+    }
+    const marker = join(workspacePath, '.scratch', '.scratchmd');
+    const mt = await stat(marker);
+    return mt.isFile();
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function writeWorkspaceRegistry(entries: LocalWorkspaceEntry[]): Promise<void> {
+  const path = registryPath();
+  const sorted = [...entries].sort((a, b) => a.id.localeCompare(b.id));
+  const lines: string[] = [`version: '1'`, 'workspaces:'];
+  if (sorted.length === 0) {
+    lines.push('[]');
+  } else {
+    for (const e of sorted) {
+      lines.push(`- id: ${JSON.stringify(e.id)}`);
+      lines.push(`  path: ${JSON.stringify(e.path)}`);
+    }
+  }
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+}
+
+/** Drops registry rows whose folder or workspace marker was removed outside the app; rewrites the file when needed. */
+async function pruneStaleWorkspaceRegistryEntries(entries: LocalWorkspaceEntry[]): Promise<LocalWorkspaceEntry[]> {
+  const valid: LocalWorkspaceEntry[] = [];
+  for (const entry of entries) {
+    if (await isLocalScratchWorkspaceRoot(entry.path)) {
+      valid.push(entry);
+    } else {
+      console.debug(
+        '[scratch] Removing stale workspace registry entry (path or marker missing):',
+        entry.id,
+        entry.path,
+      );
+    }
+  }
+  if (valid.length !== entries.length) {
+    await writeWorkspaceRegistry(valid);
+  }
+  return valid;
 }
 
 async function listLocalSyncFiles(workspacePath: string): Promise<string[]> {
@@ -325,7 +396,8 @@ ipcMain.handle('auth:is-token-expired', () => {
 ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url));
 ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
-  const entries = await readWorkspaceRegistry();
+  const rawEntries = await readWorkspaceRegistry();
+  const entries = await pruneStaleWorkspaceRegistryEntries(rawEntries);
   const result = await Promise.all(
     entries.map(async (entry) => {
       try {

@@ -1,7 +1,7 @@
 import { Alert, Box, Center, Group, Loader, Modal, Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Plus } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoUrl from '../assets/logo-color.svg';
 import { ButtonPrimaryLight, ButtonSecondaryGhost } from '../components/base/buttons';
@@ -109,6 +109,24 @@ export function HomePage() {
   useEffect(() => {
     void window.scratchDesktop.getAppVersion().then(setAppVersion);
   }, []);
+
+  const homeFocusBootAtRef = useRef(performance.now());
+  useEffect(() => {
+    homeFocusBootAtRef.current = performance.now();
+  }, []);
+
+  useEffect(() => {
+    const handleWindowFocus = (): void => {
+      if (performance.now() - homeFocusBootAtRef.current < 1500) {
+        return;
+      }
+      void fetchWorkspaces({ silent: true });
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [fetchWorkspaces]);
 
   // Track in-flight downloads keyed by workspace id so the card can transform in place.
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());

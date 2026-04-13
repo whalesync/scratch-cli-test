@@ -1,7 +1,9 @@
-import { Alert, Box, Center, Loader, Stack } from '@mantine/core';
+import { Alert, Box, Center, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ButtonPrimaryLight } from '../components/base/buttons';
+import { Text13Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
@@ -20,10 +22,15 @@ function isNoConnectionsScratchmdError(message: string): boolean {
 
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [localWorkspaceMissingModalOpen, setLocalWorkspaceMissingModalOpen] = useState(false);
+
+  /** Last known local path after a successful registry sync; used to detect “had local → missing” on refresh. */
+  const previousLocalPathRef = useRef<string | null>(null);
 
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [publishFilePath, setPublishFilePath] = useState<string | null>(null);
@@ -62,8 +69,14 @@ export function WorkspacePage() {
         }
         const [data, localWorkspaces] = await Promise.all([workspacesApi.detail(id), listLocalWorkspaces()]);
         const localWorkspace = localWorkspaces.find((entry) => entry.id === id) ?? null;
-        setWorkspace(data);
         const nextLocalPath = localWorkspace?.path ?? null;
+
+        if (previousLocalPathRef.current !== null && nextLocalPath === null) {
+          setLocalWorkspaceMissingModalOpen(true);
+        }
+        previousLocalPathRef.current = nextLocalPath;
+
+        setWorkspace(data);
         setLocalPath(nextLocalPath);
         const uniqueConnections = new Set((data.dataFolders ?? []).map((f) => f.connectorAccountId).filter(Boolean));
         return {
@@ -105,7 +118,9 @@ export function WorkspacePage() {
       await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
       const localWorkspaces = await listLocalWorkspaces();
       const localWorkspace = localWorkspaces.find((entry) => entry.id === workspace.id) ?? null;
-      setLocalPath(localWorkspace?.path ?? null);
+      const nextPath = localWorkspace?.path ?? null;
+      setLocalPath(nextPath);
+      previousLocalPathRef.current = nextPath;
       notifications.show({
         title: 'Download complete',
         message: `${workspace.name || 'Workspace'} is now available locally.`,
@@ -228,6 +243,24 @@ export function WorkspacePage() {
 
   return (
     <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
+      <Modal
+        opened={localWorkspaceMissingModalOpen}
+        onClose={() => undefined}
+        title="Local workspace not found"
+        centered
+        closeOnClickOutside={false}
+        closeOnEscape={false}
+        withCloseButton={false}
+      >
+        <Stack gap="md">
+          <Text13Regular c="dimmed">
+            The local workspace folder could not be found. It may have been moved or deleted outside Scratch.
+          </Text13Regular>
+          <ButtonPrimaryLight fullWidth onClick={() => void navigate('/')}>
+            Return to dashboard
+          </ButtonPrimaryLight>
+        </Stack>
+      </Modal>
       <PublishChangesModal
         opened={publishModalOpen}
         onClose={() => {

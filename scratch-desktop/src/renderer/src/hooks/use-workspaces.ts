@@ -18,7 +18,7 @@ export interface UseWorkspacesResult {
   error: string | null;
   /** True when the remote workspace list could not be reached (network / gateway). */
   isConnectionError: boolean;
-  fetchWorkspaces: () => Promise<void>;
+  fetchWorkspaces: (options?: { silent?: boolean }) => Promise<void>;
   handleDownloadAndOpen: (workspace: Workspace) => Promise<void>;
 }
 
@@ -32,23 +32,32 @@ export function useWorkspaces(): UseWorkspacesResult {
   const [error, setError] = useState<string | null>(null);
   const [isConnectionError, setIsConnectionError] = useState(false);
 
-  const fetchWorkspaces = useCallback(async () => {
+  const fetchWorkspaces = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
     const start = performance.now();
     try {
-      setLoading(true);
-      setError(null);
-      setIsConnectionError(false);
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+        setIsConnectionError(false);
+      }
       const [data, localWorkspaces] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
       setWorkspaces(data);
       setDownloadedWorkspaceIds(new Set(localWorkspaces.map((workspace) => workspace.id)));
       setLocalFileCountById(new Map(localWorkspaces.map((w) => [w.id, w.fileCount])));
       setLocalPathById(new Map(localWorkspaces.map((w) => [w.id, w.path])));
     } catch (err) {
-      setIsConnectionError(isServerConnectionError(err));
-      setError(err instanceof Error ? err.message : 'Failed to load workspaces');
+      if (!silent) {
+        setIsConnectionError(isServerConnectionError(err));
+        setError(err instanceof Error ? err.message : 'Failed to load workspaces');
+      } else {
+        console.debug('[useWorkspaces] silent fetchWorkspaces failed:', err);
+      }
     } finally {
       logPerf('useWorkspaces fetchWorkspaces', performance.now() - start);
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
