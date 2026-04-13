@@ -3,6 +3,16 @@ import { formatJsonWithPrettier } from '../../../utils/json-formatter';
 import type { JsonSafeObject } from '../../../utils/objects';
 import { deduplicateFileName, normalizeFileName } from '../../../workbook/util';
 
+/** Joins a data-folder path with a file name without producing `//` (collapse slashes, trim trailing). */
+export function fullPathFromFolderAndFileName(parentPath: string, fileName: string): string {
+  const collapsed = parentPath.trim().replace(/\/+/g, '/');
+  const withoutTrailingSlashes = collapsed.replace(/\/+$/, '');
+  if (withoutTrailingSlashes === '') {
+    return `/${fileName}`;
+  }
+  return `${withoutTrailingSlashes}/${fileName}`;
+}
+
 /** A file ready for git commit, with parsed record data for downstream index updates. */
 export type BuiltFile = {
   path: string;
@@ -26,7 +36,6 @@ export function buildGitFilesFromConnectorFiles(
   existingFileNames: Map<string, string>,
   suggestedFileNames: (string | undefined)[],
 ): BuiltFile[] {
-  const prefix = parentPath === '/' ? '' : parentPath;
   const idColumnRemoteId = tableSpec.idColumnRemoteId;
   const processedFiles: BuiltFile[] = [];
 
@@ -48,7 +57,7 @@ export function buildGitFilesFromConnectorFiles(
       usedFileNames.add(fileName);
     }
 
-    const fullPath = prefix ? `${prefix}/${fileName}` : `/${fileName}`;
+    const fullPath = fullPathFromFolderAndFileName(parentPath, fileName);
 
     processedFiles.push({ path: fullPath, content, recordId, parsedRecord });
   }

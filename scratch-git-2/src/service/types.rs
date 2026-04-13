@@ -19,7 +19,7 @@ pub struct FileChange {
     pub change_type: ChangeType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeType {
     Add,

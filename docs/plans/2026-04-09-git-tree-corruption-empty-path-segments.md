@@ -1,7 +1,7 @@
 # Git tree corruption: empty path segments (scratch-git-2 + server)
 
 **Date**: 2026-04-09  
-**Status**: Proposed
+**Status**: Implemented (path normalization in scratch-git-2 + `buildGitFilesFromConnectorFiles`; see `shared/git_path.rs`, `connector-file-utils.ts`)
 
 ## Investigation questions (distilled)
 

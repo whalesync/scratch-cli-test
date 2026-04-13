@@ -5,6 +5,7 @@ use gix::ObjectId;
 use crate::service::error::AppError;
 use crate::service::git::repo::GitRepo;
 use crate::service::types::{ChangeType, CommitStats, FileChange};
+use crate::shared::git_path;
 
 impl GitRepo {
     /// Apply a set of file changes to a tree, returning the new tree OID and stats
@@ -15,6 +16,30 @@ impl GitRepo {
         changes: &[FileChange],
         prefix: &str,
     ) -> Result<(ObjectId, CommitStats), AppError> {
+        let normalized_changes: Vec<FileChange> = if prefix.is_empty() {
+            changes
+                .iter()
+                .map(|c| {
+                    let path = git_path::normalize_logical_git_path(&c.path)
+                        .map_err(AppError::bad_request)?;
+                    Ok(FileChange {
+                        path,
+                        content: c.content.clone(),
+                        oid: c.oid.clone(),
+                        change_type: c.change_type,
+                    })
+                })
+                .collect::<Result<Vec<_>, AppError>>()?
+        } else {
+            Vec::new()
+        };
+
+        let changes: &[FileChange] = if prefix.is_empty() {
+            &normalized_changes
+        } else {
+            changes
+        };
+
         // Partition changes into direct (this level) vs subtree (nested)
         let mut direct_changes: HashMap<String, &FileChange> = HashMap::new();
         let mut subtree_changes: HashMap<String, Vec<&FileChange>> = HashMap::new();
@@ -205,19 +230,10 @@ mod tests {
         );
     }
 
-    /// `apply_changes_to_tree` does not normalize `//`. After stripping prefix `a`, the remainder
-    /// can start with `//`, so the next subtree segment is empty and we write an invalid tree entry.
-    ///
-    /// Canonical Git rejects that object: `git fsck` → `empty filename in tree entry`.
+    /// Regression: logical paths with `//` must not create invalid trees (`git fsck` / pack-objects).
     /// See docs/plans/2026-04-09-git-tree-corruption-empty-path-segments.md.
-    ///
-    /// Paths starting with `//` can also hit the empty-segment case but may recurse until stack overflow
-    /// instead of completing a commit; this case matches `parentPath/` + `file` → `a//x/...` on the server.
-    ///
-    /// After path normalization is implemented, update this test to expect a clean `git fsck` (or a
-    /// 4xx error at commit time instead of a written object).
     #[test]
-    fn double_slash_in_logical_path_produces_tree_git_fsck_rejects() {
+    fn double_slash_in_logical_path_normalizes_and_git_fsck_succeeds() {
         assert_git_available();
 
         let (tmp, repo) = setup_repo();
@@ -230,8 +246,8 @@ mod tests {
             change_type: ChangeType::Add,
         }];
 
-        repo.commit_changes_to_ref(MAIN_BRANCH, &changes, "repro double-slash path")
-            .expect("tree builder currently accepts this path");
+        repo.commit_changes_to_ref(MAIN_BRANCH, &changes, "double-slash normalized")
+            .expect("commit");
 
         let output = Command::new("git")
             .arg("-C")
@@ -242,18 +258,31 @@ mod tests {
 
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("empty filename"),
-            "expected git fsck to report empty tree entry name; status={:?} stderr={} stdout={}",
+            output.status.success(),
+            "git fsck should pass after normalization; status={:?} stderr={} stdout={}",
             output.status,
             stderr,
             String::from_utf8_lossy(&output.stdout)
         );
         assert!(
-            !output.status.success(),
-            "git fsck should fail on corrupt tree objects; status={:?} stderr={}",
-            output.status,
+            !stderr.contains("empty filename"),
+            "unexpected corrupt tree: stderr={}",
             stderr
         );
+    }
+
+    #[test]
+    fn dot_dot_path_component_is_rejected() {
+        let (_tmp, repo) = setup_repo();
+        let changes = vec![FileChange {
+            path: "a/../evil.json".to_string(),
+            content: Some("{}".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }];
+        assert!(repo
+            .commit_changes_to_ref(MAIN_BRANCH, &changes, "bad")
+            .is_err());
     }
 
     #[test]

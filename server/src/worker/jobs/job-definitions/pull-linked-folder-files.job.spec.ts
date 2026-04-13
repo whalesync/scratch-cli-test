@@ -13,7 +13,7 @@ import { ConnectorsService } from '../../../remote-service/connectors/connectors
 import { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import { JsonSafeObject } from '../../../utils/objects';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
-import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
+import { buildGitFilesFromConnectorFiles, fullPathFromFolderAndFileName } from './connector-file-utils';
 import { PullLinkedFolderFilesJobHandler, PullLinkedFolderFilesPublicProgress } from './pull-linked-folder-files.job';
 
 type PullCallback = (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>;
@@ -216,6 +216,26 @@ describe('PullLinkedFolderFilesJobHandler', () => {
     });
 
     describe('path construction', () => {
+      it('should collapse slashes in parentPath (no double-slash before filename)', () => {
+        const tableSpec = createMockTableSpec();
+        const records: ConnectorFile[] = [{ id: 'rec1', slug: 'test-file' }];
+
+        expect(
+          buildGitFilesFromConnectorFiles('/my-folder/', records, tableSpec, new Set(), new Map(), ['test-file'])[0]
+            .path,
+        ).toBe('/my-folder/test-file.json');
+        expect(
+          buildGitFilesFromConnectorFiles('//my//folder//', records, tableSpec, new Set(), new Map(), ['test-file'])[0]
+            .path,
+        ).toBe('/my/folder/test-file.json');
+      });
+
+      it('fullPathFromFolderAndFileName matches buildGitFilesFromConnectorFiles root and nested', () => {
+        expect(fullPathFromFolderAndFileName('/', 'x.json')).toBe('/x.json');
+        expect(fullPathFromFolderAndFileName('///', 'x.json')).toBe('/x.json');
+        expect(fullPathFromFolderAndFileName('/a/b/', 'x.json')).toBe('/a/b/x.json');
+      });
+
       it('should construct path with parentPath prefix', () => {
         const tableSpec = createMockTableSpec();
         const records: ConnectorFile[] = [

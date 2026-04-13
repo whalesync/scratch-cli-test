@@ -189,6 +189,13 @@ impl GitRepo {
         &self,
         entries: &[(String, EntryKind, ObjectId)],
     ) -> Result<ObjectId, AppError> {
+        for (name, _, _) in entries {
+            if name.is_empty() || name == "." || name == ".." {
+                return Err(AppError::internal(format!(
+                    "Refusing to write git tree entry with invalid name: {name:?}"
+                )));
+            }
+        }
         let mut tree = gix::objs::Tree::empty();
         for (name, kind, oid) in entries {
             tree.entries.push(gix::objs::tree::Entry {

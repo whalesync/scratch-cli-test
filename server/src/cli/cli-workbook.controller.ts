@@ -236,11 +236,16 @@ export class CliWorkbookController {
     let proxyResponse: globalThis.Response;
     try {
       // Proxy the request to git backend
+      const proxyHeaders: Record<string, string> = {
+        'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      };
+      if (req.headers['content-length']) {
+        proxyHeaders['Content-Length'] = req.headers['content-length'];
+      }
+
       proxyResponse = await fetch(targetUrl, {
         method: req.method,
-        headers: {
-          'Content-Type': req.headers['content-type'] || 'application/octet-stream',
-        },
+        headers: proxyHeaders,
         body,
         // @ts-expect-error -- Node fetch requires duplex for streaming request bodies
         duplex: 'half',
@@ -262,6 +267,26 @@ export class CliWorkbookController {
       return;
     }
 
+    // Dump full response metadata for debugging
+    const responseHeaders: Record<string, string> = {};
+    proxyResponse.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+    WSLogger.debug({
+      source: 'CliWorkbookController.proxyToGitBackend',
+      message: `Git backend response received`,
+      method: req.method,
+      targetUrl,
+      workbookId,
+      status: proxyResponse.status,
+      statusText: proxyResponse.statusText,
+      type: proxyResponse.type,
+      redirected: proxyResponse.redirected,
+      url: proxyResponse.url,
+      hasBody: !!proxyResponse.body,
+      responseHeaders,
+    });
+
     if (!proxyResponse.ok) {
       // Clone the response so we can read the body for logging without consuming the stream
       const cloned = proxyResponse.clone();
@@ -272,6 +297,8 @@ export class CliWorkbookController {
         targetUrl,
         workbookId,
         status: proxyResponse.status,
+        statusText: proxyResponse.statusText,
+        responseHeaders,
         responseBody,
       });
     }
@@ -286,17 +313,48 @@ export class CliWorkbookController {
     // Stream the response body
     if (proxyResponse.body) {
       const reader = proxyResponse.body.getReader();
-      const pump = async (): Promise<void> => {
-        const { done, value } = await reader.read();
-        if (done) {
-          res.end();
-          return;
+      let bytesTransferred = 0;
+      try {
+        let done = false;
+        while (!done) {
+          const result = await reader.read();
+          done = result.done;
+          if (!done && result.value) {
+            bytesTransferred += result.value.length;
+            res.write(result.value);
+          }
         }
-        res.write(value);
-        await pump();
-      };
-      await pump();
+        res.end();
+        WSLogger.debug({
+          source: 'CliWorkbookController.proxyToGitBackend',
+          message: `Git proxy stream completed`,
+          targetUrl,
+          workbookId,
+          bytesTransferred,
+        });
+      } catch (streamError) {
+        WSLogger.error({
+          source: 'CliWorkbookController.proxyToGitBackend',
+          message: `Stream error while proxying git response`,
+          targetUrl,
+          workbookId,
+          bytesTransferred,
+          status: proxyResponse.status,
+          error: streamError instanceof Error ? streamError.message : String(streamError),
+        });
+        // Try to end the response so the client gets a proper error instead of "hung up"
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
     } else {
+      WSLogger.warn({
+        source: 'CliWorkbookController.proxyToGitBackend',
+        message: `Git backend returned no response body`,
+        targetUrl,
+        workbookId,
+        status: proxyResponse.status,
+      });
       res.end();
     }
   }

@@ -305,10 +305,9 @@ fn insert_path(
     path: &str,
     blob_id: gix::ObjectId,
 ) -> anyhow::Result<()> {
-    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
-    if parts.is_empty() {
-        anyhow::bail!("invalid empty file path");
-    }
+    let normalized = crate::shared::git_path::normalize_logical_git_path(path)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let parts: Vec<&str> = normalized.split('/').collect();
     insert_path_parts(entries, &parts, path, blob_id)
 }
 
