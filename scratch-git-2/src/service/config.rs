@@ -9,6 +9,8 @@ pub struct Config {
     pub index_dir: PathBuf,
     pub staging_dir: PathBuf,
     pub build_version: String,
+    /// When set, POST a startup message to this Slack incoming webhook URL.
+    pub slack_notification_webhook_url: Option<String>,
 }
 
 impl Config {
@@ -43,6 +45,17 @@ impl Config {
 
         let build_version = env::var("BUILD_VERSION").unwrap_or_else(|_| "0.0.0-local".to_string());
 
+        let slack_notification_webhook_url = env::var("SLACK_NOTIFICATION_WEBHOOK_URL")
+            .ok()
+            .and_then(|s| {
+                let t = s.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                }
+            });
+
         Self {
             port,
             git_backend_port,
@@ -50,6 +63,7 @@ impl Config {
             index_dir,
             staging_dir,
             build_version,
+            slack_notification_webhook_url,
         }
     }
 }

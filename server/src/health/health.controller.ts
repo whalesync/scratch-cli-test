@@ -146,8 +146,8 @@ export class HealthController {
         signal: AbortSignal.timeout(5000),
       });
       if (response.ok) {
-        const body = (await response.json()) as { build_version?: string };
-        return { status: 'ok', url: scratchGitUrl, build_version: body.build_version };
+        const body = (await response.json()) as { data?: { build_version?: string } };
+        return { status: 'ok', url: scratchGitUrl, build_version: body.data?.build_version };
       }
       return { status: 'error', url: scratchGitUrl, error: `HTTP ${response.status}: ${await response.text()}` };
     } catch (err) {
@@ -168,8 +168,8 @@ export class HealthController {
         signal: AbortSignal.timeout(5000),
       });
       if (response.ok) {
-        const body = (await response.json()) as { build_version?: string };
-        return { status: 'ok', url: backendUrl, build_version: body.build_version };
+        const body = (await response.json()) as { data?: { build_version?: string } };
+        return { status: 'ok', url: backendUrl, build_version: body.data?.build_version };
       }
       return { status: 'error', url: backendUrl, error: `HTTP ${response.status}: ${await response.text()}` };
     } catch (err) {

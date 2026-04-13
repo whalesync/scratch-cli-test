@@ -4,6 +4,7 @@ pub mod error;
 pub mod git;
 pub mod graceful_shutdown;
 pub mod routes;
+pub mod slack;
 pub mod state;
 pub mod types;
 pub mod worktree;
@@ -223,6 +224,13 @@ pub async fn run() {
         config.repos_dir.display(),
         std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string()),
     );
+
+    if let Some(url) = config.slack_notification_webhook_url.clone() {
+        let build_version = config.build_version.clone();
+        tokio::spawn(async move {
+            slack::send_startup_notification(&url, &build_version).await;
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     let git_listener = tokio::net::TcpListener::bind(&git_addr).await.unwrap();
