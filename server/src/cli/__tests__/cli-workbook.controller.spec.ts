@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() returns any */
+/* eslint-disable @typescript-eslint/unbound-method -- Jest mocks passed to expect().toHaveBeen* */
 import { NotFoundException } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
@@ -7,6 +8,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -19,6 +21,17 @@ const ACTOR_ORG_ID = 'org_actor';
 const WORKBOOK_ORG_ID = 'org_workbook';
 const CONNECTOR_ID = 'ca_conn1';
 const GIT_BACKEND_URL = 'http://localhost:3101';
+
+function spyOnProxyToGitBackend() {
+  return jest
+    .spyOn(
+      CliWorkbookController.prototype as unknown as {
+        proxyToGitBackend: (targetUrl: string, workbookId: WorkbookId, req: Request, res: Response) => Promise<void>;
+      },
+      'proxyToGitBackend',
+    )
+    .mockResolvedValue(undefined);
+}
 
 function makeReqWithUser(): RequestWithUser & Request {
   return {
@@ -118,7 +131,7 @@ describe('CliWorkbookController', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   // ---------------------------------------------------------------------------
@@ -203,6 +216,89 @@ describe('CliWorkbookController', () => {
         }),
       );
     });
+
+    it('proxies to git backend with correct target URL on success', async () => {
+      const repoId = `${ACTOR_ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}` as RepoId;
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      scratchGitService.resolveConnectionRepoPath.mockResolvedValue(repoId);
+
+      const req = {
+        ...makeReqWithUser(),
+        url: `/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git/info/refs?service=git-upload-pack`,
+        method: 'GET',
+      } as RequestWithUser & Request;
+      const res = {} as Response;
+
+      const proxySpy = spyOnProxyToGitBackend();
+
+      await controller.connectorGitProxy(req, WORKBOOK_ID, CONNECTOR_ID, res);
+
+      expect(proxySpy).toHaveBeenCalledWith(
+        `${GIT_BACKEND_URL}/${repoId}.git/info/refs?service=git-upload-pack`,
+        WORKBOOK_ID,
+        req,
+        res,
+      );
+    });
+
+    it('strips only the connector git prefix from the URL path', async () => {
+      const repoId = 'some/repo/id' as RepoId;
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      scratchGitService.resolveConnectionRepoPath.mockResolvedValue(repoId);
+
+      const req = {
+        ...makeReqWithUser(),
+        url: `/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git/git-receive-pack`,
+        method: 'POST',
+      } as RequestWithUser & Request;
+      const res = {} as Response;
+
+      const proxySpy = spyOnProxyToGitBackend();
+
+      await controller.connectorGitProxy(req, WORKBOOK_ID, CONNECTOR_ID, res);
+
+      expect(proxySpy).toHaveBeenCalledWith(`${GIT_BACKEND_URL}/${repoId}.git/git-receive-pack`, WORKBOOK_ID, req, res);
+    });
+
+    it('tracks posthog git operation event', async () => {
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      scratchGitService.resolveConnectionRepoPath.mockResolvedValue('repo/id/x' as RepoId);
+
+      const req = {
+        ...makeReqWithUser(),
+        url: `/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git/info/refs`,
+        method: 'GET',
+      } as RequestWithUser & Request;
+      const res = {} as Response;
+
+      spyOnProxyToGitBackend();
+
+      await controller.connectorGitProxy(req, WORKBOOK_ID, CONNECTOR_ID, res);
+
+      expect(posthogService.trackCliGitOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: USER_ID }),
+        WORKBOOK_ID,
+        { method: 'GET' },
+      );
+    });
+
+    it('resolves repo path using the connector account ID', async () => {
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      scratchGitService.resolveConnectionRepoPath.mockResolvedValue('repo/id/y' as RepoId);
+
+      const req = {
+        ...makeReqWithUser(),
+        url: `/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git/HEAD`,
+        method: 'GET',
+      } as RequestWithUser & Request;
+      const res = {} as Response;
+
+      spyOnProxyToGitBackend();
+
+      await controller.connectorGitProxy(req, WORKBOOK_ID, CONNECTOR_ID, res);
+
+      expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(CONNECTOR_ID);
+    });
   });
 
   describe('workbook config repo endpoints', () => {
@@ -236,7 +332,7 @@ describe('CliWorkbookController', () => {
       const res = {} as Response;
 
       workbookService.findOne.mockResolvedValue(makeWorkbook());
-      const proxySpy = jest.spyOn(controller as never, 'proxyToGitBackend' as never).mockResolvedValue(undefined);
+      const proxySpy = spyOnProxyToGitBackend();
 
       await controller.configGitProxy(req, WORKBOOK_ID, res);
 
