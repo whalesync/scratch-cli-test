@@ -242,7 +242,7 @@ interface ScratchFilesAPI {
     filename: string,
     fieldName: string,
     value: string,
-  ) => Promise<void>;
+  ) => Promise<{ value: unknown }>;
   undoApprovedCellChange: (
     folderPath: string,
     workspacePath: string,

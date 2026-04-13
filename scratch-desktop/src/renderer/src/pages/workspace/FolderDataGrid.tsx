@@ -109,6 +109,120 @@ function toDisplayString(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// Mirrors parseFieldValue in src/main/local-files.ts — kept in sync by hand
+// so the renderer can predict the backend's parse result for optimistic
+// updates without an extra IPC round trip. If that function changes, update
+// this one to match.
+function parseCellValueLikeBackend(str: string): unknown {
+  const trimmed = str.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return str;
+  }
+}
+
+function diffValuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  if (typeof a !== typeof b) return false;
+  if (typeof a === 'object') {
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function deriveRowStatusAfterEdit(row: DiffRow): RowStatus {
+  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted') {
+    return row.__rowStatus;
+  }
+  if (row.__changedFields.length > 0) {
+    return 'modified';
+  }
+  if (row.__unpublishedFields.length > 0) {
+    return 'unpublished';
+  }
+  return 'unchanged';
+}
+
+function recomputeSummaryCount(prev: DiffRow, next: DiffRow, status: RowStatus, count: number): number {
+  const wasStatus = prev.__rowStatus === status;
+  const isStatus = next.__rowStatus === status;
+  if (wasStatus === isStatus) return count;
+  return count + (isStatus ? 1 : -1);
+}
+
+function recomputeFilterCount(prevHad: boolean, nextHas: boolean, count: number): number {
+  if (prevHad === nextHas) return count;
+  return count + (nextHas ? 1 : -1);
+}
+
+function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: DiffRow): DiffGridResult {
+  const nextRows = result.rows.map((r) => (r.__filename === prevRow.__filename ? nextRow : r));
+
+  const prevHadUnreviewed =
+    prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'deleted' || prevRow.__changedFields.length > 0;
+  const nextHasUnreviewed =
+    nextRow.__rowStatus === 'added' || nextRow.__rowStatus === 'deleted' || nextRow.__changedFields.length > 0;
+  const prevHadUnpublished = prevRow.__unpublishedFields.length > 0;
+  const nextHasUnpublished = nextRow.__unpublishedFields.length > 0;
+
+  const summary: DiffGridResult['summary'] = {
+    total: result.summary.total,
+    added: recomputeSummaryCount(prevRow, nextRow, 'added', result.summary.added),
+    modified: recomputeSummaryCount(prevRow, nextRow, 'modified', result.summary.modified),
+    unpublished: recomputeSummaryCount(prevRow, nextRow, 'unpublished', result.summary.unpublished),
+    deleted: recomputeSummaryCount(prevRow, nextRow, 'deleted', result.summary.deleted),
+  };
+
+  const filterCounts = {
+    unreviewed: recomputeFilterCount(prevHadUnreviewed, nextHasUnreviewed, result.filterCounts.unreviewed),
+    unpublished: recomputeFilterCount(prevHadUnpublished, nextHasUnpublished, result.filterCounts.unpublished),
+  };
+
+  return { ...result, rows: nextRows, summary, filterCounts };
+}
+
+function applyAcceptedCellChange(
+  result: DiffGridResult,
+  filename: string,
+  fieldName: string,
+  nextValue: unknown,
+): DiffGridResult {
+  const prevRow = result.rows.find((r) => r.__filename === filename);
+  if (!prevRow) return result;
+
+  const masterValue = prevRow.__masterFields[fieldName];
+  const masterHadField = Object.prototype.hasOwnProperty.call(prevRow.__masterFields, fieldName);
+  const nextFromFields = { ...prevRow.__fromFields };
+  delete nextFromFields[fieldName];
+
+  const wasUnpublished = prevRow.__unpublishedFields.includes(fieldName);
+  const matchesMaster = masterHadField && diffValuesEqual(nextValue, masterValue);
+  const nextUnpublishedFields = wasUnpublished
+    ? matchesMaster
+      ? prevRow.__unpublishedFields.filter((f) => f !== fieldName)
+      : prevRow.__unpublishedFields
+    : matchesMaster
+      ? prevRow.__unpublishedFields
+      : [...prevRow.__unpublishedFields, fieldName];
+
+  const nextRow: DiffRow = {
+    ...prevRow,
+    [fieldName]: nextValue,
+    __changedFields: prevRow.__changedFields.filter((f) => f !== fieldName),
+    __fromFields: nextFromFields,
+    __unpublishedFields: nextUnpublishedFields,
+  };
+  nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+
+  return replaceRowInResult(result, prevRow, nextRow);
+}
+
 function getCellDiffState(row: DiffRow, fieldName: string): { diffKind: FieldValueDiffKind; fromValue: string } {
   const isUnreviewed = row.__changedFields.includes(fieldName);
   const isUnpublished = !isUnreviewed && row.__unpublishedFields.includes(fieldName);
@@ -613,14 +727,30 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
+      // Apply optimistically before awaiting the IPC so the grid canvas never
+      // repaints the pre-edit value in the gap between the overlay closing
+      // and the backend write completing. The backend's parseFieldValue is
+      // a JSON.parse-or-string fallback, which we mirror here. On failure we
+      // trigger a full refresh to resync the grid with the authoritative
+      // on-disk state rather than trying to surgically revert — any
+      // intervening edits on other cells are preserved that way.
+      const parsedValue = parseCellValueLikeBackend(nextValue);
+      setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, parsedValue) : prev));
+
       void window.scratchFiles
         .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
           closeGridEditorChrome();
-          refreshGridData();
         })
         .catch((err: unknown) => {
           console.error(`[acceptCellChange] ${logLabel} failed:`, err);
+          closeGridEditorChrome();
+          refreshGridData();
+          notifications.show({
+            color: 'red',
+            title: 'Failed to save cell',
+            message: err instanceof Error ? err.message : 'Unknown error',
+          });
         });
     },
     [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
@@ -640,6 +770,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         })
         .catch((err: unknown) => {
           console.error('[undoApprovedCellChange] undo failed:', err);
+        });
+    },
+    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+  );
+
+  const discardUnreviewedGridCellChange = useCallback(
+    (filename: string, fieldName: string, dirtyValue: string) => {
+      if (!selectedFolderPath || !workspacePath) {
+        return;
+      }
+
+      void window.scratchFiles
+        .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, dirtyValue)
+        .then(() => {
+          closeGridEditorChrome();
+          refreshGridData();
+        })
+        .catch((err: unknown) => {
+          console.error('[acceptCellChange] discard unreviewed failed:', err);
         });
     },
     [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
@@ -752,7 +901,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           return {
             kind,
             data: typeof val === 'boolean' ? val : undefined,
-            allowOverlay,
+            allowOverlay: false as const,
             copyData: toDisplayString(val),
             themeOverride,
           };
@@ -783,7 +932,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return {
           kind,
           data: typeof val === 'boolean' ? val : undefined,
-          allowOverlay,
+          allowOverlay: false as const,
           copyData: toDisplayString(val),
           themeOverride,
         };
@@ -1370,7 +1519,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             editingCell != null && editingCell[0] === cellPopover.col && editingCell[1] === cellPopover.row;
           let undoAction: (() => void) | undefined;
           if (diffKind === 'unreviewed') {
-            undoAction = () => acceptGridCellChange(filename, fieldName, fromValue, 'undo');
+            undoAction = () => discardUnreviewedGridCellChange(filename, fieldName, fromValue);
           } else if (diffKind === 'unpublished') {
             undoAction = () => undoApprovedGridCellChange(filename, fieldName);
           }

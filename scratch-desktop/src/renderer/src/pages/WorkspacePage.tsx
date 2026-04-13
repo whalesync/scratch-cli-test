@@ -20,6 +20,8 @@ function isNoConnectionsScratchmdError(message: string): boolean {
   return message.toLowerCase().includes('no connections found');
 }
 
+const FOCUS_SYNC_THROTTLE_MS = 10_000;
+
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -42,6 +44,7 @@ export function WorkspacePage() {
   const [connectionError, setConnectionError] = useState(false);
 
   const focusSyncBootAtRef = useRef(0);
+  const lastFocusSyncAtRef = useRef(0);
   const previousFolderCountRef = useRef<number | null>(null);
   const previousConnectionCountRef = useRef<number | null>(null);
 
@@ -162,9 +165,14 @@ export function WorkspacePage() {
     }
 
     const handleWindowFocus = (): void => {
-      if (performance.now() - focusSyncBootAtRef.current < 1500) {
+      const now = performance.now();
+      if (now - focusSyncBootAtRef.current < 1500) {
         return;
       }
+      if (now - lastFocusSyncAtRef.current < FOCUS_SYNC_THROTTLE_MS) {
+        return;
+      }
+      lastFocusSyncAtRef.current = now;
       void (async () => {
         const snapshot = await fetchWorkspace({ silent: true });
         if (!snapshot?.localPath) {
@@ -178,7 +186,7 @@ export function WorkspacePage() {
           return;
         }
 
-        // Check if folders or connections changed — trigger pull with --on-delete remove
+        // Only pull when the server's folder or connection shape has actually changed.
         const prevFolderCount = previousFolderCountRef.current;
         const prevConnectionCount = previousConnectionCountRef.current;
         const folderCountChanged = prevFolderCount !== null && prevFolderCount !== snapshot.serverDataFolderCount;
@@ -186,12 +194,13 @@ export function WorkspacePage() {
         previousFolderCountRef.current = snapshot.serverDataFolderCount;
         previousConnectionCountRef.current = snapshot.connectionCount;
 
+        if (!folderCountChanged && !connectionCountChanged) {
+          handleDataRefresh();
+          return;
+        }
+
         try {
-          if (folderCountChanged || connectionCountChanged) {
-            await window.scratchDesktop.pullWorkspaceChanges(snapshot.localPath, { onDelete: 'remove' });
-          } else {
-            await window.scratchDesktop.pullWorkspaceChanges(snapshot.localPath, { onDelete: 'remove' });
-          }
+          await window.scratchDesktop.pullWorkspaceChanges(snapshot.localPath, { onDelete: 'remove' });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (isNoConnectionsScratchmdError(message) && snapshot.serverDataFolderCount > 0) {

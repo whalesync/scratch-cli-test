@@ -1153,7 +1153,7 @@ export async function acceptCellChange(
   filename: string,
   fieldName: string,
   value: string,
-): Promise<void> {
+): Promise<{ value: unknown }> {
   const parsed = parseFieldValue(value);
 
   const workingFile = join(folderPath, filename);
@@ -1172,6 +1172,8 @@ export async function acceptCellChange(
 
   await commitReviewedDirtyFile(folderPath, workspacePath, filename);
   console.debug('[acceptCellChange] dirty ref updated');
+
+  return { value: parsed };
 }
 
 /**
