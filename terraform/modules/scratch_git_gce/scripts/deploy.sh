@@ -29,6 +29,9 @@ fi
 
 echo "Active: $ACTIVE, deploying to: $TARGET"
 
+# ---------- clean up old images to free boot disk space ----------
+docker system prune -af
+
 # ---------- pull new image ----------
 docker pull "$IMAGE"
 
