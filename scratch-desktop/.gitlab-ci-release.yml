@@ -76,7 +76,6 @@ Local build test CLI for desktop app:
     SCRATCH_DEFAULT_URL: 'https://test-api.scratch.md'
   rules:
     - if: !reference [.rules, local_runner_users_master]
-      when: manual
       allow_failure: true
     - if: !reference [.rules, local_runner_users_mr]
       when: manual
@@ -233,7 +232,6 @@ Local release test desktop macOS app:
         - 'major'
   rules:
     - if: !reference [.rules, local_runner_users_master]
-      when: manual
       allow_failure: true
     - if: !reference [.rules, local_runner_users_mr]
       when: manual
