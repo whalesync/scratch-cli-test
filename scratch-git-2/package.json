@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "SLACK_NOTIFICATION_WEBHOOK_URL=\"https://hooks.slack.com/services/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\" GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" cargo run",
+    "dev": "GIT_REPOS_DIR=\"$INIT_CWD/../local/scratch-git-repos\" cargo run",
     "build": "cargo build --release 2>&1 | tail -5",
     "format": "cargo fmt",
     "test": "cargo test"
