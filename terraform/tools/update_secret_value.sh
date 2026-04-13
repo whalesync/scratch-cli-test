@@ -13,8 +13,8 @@ value="$3"
 secrets_file=$(realpath "$(dirname "$0")/../secrets.txt")
 project_id="spv1eu-$env"
 
-# Check if the secret name exists in the secrets file
-if ! grep -q "^$name$" "$secrets_file"; then
+# Check if the secret name exists in the secrets file (tolerate CRLF line endings)
+if ! grep -qE "^${name}"$'\r'"?$" "$secrets_file"; then
     echo "Error: Secret '$name' not found in $secrets_file"
     exit 1
 fi
