@@ -47,6 +47,7 @@ Local build production CLI for desktop app:
   extends:
     - .build_cli_for_desktop
     - .local-runner-defaults
+  timeout: 30 minutes
   variables:
     SCRATCH_DEFAULT_URL: 'https://api.scratch.md'
   rules:
@@ -72,6 +73,7 @@ Local build test CLI for desktop app:
   extends:
     - .build_cli_for_desktop
     - .local-runner-defaults
+  timeout: 30 minutes
   variables:
     SCRATCH_DEFAULT_URL: 'https://test-api.scratch.md'
   rules:
@@ -175,6 +177,7 @@ Local release desktop macOS app:
   extends:
     - .release_desktop_prod_job
     - .local-macos-runner-defaults
+  timeout: 30 minutes
   needs:
     - job: Local build production CLI for desktop app
       artifacts: true
@@ -212,6 +215,7 @@ Local release test desktop macOS app:
   extends:
     - .release_desktop_test_job
     - .local-macos-runner-defaults
+  timeout: 30 minutes
   needs:
     - job: Local build test CLI for desktop app
       artifacts: true
