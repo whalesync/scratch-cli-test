@@ -162,6 +162,10 @@ Remove your username from both opt-in lists (`.rules.local_runner_users_mr` in `
   gitlab-runner start
   ```
 
+**Docker Desktop VM disk full**
+
+- Symptoms: `apt-get` inside container jobs fails with `"At least one invalid signature was encountered"` or other obscure errors; `docker run` fails with no free space. Docker Desktop's internal VM disk is separate from your Mac's filesystem and fills up silently. Reclaim with `docker system prune -a --volumes` (stop the runner first). To catch this proactively, install the [Docker disk monitor](local-dev/docker-disk-monitor.md) — a LaunchAgent that alerts when the VM disk hits 90%.
+
 **Integration test DB connection refused**
 
 - The Postgres service container should start automatically. Check Docker logs for the job's service containers.
