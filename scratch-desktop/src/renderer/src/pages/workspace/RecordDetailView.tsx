@@ -29,9 +29,16 @@ interface RecordDetailViewProps {
   folderPath: string;
   workspacePath: string;
   titleColumnId: string | null;
+  /**
+   * Field display order, matching the grid's visible column order (including
+   * the title-first move and any user column-picker choices). Fields not in
+   * this list are hidden from the detail view, matching the grid.
+   */
+  columnOrder: string[];
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
+  onRecordFieldChanged?: (filename: string, fieldName: string, nextValue: unknown) => void;
   onPublishFile?: (relativePath: string) => void;
 }
 
@@ -67,15 +74,102 @@ function toDisplayString(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function diffValuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  if (typeof a !== typeof b) return false;
+  if (typeof a === 'object') {
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+type DiffRow = DiffRecordData['row'];
+
+function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
+  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted') {
+    return row.__rowStatus;
+  }
+  if (row.__changedFields.length > 0) {
+    return 'modified';
+  }
+  if (row.__unpublishedFields.length > 0) {
+    return 'unpublished';
+  }
+  return 'unchanged';
+}
+
+/**
+ * Writes a `.`-delimited field path into a nested object, creating intermediate
+ * plain objects as needed. Mirrors setNestedValue in src/main/local-files.ts so
+ * that optimistic updates to displayData match what readDiffRecordData would
+ * see on disk. Top-level fields and nested dot paths are both supported.
+ */
+function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let cursor: Record<string, unknown> = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    const existing = cursor[key];
+    if (typeof existing !== 'object' || existing === null || Array.isArray(existing)) {
+      const next: Record<string, unknown> = {};
+      cursor[key] = next;
+      cursor = next;
+    } else {
+      cursor = existing as Record<string, unknown>;
+    }
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+
+function applyAcceptedFieldChangeToRecord(prev: DiffRecordData, fieldName: string, nextValue: unknown): DiffRecordData {
+  const prevRow = prev.row;
+
+  const masterValue = prevRow.__masterFields[fieldName];
+  const masterHadField = Object.prototype.hasOwnProperty.call(prevRow.__masterFields, fieldName);
+  const nextFromFields = { ...prevRow.__fromFields };
+  delete nextFromFields[fieldName];
+
+  const wasUnpublished = prevRow.__unpublishedFields.includes(fieldName);
+  const matchesMaster = masterHadField && diffValuesEqual(nextValue, masterValue);
+  const nextUnpublishedFields = wasUnpublished
+    ? matchesMaster
+      ? prevRow.__unpublishedFields.filter((f) => f !== fieldName)
+      : prevRow.__unpublishedFields
+    : matchesMaster
+      ? prevRow.__unpublishedFields
+      : [...prevRow.__unpublishedFields, fieldName];
+
+  const nextRow: DiffRow = {
+    ...prevRow,
+    [fieldName]: nextValue,
+    __changedFields: prevRow.__changedFields.filter((f) => f !== fieldName),
+    __fromFields: nextFromFields,
+    __unpublishedFields: nextUnpublishedFields,
+  };
+  nextRow.__rowStatus = deriveRowStatusAfterEdit(nextRow);
+
+  const nextDisplayData = prev.displayData ? { ...prev.displayData } : {};
+  setNestedValue(nextDisplayData, fieldName, nextValue);
+
+  return { ...prev, row: nextRow, displayData: nextDisplayData };
+}
+
 export const RecordDetailView = memo(function RecordDetailView({
   rows,
   selectedIndex,
   folderPath,
   workspacePath,
   titleColumnId,
+  columnOrder,
   onSelectIndex,
   onClose,
   onRecordChanged,
+  onRecordFieldChanged,
   onPublishFile,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
@@ -83,7 +177,6 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
-  const [editingFieldValue, setEditingFieldValue] = useState('');
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
 
@@ -106,11 +199,18 @@ export const RecordDetailView = memo(function RecordDetailView({
 
   const displayData = recordData?.displayData ?? null;
 
-  // Load shared diff data when selection changes
-  useEffect(() => {
+  const selectedFilename = (() => {
     const row = rows[selectedIndex];
-    const filename = row?.__filename as string | undefined;
-    if (!filename) {
+    const filename = row?.__filename;
+    return typeof filename === 'string' ? filename : undefined;
+  })();
+
+  // Load shared diff data when selection changes. We depend on selectedFilename
+  // (not `rows`) so that optimistic updates in the parent grid, which produce a
+  // new `rows` array reference but no filename change, do not retrigger a full
+  // record reload.
+  useEffect(() => {
+    if (!selectedFilename) {
       setRecordData(null);
       return;
     }
@@ -119,7 +219,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     setLoading(true);
 
     window.scratchFiles
-      .readDiffRecordData(folderPath, workspacePath, filename)
+      .readDiffRecordData(folderPath, workspacePath, selectedFilename)
       .then((result) => {
         if (!cancelled) {
           setRecordData(result);
@@ -135,7 +235,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     return () => {
       cancelled = true;
     };
-  }, [selectedIndex, rows, folderPath, workspacePath, recordReloadKey]);
+  }, [selectedFilename, folderPath, workspacePath, recordReloadKey]);
 
   // Escape key closes overlay (capture phase so it fires before the grid handles it)
   useEffect(() => {
@@ -157,7 +257,6 @@ export const RecordDetailView = memo(function RecordDetailView({
   useEffect(() => {
     editingFieldRef.current = null;
     setEditingFieldName(null);
-    setEditingFieldValue('');
   }, [selectedIndex]);
 
   const handlePrev = useCallback(() => {
@@ -195,32 +294,54 @@ export const RecordDetailView = memo(function RecordDetailView({
   const clearFieldEdit = useCallback(() => {
     editingFieldRef.current = null;
     setEditingFieldName(null);
-    setEditingFieldValue('');
   }, []);
+
+  const filenameRef = useRef(currentFilename);
+  filenameRef.current = currentFilename;
 
   const handleAcceptCellChange = useCallback(
     (fieldName: string, value: string, logLabel: string) => {
-      if (!currentFilename) return;
+      const filename = filenameRef.current;
+      if (!filename) return;
       clearFieldEdit();
       void window.scratchFiles
-        .acceptCellChange(folderPath, workspacePath, currentFilename, fieldName, value)
-        .then(() => {
-          setRecordReloadKey((k) => k + 1);
-          onRecordChanged?.();
+        .acceptCellChange(folderPath, workspacePath, filename, fieldName, value)
+        .then((result) => {
+          setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
+          onRecordFieldChanged?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
           console.error(`[acceptCellChange] ${logLabel} failed:`, err);
         });
     },
-    [clearFieldEdit, currentFilename, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged],
+  );
+
+  const handleDiscardUnreviewedCellChange = useCallback(
+    (fieldName: string, dirtyValue: string) => {
+      const filename = filenameRef.current;
+      if (!filename) return;
+      clearFieldEdit();
+      void window.scratchFiles
+        .acceptCellChange(folderPath, workspacePath, filename, fieldName, dirtyValue)
+        .then(() => {
+          setRecordReloadKey((k) => k + 1);
+          onRecordChanged?.();
+        })
+        .catch((err: unknown) => {
+          console.error('[acceptCellChange] discard unreviewed failed:', err);
+        });
+    },
+    [clearFieldEdit, folderPath, workspacePath, onRecordChanged],
   );
 
   const handleUndoApprovedCellChange = useCallback(
     (fieldName: string) => {
-      if (!currentFilename) return;
+      const filename = filenameRef.current;
+      if (!filename) return;
       clearFieldEdit();
       void window.scratchFiles
-        .undoApprovedCellChange(folderPath, workspacePath, currentFilename, fieldName)
+        .undoApprovedCellChange(folderPath, workspacePath, filename, fieldName)
         .then(() => {
           setRecordReloadKey((k) => k + 1);
           onRecordChanged?.();
@@ -229,13 +350,12 @@ export const RecordDetailView = memo(function RecordDetailView({
           console.error('[undoApprovedCellChange] undo failed:', err);
         });
     },
-    [clearFieldEdit, currentFilename, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, onRecordChanged],
   );
 
-  const beginFieldEdit = useCallback((fieldName: string, value: string) => {
+  const beginFieldEdit = useCallback((fieldName: string) => {
     editingFieldRef.current = fieldName;
     setEditingFieldName(fieldName);
-    setEditingFieldValue(value);
   }, []);
 
   const cancelFieldEdit = useCallback(
@@ -249,12 +369,12 @@ export const RecordDetailView = memo(function RecordDetailView({
   );
 
   const commitFieldEdit = useCallback(
-    (fieldName: string, currentValue: string) => {
-      if (!currentFilename || editingFieldRef.current !== fieldName) {
+    (fieldName: string, currentValue: string, nextValue: string) => {
+      const filename = filenameRef.current;
+      if (!filename || editingFieldRef.current !== fieldName) {
         return;
       }
 
-      const nextValue = editingFieldValue;
       clearFieldEdit();
 
       if (nextValue === currentValue) {
@@ -262,16 +382,16 @@ export const RecordDetailView = memo(function RecordDetailView({
       }
 
       void window.scratchFiles
-        .acceptCellChange(folderPath, workspacePath, currentFilename, fieldName, nextValue)
-        .then(() => {
-          setRecordReloadKey((k) => k + 1);
-          onRecordChanged?.();
+        .acceptCellChange(folderPath, workspacePath, filename, fieldName, nextValue)
+        .then((result) => {
+          setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
+          onRecordFieldChanged?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
           console.error('[acceptCellChange] record edit failed:', err);
         });
     },
-    [clearFieldEdit, currentFilename, editingFieldValue, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged],
   );
 
   const fieldRows = useMemo<RecordFieldRow[]>(() => {
@@ -282,8 +402,10 @@ export const RecordDetailView = memo(function RecordDetailView({
     const displayFields = flattenObject(displayData);
     const changedFields = new Set(recordData.row.__changedFields);
     const unpublishedFields = new Set(recordData.row.__unpublishedFields);
+    const recordColumnSet = new Set(recordData.columns);
+    const orderedFields = columnOrder.filter((fieldName) => recordColumnSet.has(fieldName));
 
-    return recordData.columns.map((fieldName) => {
+    return orderedFields.map((fieldName) => {
       const isUnreviewed = changedFields.has(fieldName);
       const isUnpublished = unpublishedFields.has(fieldName);
       const diffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
@@ -301,15 +423,13 @@ export const RecordDetailView = memo(function RecordDetailView({
         diffKind,
         displayMode: isUnreviewed ? 'diff' : 'current',
         editing: editingFieldName === fieldName,
-        editValue: editingFieldName === fieldName ? editingFieldValue : undefined,
         referenceValue: diffKind !== null ? fromValue : undefined,
-        onClick: () => beginFieldEdit(fieldName, value),
-        onEditValueChange: (nextValue) => setEditingFieldValue(nextValue),
-        onEditCommit: () => commitFieldEdit(fieldName, value),
+        onClick: () => beginFieldEdit(fieldName),
+        onEditCommit: (nextValue: string) => commitFieldEdit(fieldName, value, nextValue),
         onEditCancel: () => cancelFieldEdit(fieldName),
         onApprove: isUnreviewed ? () => handleAcceptCellChange(fieldName, value, 'approve') : undefined,
         onUndo: isUnreviewed
-          ? () => handleAcceptCellChange(fieldName, fromValue, 'undo')
+          ? () => handleDiscardUnreviewedCellChange(fieldName, fromValue)
           : isUnpublished
             ? () => handleUndoApprovedCellChange(fieldName)
             : undefined,
@@ -318,12 +438,13 @@ export const RecordDetailView = memo(function RecordDetailView({
   }, [
     beginFieldEdit,
     cancelFieldEdit,
+    columnOrder,
     commitFieldEdit,
     displayData,
     editingFieldName,
-    editingFieldValue,
     recordData,
     handleAcceptCellChange,
+    handleDiscardUnreviewedCellChange,
     handleUndoApprovedCellChange,
   ]);
 

@@ -1408,9 +1408,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 folderPath={selectedFolderPath}
                 workspacePath={workspacePath}
                 titleColumnId={titleColumnId}
+                columnOrder={effectiveVisibleColumns}
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
                 onRecordChanged={() => setReloadKey((k) => k + 1)}
+                onRecordFieldChanged={(filename, fieldName, nextValue) =>
+                  setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev))
+                }
                 onPublishFile={props.onPublishFile}
               />
             )}

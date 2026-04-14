@@ -1,5 +1,5 @@
 import { Box, Portal, ScrollArea, Table, Textarea } from '@mantine/core';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular } from '../../components/base/text';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
@@ -11,11 +11,9 @@ export interface RecordFieldRow {
   diffKind: FieldValueDiffKind;
   displayMode?: FieldValueDisplayMode;
   editing?: boolean;
-  editValue?: string;
   referenceValue?: string;
   onClick?: () => void;
-  onEditValueChange?: (value: string) => void;
-  onEditCommit?: () => void;
+  onEditCommit?: (nextValue: string) => void;
   onEditCancel?: () => void;
   onApprove?: () => void;
   onUndo?: () => void;
@@ -26,6 +24,54 @@ interface RecordFieldsGridProps {
 }
 
 const FLOATING_PANEL_GAP = 5;
+
+const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const committedRef = useRef(false);
+
+  const commit = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    row.onEditCommit?.(textareaRef.current?.value ?? row.value);
+  };
+
+  return (
+    <Textarea
+      ref={textareaRef}
+      autoFocus
+      autosize
+      minRows={1}
+      defaultValue={row.value}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          commit();
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          committedRef.current = true;
+          row.onEditCancel?.();
+        }
+      }}
+      styles={{
+        wrapper: { margin: 0 },
+        input: {
+          backgroundColor: 'var(--bg-base)',
+          borderRadius: 0,
+          border: 'none',
+          outline: '2px solid var(--highlight-border)',
+          padding: '8px 12px',
+          fontFamily: 'monospace',
+          fontSize: 13,
+          lineHeight: 1.5,
+        },
+      }}
+    />
+  );
+});
 
 export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordFieldsGridProps) {
   const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
@@ -107,40 +153,8 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                 >
                   {row.editing ? (
                     <Box style={{ display: 'grid', gap: 6 }}>
-                      <Box ref={row.editing ? setEditingAnchorEl : undefined}>
-                        <Textarea
-                          autoFocus
-                          autosize
-                          minRows={1}
-                          value={row.editValue ?? row.value}
-                          onChange={(e) => row.onEditValueChange?.(e.currentTarget.value)}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onBlur={() => row.onEditCommit?.()}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault();
-                              row.onEditCommit?.();
-                              return;
-                            }
-                            if (e.key === 'Escape') {
-                              e.preventDefault();
-                              row.onEditCancel?.();
-                            }
-                          }}
-                          styles={{
-                            wrapper: { margin: 0 },
-                            input: {
-                              backgroundColor: 'var(--bg-base)',
-                              borderRadius: 0,
-                              border: 'none',
-                              outline: '2px solid var(--highlight-border)',
-                              padding: '8px 12px',
-                              fontFamily: 'monospace',
-                              fontSize: 13,
-                              lineHeight: 1.5,
-                            },
-                          }}
-                        />
+                      <Box ref={setEditingAnchorEl}>
+                        <FieldEditor row={row} />
                       </Box>
                     </Box>
                   ) : (
