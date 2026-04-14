@@ -100,7 +100,7 @@ function OpenInDesktopInner(): ReactElement {
             <Stack gap="sm" w="100%">
               <ButtonPrimaryLight
                 onClick={() => {
-                  window.open(RouteUrls.desktopDownloadUrl, '_blank', 'noopener,noreferrer');
+                  window.open(RouteUrls.downloadsPageUrl, '_blank', 'noopener,noreferrer');
                 }}
               >
                 Download Scratch Desktop

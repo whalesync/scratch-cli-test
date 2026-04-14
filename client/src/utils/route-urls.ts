@@ -20,7 +20,7 @@ export class RouteUrls {
   static pricingPageUrl = '/pricing';
 
   /** macOS desktop installer landing page (see also home page desktop CTA). */
-  static desktopDownloadUrl = 'https://scratch.app/download/mac';
+  static downloadsPageUrl = '/downloads';
 
   // Not implemented yet, just placeholder for future use
   static signInPageUrl = '/sign-in';

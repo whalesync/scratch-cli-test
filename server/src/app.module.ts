@@ -10,6 +10,7 @@ import { ScratchConfigModule } from './config/scratch-config.module';
 import { ScratchConfigService } from './config/scratch-config.service';
 import { CronModule } from './cron/cron.module';
 import { DbModule } from './db/db.module';
+import { DesktopReleaseModule } from './desktop-release/desktop-release.module';
 import { DevToolsModule } from './dev-tools/dev-tools.module';
 import { DiscoverModule } from './discover/discover.module';
 import { ExperimentsModule } from './experiments/experiments.module';
@@ -48,6 +49,7 @@ import { WorkerModule } from './worker/workers.module';
     AuditLogModule,
     ExperimentsModule,
     HealthModule,
+    DesktopReleaseModule,
     DiscoverModule,
     DbModule,
     UserModule,

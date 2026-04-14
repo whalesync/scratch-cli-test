@@ -4,6 +4,7 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { Text13Medium, Text13Regular, Text16Regular, TextTitle2 } from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { useDesktopRelease } from '@/hooks/use-desktop-release';
 import { useWorkbooks } from '@/hooks/use-workbooks';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { usersApi } from '@/lib/api/users';
@@ -12,13 +13,30 @@ import { isExperimentEnabled } from '@/types/server-entities/users';
 import { RouteUrls } from '@/utils/route-urls';
 import { UserButton } from '@clerk/nextjs';
 import { Box, Center, Divider, Group, Stack, TextInput, UnstyledButton } from '@mantine/core';
-import type { Workbook } from '@spinner/shared-types';
-import { ChevronDownIcon, ChevronRightIcon, DownloadIcon, PlusIcon, SettingsIcon, UserIcon } from 'lucide-react';
+import type { DesktopReleaseAsset, Workbook } from '@spinner/shared-types';
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  MonitorIcon,
+  PlusIcon,
+  SettingsIcon,
+  UserIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+function findMacDmg(assets: DesktopReleaseAsset[] | undefined): DesktopReleaseAsset | null {
+  if (!assets) return null;
+  const arm64 = assets.find((a) => /arm64.*\.dmg$/i.test(a.name));
+  if (arm64) return arm64;
+  return assets.find((a) => /\.dmg$/i.test(a.name)) ?? null;
+}
+
 function DesktopLandingPage({ displayName, lastWorkbookId }: { displayName: string; lastWorkbookId?: string }) {
+  const { release, isLoading: isReleaseLoading } = useDesktopRelease();
+  const macDmg = findMacDmg(release?.assets);
   return (
     <Box
       style={{
@@ -50,13 +68,26 @@ function DesktopLandingPage({ displayName, lastWorkbookId }: { displayName: stri
               Download Scratch Desktop for the best experience managing your content.
             </Text16Regular>
           </Stack>
-          <ButtonPrimaryLight
-            leftSection={<StyledLucideIcon Icon={DownloadIcon} size="sm" />}
-            fullWidth
-            onClick={() => window.open(RouteUrls.desktopDownloadUrl, '_blank')}
-          >
-            Download for macOS
-          </ButtonPrimaryLight>
+          <Stack gap="sm" w="100%">
+            <ButtonPrimaryLight
+              component="a"
+              href={macDmg?.url ?? RouteUrls.downloadsPageUrl}
+              leftSection={<StyledLucideIcon Icon={DownloadIcon} size="sm" />}
+              fullWidth
+              loading={isReleaseLoading}
+              disabled={!isReleaseLoading && !macDmg}
+            >
+              Download for macOS
+            </ButtonPrimaryLight>
+            <ButtonSecondaryOutline
+              component="a"
+              href="scratch://"
+              leftSection={<StyledLucideIcon Icon={MonitorIcon} size="sm" />}
+              fullWidth
+            >
+              Open Scratch Desktop
+            </ButtonSecondaryOutline>
+          </Stack>
         </Stack>
       </Center>
 
