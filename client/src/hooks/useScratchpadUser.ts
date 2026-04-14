@@ -16,6 +16,7 @@ export interface ScratchPadUser {
   signOut: () => void;
   isSignedIn?: boolean;
   isAdmin?: boolean;
+  isImpersonating: boolean;
   updateUserSetting: (key: UserSetting, value: UserSettingValue) => Promise<void>;
   clearUserSetting: (key: UserSetting) => Promise<void>;
   getUserSetting: (key: UserSetting, defaultValue?: UserSettingValue) => UserSettingValue | null;
@@ -23,7 +24,7 @@ export interface ScratchPadUser {
 }
 
 export const useScratchPadUser = (): ScratchPadUser => {
-  const { signOut } = useAuth();
+  const { signOut, actor } = useAuth();
   const { user: clerkUser, isLoaded, isSignedIn } = useUser();
   const {
     data: user,
@@ -108,6 +109,7 @@ export const useScratchPadUser = (): ScratchPadUser => {
     signOut: signOutClerk,
     isSignedIn,
     isAdmin: user?.isAdmin,
+    isImpersonating: !!actor,
     updateUserSetting,
     clearUserSetting,
     getUserSetting,

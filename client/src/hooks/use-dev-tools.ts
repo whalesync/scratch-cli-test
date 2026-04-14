@@ -4,7 +4,7 @@ import { useCallback } from 'react';
 import { useScratchPadUser } from './useScratchpadUser';
 
 export const useDevTools = () => {
-  const { user } = useScratchPadUser();
+  const { user, isImpersonating } = useScratchPadUser();
 
   const toggleDevToolsVisible = useCallback(() => {
     if (user?.isAdmin) {
@@ -14,7 +14,8 @@ export const useDevTools = () => {
   }, [user]);
 
   return {
-    isDevToolsEnabled: isExperimentEnabled('DEV_TOOLBOX', user) && FLAGS.DEV_TOOLS_VISIBLE.getLocalStorageValue(),
+    isDevToolsEnabled:
+      isImpersonating || (isExperimentEnabled('DEV_TOOLBOX', user) && FLAGS.DEV_TOOLS_VISIBLE.getLocalStorageValue()),
     toggleDevToolsVisible,
     showSecretButton: user?.isAdmin,
   };
