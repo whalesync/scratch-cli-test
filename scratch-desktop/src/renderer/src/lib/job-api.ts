@@ -31,4 +31,10 @@ export const jobApi = {
     const res = await axios.get<JobStatus[]>(`/jobs/workbook/${workbookId}/active`);
     return res.data;
   },
+
+  getJobRaw: async (jobId: string): Promise<unknown> => {
+    const axios = API_CONFIG.getAxiosInstance();
+    const res = await axios.get<unknown>(`/jobs/${jobId}/raw`);
+    return res.data;
+  },
 };

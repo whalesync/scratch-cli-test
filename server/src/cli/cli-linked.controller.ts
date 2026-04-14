@@ -198,6 +198,20 @@ export class CliLinkedController {
   /**
    * Pull CRM changes into the workbook for a specific linked table.
    */
+  @Post('workbooks/:workbookId/linked/pull-all')
+  async pullAllLinkedTables(
+    @Req() req: RequestWithUser,
+    @Param('workbookId') workbookId: string,
+  ): Promise<PullFilesResponseDto> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+
+    return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, undefined, createRunContext('cli'));
+  }
+
+  /**
+   * Pull CRM changes into the workbook for a specific linked table.
+   */
   @Post('workbooks/:workbookId/linked/:folderId/pull')
   async pullLinkedTable(
     @Req() req: RequestWithUser,

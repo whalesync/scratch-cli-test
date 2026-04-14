@@ -1,7 +1,9 @@
 import { Badge, Box, Center, Group, Loader, Modal, Progress, ScrollArea, Stack, Table } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text12Regular, Text13Regular } from '../../components/base/text';
+import { useCurrentUser } from '../../hooks/use-current-user';
 import { jobApi, type JobStatus } from '../../lib/job-api';
+import { JobRawJsonButton } from './JobRawJsonButton';
 
 type PullProgress = {
   totalFiles: number;
@@ -44,6 +46,10 @@ function statusColor(state: PullProgress['status'] | JobStatus['state']): string
   }
 }
 
+function getConnectionLabel(job: JobStatus, progress?: PullProgress): string {
+  return progress?.connectionName ?? progress?.folderName ?? job.bullJobId ?? '—';
+}
+
 interface PullInProgressModalProps {
   opened: boolean;
   onClose: () => void;
@@ -64,11 +70,13 @@ export function PullInProgressModal({
   localPath,
   onDataRefresh,
 }: PullInProgressModalProps) {
+  const { user } = useCurrentUser();
   const [phase, setPhase] = useState<'loading' | 'polling' | 'downloading' | 'done' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [trackedJobIds, setTrackedJobIds] = useState<string[]>([]);
   const pollingIntervalRef = useRef<number | null>(null);
+  const showJobDebug = user?.isAdmin === true;
 
   const clearPolling = useCallback(() => {
     if (pollingIntervalRef.current !== null) {
@@ -237,7 +245,7 @@ export function PullInProgressModal({
             <Box>
               <Group justify="space-between" mb={4}>
                 <Text12Regular c="dimmed">
-                  {completedCount} / {jobs.length} tables pulled
+                  {completedCount} / {jobs.length} pull jobs complete
                 </Text12Regular>
                 {phase === 'done' && (
                   <Badge color="green" size="xs">
@@ -252,13 +260,9 @@ export function PullInProgressModal({
               <Table fz="xs" withRowBorders={false}>
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>Table</Table.Th>
                     <Table.Th>Connection</Table.Th>
                     <Table.Th>Status</Table.Th>
-                    <Table.Th style={{ textAlign: 'right' }}>Created</Table.Th>
-                    <Table.Th style={{ textAlign: 'right' }}>Updated</Table.Th>
-                    <Table.Th style={{ textAlign: 'right' }}>Deleted</Table.Th>
-                    <Table.Th style={{ textAlign: 'right' }}>Total</Table.Th>
+                    <Table.Th style={{ textAlign: 'right' }}>Records Processed</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -267,31 +271,18 @@ export function PullInProgressModal({
                     const displayStatus = prog?.status ?? (job.state === 'active' ? 'active' : job.state);
                     return (
                       <Table.Tr key={job.bullJobId}>
-                        <Table.Td>{prog?.folderName ?? job.bullJobId}</Table.Td>
                         <Table.Td>
-                          <Text12Regular c="dimmed">{prog?.connectionName ?? '—'}</Text12Regular>
+                          <Group gap={4} wrap="nowrap">
+                            <Text13Regular style={{ minWidth: 0 }}>{getConnectionLabel(job, prog)}</Text13Regular>
+                            {showJobDebug && <JobRawJsonButton jobId={job.bullJobId} />}
+                          </Group>
                         </Table.Td>
                         <Table.Td>
                           <Badge color={statusColor(displayStatus)} size="xs" variant="light">
                             {displayStatus}
                           </Badge>
                         </Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>
-                          {prog ? (prog.createdCount ?? prog.createdPaths.length) : '—'}
-                        </Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>
-                          {prog ? (prog.updatedCount ?? prog.updatedPaths.length) : '—'}
-                        </Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>
-                          {prog ? (prog.deletedCount ?? prog.deletedPaths.length) : '—'}
-                        </Table.Td>
-                        <Table.Td style={{ textAlign: 'right' }}>
-                          {prog
-                            ? (prog.createdCount ?? prog.createdPaths.length) +
-                              (prog.updatedCount ?? prog.updatedPaths.length) +
-                              (prog.deletedCount ?? prog.deletedPaths.length)
-                            : '—'}
-                        </Table.Td>
+                        <Table.Td style={{ textAlign: 'right' }}>{prog?.totalFiles ?? '—'}</Table.Td>
                       </Table.Tr>
                     );
                   })}

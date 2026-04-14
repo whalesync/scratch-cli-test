@@ -304,6 +304,16 @@ pub struct JobStartedResponse {
     pub job_id: String,
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct PullAllLinkedTablesResponse {
+    #[serde(rename = "jobId", default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(rename = "jobIds", default)]
+    pub job_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
 fn job_progress_path(job_id: &str) -> String {
     format!("jobs/{}/progress", job_id)
 }
@@ -616,6 +626,14 @@ impl ApiClient {
             &body,
         )
         .await
+    }
+
+    pub async fn pull_all_linked_tables(
+        &self,
+        workbook_id: &str,
+    ) -> ApiResult<PullAllLinkedTablesResponse> {
+        self.post_no_body(&format!("workbooks/{}/linked/pull-all", workbook_id))
+            .await
     }
 
     pub async fn publish_linked_table(
