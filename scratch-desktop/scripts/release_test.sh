@@ -173,5 +173,24 @@ for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DI
     --data-binary "@$FILE"
 done
 
-echo "Test release $NEW_VERSION complete. Artifacts at: $BASE_URL"
+RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/${NEW_VERSION}"
+echo ""
+echo "✓ Test release $NEW_VERSION complete"
+echo "  Release URL: $RELEASE_URL"
+echo "  Artifacts: $BASE_URL"
 echo "(No Homebrew update for test releases)"
+
+# Generate annotations.json for GitLab CI
+cat > annotations.json <<JSON
+{
+  "Release URLs": [
+    {
+      "external_link": {
+        "label": "GitHub Release: $NEW_VERSION",
+        "url": "$RELEASE_URL"
+      }
+    }
+  ]
+}
+JSON
+echo "Generated annotations.json"

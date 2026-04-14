@@ -226,4 +226,23 @@ rm -rf "$TAP_DIR"
 
 # Version state is tracked by GitHub tags — no GitLab tag needed.
 
-echo "Release $NEW_VERSION complete."
+RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/${NEW_VERSION}"
+echo ""
+echo "✓ Release $NEW_VERSION complete"
+echo "  Release URL: $RELEASE_URL"
+echo "  Homebrew cask updated"
+
+# Generate annotations.json for GitLab CI
+cat > annotations.json <<JSON
+{
+  "Release URLs": [
+    {
+      "external_link": {
+        "label": "GitHub Release: $NEW_VERSION",
+        "url": "$RELEASE_URL"
+      }
+    }
+  ]
+}
+JSON
+echo "Generated annotations.json"

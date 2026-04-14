@@ -98,6 +98,8 @@ Local build test CLI for desktop app:
     when: always
     paths:
       - scratch-desktop/dist-release/
+    reports:
+      annotations: scratch-desktop/annotations.json
     expire_in: 1 day
   before_script:
     - apt-get update -qq && apt-get install -y zip jq
@@ -139,6 +141,8 @@ Release desktop Linux and Windows apps:
     when: always
     paths:
       - scratch-desktop/dist-release-test/
+    reports:
+      annotations: scratch-desktop/annotations.json
     expire_in: 1 day
   before_script:
     - apt-get update -qq && apt-get install -y zip jq
