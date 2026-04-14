@@ -271,6 +271,7 @@ build server docker image:
       policy: pull-push
   script:
     - apt-get update && apt-get install -y pkg-config libssl-dev git && rm -rf /var/lib/apt/lists/*
+    - command -v git && git --version
     - cd scratch-git-2
     - cargo test
 

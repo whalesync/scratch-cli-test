@@ -110,7 +110,7 @@ notify slack on failure test environment:
     - |
       curl -X POST -H 'Content-type: application/json' \
       --data "{\"text\":\"❌ Failed to deploy Scratch to GCP - Test (EU)\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit> | <https://test-api.scratch.md/health|API Health>\"}" \
-      ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
+      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_master]
   when: on_failure
@@ -123,7 +123,7 @@ notify slack on success test environment:
     - |
       curl -X POST -H 'Content-type: application/json' \
       --data "{\"text\":\"✅ Successfully deployed Scratch to GCP - Test (EU)\n>${CI_COMMIT_TITLE}\n<https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit> | <https://test-api.scratch.md/health|API Health>\"}" \
-      ${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}
+      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
   rules:
     - !reference [.rules, on_merge_to_master]
   when: on_success

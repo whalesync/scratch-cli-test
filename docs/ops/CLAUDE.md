@@ -4,3 +4,4 @@ This folder is for all documentation related to operating Scratch from a technic
 - postmortems to track incidents
 - plans related to proposed structure changes
 - architectural designs and proposals
+- configuring development environments and engineering workstation tools

@@ -85,6 +85,8 @@ release-rust-cli-test-patch:
     RELEASE_TYPE: "patch"
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      changes:
+        - scratch-git-2/**/*
       when: on_success
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
