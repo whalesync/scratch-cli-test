@@ -14,6 +14,7 @@ import { BaseJsonTableSpec, ConnectorFile } from '../../../../remote-service/con
 import { ScratchGitService } from '../../../../scratch-git/scratch-git.service';
 import { JsonSafeObject } from '../../../../utils/objects';
 import { WorkbookEventService } from '../../../../workbook/workbook-event.service';
+import { JobCanceledError } from '../../../../worker/job-errors';
 import {
   getMaxConcurrency,
   PullLinkedFolderFilesV2JobHandler,
@@ -275,6 +276,28 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
       // Items 1 and 3 should still be processed
       expect(processed).toContain(1);
       expect(processed).toContain(3);
+    });
+
+    it('should propagate JobCanceledError instead of swallowing it', async () => {
+      await expect(
+        runWithConcurrency([1, 2, 3], 2, async (item) => {
+          if (item === 2) throw new JobCanceledError('test-job');
+          await Promise.resolve();
+        }),
+      ).rejects.toThrow(JobCanceledError);
+    });
+
+    it('should stop starting new items after JobCanceledError', async () => {
+      const processed: number[] = [];
+      await expect(
+        runWithConcurrency([1, 2, 3, 4, 5], 1, async (item) => {
+          if (item === 2) throw new JobCanceledError('test-job');
+          processed.push(item);
+          await Promise.resolve();
+        }),
+      ).rejects.toThrow(JobCanceledError);
+      // Item 1 runs, item 2 throws, items 3-5 should not start
+      expect(processed).toEqual([1]);
     });
   });
 
@@ -631,6 +654,56 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
             filesCreated: 1,
           }),
         );
+      });
+    });
+
+    describe('cancellation', () => {
+      it('should throw JobCanceledError when aborted during Phase 1 fetch', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+
+        const abortController = new AbortController();
+        params.abortSignal = abortController.signal;
+
+        // Abort during the connector's pullRecordFiles callback
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          abortController.abort();
+          await callback({
+            files: [{ id: 'rec1', slug: 'test-product', title: 'Test Product' }],
+            connectorProgress: {},
+          });
+        });
+
+        await expect(handler.run(params)).rejects.toThrow(JobCanceledError);
+
+        // Cleanup should still run
+        expect(mockScratchGitService.cleanupStaging).toHaveBeenCalledWith('test-job-id');
+      });
+
+      it('should throw JobCanceledError when aborted before Phase 2', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+
+        const abortController = new AbortController();
+        params.abortSignal = abortController.signal;
+
+        // Phase 1 succeeds, then abort before Phase 2
+        mockConnector.pullRecordFiles.mockResolvedValue(undefined);
+
+        // Abort when checkpoint is called after Phase 1 completes
+        params.checkpoint = jest.fn().mockImplementation(() => {
+          abortController.abort();
+          return Promise.resolve();
+        });
+
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await expect(handler.run(params)).rejects.toThrow(JobCanceledError);
+
+        expect(mockScratchGitService.cleanupStaging).toHaveBeenCalledWith('test-job-id');
       });
     });
 

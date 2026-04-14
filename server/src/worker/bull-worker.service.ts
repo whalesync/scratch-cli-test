@@ -284,14 +284,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         const abortController = this.activeJobToAbortCtrl.get(jobId);
 
         if (abortController) {
-          console.log(`Cancelling job ${jobId}`);
+          WSLogger.info({ source: 'QueueService', message: `Cancelling job ${jobId}` });
           abortController.abort();
         } else {
-          console.log(`Job ${jobId} not found in active jobs or already completed`);
+          WSLogger.info({
+            source: 'QueueService',
+            message: `Job ${jobId} not found in active jobs or already completed`,
+          });
         }
       }
     } catch (error) {
-      console.error('Error handling cancellation message:', error);
+      WSLogger.error({ source: 'QueueService', message: 'Error handling cancellation message', error });
     }
   }
 

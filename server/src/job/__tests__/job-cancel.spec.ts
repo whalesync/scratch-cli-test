@@ -105,18 +105,22 @@ describe('JobService.cancelJob', () => {
     }
   });
 
-  it('persists cancelRequestedAt in DB before checking BullMQ', async () => {
+  it('immediately marks job as canceled in DB before checking BullMQ', async () => {
     mockFindFirst.mockResolvedValue(makeDbJob());
     mockUpdate.mockResolvedValue(makeDbJob());
     mockGetJob.mockResolvedValue(makeBullJob());
 
     await service.cancelJob(BULL_JOB_ID, ACTOR);
 
-    // First update should set cancelRequestedAt
+    // First update should set status to canceled along with cancelRequestedAt
     expect(mockUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'job_1' },
-        data: { cancelRequestedAt: expect.any(Date) },
+        data: expect.objectContaining({
+          status: 'canceled',
+          cancelRequestedAt: expect.any(Date),
+          finishedOn: expect.any(Date),
+        }),
       }),
     );
   });
@@ -129,8 +133,9 @@ describe('JobService.cancelJob', () => {
     const result = await service.cancelJob(BULL_JOB_ID, ACTOR);
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('no longer in the queue');
+    expect(result.message).toContain('canceled');
 
+    // The immediate update already set canceled status — no separate zombie update needed
     expect(mockUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'canceled', finishedOn: expect.any(Date) }),
@@ -164,6 +169,57 @@ describe('JobService.cancelJob', () => {
 
     expect(result.success).toBe(true);
     expect(mockPublish).toHaveBeenCalledWith(`job-cancel:${BULL_JOB_ID}`, expect.stringContaining(BULL_JOB_ID));
+  });
+});
+
+describe('JobService.updateJobStatus', () => {
+  let service: JobService;
+  let mockUpdateMany: jest.Mock;
+  let mockFindUniqueOrThrow: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    mockUpdateMany = jest.fn();
+    mockFindUniqueOrThrow = jest.fn();
+
+    const db = {
+      client: {
+        dbJob: { updateMany: mockUpdateMany, findUniqueOrThrow: mockFindUniqueOrThrow },
+      },
+    } as unknown as DbService;
+
+    const config = {
+      getRedisHost: () => 'localhost',
+      getRedisPort: () => 6379,
+      getRedisPassword: () => undefined,
+    } as unknown as ScratchConfigService;
+
+    service = new JobService(db, config);
+  });
+
+  it('does not overwrite canceled status with completed', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    mockFindUniqueOrThrow.mockResolvedValue(makeDbJob({ status: 'canceled' }));
+
+    const result = await service.updateJobStatus({ id: 'job_1', status: 'completed', finishedOn: new Date() });
+
+    expect(result.status).toBe('canceled');
+    // updateMany should have been called with the guard
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'job_1', status: { not: 'canceled' } },
+      }),
+    );
+  });
+
+  it('updates status normally when not canceled', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockFindUniqueOrThrow.mockResolvedValue(makeDbJob({ status: 'completed' }));
+
+    const result = await service.updateJobStatus({ id: 'job_1', status: 'completed', finishedOn: new Date() });
+
+    expect(result.status).toBe('completed');
   });
 });
 

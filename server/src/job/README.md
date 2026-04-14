@@ -178,16 +178,21 @@ type Progress = {
 
 ## Cancellation
 
-Cancellation uses a **dual-path** design to balance speed and reliability:
-
-### Fast Path: Redis Pub/Sub
-
-For actively running jobs where the worker is listening:
+Cancellation is **immediate in Postgres** and **eventually consistent in BullMQ**. When a user clicks Cancel:
 
 ```
 User clicks Cancel
-  → Publish to Redis channel 'job-cancel:{jobId}'
-  → Worker receives message
+  → DbJob.status = 'canceled' immediately (UI reflects it right away)
+  → DbJob.cancelRequestedAt = now()
+  → Publish to Redis channel 'job-cancel:{jobId}' (fast path to abort worker)
+```
+
+The worker is still running after the DB update. It stops via two complementary paths:
+
+### Fast Path: Redis Pub/Sub
+
+```
+Worker receives pub/sub message
   → AbortController.abort()
   → Handler throws JobCanceledError
 ```
@@ -199,9 +204,7 @@ Latency: near-instant.
 For jobs where pub/sub might not reach (worker restarted, message lost):
 
 ```
-User clicks Cancel
-  → Set DbJob.cancelRequestedAt = now()
-  → ... at next checkpoint() ...
+At next checkpoint():
   → Worker reads cancelRequestedAt from Postgres
   → AbortController.abort()
   → Handler throws JobCanceledError
@@ -209,13 +212,15 @@ User clicks Cancel
 
 Latency: up to one checkpoint interval (typically seconds to a minute).
 
-Both paths always fire together. The fast path wins in the common case; the slow path is a safety net.
+### Race Protection
+
+The worker may finish before the abort signal fires. To prevent it from overwriting the `canceled` status, `updateJobStatus` uses a conditional update: it will not transition a job **out of** the `canceled` state. If the worker calls `updateJobStatus({ status: 'completed' })` after the user canceled, the update is a no-op.
 
 ### Cancellation Edge Cases
 
 - **Job already terminal**: Returns the current status, no action taken
-- **Job missing from BullMQ but DbJob exists**: Marks DbJob as `canceled` immediately
-- **BullMQ and Postgres disagree on status**: Reconciles toward BullMQ's state
+- **Job missing from BullMQ but DbJob exists**: Already marked `canceled` by the initial update
+- **BullMQ says job is already completed/failed**: Overwrites the `canceled` status to match BullMQ's terminal state (BullMQ is authoritative for terminal states)
 
 ## DataFolder Locking
 

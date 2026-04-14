@@ -85,8 +85,10 @@ export class JobService {
     finishedOn?: Date;
     progress?: Progress;
   }): Promise<DbJob> {
-    const job = await this.db.client.dbJob.update({
-      where: { id: params.id },
+    // Never overwrite a 'canceled' status — the user's cancellation takes priority over
+    // any in-flight worker status update (e.g., the worker finishing before the abort signal fires).
+    const result = await this.db.client.dbJob.updateMany({
+      where: { id: params.id, status: { not: 'canceled' } },
       data: {
         status: params.status,
         error: params.error,
@@ -96,7 +98,13 @@ export class JobService {
       },
     });
 
-    return job;
+    // If the row was already canceled, return the current state without overwriting
+    if (result.count === 0) {
+      const existing = await this.db.client.dbJob.findUniqueOrThrow({ where: { id: params.id } });
+      return existing;
+    }
+
+    return this.db.client.dbJob.findUniqueOrThrow({ where: { id: params.id } });
   }
 
   /**
@@ -351,10 +359,12 @@ export class JobService {
       };
     }
 
-    // Persist the cancellation request so checkpoint() can detect it even after worker restart
+    // Mark the job as canceled in Postgres immediately so the UI reflects it right away.
+    // Also set cancelRequestedAt so checkpoint() can detect it if the worker is still running.
+    const now = new Date();
     await this.db.client.dbJob.update({
       where: { id: dbJob.id },
-      data: { cancelRequestedAt: new Date() },
+      data: { status: 'canceled', cancelRequestedAt: now, finishedOn: now, error: 'Canceled by user' },
     });
 
     // Try to also send the fast-path pub/sub signal for immediate in-memory abort
@@ -365,24 +375,19 @@ export class JobService {
     await queue.close();
 
     if (!job) {
-      // Job is gone from BullMQ (worker restarted, cleaned up, etc.) — mark as canceled directly
-      await this.db.client.dbJob.update({
-        where: { id: dbJob.id },
-        data: { status: 'canceled', finishedOn: new Date(), error: 'Canceled (job no longer in queue)' },
-      });
       return {
         success: true,
-        message: `Job ${jobId} was no longer in the queue and has been marked as canceled`,
+        message: `Job ${jobId} has been canceled`,
       };
     }
 
     const state = await job.getState();
 
     if (state === 'completed' || state === 'failed') {
-      // Sync DB status to match BullMQ
+      // Sync DB status to match BullMQ's terminal state instead
       await this.db.client.dbJob.update({
         where: { id: dbJob.id },
-        data: { status: state, finishedOn: new Date() },
+        data: { status: state, finishedOn: now },
       });
       return {
         success: false,
@@ -396,7 +401,7 @@ export class JobService {
 
     return {
       success: true,
-      message: `Cancellation signal sent for job ${jobId}`,
+      message: `Job ${jobId} has been canceled`,
     };
   }
 }

@@ -15,6 +15,7 @@ import type { Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { JobCanceledError } from 'src/worker/job-errors';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { type BuiltFile, buildGitFilesFromConnectorFiles } from './connector-file-utils';
@@ -501,6 +502,9 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         results.set(folderId, result);
         jobProgress.folderFetchStatus[folderId] = 'fetched';
       } catch (error) {
+        // Let cancellation errors propagate — they're not folder failures
+        if (error instanceof JobCanceledError) throw error;
+
         jobProgress.folderFetchStatus[folderId] = 'failed';
         pullStats.failed = true;
 
@@ -601,6 +605,9 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         jobProgress.completedFolderIds.push(folderCtx.dataFolder.id);
         await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
       } catch (error) {
+        // Let cancellation errors propagate — they're not folder failures
+        if (error instanceof JobCanceledError) throw error;
+
         pullStats.failed = true;
 
         WSLogger.error({
@@ -627,6 +634,11 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         });
       }
     }
+
+    // If the loop exited due to abort, surface it as a cancellation
+    if (abortSignal.aborted) {
+      throw new JobCanceledError(jobId);
+    }
   }
 
   private async fetchFolder(params: {
@@ -650,7 +662,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     const stagingFolder = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
 
     const onBatch = async (callbackParams: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => {
-      if (abortSignal.aborted) return;
+      if (abortSignal.aborted) throw new JobCanceledError(folderCtx.jobId);
 
       const { files, connectorProgress } = callbackParams;
 
@@ -1002,18 +1014,26 @@ export function getMaxConcurrency(service: string, folderCount: number): number 
  */
 export async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   const executing = new Set<Promise<void>>();
+  let canceled = false;
+
   for (const item of items) {
+    if (canceled) break;
+
     const p = fn(item).then(
       () => {
         executing.delete(p);
       },
       (err) => {
         executing.delete(p);
-        WSLogger.error({
-          source: LOG_SOURCE,
-          message: 'Unhandled error in runWithConcurrency task',
-          error: err,
-        });
+        if (err instanceof JobCanceledError) {
+          canceled = true;
+        } else {
+          WSLogger.error({
+            source: LOG_SOURCE,
+            message: 'Unhandled error in runWithConcurrency task',
+            error: err,
+          });
+        }
       },
     );
     executing.add(p);
@@ -1021,5 +1041,8 @@ export async function runWithConcurrency<T>(items: T[], limit: number, fn: (item
       await Promise.race(executing);
     }
   }
+  // Wait for in-flight work to settle before propagating cancellation
   await Promise.all(executing);
+
+  if (canceled) throw new JobCanceledError('concurrent-task');
 }
