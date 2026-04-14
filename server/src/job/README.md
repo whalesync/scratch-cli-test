@@ -138,7 +138,7 @@ When a job stalls (worker dies) and BullMQ re-dispatches it, `run()` is called a
 - **jobProgress** tracks high-level completion (e.g., `completedFolderIds` — which folders to skip)
 - **connectorProgress** tracks API pagination state (e.g., a cursor token to resume fetching mid-page)
 
-This means resume is **opt-in per handler and per connector**. The framework provides the checkpoint/restore plumbing, but each handler must be written to actually use it. In practice, not all connectors persist their pagination cursor yet — those restart from the beginning after a stall. See [Connector Resume Plan](/docs/plans/2026-04-14-connector-resume-plan.md) for per-connector status.
+This means resume is **opt-in per handler and per connector**. The framework provides the checkpoint/restore plumbing, but each handler must be written to actually use it. All active connectors now persist their pagination cursor — see [Connector Resume Plan](/docs/plans/resolved/2026-04-14-connector-resume-plan.md) for details.
 
 ## Checkpointing and Progress
 
@@ -264,7 +264,7 @@ When BullMQ re-dispatches a stalled job to a new worker:
    - **jobProgress.completedFolderIds** — skip fully-processed folders
    - **connectorProgress** — resume API pagination from the last cursor
 
-Not all connectors support cursor-based resume yet. See [Connector Resume Plan](/docs/plans/2026-04-14-connector-resume-plan.md) for status.
+All active connectors support cursor-based resume. See [Connector Resume Plan](/docs/plans/resolved/2026-04-14-connector-resume-plan.md) for details.
 
 ### What Causes Stalls (and What Doesn't)
 
@@ -385,10 +385,6 @@ Each job type emits metrics at terminal states:
 
 The stale job reaper only catches jobs stuck in `created`. If a BullMQ job is lost while a DbJob is in `active` status (e.g., Redis flush, BullMQ bug), the DbJob stays `active` forever and its DataFolder lock is never released. A periodic scan that checks `active` DbJobs against BullMQ state would close this gap.
 
-### Incomplete connector resume support
-
-When a job stalls and is re-dispatched, resume depends on the connector persisting its pagination cursor via `connectorProgress`. Not all connectors implement this yet — some restart from the beginning after a stall. See [Connector Resume Plan](/docs/plans/2026-04-14-connector-resume-plan.md) for per-connector status.
-
 ### No framework-level resume abstraction
 
 Each handler is responsible for its own resume logic — reading `completedFolderIds` from progress, skipping finished work, tracking what's done. The framework provides checkpoint/restore plumbing but no higher-level abstraction like "process these items, skip completed ones." This means every handler reinvents the pattern, and it's easy for a new handler to not implement resume at all without anyone noticing.
@@ -413,24 +409,24 @@ The enqueuer writes to Postgres first, then BullMQ. If the process crashes betwe
 
 ## Appendix: Code Map
 
-| Component                         | File                                                                               |
-| --------------------------------- | ---------------------------------------------------------------------------------- |
-| Job CRUD, cancellation logic      | `server/src/job/job.service.ts`                                                    |
-| REST API controller               | `server/src/job/job.controller.ts`                                                 |
-| Job entity & status types         | `server/src/job/entities/job.entity.ts`                                            |
-| Job type enum                     | `packages/shared-types/src/job-types.ts`                                           |
-| Enqueuer (create + enqueue)       | `server/src/worker-enqueuer/bull-enqueuer.service.ts`                              |
-| BullMQ worker (processing)        | `server/src/worker/bull-worker.service.ts`                                         |
-| Handler factory                   | `server/src/worker/job-handler.service.ts`                                         |
-| Handler base types                | `server/src/worker/jobs/base-types.ts`                                             |
-| Progress type definition          | `server/src/types/progress.ts`                                                     |
-| JobCanceledError                  | `server/src/worker/job-errors.ts`                                                  |
-| Stale job reaper                  | `server/src/cron/stale-job-reaper.service.ts`                                      |
-| Old job cleanup                   | `server/src/cron/old-job-cleanup.service.ts`                                       |
-| Redis pub/sub infrastructure      | `server/src/redis/redis-pubsub.service.ts`                                         |
-| Workbook event broadcasting       | `server/src/workbook/workbook-event.service.ts`                                    |
-| Worker config (concurrency, lock) | `server/src/config/scratch-config.service.ts`                                      |
-| Custom metrics definitions        | `server/src/metrics/custom-metrics.ts`                                             |
-| Prisma schema (DbJob model)       | `server/prisma/schema.prisma`                                                      |
-| Connector resume plan             | [`docs/connector-resume-plan.md`](/docs/plans/2026-04-14-connector-resume-plan.md) |
-| Pull job performance plan         | [`docs/pull-job-performance-plan.md`](/docs/pull-job-performance-plan.md)          |
+| Component                         | File                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| Job CRUD, cancellation logic      | `server/src/job/job.service.ts`                                                             |
+| REST API controller               | `server/src/job/job.controller.ts`                                                          |
+| Job entity & status types         | `server/src/job/entities/job.entity.ts`                                                     |
+| Job type enum                     | `packages/shared-types/src/job-types.ts`                                                    |
+| Enqueuer (create + enqueue)       | `server/src/worker-enqueuer/bull-enqueuer.service.ts`                                       |
+| BullMQ worker (processing)        | `server/src/worker/bull-worker.service.ts`                                                  |
+| Handler factory                   | `server/src/worker/job-handler.service.ts`                                                  |
+| Handler base types                | `server/src/worker/jobs/base-types.ts`                                                      |
+| Progress type definition          | `server/src/types/progress.ts`                                                              |
+| JobCanceledError                  | `server/src/worker/job-errors.ts`                                                           |
+| Stale job reaper                  | `server/src/cron/stale-job-reaper.service.ts`                                               |
+| Old job cleanup                   | `server/src/cron/old-job-cleanup.service.ts`                                                |
+| Redis pub/sub infrastructure      | `server/src/redis/redis-pubsub.service.ts`                                                  |
+| Workbook event broadcasting       | `server/src/workbook/workbook-event.service.ts`                                             |
+| Worker config (concurrency, lock) | `server/src/config/scratch-config.service.ts`                                               |
+| Custom metrics definitions        | `server/src/metrics/custom-metrics.ts`                                                      |
+| Prisma schema (DbJob model)       | `server/prisma/schema.prisma`                                                               |
+| Connector resume plan             | [`docs/connector-resume-plan.md`](/docs/plans/resolved/2026-04-14-connector-resume-plan.md) |
+| Pull job performance plan         | [`docs/pull-job-performance-plan.md`](/docs/pull-job-performance-plan.md)                   |

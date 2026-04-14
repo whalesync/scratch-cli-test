@@ -1,5 +1,13 @@
 # Connector Pagination Resume Plan
 
+> **Resolved 2026-04-09**
+>
+> - `40b09098` — Add pagination resume support to all connectors for stalled pull jobs
+> - `0e8e1fbc` — Add smoke test for pull job connector progress persistence
+> - `ad0bbdbc` — Fix stale connector progress leaking between folders on job resume
+>
+> Remaining follow-ups: Shopify child entity resume and Shopify metaobject resume.
+
 ## Context
 
 Pull jobs can stall when BullMQ's lock expires during long-running operations. When a stalled job restarts, every connector re-fetches all records from page 1 because no pagination state is persisted. This wastes API quota, re-commits duplicate data, and causes jobs to get stuck in stall loops on large datasets (e.g., 6,100 Stripe Payment Intents).
