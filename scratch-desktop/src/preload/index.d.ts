@@ -76,6 +76,7 @@ interface ScratchDesktopAPI {
       tablePaths: string[];
     }>
   >;
+  deleteLocalPublishPlans: (workspacePath: string) => Promise<void>;
   pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
   pullWorkspaceChanges: (
     workspacePath: string,

@@ -15,7 +15,7 @@
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { app } from 'electron';
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, rm } from 'fs/promises';
 import { join, resolve } from 'path';
 
 // ── Types ──
@@ -365,6 +365,56 @@ export async function listLocalPublishPlans(workspacePath: string): Promise<Loca
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === 'ENOENT') {
       return [];
+    }
+    throw error;
+  }
+}
+
+async function removeLegacyPublishPlanDirs(scratchDir: string): Promise<void> {
+  try {
+    const entries = await readdir(scratchDir, { withFileTypes: true });
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const entryPath = join(scratchDir, entry.name);
+          if (entry.name.startsWith('publish-plan-')) {
+            await rm(entryPath, { recursive: true, force: true });
+            return;
+          }
+
+          if (!entry.name.startsWith('.')) {
+            await removeLegacyPublishPlanDirs(entryPath);
+          }
+        }),
+    );
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function deleteLocalPublishPlans(workspacePath: string): Promise<void> {
+  const plansRoot = join(workspacePath, '.scratch', 'connections', 'scratch');
+
+  try {
+    const connectionEntries = await readdir(plansRoot, { withFileTypes: true });
+    await Promise.all(
+      connectionEntries
+        .filter((entry) => entry.isDirectory())
+        .map(async (connectionEntry) => {
+          const scratchDir = join(plansRoot, connectionEntry.name);
+          await removeLegacyPublishPlanDirs(scratchDir);
+          await rm(join(scratchDir, '.publish-plans'), { recursive: true, force: true });
+        }),
+    );
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === 'ENOENT') {
+      return;
     }
     throw error;
   }

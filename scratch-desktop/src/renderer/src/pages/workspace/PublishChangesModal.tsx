@@ -248,11 +248,11 @@ export function PublishChangesModal({
   const [error, setError] = useState<string | null>(null);
   const [unreviewedEntries, setUnreviewedEntries] = useState<UnreviewedChangeEntry[]>([]);
   const [plans, setPlans] = useState<LocalPublishPlan[]>([]);
-  const [planSource, setPlanSource] = useState<'existing' | 'new' | null>(null);
   const [planningOutput, setPlanningOutput] = useState('');
   const [planningRunning, setPlanningRunning] = useState(false);
   const [planningExitCode, setPlanningExitCode] = useState<number | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
 
@@ -272,10 +272,12 @@ export function PublishChangesModal({
 
     try {
       setError(null);
+      setPlans([]);
       setPlanningOutput('');
       setPlanningExitCode(null);
       setPlanningRunning(true);
       setMode('planning');
+      await window.scratchDesktop.deleteLocalPublishPlans(localPath);
       const { sessionId } = await window.scratchDesktop.startPlanPublish(localPath, filterPath ?? undefined);
       planningSessionIdRef.current = sessionId;
     } catch (err) {
@@ -292,6 +294,9 @@ export function PublishChangesModal({
 
     setInitializing(true);
     setError(null);
+    setClosing(false);
+    setUnreviewedEntries([]);
+    setPlans([]);
     setPlanningOutput('');
     setPlanningExitCode(null);
     setPlanningRunning(false);
@@ -301,33 +306,20 @@ export function PublishChangesModal({
     planningSessionIdRef.current = null;
 
     try {
-      const [nextUnreviewed, nextPlans] = await Promise.all([
-        window.scratchDesktop.listUnreviewedChanges(localPath),
-        window.scratchDesktop.listLocalPublishPlans(localPath),
-      ]);
+      const nextUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
 
       setUnreviewedEntries(nextUnreviewed);
-      setPlans(nextPlans);
 
       if (autoStartPlanningOnOpen || filterPath) {
-        setPlanSource('new');
         await startPlanning();
         return;
       }
 
       if (!assumeUnreviewedApproved && nextUnreviewed.length > 0) {
-        setPlanSource(nextPlans.length > 0 ? 'existing' : null);
         setMode('approval');
         return;
       }
 
-      if (nextPlans.length > 0) {
-        setPlanSource('existing');
-        setMode('ready');
-        return;
-      }
-
-      setPlanSource('new');
       await startPlanning();
     } catch (err) {
       setMode('error');
@@ -338,15 +330,32 @@ export function PublishChangesModal({
   }, [assumeUnreviewedApproved, autoStartPlanningOnOpen, filterPath, localPath, opened, startPlanning]);
 
   const continueAfterApproval = useCallback(() => {
-    if (plans.length > 0) {
-      setPlanSource('existing');
-      setMode('ready');
+    void startPlanning();
+  }, [startPlanning]);
+
+  const handleClose = useCallback(async () => {
+    if (closing) {
       return;
     }
 
-    setPlanSource('new');
-    void startPlanning();
-  }, [plans.length, startPlanning]);
+    setClosing(true);
+
+    try {
+      if (localPath) {
+        await window.scratchDesktop.deleteLocalPublishPlans(localPath);
+      }
+    } catch (err) {
+      console.debug('Failed to delete local publish plans on close:', err);
+      notifications.show({
+        title: 'Publish plan cleanup failed',
+        message: err instanceof Error ? err.message : 'Failed to delete the local publish plan.',
+        color: 'red',
+      });
+    }
+
+    setClosing(false);
+    onClose();
+  }, [closing, localPath, onClose]);
 
   const triggerPublish = useCallback(async () => {
     if (!localPath) {
@@ -407,7 +416,6 @@ export function PublishChangesModal({
 
       void refreshPlans()
         .then((nextPlans) => {
-          setPlanSource('new');
           setMode('ready');
           if (nextPlans.length === 0) {
             notifications.show({
@@ -513,12 +521,12 @@ export function PublishChangesModal({
     [plans],
   );
 
-  const canClose = !planningRunning && !publishing;
+  const canClose = !planningRunning && !publishing && !closing;
 
   return (
     <Modal
       opened={opened}
-      onClose={canClose ? onClose : () => undefined}
+      onClose={canClose ? () => void handleClose() : () => undefined}
       title={filterPath ? 'Publish file' : 'Publish changes'}
       size="lg"
     >
@@ -539,10 +547,12 @@ export function PublishChangesModal({
                   first.
                 </Text>
                 <Group justify="flex-end">
-                  <Button variant="default" onClick={onClose}>
+                  <Button variant="default" onClick={() => void handleClose()} loading={closing}>
                     Cancel
                   </Button>
-                  <Button onClick={() => continueAfterApproval()}>Continue</Button>
+                  <Button onClick={() => continueAfterApproval()} disabled={closing}>
+                    Continue
+                  </Button>
                 </Group>
               </>
             )}
@@ -566,9 +576,7 @@ export function PublishChangesModal({
                 {plans.length > 0 ? (
                   <>
                     <Text size="sm" c="dimmed">
-                      {planSource === 'existing'
-                        ? 'An existing local publish plan was found. You can continue with it or rebuild it.'
-                        : 'The publish plan is ready. Review the summary below, then publish when ready.'}
+                      The publish plan is ready. Review the summary below, then publish when ready.
                     </Text>
 
                     <Group gap="xs">
@@ -613,24 +621,21 @@ export function PublishChangesModal({
                     </ScrollArea.Autosize>
 
                     <Group justify="space-between">
-                      <Button variant="default" onClick={onClose}>
+                      <Button variant="default" onClick={() => void handleClose()} loading={closing}>
                         Cancel
                       </Button>
-                      <Group>
-                        <Button variant="default" onClick={() => void startPlanning()}>
-                          Start new plan
-                        </Button>
-                        <Button onClick={() => void triggerPublish()}>
-                          {planSource === 'existing' ? 'Continue publish plan' : 'Publish now'}
-                        </Button>
-                      </Group>
+                      <Button onClick={() => void triggerPublish()} disabled={closing}>
+                        Publish now
+                      </Button>
                     </Group>
                   </>
                 ) : (
                   <>
                     <Text size="sm">Nothing needs to be published.</Text>
                     <Group justify="flex-end">
-                      <Button onClick={onClose}>Close</Button>
+                      <Button onClick={() => void handleClose()} loading={closing}>
+                        Close
+                      </Button>
                     </Group>
                   </>
                 )}
@@ -645,7 +650,9 @@ export function PublishChangesModal({
                   All data published
                 </Alert>
                 <Group justify="flex-end">
-                  <Button onClick={onClose}>Close</Button>
+                  <Button onClick={() => void handleClose()} loading={closing}>
+                    Close
+                  </Button>
                 </Group>
               </>
             )}
@@ -666,7 +673,9 @@ export function PublishChangesModal({
                   </Stack>
                 )}
                 <Group justify="flex-end">
-                  <Button onClick={onClose}>Close</Button>
+                  <Button onClick={() => void handleClose()} loading={closing}>
+                    Close
+                  </Button>
                 </Group>
               </>
             )}

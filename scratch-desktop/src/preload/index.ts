@@ -99,6 +99,8 @@ const scratchDesktop = {
       tablePaths: string[];
     }>
   > => invoke('scratch:list-local-publish-plans', workspacePath),
+  deleteLocalPublishPlans: (workspacePath: string): Promise<void> =>
+    invoke('scratch:delete-local-publish-plans', workspacePath),
   pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
     invoke('scratch:push-workspace-changes', workspacePath),
   pullWorkspaceChanges: (

@@ -25,6 +25,7 @@ import {
 } from './local-files';
 import {
   acceptFieldChanges,
+  deleteLocalPublishPlans,
   listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
@@ -447,6 +448,9 @@ ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: strin
 ipcMain.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) => listUnpushedChanges(workspacePath));
 ipcMain.handle('scratch:list-local-publish-plans', async (_, workspacePath: string) =>
   listLocalPublishPlans(workspacePath),
+);
+ipcMain.handle('scratch:delete-local-publish-plans', async (_, workspacePath: string) =>
+  deleteLocalPublishPlans(workspacePath),
 );
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
   runScratchmd(['files', 'upload'], workspacePath),
