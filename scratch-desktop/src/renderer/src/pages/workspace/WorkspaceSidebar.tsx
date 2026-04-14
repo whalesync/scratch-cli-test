@@ -14,6 +14,7 @@ interface WorkspaceSidebarProps {
   workspace: Workspace;
   localFolders: LocalFolder[];
   isFoldersLoading: boolean;
+  hasLoadedFoldersOnce: boolean;
   width: number;
   minWidth: number;
   maxWidth: number;
@@ -25,6 +26,7 @@ export function WorkspaceSidebar({
   workspace,
   localFolders,
   isFoldersLoading,
+  hasLoadedFoldersOnce,
   width,
   minWidth,
   maxWidth,
@@ -33,6 +35,7 @@ export function WorkspaceSidebar({
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
+  const showInitialLoader = isFoldersLoading && !hasLoadedFoldersOnce;
 
   return (
     <Stack
@@ -50,7 +53,7 @@ export function WorkspaceSidebar({
     >
       {/* Folder tree */}
       <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} py="xs">
-        {isFoldersLoading ? (
+        {showInitialLoader ? (
           <Group justify="center" align="center" gap="sm">
             <Loader size="xs" />
             <Text12Regular c="dimmed" ta="center">

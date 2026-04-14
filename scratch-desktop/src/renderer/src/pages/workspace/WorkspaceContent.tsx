@@ -38,6 +38,7 @@ export function WorkspaceContent({
   const [isResizing, setIsResizing] = useState(false);
   const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
   const [isFoldersLoading, setIsFoldersLoading] = useState(false);
+  const [hasLoadedFoldersOnce, setHasLoadedFoldersOnce] = useState(false);
   const folderLoadGeneration = useRef(0);
 
   const handleResizeStart = useCallback(() => {
@@ -65,6 +66,7 @@ export function WorkspaceContent({
       folderLoadGeneration.current += 1;
       setLocalFolders([]);
       setIsFoldersLoading(false);
+      setHasLoadedFoldersOnce(false);
       return;
     }
 
@@ -78,12 +80,13 @@ export function WorkspaceContent({
           return;
         }
         setLocalFolders(folders);
+        setHasLoadedFoldersOnce(true);
       })
       .catch(() => {
         if (generation !== folderLoadGeneration.current) {
           return;
         }
-        setLocalFolders([]);
+        setHasLoadedFoldersOnce(true);
       })
       .finally(() => {
         if (generation !== folderLoadGeneration.current) {
@@ -108,6 +111,7 @@ export function WorkspaceContent({
         workspace={workspace}
         localFolders={localFolders}
         isFoldersLoading={isFoldersLoading}
+        hasLoadedFoldersOnce={hasLoadedFoldersOnce}
         width={sidebarWidth}
         minWidth={MIN_SIDEBAR_WIDTH}
         maxWidth={MAX_SIDEBAR_WIDTH}
