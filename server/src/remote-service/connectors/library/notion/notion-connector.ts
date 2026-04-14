@@ -24,7 +24,6 @@ import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams 
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
-import { REMOTE_FIELD_ID } from '../../json-schema';
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { createNotionBlockDiff } from './conversion/notion-block-diff';
@@ -218,32 +217,23 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
   /**
    * Resolve the title property name for filename extraction.
-   * Handles both the nameFieldOverride case (single-element titleColumnRemoteId)
-   * and the normal case (2-element [databaseId, propertyId]).
+   * titleColumnRemoteId is now ['properties', propertyName], so just return the property name directly.
    */
   private resolveTitlePropertyName(tableSpec: BaseJsonTableSpec): string | undefined {
     if (!tableSpec.titleColumnRemoteId || tableSpec.titleColumnRemoteId.length === 0) {
       return undefined;
     }
 
-    // nameFieldOverride sets titleColumnRemoteId to a single-element array with the property name
+    // titleColumnRemoteId is ['properties', propertyName] — return the property name directly
+    if (tableSpec.titleColumnRemoteId.length >= 2) {
+      return tableSpec.titleColumnRemoteId[1];
+    }
+
+    // Fallback for single-element array (shouldn't happen with new schema)
     if (tableSpec.titleColumnRemoteId.length === 1) {
       return tableSpec.titleColumnRemoteId[0];
     }
 
-    // Normal case: [databaseId, propertyId] — look up property name from schema
-    const targetPropertyId = tableSpec.titleColumnRemoteId[1];
-    const schema = tableSpec.schema as Record<string, unknown> | undefined;
-    const topProps = schema?.properties as Record<string, Record<string, unknown>> | undefined;
-    const propertiesSchema = topProps?.properties?.properties as Record<string, Record<string, unknown>> | undefined;
-    if (!propertiesSchema) {
-      return undefined;
-    }
-    for (const [name, propSchema] of Object.entries(propertiesSchema)) {
-      if (propSchema[REMOTE_FIELD_ID] === targetPropertyId) {
-        return name;
-      }
-    }
     return undefined;
   }
 

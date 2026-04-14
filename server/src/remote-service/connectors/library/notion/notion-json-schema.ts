@@ -36,15 +36,10 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
   const [databaseId] = id.remoteId;
 
   const propertySchemas: Record<string, TSchema> = {};
-  let titleColumnRemoteId: EntityId['remoteId'] | undefined;
 
   for (const [name, property] of Object.entries(database.properties)) {
     const propSchema = notionPropertyToJsonSchema(property);
     propertySchemas[name] = Type.Optional(propSchema);
-
-    if (property.type === 'title') {
-      titleColumnRemoteId = [databaseId, property.id];
-    }
   }
 
   const tableTitle = database.title.map((t) => t.plain_text).join('');
@@ -137,7 +132,6 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
     name: sanitizeForTableWsId(tableTitle),
     schema,
     idColumnRemoteId: 'id',
-    titleColumnRemoteId,
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

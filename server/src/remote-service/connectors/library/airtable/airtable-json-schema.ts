@@ -37,12 +37,12 @@ export function buildAirtableJsonTableSpec(
 
     // Track title column (primary field)
     if (field.id === table.primaryFieldId) {
-      titleColumnRemoteId = [baseId, tableId, field.id];
+      titleColumnRemoteId = ['fields', field.name];
     }
 
     // Track main content column (first rich text field)
     if (!mainContentColumnRemoteId && (field.type as AirtableDataType) === AirtableDataType.RICH_TEXT) {
-      mainContentColumnRemoteId = [baseId, tableId, field.id];
+      mainContentColumnRemoteId = ['fields', field.name];
     }
   }
 

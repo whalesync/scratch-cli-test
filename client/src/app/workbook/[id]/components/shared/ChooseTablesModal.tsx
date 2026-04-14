@@ -46,6 +46,54 @@ import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
+type SchemaField = { path: string[]; label: string; type: string };
+
+// Format a path for display. Segments containing "." are quoted so e.g.
+// ["fields", "U.S. Sales"] renders as `fields → "U.S. Sales"` rather than the
+// ambiguous `fields.U.S. Sales`.
+function formatFieldPath(path: string[]): string {
+  return path.map((seg) => (seg.includes('.') ? `"${seg}"` : seg)).join(' → ');
+}
+
+// Walk a JSON Schema, emitting one SchemaField per leaf property. Nested object properties
+// produce dotted paths (e.g. "fields.Name") so the user can target them in the field selects.
+// Nullable unions (anyOf/oneOf with a "null" branch) are unwrapped, matching the rest of the app.
+function flattenSchemaFields(schema: unknown): SchemaField[] {
+  const results: SchemaField[] = [];
+
+  const visit = (node: Record<string, unknown> | undefined, prefix: string[]) => {
+    const properties = node?.properties as Record<string, Record<string, unknown>> | undefined;
+    if (!properties) return;
+    for (const [name, prop] of Object.entries(properties)) {
+      const path = [...prefix, name];
+
+      // Resolve the effective type, unwrapping nullable unions.
+      let type = (prop?.['x-scratch-connector-data-type'] as string) ?? (prop?.type as string);
+      let effective: Record<string, unknown> = prop;
+      if (!type) {
+        const variants = (prop?.anyOf ?? prop?.oneOf) as Array<Record<string, unknown>> | undefined;
+        const real = variants?.filter((s) => s.type !== 'null');
+        if (real?.length) {
+          effective = real[0];
+          type = (real[0].type as string) ?? 'unknown';
+        } else {
+          type = 'unknown';
+        }
+      }
+
+      results.push({ path: [...path], label: formatFieldPath(path), type: type ?? 'unknown' });
+
+      // Recurse into nested objects so children are also selectable.
+      if (type === 'object' && (effective.properties as Record<string, unknown> | undefined)) {
+        visit(effective, path);
+      }
+    }
+  };
+
+  visit(schema as Record<string, unknown> | undefined, []);
+  return results;
+}
+
 type TableGroup = {
   groupLabel: string | null;
   subGroups: {
@@ -214,7 +262,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const [dirtyFileCount, setDirtyFileCount] = useState(0);
 
   const groupedTables = useMemo(() => groupTables(availableTables), [availableTables]);
-  const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string | null }>>(
+  const [fieldSelections, setFieldSelections] = useState<Map<string, { idField: string; nameField: string[] | null }>>(
     new Map(),
   );
   const [loadedTableSchemas, setLoadedTableSchemas] = useState<Map<string, TableSchemaPreview>>(new Map());
@@ -465,7 +513,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
             const next = new Map(prev);
             const detectedNameField =
               result.titleColumnRemoteId && result.titleColumnRemoteId.length > 0
-                ? result.titleColumnRemoteId[0]
+                ? result.titleColumnRemoteId
                 : null;
             next.set(tableKey, {
               idField: result.idColumnRemoteId,
@@ -489,7 +537,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   }, [step, supportsFieldSelection, tablesToAdd, workbookId, connectorAccount.id]);
 
   const handleFieldSelectionChange = useCallback(
-    (tableKey: string, field: 'idField' | 'nameField', value: string | null) => {
+    (tableKey: string, field: 'idField' | 'nameField', value: string | string[] | null) => {
       setFieldSelections((prev) => {
         const next = new Map(prev);
         const current = next.get(tableKey) ?? { idField: '', nameField: null };
@@ -930,20 +978,9 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
               const currentSelection = fieldSelections.get(entry.tableKey);
               const showFieldSelectors = supportsFieldSelection && entry.isNew && !entry.isRemoved;
 
-              // Extract field names/types from schema properties, unwrapping nullable unions
-              const schemaFields = tableSchema
-                ? Object.entries((tableSchema.schema?.properties as Record<string, Record<string, unknown>>) ?? {}).map(
-                    ([name, prop]) => {
-                      let type = (prop?.['x-scratch-connector-data-type'] as string) ?? (prop?.type as string);
-                      if (!type) {
-                        const variants = (prop?.anyOf ?? prop?.oneOf) as Array<Record<string, unknown>> | undefined;
-                        const real = variants?.filter((s) => s.type !== 'null');
-                        type = (real?.length ? (real[0].type as string) : undefined) ?? 'unknown';
-                      }
-                      return { name, type };
-                    },
-                  )
-                : [];
+              // Extract field names/types from schema properties, unwrapping nullable unions and
+              // recursing into nested object properties so paths like "fields.Name" are selectable.
+              const schemaFields = tableSchema ? flattenSchemaFields(tableSchema.schema) : [];
 
               return (
                 <Box key={entry.tableKey}>
@@ -964,31 +1001,67 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
                     {showFieldSelectors && tableSchema && (
                       <>
-                        <Select
-                          label="ID field"
-                          description="Column used to uniquely identify each record"
-                          data={schemaFields.map((f) => ({
-                            value: f.name,
-                            label: `${f.name} (${f.type})`,
-                          }))}
-                          value={currentSelection?.idField ?? tableSchema.idColumnRemoteId}
-                          onChange={(value) => handleFieldSelectionChange(entry.tableKey, 'idField', value)}
-                          allowDeselect={false}
-                          size="xs"
-                        />
-                        <Select
-                          label="Name field (optional)"
-                          description="Column used for filenames. Leave empty to use the ID."
-                          data={schemaFields.map((f) => ({
-                            value: f.name,
-                            label: `${f.name} (${f.type})`,
-                          }))}
-                          value={currentSelection?.nameField ?? null}
-                          onChange={(value) => handleFieldSelectionChange(entry.tableKey, 'nameField', value)}
-                          placeholder="None (use ID for filenames)"
-                          clearable
-                          size="xs"
-                        />
+                        {(() => {
+                          // Mantine <Select> values must be strings, but our paths are arrays
+                          // that may contain ".". We use the option's index as the synthetic
+                          // value and look up the real path on selection — fully lossless.
+                          const options = schemaFields.map((f, i) => ({
+                            value: String(i),
+                            label: `${f.label} (${f.type})`,
+                          }));
+                          const findIndexByPath = (path: string[] | null | undefined) => {
+                            if (!path) return null;
+                            const i = schemaFields.findIndex(
+                              (f) => f.path.length === path.length && f.path.every((seg, j) => seg === path[j]),
+                            );
+                            return i >= 0 ? String(i) : null;
+                          };
+                          const currentIdPath = currentSelection?.idField
+                            ? [currentSelection.idField]
+                            : [tableSchema.idColumnRemoteId];
+                          return (
+                            <>
+                              <Select
+                                label="ID field"
+                                description="Column used to uniquely identify each record"
+                                data={options}
+                                value={findIndexByPath(currentIdPath)}
+                                onChange={(value) => {
+                                  const picked = value != null ? schemaFields[Number(value)] : null;
+                                  // ID field is stored as a single string; join with "." for nested
+                                  // paths. Connectors that only understand top-level IDs will ignore
+                                  // nested selections, but the picker no longer hides them.
+                                  handleFieldSelectionChange(
+                                    entry.tableKey,
+                                    'idField',
+                                    picked ? picked.path.join('.') : null,
+                                  );
+                                }}
+                                allowDeselect={false}
+                                size="xs"
+                                searchable
+                              />
+                              <Select
+                                label="Name field (optional)"
+                                description="Column used for filenames. Leave empty to use the ID."
+                                data={options}
+                                value={findIndexByPath(currentSelection?.nameField)}
+                                onChange={(value) => {
+                                  const picked = value != null ? schemaFields[Number(value)] : null;
+                                  handleFieldSelectionChange(
+                                    entry.tableKey,
+                                    'nameField',
+                                    picked ? picked.path : null,
+                                  );
+                                }}
+                                placeholder="None (use ID for filenames)"
+                                clearable
+                                size="xs"
+                                searchable
+                              />
+                            </>
+                          );
+                        })()}
                       </>
                     )}
 

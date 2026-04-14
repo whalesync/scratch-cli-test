@@ -1008,7 +1008,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       const dataFolder = createMockDataFolder({
         options: {
           idFieldOverride: 'custom_id',
-          nameFieldOverride: 'custom_name',
+          nameFieldOverride: ['custom_name'],
         },
       });
       const connectorAccount = createMockConnectorAccount();

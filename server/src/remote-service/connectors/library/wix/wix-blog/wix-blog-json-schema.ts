@@ -124,8 +124,8 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     name: 'Blog Posts',
     schema,
     idColumnRemoteId: '_id',
-    titleColumnRemoteId: ['wix-blog', 'title'],
-    mainContentColumnRemoteId: ['wix-blog', 'richContent'],
+    titleColumnRemoteId: ['title'],
+    mainContentColumnRemoteId: ['richContent'],
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

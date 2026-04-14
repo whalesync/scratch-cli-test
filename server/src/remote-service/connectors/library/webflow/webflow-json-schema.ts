@@ -219,12 +219,12 @@ export function buildWebflowJsonTableSpec(
 
     // Track title column (name field)
     if (field.slug === 'name') {
-      titleColumnRemoteId = [field.slug, field.id];
+      titleColumnRemoteId = ['fieldData', field.slug];
     }
 
     // Track main content column (first RichText field)
     if (!mainContentColumnRemoteId && field.type === Webflow.FieldType.RichText) {
-      mainContentColumnRemoteId = [field.slug, field.id];
+      mainContentColumnRemoteId = ['fieldData', field.slug];
     }
   }
 

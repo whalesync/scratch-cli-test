@@ -12,7 +12,6 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
-import { REMOTE_FIELD_ID } from '../../json-schema';
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
@@ -129,32 +128,23 @@ export class AirtableConnector extends Connector {
 
   /**
    * Resolve the primary field name for filename extraction.
-   * Handles both the nameFieldOverride case (single-element titleColumnRemoteId)
-   * and the normal case (3-element [baseId, tableId, fieldId]).
+   * titleColumnRemoteId is now ['fields', fieldName], so just return the field name directly.
    */
   private resolvePrimaryFieldName(tableSpec: BaseJsonTableSpec): string | undefined {
     if (!tableSpec.titleColumnRemoteId || tableSpec.titleColumnRemoteId.length === 0) {
       return undefined;
     }
 
-    // nameFieldOverride sets titleColumnRemoteId to a single-element array with the field name
+    // titleColumnRemoteId is ['fields', fieldName] — return the field name directly
+    if (tableSpec.titleColumnRemoteId.length >= 2) {
+      return tableSpec.titleColumnRemoteId[1];
+    }
+
+    // Fallback for single-element array (shouldn't happen with new schema)
     if (tableSpec.titleColumnRemoteId.length === 1) {
       return tableSpec.titleColumnRemoteId[0];
     }
 
-    // Normal case: [baseId, tableId, fieldId] — look up field name from schema
-    const targetFieldId = tableSpec.titleColumnRemoteId[2];
-    const schema = tableSpec.schema as Record<string, unknown> | undefined;
-    const topProps = schema?.properties as Record<string, Record<string, unknown>> | undefined;
-    const fieldsSchema = topProps?.fields?.properties as Record<string, Record<string, unknown>> | undefined;
-    if (!fieldsSchema) {
-      return undefined;
-    }
-    for (const [name, fieldSchema] of Object.entries(fieldsSchema)) {
-      if (fieldSchema[REMOTE_FIELD_ID] === targetFieldId) {
-        return name;
-      }
-    }
     return undefined;
   }
 

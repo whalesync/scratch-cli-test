@@ -225,7 +225,7 @@ export function buildWordPressJsonTableSpec(
 
     // Track main content column
     if (fieldId === 'content' && !mainContentColumnRemoteId) {
-      mainContentColumnRemoteId = [tableId, fieldId];
+      mainContentColumnRemoteId = [fieldId];
     }
   }
 

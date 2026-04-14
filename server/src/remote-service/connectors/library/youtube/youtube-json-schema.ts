@@ -92,8 +92,8 @@ export function buildYouTubeJsonTableSpec(id: EntityId, channelId: string, chann
     name: channelTitle,
     schema,
     idColumnRemoteId: 'id',
-    titleColumnRemoteId: [channelId, 'snippet.title'],
-    mainContentColumnRemoteId: [channelId, 'snippet.description'],
+    titleColumnRemoteId: ['snippet', 'title'],
+    mainContentColumnRemoteId: ['snippet', 'description'],
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

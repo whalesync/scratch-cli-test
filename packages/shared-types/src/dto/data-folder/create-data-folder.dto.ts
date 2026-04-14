@@ -36,8 +36,9 @@ export class CreateDataFolderDto {
   idFieldOverride?: string;
 
   @IsOptional()
-  @IsString()
-  nameFieldOverride?: string;
+  @IsArray()
+  @IsString({ each: true })
+  nameFieldOverride?: string[];
 
   @IsOptional()
   @IsBoolean()

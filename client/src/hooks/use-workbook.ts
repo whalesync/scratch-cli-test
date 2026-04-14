@@ -29,7 +29,7 @@ export interface UseWorkbookReturn {
     connectorAccountId: string,
     filter?: string,
     idFieldOverride?: string,
-    nameFieldOverride?: string,
+    nameFieldOverride?: string[],
     options?: Record<string, unknown>,
     triggerPull?: boolean,
   ) => Promise<DataFolder>;
@@ -81,7 +81,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
       connectorAccountId: string,
       filter?: string,
       idFieldOverride?: string,
-      nameFieldOverride?: string,
+      nameFieldOverride?: string[],
       options?: Record<string, unknown>,
       triggerPull?: boolean,
     ): Promise<DataFolder> => {

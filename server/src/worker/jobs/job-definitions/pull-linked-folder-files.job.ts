@@ -467,8 +467,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     if (typeof idOverride === 'string') {
       tableSpec.idColumnRemoteId = idOverride;
     }
-    if (typeof nameOverride === 'string') {
-      tableSpec.titleColumnRemoteId = [nameOverride];
+    if (Array.isArray(nameOverride) && nameOverride.length > 0) {
+      tableSpec.titleColumnRemoteId = nameOverride;
     }
 
     // Write refreshed schema to git

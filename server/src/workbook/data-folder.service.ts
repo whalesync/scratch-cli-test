@@ -10,6 +10,7 @@ import {
   ValidatedUpdateDataFolderDto,
   WorkbookId,
 } from '@spinner/shared-types';
+import { get } from 'lodash';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DataFolderCluster } from 'src/db/cluster-types';
@@ -223,20 +224,25 @@ export class DataFolderService {
     // Apply user field overrides to the schema
     const { idFieldOverride, nameFieldOverride } = dto;
     if (idFieldOverride || nameFieldOverride) {
-      const schemaProps = (tableSpec.schema as Record<string, unknown>)?.properties as
-        | Record<string, unknown>
-        | undefined;
+      const schema = tableSpec.schema as Record<string, unknown> | undefined;
       if (idFieldOverride) {
-        if (!schemaProps?.[idFieldOverride]) {
+        if (!schema?.properties || !(schema.properties as Record<string, unknown>)[idFieldOverride]) {
           throw new BadRequestException(`ID field "${idFieldOverride}" does not exist in the table schema`);
         }
         tableSpec.idColumnRemoteId = idFieldOverride;
       }
-      if (nameFieldOverride) {
-        if (!schemaProps?.[nameFieldOverride]) {
-          throw new BadRequestException(`Name field "${nameFieldOverride}" does not exist in the table schema`);
+      if (nameFieldOverride && nameFieldOverride.length > 0) {
+        // Validate that the field path exists in the schema. lodash.get takes a path array
+        // (NOT a JSON Pointer string), so we interleave "properties" between each segment:
+        // ["fields", "Name"] -> ["properties", "fields", "properties", "Name"].
+        const lookupPath = nameFieldOverride.flatMap((segment) => ['properties', segment]);
+        const fieldExists = get(schema, lookupPath) !== undefined;
+        if (!fieldExists) {
+          throw new BadRequestException(
+            `Name field path "${nameFieldOverride.join('.')}" does not exist in the table schema`,
+          );
         }
-        tableSpec.titleColumnRemoteId = [nameFieldOverride];
+        tableSpec.titleColumnRemoteId = nameFieldOverride;
       }
     }
 
@@ -776,8 +782,8 @@ export class DataFolderService {
       if (typeof idOverride === 'string') {
         tableSpec.idColumnRemoteId = idOverride;
       }
-      if (typeof nameOverride === 'string') {
-        tableSpec.titleColumnRemoteId = [nameOverride];
+      if (Array.isArray(nameOverride) && nameOverride.length > 0) {
+        tableSpec.titleColumnRemoteId = nameOverride;
       }
 
       // Write schema to git repo

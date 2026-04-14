@@ -1351,7 +1351,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 drawCell={drawCell}
                 rowMarkers="number"
                 rowMarkerWidth={ROW_MARKER_WIDTH}
-                freezeColumns={1}
+                freezeColumns={titleColumnId && columns[0]?.id === titleColumnId ? 1 : 0}
               />
             )}
             {inspectButtonRect && hoveredRowIdx !== null && (
