@@ -82,14 +82,14 @@ echo "Building Electron app..."
 rm -rf "./dist"
 VITE_SCRATCH_API_URL="$PROD_API_URL" VITE_SCRATCH_WEB_URL="$PROD_WEB_URL" yarn build
 
-# Build macOS targets (unsigned for now)
-# TODO: Add code signing — set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
+# Build macOS targets (ad-hoc signed but not notarized for now)
+# TODO: Add code notarizing — set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
 #       APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID CI variables.
 #       electron-builder handles signing automatically when these are present.
 # NOTE: DMG requires dmg-license module + macOS host, so we only build ZIP on Linux CI.
 # TODO: Add DMG builds when we have a macOS runner with code signing.
 echo "Packaging macOS targets (unsigned, zip only)..."
-CSC_IDENTITY_AUTO_DISCOVERY=false yarn electron-builder --mac zip --publish never
+yarn electron-builder --mac zip --publish never
 
 # Build Linux targets
 echo "Packaging Linux targets..."

@@ -39,9 +39,6 @@ Build production CLI for desktop app:
     - if: '$CI_COMMIT_BRANCH == "prod"'
       when: manual
       allow_failure: true
-    - if: '$CI_MERGE_REQUEST_IID'
-      when: manual
-      allow_failure: true
 
 Local build production CLI for desktop app:
   extends:
@@ -54,9 +51,6 @@ Local build production CLI for desktop app:
     - if: !reference [.rules, local_runner_users_prod]
       when: manual
       allow_failure: true
-    - if: !reference [.rules, local_runner_users_mr]
-      when: manual
-      allow_failure: true
 
 Build test CLI for desktop app:
   extends: .build_cli_for_desktop
@@ -65,8 +59,6 @@ Build test CLI for desktop app:
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      when: manual
-    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
 
 Local build test CLI for desktop app:
@@ -78,9 +70,6 @@ Local build test CLI for desktop app:
     SCRATCH_DEFAULT_URL: 'https://test-api.scratch.md'
   rules:
     - if: !reference [.rules, local_runner_users_master]
-      allow_failure: true
-    - if: !reference [.rules, local_runner_users_mr]
-      when: manual
       allow_failure: true
 
 # PROD RELEASE JOBS (prod branch)
@@ -120,9 +109,6 @@ Release desktop Linux and Windows apps:
         - 'major'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
       allow_failure: true
 
@@ -166,9 +152,6 @@ Release test desktop Linux and Windows apps:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
       when: manual
       allow_failure: true
-    - if: '$CI_MERGE_REQUEST_IID'
-      when: manual
-      allow_failure: true
 
 # -----------------------------------------------------------------------------
 # Local runner: Desktop Prod Releases — macOS (builds .dmg + .zip, no Linux)
@@ -204,9 +187,6 @@ Local release desktop macOS app:
     - if: !reference [.rules, local_runner_users_prod]
       when: manual
       allow_failure: true
-    - if: !reference [.rules, local_runner_users_mr]
-      when: manual
-      allow_failure: true
 
 # -----------------------------------------------------------------------------
 # Local runner: Desktop Test Releases — macOS (builds .dmg + .zip, no Linux)
@@ -240,7 +220,4 @@ Local release test desktop macOS app:
         - 'major'
   rules:
     - if: !reference [.rules, local_runner_users_master]
-      allow_failure: true
-    - if: !reference [.rules, local_runner_users_mr]
-      when: manual
       allow_failure: true

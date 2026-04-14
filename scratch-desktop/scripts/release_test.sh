@@ -79,31 +79,19 @@ VITE_SCRATCH_API_URL="$TEST_API_URL" VITE_SCRATCH_WEB_URL="$TEST_WEB_URL" yarn b
 MAC_TARGETS="${MAC_TARGETS:-zip}"
 BUILD_LINUX="${BUILD_LINUX:-true}"
 
-# Build macOS targets (unsigned — test releases never need signing)
+# Build macOS targets (ad-hoc signed but not notarized)
 # NOTE: DMG requires dmg-license module + macOS host, so we only build ZIP on Linux CI.
 # Set MAC_TARGETS="dmg zip" and BUILD_LINUX="false" for native macOS builds.
 echo "Packaging macOS targets (unsigned, ${MAC_TARGETS})..."
 # shellcheck disable=SC2086
 # intentional word splitting for multiple targets
-CSC_IDENTITY_AUTO_DISCOVERY=false yarn electron-builder --mac $MAC_TARGETS --publish never
+yarn electron-builder --mac $MAC_TARGETS --publish never
 
 # Build Linux targets (can be disabled via BUILD_LINUX=false)
 if [ "$BUILD_LINUX" = "true" ]; then
   echo "Packaging Linux targets..."
   yarn electron-builder --linux --publish never
 fi
-
-# 6. Ad-hoc codesign the .app bundle (requires macOS host with codesign)
-for APP in dist/mac-arm64/*.app; do
-  [ -d "$APP" ] || continue
-  if command -v codesign &>/dev/null; then
-    echo "Ad-hoc signing $APP..."
-    chmod +x scripts/fix_macos_app_signatures.sh
-    scripts/fix_macos_app_signatures.sh "$APP"
-  else
-    echo "WARNING: codesign not available (not on macOS). Skipping ad-hoc signing."
-  fi
-done
 
 # 7. Collect artifacts into dist-release-test
 DIST_DIR="./dist-release-test"

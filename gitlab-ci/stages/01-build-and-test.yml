@@ -306,9 +306,6 @@ warm-scratch-git-cargo-cache:
     - cargo zigbuild --release --bin scratchmd --target x86_64-unknown-linux-gnu
     - cargo zigbuild --release --bin scratchmd --target x86_64-pc-windows-gnu
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-      allow_failure: true
     - !reference [.rules, on_merge_to_master]
 
 .build-scratch-git-docker-image:
