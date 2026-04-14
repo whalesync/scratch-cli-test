@@ -68,11 +68,12 @@ node -e "
 echo "Updated package.json version to $SEMVER"
 
 TEST_API_URL="https://test-api.scratch.md"
+TEST_WEB_URL="https://test.scratch.md"
 
 # 5. Build the Electron app for all targets
 echo "Building Electron app..."
 rm -rf "./dist"
-VITE_SCRATCH_API_URL="$TEST_API_URL" yarn build
+VITE_SCRATCH_API_URL="$TEST_API_URL" VITE_SCRATCH_WEB_URL="$TEST_WEB_URL" yarn build
 
 # Configurable via CI variables (defaults match current behavior)
 MAC_TARGETS="${MAC_TARGETS:-zip}"

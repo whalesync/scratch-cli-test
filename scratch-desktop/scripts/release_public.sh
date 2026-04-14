@@ -68,6 +68,7 @@ node -e "
 echo "Updated package.json version to $SEMVER"
 
 PROD_API_URL="https://api.scratch.md"
+PROD_WEB_URL="https://app.scratch.md"
 
 # 5. Build the Electron app for all targets
 #
@@ -79,7 +80,7 @@ PROD_API_URL="https://api.scratch.md"
 #   - electron-builder will automatically sign and notarize when these are present
 echo "Building Electron app..."
 rm -rf "./dist"
-VITE_SCRATCH_API_URL="$PROD_API_URL" yarn build
+VITE_SCRATCH_API_URL="$PROD_API_URL" VITE_SCRATCH_WEB_URL="$PROD_WEB_URL" yarn build
 
 # Build macOS targets (unsigned for now)
 # TODO: Add code signing — set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
