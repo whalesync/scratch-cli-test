@@ -193,6 +193,47 @@ export async function listFiles(folderPath: string, opts: ListFilesOptions): Pro
   return { files, total, offset };
 }
 
+const MAX_TEXT_FILE_RAW_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Reads a UTF-8 file as plain text (no JSON parsing). Used to display invalid JSON contents.
+ */
+export async function readFileTextRaw(filePath: string): Promise<{ text: string } | { error: string }> {
+  try {
+    const fileStat = await stat(filePath);
+    if (fileStat.size > MAX_TEXT_FILE_RAW_BYTES) {
+      return {
+        error: `File is too large to display (${fileStat.size} bytes; max ${MAX_TEXT_FILE_RAW_BYTES})`,
+      };
+    }
+    const text = await readFile(filePath, 'utf-8');
+    return { text };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { error: message };
+  }
+}
+
+/**
+ * Writes UTF-8 text to a file (used by the invalid-JSON editor). Creates parent directories if needed.
+ */
+export async function writeFileTextRaw(filePath: string, contents: string): Promise<{ ok: true } | { error: string }> {
+  try {
+    const byteLength = Buffer.byteLength(contents, 'utf8');
+    if (byteLength > MAX_TEXT_FILE_RAW_BYTES) {
+      return {
+        error: `File content is too large (${byteLength} bytes; max ${MAX_TEXT_FILE_RAW_BYTES})`,
+      };
+    }
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, contents, 'utf8');
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { error: message };
+  }
+}
+
 export async function readFileContent(filePath: string): Promise<FileContent> {
   try {
     const fileStat = await stat(filePath);
@@ -256,7 +297,7 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 
 export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
 export type GridVersion = 'working' | 'dirty' | 'main';
-export type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+export type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
 export type DiffGridFilterKind = 'unreviewed' | 'unpublished';
 
 export type DiffGridFilter =
@@ -275,6 +316,16 @@ export interface DiffRow extends Record<string, unknown> {
   /** Master-branch values for unpublished fields (the "from" side when d != m). */
   __masterFields: Record<string, unknown>;
   __filename: string;
+  /** Set when __rowStatus is invalidJson (which branch failed is encoded in the string). */
+  __parseError?: string;
+}
+
+export interface InvalidJsonFileEntry {
+  filename: string;
+  error: string;
+  workingFilePath: string;
+  reviewedFilePath: string;
+  publishedFilePath: string;
 }
 
 export interface DiffGridResult {
@@ -286,6 +337,7 @@ export interface DiffGridResult {
     unreviewed: number;
     unpublished: number;
   };
+  invalidJsonFiles: InvalidJsonFileEntry[];
 }
 
 export interface DiffRecordResult {
@@ -326,6 +378,8 @@ interface GridDataResult {
   columns: string[];
   total: number;
   offset: number;
+  /** `.json` files that could not be parsed as a top-level object (separate from `rows`). */
+  invalidJsonFiles: Array<{ filename: string; error: string }>;
 }
 
 /**
@@ -337,6 +391,9 @@ interface GridDataResult {
  * returned rows, in insertion order (first file's keys first, then any new keys
  * from subsequent files). If `opts.columns` is provided, only those columns are
  * returned and the column order matches the requested list.
+ *
+ * Files that are not valid JSON objects are omitted from `rows` and listed in
+ * `invalidJsonFiles` (filename + parse error).
  */
 export async function readGridData(folderPath: string, opts: ReadGridDataOptions): Promise<GridDataResult> {
   console.debug('readGridData', folderPath, opts);
@@ -369,6 +426,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
   // Read, parse, and flatten all matching files
   const columnSet = new Set<string>();
   let allRows: Array<Record<string, unknown>> = [];
+  const invalidJsonFiles: Array<{ filename: string; error: string }> = [];
 
   for (let i = 0; i < allNames.length; i += BATCH_CONCURRENCY) {
     const batch = allNames.slice(i, i + BATCH_CONCURRENCY);
@@ -376,14 +434,17 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
       batch.map(async (name) => {
         try {
           const content = await readFile(join(folderPath, name), 'utf-8');
-          const parsed: unknown = JSON.parse(content);
-          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+          const parsed = parseTopLevelJsonObject(content);
+          if (!parsed.ok) {
+            invalidJsonFiles.push({ filename: name, error: parsed.error });
             return null;
           }
-          const flat = flattenObject(parsed as Record<string, unknown>);
+          const flat = flattenObject(parsed.raw);
           flat.__filename = name;
           return flat;
-        } catch {
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          invalidJsonFiles.push({ filename: name, error: message });
           return null;
         }
       }),
@@ -439,7 +500,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
     });
   }
 
-  return { rows, columns, total, offset };
+  return { rows, columns, total, offset, invalidJsonFiles };
 }
 
 /**
@@ -524,6 +585,25 @@ function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string
   }
   return result;
 }
+
+function parseTopLevelJsonObject(
+  content: string,
+): { ok: true; raw: Record<string, unknown> } | { ok: false; error: string } {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return { ok: true, raw: parsed as Record<string, unknown> };
+    }
+    return { ok: false, error: 'JSON must be a top-level object' };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+type JsonFileSnapshot =
+  | { kind: 'missing' }
+  | { kind: 'invalid'; error: string }
+  | { kind: 'ok'; flat: Record<string, unknown>; raw: Record<string, unknown> };
 
 function sortRowsByColumn(
   rows: Array<Record<string, unknown>>,
@@ -802,8 +882,23 @@ async function commitReviewedDirtyFile(folderPath: string, workspacePath: string
   }
 }
 
-async function readFolderFiles(folderPath: string): Promise<Map<string, Record<string, unknown>>> {
-  const result = new Map<string, Record<string, unknown>>();
+async function readJsonFileSnapshot(filePath: string): Promise<JsonFileSnapshot> {
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf-8');
+  } catch (err) {
+    if (isFileNotFoundError(err)) return { kind: 'missing' };
+    return { kind: 'invalid', error: err instanceof Error ? err.message : String(err) };
+  }
+  const parsed = parseTopLevelJsonObject(content);
+  if (!parsed.ok) {
+    return { kind: 'invalid', error: parsed.error };
+  }
+  return { kind: 'ok', flat: flattenObject(parsed.raw), raw: parsed.raw };
+}
+
+async function readFolderSnapshots(folderPath: string): Promise<Map<string, JsonFileSnapshot>> {
+  const result = new Map<string, JsonFileSnapshot>();
   let names: string[];
   try {
     names = (await getCachedFileNames(folderPath)).filter((n) => extname(n).toLowerCase() === '.json');
@@ -814,15 +909,8 @@ async function readFolderFiles(folderPath: string): Promise<Map<string, Record<s
     const batch = names.slice(i, i + BATCH_CONCURRENCY);
     await Promise.all(
       batch.map(async (name) => {
-        try {
-          const content = await readFile(join(folderPath, name), 'utf-8');
-          const parsed: unknown = JSON.parse(content);
-          if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-            result.set(name, flattenObject(parsed as Record<string, unknown>));
-          }
-        } catch {
-          // skip unreadable files
-        }
+        const snap = await readJsonFileSnapshot(join(folderPath, name));
+        result.set(name, snap);
       }),
     );
   }
@@ -847,6 +935,7 @@ export interface DiffGridSummary {
   modified: number;
   unpublished: number;
   deleted: number;
+  invalidJson: number;
 }
 
 function makeDiffRow(
@@ -857,6 +946,7 @@ function makeDiffRow(
   unpublishedFields: string[],
   masterFields: Record<string, unknown>,
   filename: string,
+  parseError?: string,
 ): DiffRow {
   const row: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(base)) row[k] = v;
@@ -866,6 +956,9 @@ function makeDiffRow(
   row['__unpublishedFields'] = unpublishedFields;
   row['__masterFields'] = masterFields;
   row['__filename'] = filename;
+  if (parseError !== undefined) {
+    row['__parseError'] = parseError;
+  }
   return row as DiffRow;
 }
 
@@ -934,6 +1027,36 @@ function compareFlattenedRecordVersions(
   return null;
 }
 
+function compareRecordSnapshots(
+  w: JsonFileSnapshot,
+  d: JsonFileSnapshot,
+  m: JsonFileSnapshot,
+  filename: string,
+): { row: DiffRow; columns: string[] } | null {
+  if (w.kind === 'invalid' || d.kind === 'invalid' || m.kind === 'invalid') {
+    const parseParts: string[] = [];
+    if (w.kind === 'invalid') parseParts.push(`working: ${w.error}`);
+    if (d.kind === 'invalid') parseParts.push(`reviewed: ${d.error}`);
+    if (m.kind === 'invalid') parseParts.push(`published: ${m.error}`);
+    const parseError = parseParts.join('; ');
+    const base: Record<string, unknown> =
+      w.kind === 'ok' ? w.flat : d.kind === 'ok' ? d.flat : m.kind === 'ok' ? m.flat : {};
+    const columnSet = new Set<string>();
+    for (const k of Object.keys(base)) {
+      columnSet.add(k);
+    }
+    return {
+      row: makeDiffRow(base, 'invalidJson', [], {}, [], {}, filename, parseError),
+      columns: Array.from(columnSet),
+    };
+  }
+
+  const wRow = w.kind === 'ok' ? w.flat : undefined;
+  const dRow = d.kind === 'ok' ? d.flat : undefined;
+  const mRow = m.kind === 'ok' ? m.flat : undefined;
+  return compareFlattenedRecordVersions(wRow, dRow, mRow, filename);
+}
+
 function pickDisplayRecordData(
   workingData: Record<string, unknown> | null,
   dirtyData: Record<string, unknown> | null,
@@ -951,6 +1074,7 @@ function pickDisplayRecordData(
  * - modified:    w != d for at least one field (unreviewed changes; d vs m is ignored)
  * - unpublished: w == d but d != m for at least one field (reviewed, not yet published)
  * - unchanged:   w == d == m for all fields
+ * - invalidJson: at least one branch file is not valid top-level JSON object (see __parseError)
  *
  * For modified rows, __changedFields lists fields where w != d, and __fromFields holds the
  * dirty-branch values (the "from" side for the unreviewed diff display).
@@ -958,6 +1082,24 @@ function pickDisplayRecordData(
  * For unpublished rows, __unpublishedFields lists fields where d != m (and w == d), and
  * __masterFields holds the master-branch values (the "from" side for the unpublished diff display).
  */
+function buildInvalidJsonFileEntries(
+  folderPath: string,
+  workspacePath: string,
+  rows: DiffRow[],
+): InvalidJsonFileEntry[] {
+  const reviewedDir = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+  const publishedDir = getVersionFolderPath(folderPath, workspacePath, 'main');
+  return rows
+    .filter((r) => r.__rowStatus === 'invalidJson')
+    .map((r) => ({
+      filename: r.__filename,
+      error: typeof r.__parseError === 'string' ? r.__parseError : 'Invalid JSON',
+      workingFilePath: join(folderPath, r.__filename),
+      reviewedFilePath: join(reviewedDir, r.__filename),
+      publishedFilePath: join(publishedDir, r.__filename),
+    }));
+}
+
 export async function readDiffGridData(folderPath: string, workspacePath: string): Promise<DiffGridResult> {
   return readDiffGridDataPage(folderPath, workspacePath, {});
 }
@@ -973,11 +1115,13 @@ export async function readDiffGridDataPage(
 
   const relPath = relative(workspacePath, folderPath);
   const [workingFiles, dirtyFiles, masterFiles, schema] = await Promise.all([
-    readFolderFiles(workingPath),
-    readFolderFiles(dirtyPath),
-    readFolderFiles(masterPath),
+    readFolderSnapshots(workingPath),
+    readFolderSnapshots(dirtyPath),
+    readFolderSnapshots(masterPath),
     readConnectionSchema(workspacePath, relPath),
   ]);
+
+  const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
 
   // Include master-only files so approved deletions (dirty removed, master still has it) remain visible.
   const allNamesArr: string[] = Array.from(
@@ -989,10 +1133,10 @@ export async function readDiffGridDataPage(
   const rows: DiffRow[] = [];
 
   for (const name of allNamesArr) {
-    const compared = compareFlattenedRecordVersions(
-      workingFiles.get(name),
-      dirtyFiles.get(name),
-      masterFiles.get(name),
+    const compared = compareRecordSnapshots(
+      workingFiles.get(name) ?? missingSnapshot,
+      dirtyFiles.get(name) ?? missingSnapshot,
+      masterFiles.get(name) ?? missingSnapshot,
       name,
     );
     if (!compared) {
@@ -1008,12 +1152,14 @@ export async function readDiffGridDataPage(
     modified: rows.filter((r) => r.__rowStatus === 'modified').length,
     unpublished: rows.filter((r) => r.__rowStatus === 'unpublished').length,
     deleted: rows.filter((r) => r.__rowStatus === 'deleted').length,
+    invalidJson: rows.filter((r) => r.__rowStatus === 'invalidJson').length,
   };
 
   const filterCounts = {
     unreviewed: rows.filter((row) => rowHasUnreviewedChanges(row)).length,
     unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
   };
+  const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, workspacePath, rows);
   const filteredRows = applyDiffGridFilters(rows, opts.filters ?? []);
   const sortedRows = sortDiffRows(filteredRows, opts.sortBy, opts.sortOrder);
   const offset = Math.max(0, opts.offset ?? 0);
@@ -1026,11 +1172,17 @@ export async function readDiffGridDataPage(
     total: filteredRows.length,
     summary,
     filterCounts,
+    invalidJsonFiles,
   };
 }
 
 function rowHasUnreviewedChanges(row: DiffRow): boolean {
-  return row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__changedFields.length > 0;
+  return (
+    row.__rowStatus === 'added' ||
+    row.__rowStatus === 'deleted' ||
+    row.__rowStatus === 'invalidJson' ||
+    row.__changedFields.length > 0
+  );
 }
 
 function rowHasUnpublishedChanges(row: DiffRow): boolean {
@@ -1115,22 +1267,20 @@ export async function readDiffRecordData(
   const dirtyFile = join(getVersionFolderPath(folderPath, workspacePath, 'dirty'), filename);
   const masterFile = join(getVersionFolderPath(folderPath, workspacePath, 'main'), filename);
 
-  const [workingData, dirtyData, masterData] = await Promise.all([
-    readJsonObject(workingFile),
-    readJsonObject(dirtyFile),
-    readJsonObject(masterFile),
+  const [w, d, m] = await Promise.all([
+    readJsonFileSnapshot(workingFile),
+    readJsonFileSnapshot(dirtyFile),
+    readJsonFileSnapshot(masterFile),
   ]);
 
-  const compared = compareFlattenedRecordVersions(
-    workingData ? flattenObject(workingData) : undefined,
-    dirtyData ? flattenObject(dirtyData) : undefined,
-    masterData ? flattenObject(masterData) : undefined,
-    filename,
-  );
-
+  const compared = compareRecordSnapshots(w, d, m, filename);
   if (!compared) {
     return null;
   }
+
+  const workingData = w.kind === 'ok' ? w.raw : null;
+  const dirtyData = d.kind === 'ok' ? d.raw : null;
+  const masterData = m.kind === 'ok' ? m.raw : null;
 
   return {
     row: compared.row,

@@ -9,12 +9,13 @@ import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
 
 interface DiffRecordData {
   row: Record<string, unknown> & {
-    __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+    __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
     __changedFields: string[];
     __fromFields: Record<string, unknown>;
     __unpublishedFields: string[];
     __masterFields: Record<string, unknown>;
     __filename: string;
+    __parseError?: string;
   };
   columns: string[];
   workingData: Record<string, unknown> | null;
@@ -45,14 +46,19 @@ interface RecordDetailViewProps {
 function rowHasUnreviewedChanges(
   row:
     | (Record<string, unknown> & {
-        __rowStatus?: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+        __rowStatus?: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
         __changedFields?: string[];
       })
     | null
     | undefined,
 ): boolean {
   if (!row) return false;
-  return row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || (row.__changedFields?.length ?? 0) > 0;
+  return (
+    row.__rowStatus === 'added' ||
+    row.__rowStatus === 'deleted' ||
+    row.__rowStatus === 'invalidJson' ||
+    (row.__changedFields?.length ?? 0) > 0
+  );
 }
 
 function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
@@ -91,7 +97,7 @@ function diffValuesEqual(a: unknown, b: unknown): boolean {
 type DiffRow = DiffRecordData['row'];
 
 function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
-  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted') {
+  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__rowStatus === 'invalidJson') {
     return row.__rowStatus;
   }
   if (row.__changedFields.length > 0) {
@@ -557,6 +563,17 @@ export const RecordDetailView = memo(function RecordDetailView({
 
       {/* Right panel — record detail */}
       <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+        {typeof recordData?.row.__parseError === 'string' && recordData.row.__parseError.length > 0 && (
+          <Box
+            style={{
+              padding: '8px 12px',
+              borderBottom: '0.5px solid var(--fg-divider)',
+              backgroundColor: '#fff7ed',
+            }}
+          >
+            <Text12Regular c="var(--mantine-color-orange-8)">{recordData.row.__parseError}</Text12Regular>
+          </Box>
+        )}
         {/* Header */}
         <Box style={{ padding: '8px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
           <Group justify="space-between" align="center" wrap="nowrap">

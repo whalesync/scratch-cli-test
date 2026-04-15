@@ -126,6 +126,8 @@ const scratchDesktop = {
   pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
     invoke('scratch:pull-all-linked-tables', workspacePath),
   showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),
+  /** Reveals a file in Finder / Explorer (shell.showItemInFolder). */
+  showItemInFolder: (filePath: string): Promise<void> => invoke('scratch:show-item-in-folder', filePath),
   showNativeContextMenu: (
     items: Array<{ id: string; label: string; type?: 'separator' }>,
     onClick: (id: string) => void,
@@ -210,6 +212,10 @@ const scratchFiles = {
     | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
     | { type: 'error'; path: string; error: string }
   > => invoke('files:read-file', filePath),
+  readFileTextRaw: (filePath: string): Promise<{ text: string } | { error: string }> =>
+    invoke('files:read-file-text-raw', filePath),
+  writeFileTextRaw: (filePath: string, contents: string): Promise<{ ok: true } | { error: string }> =>
+    invoke('files:write-file-text-raw', filePath, contents),
   readBatch: (
     filePaths: string[],
     opts?: { maxSize?: number },
@@ -239,6 +245,7 @@ const scratchFiles = {
     columns: string[];
     total: number;
     offset: number;
+    invalidJsonFiles: Array<{ filename: string; error: string }>;
   }> => invoke('files:read-grid-data', folderPath, opts ?? {}),
   readFolderStatuses: (
     folderPath: string,
@@ -258,18 +265,33 @@ const scratchFiles = {
   ): Promise<{
     rows: Array<
       Record<string, unknown> & {
-        __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+        __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
         __changedFields: string[];
         __fromFields: Record<string, unknown>;
         __unpublishedFields: string[];
         __masterFields: Record<string, unknown>;
         __filename: string;
+        __parseError?: string;
       }
     >;
     columns: string[];
     total: number;
-    summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
+    summary: {
+      total: number;
+      added: number;
+      modified: number;
+      unpublished: number;
+      deleted: number;
+      invalidJson: number;
+    };
     filterCounts: { unreviewed: number; unpublished: number };
+    invalidJsonFiles: Array<{
+      filename: string;
+      error: string;
+      workingFilePath: string;
+      reviewedFilePath: string;
+      publishedFilePath: string;
+    }>;
   }> => invoke('files:read-diff-grid-data', folderPath, workspacePath, opts ?? {}),
   readDiffRecordData: (
     folderPath: string,
@@ -277,12 +299,13 @@ const scratchFiles = {
     filename: string,
   ): Promise<{
     row: Record<string, unknown> & {
-      __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+      __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
       __changedFields: string[];
       __fromFields: Record<string, unknown>;
       __unpublishedFields: string[];
       __masterFields: Record<string, unknown>;
       __filename: string;
+      __parseError?: string;
     };
     columns: string[];
     workingData: Record<string, unknown> | null;

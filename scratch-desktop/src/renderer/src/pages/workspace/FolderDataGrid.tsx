@@ -23,11 +23,12 @@ import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { FolderGridHeaderMenu } from './FolderGridHeaderMenu';
+import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
 import { RecordDetailView } from './RecordDetailView';
 
 // ── Types ──
 
-type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
 
 interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
@@ -36,14 +37,23 @@ interface DiffRow extends Record<string, unknown> {
   __unpublishedFields: string[];
   __masterFields: Record<string, unknown>;
   __filename: string;
+  __parseError?: string;
 }
 
 interface DiffGridResult {
   rows: DiffRow[];
   columns: string[];
   total: number;
-  summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
+  summary: {
+    total: number;
+    added: number;
+    modified: number;
+    unpublished: number;
+    deleted: number;
+    invalidJson: number;
+  };
   filterCounts: { unreviewed: number; unpublished: number };
+  invalidJsonFiles: InvalidJsonFileListEntry[];
 }
 
 type FilterKind = 'unreviewed' | 'unpublished';
@@ -142,7 +152,7 @@ function diffValuesEqual(a: unknown, b: unknown): boolean {
 }
 
 function deriveRowStatusAfterEdit(row: DiffRow): RowStatus {
-  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted') {
+  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__rowStatus === 'invalidJson') {
     return row.__rowStatus;
   }
   if (row.__changedFields.length > 0) {
@@ -170,9 +180,15 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
   const nextRows = result.rows.map((r) => (r.__filename === prevRow.__filename ? nextRow : r));
 
   const prevHadUnreviewed =
-    prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'deleted' || prevRow.__changedFields.length > 0;
+    prevRow.__rowStatus === 'added' ||
+    prevRow.__rowStatus === 'deleted' ||
+    prevRow.__rowStatus === 'invalidJson' ||
+    prevRow.__changedFields.length > 0;
   const nextHasUnreviewed =
-    nextRow.__rowStatus === 'added' || nextRow.__rowStatus === 'deleted' || nextRow.__changedFields.length > 0;
+    nextRow.__rowStatus === 'added' ||
+    nextRow.__rowStatus === 'deleted' ||
+    nextRow.__rowStatus === 'invalidJson' ||
+    nextRow.__changedFields.length > 0;
   const prevHadUnpublished = prevRow.__unpublishedFields.length > 0;
   const nextHasUnpublished = nextRow.__unpublishedFields.length > 0;
 
@@ -182,6 +198,7 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
     modified: recomputeSummaryCount(prevRow, nextRow, 'modified', result.summary.modified),
     unpublished: recomputeSummaryCount(prevRow, nextRow, 'unpublished', result.summary.unpublished),
     deleted: recomputeSummaryCount(prevRow, nextRow, 'deleted', result.summary.deleted),
+    invalidJson: recomputeSummaryCount(prevRow, nextRow, 'invalidJson', result.summary.invalidJson),
   };
 
   const filterCounts = {
@@ -300,6 +317,7 @@ const ROW_TINT: Record<RowStatus, string | undefined> = {
   unpublished: undefined,
   deleted: '#fef2f2',
   unchanged: undefined,
+  invalidJson: '#fff7ed',
 };
 
 // ── Filter pill ──
@@ -415,6 +433,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const cellPopoverRef = useRef<HTMLDivElement | null>(null);
   const [hoveredRowIdx, setHoveredRowIdx] = useState<number | null>(null);
   const [inspectButtonRect, setInspectButtonRect] = useState<{ x: number; y: number; height: number } | null>(null);
+  const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
     wrapperElRef.current = el;
@@ -669,7 +688,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     (col: number, row: number): CellPopoverState | null => {
       const record = pagedRows[row] as DiffRow | undefined;
       const columnId = columns[col]?.id;
-      if (!record || !columnId || record.__rowStatus === 'deleted') {
+      if (!record || !columnId || record.__rowStatus === 'deleted' || record.__rowStatus === 'invalidJson') {
         return null;
       }
 
@@ -919,7 +938,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             ? { bgCell: DIFF_UNPUBLISHED_BG() }
             : {};
       const themeOverride = { ...rowTheme, ...diffTheme };
-      const allowOverlay = status !== 'deleted';
+      const allowOverlay = status !== 'deleted' && status !== 'invalidJson';
 
       if (col === 0) {
         const kind = inferCellKind(val);
@@ -1101,7 +1120,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
-      if (r.__rowStatus === 'deleted') return;
+      if (r.__rowStatus === 'deleted' || r.__rowStatus === 'invalidJson') return;
       const { diffKind } = getCellDiffState(r, colId);
       setActiveEditorDiffKind(diffKind ?? 'none');
       setEditingCell([col, row]);
@@ -1118,7 +1137,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     ([col, row]: Item, newValue: EditableGridCell) => {
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
-      if (!r || !colId || r.__rowStatus === 'deleted') {
+      if (!r || !colId || r.__rowStatus === 'deleted' || r.__rowStatus === 'invalidJson') {
         return;
       }
 
@@ -1235,7 +1254,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const summary = diffData?.summary;
   const hasChanges =
-    summary && (summary.added > 0 || summary.modified > 0 || summary.unpublished > 0 || summary.deleted > 0);
+    summary &&
+    (summary.added > 0 ||
+      summary.modified > 0 ||
+      summary.unpublished > 0 ||
+      summary.deleted > 0 ||
+      summary.invalidJson > 0);
   const showFilterBar = workspacePath && selectedFolderPath && !error;
 
   return (
@@ -1515,6 +1539,28 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       <Text12Regular c="var(--fg-muted)">{summary.deleted} deleted</Text12Regular>
                     </Group>
                   )}
+                  {summary.invalidJson > 0 && (
+                    <UnstyledButton
+                      type="button"
+                      onClick={() => setInvalidJsonModalOpen(true)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        border: 'none',
+                        background: 'transparent',
+                        padding: 0,
+                        margin: 0,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Group gap={4}>
+                        <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ea580c' }} />
+                        <Text12Regular c="var(--fg-muted)" style={{ textDecoration: 'underline' }}>
+                          {summary.invalidJson} invalid files
+                        </Text12Regular>
+                      </Group>
+                    </UnstyledButton>
+                  )}
                 </Group>
               )}
 
@@ -1559,6 +1605,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           </Box>
         </>
       )}
+
+      <InvalidJsonFilesModal
+        opened={invalidJsonModalOpen}
+        onClose={() => setInvalidJsonModalOpen(false)}
+        entries={diffData?.invalidJsonFiles ?? []}
+        onFileSaved={refreshGridData}
+      />
 
       {cellPopover &&
         selectedFolderPath &&

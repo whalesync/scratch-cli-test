@@ -94,6 +94,7 @@ interface ScratchDesktopAPI {
   startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;
   pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
   showInFolder: (folderPath: string) => Promise<void>;
+  showItemInFolder: (filePath: string) => Promise<void>;
   showNativeContextMenu: (
     items: Array<{ id: string; label: string; type?: 'separator' }>,
     onClick: (id: string) => void,
@@ -159,6 +160,8 @@ interface ScratchFilesAPI {
     | { type: 'binary'; path: string; mimeType: string; size: number; base64?: string }
     | { type: 'error'; path: string; error: string }
   >;
+  readFileTextRaw: (filePath: string) => Promise<{ text: string } | { error: string }>;
+  writeFileTextRaw: (filePath: string, contents: string) => Promise<{ ok: true } | { error: string }>;
   readBatch: (
     filePaths: string[],
     opts?: { maxSize?: number },
@@ -187,6 +190,7 @@ interface ScratchFilesAPI {
     columns: string[];
     total: number;
     offset: number;
+    invalidJsonFiles: Array<{ filename: string; error: string }>;
   }>;
   readFolderStatuses: (
     folderPath: string,
@@ -205,18 +209,33 @@ interface ScratchFilesAPI {
   ) => Promise<{
     rows: Array<
       Record<string, unknown> & {
-        __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+        __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
         __changedFields: string[];
         __fromFields: Record<string, unknown>;
         __unpublishedFields: string[];
         __masterFields: Record<string, unknown>;
         __filename: string;
+        __parseError?: string;
       }
     >;
     columns: string[];
     total: number;
-    summary: { total: number; added: number; modified: number; unpublished: number; deleted: number };
+    summary: {
+      total: number;
+      added: number;
+      modified: number;
+      unpublished: number;
+      deleted: number;
+      invalidJson: number;
+    };
     filterCounts: { unreviewed: number; unpublished: number };
+    invalidJsonFiles: Array<{
+      filename: string;
+      error: string;
+      workingFilePath: string;
+      reviewedFilePath: string;
+      publishedFilePath: string;
+    }>;
   }>;
   readDiffRecordData: (
     folderPath: string,
@@ -224,12 +243,13 @@ interface ScratchFilesAPI {
     filename: string,
   ) => Promise<{
     row: Record<string, unknown> & {
-      __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged';
+      __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
       __changedFields: string[];
       __fromFields: Record<string, unknown>;
       __unpublishedFields: string[];
       __masterFields: Record<string, unknown>;
       __filename: string;
+      __parseError?: string;
     };
     columns: string[];
     workingData: Record<string, unknown> | null;

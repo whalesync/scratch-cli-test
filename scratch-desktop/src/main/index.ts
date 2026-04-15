@@ -17,11 +17,13 @@ import {
   readDiffGridDataPage,
   readDiffRecordData,
   readFileContent,
+  readFileTextRaw,
   readFolderStatuses,
   readGridData,
   readSchema,
   readWorkspaceConfig,
   undoApprovedCellChange,
+  writeFileTextRaw,
 } from './local-files';
 import {
   acceptFieldChanges,
@@ -496,6 +498,9 @@ ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string)
 ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
   void shell.openPath(folderPath);
 });
+ipcMain.handle('scratch:show-item-in-folder', (_, filePath: string) => {
+  shell.showItemInFolder(filePath);
+});
 ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();
 });
@@ -545,6 +550,10 @@ ipcMain.handle(
   },
 );
 ipcMain.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
+ipcMain.handle('files:read-file-text-raw', async (_, filePath: string) => readFileTextRaw(filePath));
+ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents: string) =>
+  writeFileTextRaw(filePath, contents),
+);
 ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
   readBatch(filePaths, opts),
 );
