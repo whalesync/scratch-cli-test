@@ -26,6 +26,7 @@ function parseArgs(argv) {
     editCount: undefined,
     acceptCount: undefined,
     remoteDirtyRecord: undefined,
+    failingEditRecord: undefined,
     serverUrl: undefined,
     binary: undefined,
     databaseUrl: undefined,
@@ -100,6 +101,14 @@ function parseArgs(argv) {
       args.remoteDirtyRecord = arg.slice("--change-remote-dirty=".length);
       continue;
     }
+    if (arg === "--failing-edit-record") {
+      args.failingEditRecord = argv[++i];
+      continue;
+    }
+    if (arg.startsWith("--failing-edit-record=")) {
+      args.failingEditRecord = arg.slice("--failing-edit-record=".length);
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -136,6 +145,7 @@ Options:
   --edit-count <n>         Edit only the first N records (default: all). Must be <= --count.
   --accept-count <m>       Accept only the first M edited records (default: all edited). Must be <= --edit-count.
   --change-remote-dirty <n> Commit a remote dirty change to record N (simulates a concurrent external edit).
+  --failing-edit-record <n> Make record N invalid locally by writing a bad timestamp (expected publish failure).
   --server-url <url>       Override SCRATCH_API_URL
   --binary <path-or-name>  Override SCRATCH_CLI_BINARY
   --database-url <url>     Override DATABASE_URL / DATABASE_URL_PREFIX
@@ -496,7 +506,12 @@ function sortRecordFiles(files) {
   });
 }
 
-function editLocalRecords(workspaceDir, runName, count = Infinity) {
+function editLocalRecords(
+  workspaceDir,
+  runName,
+  count = Infinity,
+  failingRecordNumber = null,
+) {
   const files = sortRecordFiles(listRecordFiles(workspaceDir));
   const touched = [];
 
@@ -504,6 +519,9 @@ function editLocalRecords(workspaceDir, runName, count = Infinity) {
     const record = JSON.parse(fs.readFileSync(file, "utf8"));
     if (record && typeof record === "object" && record.id != null) {
       record.name = `Edited Record ${record.id} (${runName})`;
+      if (failingRecordNumber !== null && Number(record.id) === failingRecordNumber) {
+        record.ts = "not-a-timestamp";
+      }
       fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
       touched.push(file);
     }
@@ -549,6 +567,13 @@ function summarizeApprovedFilesAfterUpload(files, expectedNames) {
   return { preserved, reverted, missing };
 }
 
+function getRecordIds(files) {
+  return files.map((file) => {
+    const record = JSON.parse(fs.readFileSync(file, "utf8"));
+    return Number(record.id);
+  });
+}
+
 function getConnectionDir(workspaceDir) {
   return path.join(workspaceDir, "POSTGRES - Smoke Postgres");
 }
@@ -578,6 +603,40 @@ function listModifiedRecordPaths(workspaceDir) {
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .map((line) => line.slice(3));
+}
+
+function listReviewedDirtyPaths(workspaceDir) {
+  const bareRepo = findBareRepo(workspaceDir);
+  const result = spawnSync(
+    "git",
+    [
+      "--git-dir",
+      bareRepo,
+      "diff",
+      "--name-only",
+      "main..dirty",
+      "--",
+      `public/${TABLE_NAME}`,
+    ],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    },
+  );
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (typeof result.status === "number" && result.status !== 0) {
+    const stderr = (result.stderr || "").trim();
+    throw new Error(stderr ? `git diff failed: ${stderr}` : "git diff failed");
+  }
+
+  return (result.stdout || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function findBareRepo(workspaceDir) {
@@ -696,7 +755,8 @@ function tableIdArgs(tableId) {
     .flatMap((part) => ["--table-id", part]);
 }
 
-async function waitForJobs(serverUrl, apiToken, jobIds) {
+async function waitForJobs(serverUrl, apiToken, jobIds, options = {}) {
+  const { allowFailure = false } = options;
   const start = Date.now();
   let lastSummary = "";
   let consecutiveNetworkFailures = 0;
@@ -762,6 +822,9 @@ async function waitForJobs(serverUrl, apiToken, jobIds) {
         ["failed", "canceled", "unknown"].includes(job.state),
       )
     ) {
+      if (allowFailure) {
+        return hydrated;
+      }
       throw new Error(`One or more jobs failed: ${summary}`);
     }
 
@@ -842,6 +905,10 @@ async function main() {
     cliArgs.remoteDirtyRecord != null
       ? Number(cliArgs.remoteDirtyRecord)
       : null;
+  const failingEditRecord =
+    cliArgs.failingEditRecord != null
+      ? Number(cliArgs.failingEditRecord)
+      : null;
   const binary = resolveBinary(
     cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
   );
@@ -884,6 +951,16 @@ async function main() {
       `--change-remote-dirty must be a record number between 1 and ${recordCount}`,
     );
   }
+  if (
+    failingEditRecord !== null &&
+    (!Number.isFinite(failingEditRecord) ||
+      failingEditRecord < 1 ||
+      failingEditRecord > editCount)
+  ) {
+    throw new Error(
+      `--failing-edit-record must be an edited record number between 1 and ${editCount}`,
+    );
+  }
 
   const runName = makeRunName();
   const workbookName = runName;
@@ -913,6 +990,8 @@ async function main() {
   console.log(`Accept count:   ${acceptCount}`);
   if (remoteDirtyRecord !== null)
     console.log(`Remote dirty:   record ${remoteDirtyRecord}`);
+  if (failingEditRecord !== null)
+    console.log(`Failing edit:   record ${failingEditRecord}`);
   console.log(`Workspace root: ${workspaceRoot}`);
   console.log(`Cleanup:        ${cliArgs.noCleanup ? "disabled" : "enabled"}`);
 
@@ -1075,6 +1154,7 @@ async function main() {
       state.workspaceDir,
       runName,
       editCount,
+      failingEditRecord,
     );
     console.log(
       `Edited ${editedFiles.length} of ${downloadedFiles.length} record files.`,
@@ -1199,8 +1279,21 @@ async function main() {
       "Wait for publish job completion",
       [`Job IDs: ${jobIds.join(", ")}`],
     );
-    await waitForJobs(serverUrl, apiToken, jobIds);
-    console.log("All publish jobs completed.");
+    const jobStatuses = await waitForJobs(serverUrl, apiToken, jobIds, {
+      allowFailure: failingEditRecord !== null,
+    });
+    const failedJobs = jobStatuses.filter((job) =>
+      ["failed", "canceled", "unknown"].includes(job.state),
+    );
+    if (failedJobs.length > 0) {
+      console.log(
+        `Publish reached terminal failure state for ${failedJobs.length} job(s): ${failedJobs
+          .map((job) => `${job.bullJobId}:${job.state}`)
+          .join(", ")}`,
+      );
+    } else {
+      console.log("All publish jobs completed.");
+    }
 
     printSection("Verify remote database state");
     await checkpointIfNeeded(
@@ -1211,16 +1304,22 @@ async function main() {
       [`Database: ${dbName}`],
     );
     const finalRows = await readRows(databaseUrl);
-    const acceptedIds = new Set(
-      editedFiles.slice(0, acceptCount).map((f) => {
-        const record = JSON.parse(fs.readFileSync(f, "utf8"));
-        return record.id;
-      }),
-    );
+    const acceptedFilesForPublish = editedFiles.slice(0, acceptCount);
+    const acceptedIds = getRecordIds(acceptedFilesForPublish);
+    const progressSummary =
+      jobStatuses
+        .map((job) => job.publicProgress)
+        .find((progress) => progress && typeof progress === "object") || null;
+    const successfulOperationCount =
+      progressSummary && typeof progressSummary.successCount === "number"
+        ? progressSummary.successCount
+        : acceptedIds.length;
+    const successfulIds = new Set(acceptedIds.slice(0, successfulOperationCount));
+    const failedOrRemainingIds = new Set(acceptedIds.slice(successfulOperationCount));
     let mismatches = 0;
     for (const row of finalRows) {
       let expected;
-      if (acceptedIds.has(row.id)) {
+      if (successfulIds.has(row.id)) {
         expected = `Edited Record ${row.id} (${runName})`;
       } else {
         expected = `Record ${row.id}`;
@@ -1238,8 +1337,8 @@ async function main() {
       );
     }
     console.log(
-        `Verified ${finalRows.length} rows in Postgres (${acceptedIds.size} edited, ${finalRows.length - acceptedIds.size} unchanged).`,
-      );
+      `Verified ${finalRows.length} rows in Postgres (${successfulIds.size} published, ${failedOrRemainingIds.size} still local, ${finalRows.length - successfulIds.size - failedOrRemainingIds.size} unchanged).`,
+    );
 
     const unreviewedFiles = editedFiles.slice(acceptCount);
     const expectedUnreviewedNames = captureExpectedNames(unreviewedFiles);
@@ -1275,6 +1374,11 @@ async function main() {
       expectedUnreviewedNames,
     );
     const modifiedPaths = listModifiedRecordPaths(state.workspaceDir);
+    const reviewedDirtyPaths = listReviewedDirtyPaths(state.workspaceDir);
+    const remainingPublishedFiles = acceptedFilesForPublish.slice(successfulOperationCount);
+    const expectedReviewedDirtyPaths = remainingPublishedFiles.map((file) =>
+      path.relative(getConnectionDir(state.workspaceDir), file),
+    );
     const expectedModifiedPaths = unreviewedFiles.map((file) =>
       path.relative(getConnectionDir(state.workspaceDir), file),
     );
@@ -1297,6 +1401,17 @@ async function main() {
       );
     }
 
+    const expectedReviewedDirtySet = new Set(expectedReviewedDirtyPaths);
+    const matchesReviewedDirtySet =
+      reviewedDirtyPaths.length === expectedReviewedDirtyPaths.length &&
+      reviewedDirtyPaths.every((value) => expectedReviewedDirtySet.has(value));
+
+    if (!matchesReviewedDirtySet) {
+      throw new Error(
+        `Unexpected reviewed dirty paths after final download. Expected: ${expectedReviewedDirtyPaths.join(", ") || "(none)"}; got: ${reviewedDirtyPaths.join(", ") || "(none)"}.`,
+      );
+    }
+
     const expectedModifiedSet = new Set(expectedModifiedPaths);
     const matchesModifiedSet =
       modifiedPaths.length === expectedModifiedPaths.length &&
@@ -1309,7 +1424,7 @@ async function main() {
     }
 
     console.log(
-      `Local workspace verified after final download: ${acceptedFiles.length} approved preserved, ${unreviewedFiles.length} unreviewed preserved, ${modifiedPaths.length} modified path(s) remaining.`,
+      `Local workspace verified after final download: ${successfulIds.size} published baseline, ${remainingPublishedFiles.length} failed/remaining reviewed in dirty, ${unreviewedFiles.length} unreviewed preserved in working tree, ${modifiedPaths.length} working-tree modified path(s) remaining.`,
     );
 
     console.log("\nDriver completed successfully.");

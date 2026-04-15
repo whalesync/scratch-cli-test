@@ -1,4 +1,4 @@
-import { Pool, type PoolConfig } from 'pg';
+import { Pool, type PoolClient, type PoolConfig } from 'pg';
 import { PostgresColumnInfo, PostgresForeignKey } from './postgres-types';
 
 export class PostgresClientError extends Error {
@@ -160,45 +160,94 @@ export class PostgresClient {
    * Insert a row and return the inserted data.
    */
   async insertRow(tableName: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const rows = await this.insertRows(tableName, [data]);
+    return rows[0];
+  }
+
+  /**
+   * Insert multiple rows in a single atomic statement and return the inserted data.
+   */
+  async insertRows(tableName: string, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    if (rows.length === 0) return [];
+
     await this.validateTableName(tableName);
-    const columns = await this.getValidatedColumns(tableName, Object.keys(data));
+    const tableColumns = await this.getTableColumns(tableName);
     const quotedTable = this.quoteIdentifier(tableName);
+    const insertedRows: Record<string, unknown>[] = [];
 
-    const quotedColumns = columns.map((c) => this.quoteIdentifier(c));
-    const placeholders = columns.map((_, i) => `$${i + 1}`);
-    const values = columns.map((c) => data[c]);
+    return this.withTransaction(async (tx) => {
+      for (const row of rows) {
+        const columns = this.getValidatedColumnsInTableOrderFromColumns(tableName, tableColumns, Object.keys(row));
+        const quotedColumns = columns.map((column) => this.quoteIdentifier(column));
+        const placeholders = columns.map((_, index) => `$${index + 1}`);
+        const values = columns.map((column) => row[column]);
 
-    const result = await this.pool.query(
-      `INSERT INTO ${quotedTable} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
-      values,
-    );
-    return result.rows[0] as Record<string, unknown>;
+        const result = await tx.query(
+          `INSERT INTO ${quotedTable} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
+          values,
+        );
+        insertedRows.push(result.rows[0] as Record<string, unknown>);
+      }
+
+      return insertedRows;
+    });
   }
 
   /**
    * Update a row by primary key.
    */
   async updateRow(tableName: string, pkColumn: string, id: unknown, data: Record<string, unknown>): Promise<void> {
+    await this.updateRows(tableName, pkColumn, [{ id, data }]);
+  }
+
+  /**
+   * Update multiple rows in a single atomic statement.
+   */
+  async updateRows(
+    tableName: string,
+    pkColumn: string,
+    rows: { id: unknown; data: Record<string, unknown> }[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
     await this.validateTableName(tableName);
-    const columns = await this.getValidatedColumns(tableName, Object.keys(data));
+    const tableColumns = await this.getTableColumns(tableName);
     const quotedTable = this.quoteIdentifier(tableName);
     const quotedPk = this.quoteIdentifier(pkColumn);
 
-    const setClauses = columns.map((c, i) => `${this.quoteIdentifier(c)} = $${i + 2}`);
-    const values = [id, ...columns.map((c) => data[c])];
+    await this.withTransaction(async (tx) => {
+      for (const row of rows) {
+        const columns = this.getValidatedColumnsInTableOrderFromColumns(tableName, tableColumns, Object.keys(row.data));
+        const setClauses = columns.map((column, index) => `${this.quoteIdentifier(column)} = $${index + 2}`);
+        const values = [row.id, ...columns.map((column) => row.data[column])];
 
-    await this.pool.query(`UPDATE ${quotedTable} SET ${setClauses.join(', ')} WHERE ${quotedPk} = $1`, values);
+        await tx.query(`UPDATE ${quotedTable} SET ${setClauses.join(', ')} WHERE ${quotedPk}::text = $1::text`, values);
+      }
+    });
   }
 
   /**
    * Delete a row by primary key.
    */
   async deleteRow(tableName: string, pkColumn: string, id: unknown): Promise<void> {
+    await this.deleteRows(tableName, pkColumn, [id]);
+  }
+
+  /**
+   * Delete multiple rows in a single atomic statement.
+   */
+  async deleteRows(tableName: string, pkColumn: string, ids: unknown[]): Promise<void> {
+    if (ids.length === 0) return;
+
     await this.validateTableName(tableName);
     const quotedTable = this.quoteIdentifier(tableName);
     const quotedPk = this.quoteIdentifier(pkColumn);
 
-    await this.pool.query(`DELETE FROM ${quotedTable} WHERE ${quotedPk} = $1`, [id]);
+    await this.withTransaction(async (tx) => {
+      for (const id of ids) {
+        await tx.query(`DELETE FROM ${quotedTable} WHERE ${quotedPk}::text = $1::text`, [id]);
+      }
+    });
   }
 
   /**
@@ -226,13 +275,43 @@ export class PostgresClient {
    */
   private async getValidatedColumns(tableName: string, requestedColumns: string[]): Promise<string[]> {
     const columns = await this.getTableColumns(tableName);
-    const validColumnNames = new Set(columns.map((c) => c.column_name));
+    return this.getValidatedColumnsInTableOrderFromColumns(tableName, columns, requestedColumns);
+  }
 
-    const validated = requestedColumns.filter((col) => validColumnNames.has(col));
+  /**
+   * Validate column names and return them in table order for deterministic SQL generation.
+   */
+  private async getValidatedColumnsInTableOrder(tableName: string, requestedColumns: string[]): Promise<string[]> {
+    const columns = await this.getTableColumns(tableName);
+    return this.getValidatedColumnsInTableOrderFromColumns(tableName, columns, requestedColumns);
+  }
+
+  private getValidatedColumnsInTableOrderFromColumns(
+    tableName: string,
+    tableColumns: PostgresColumnInfo[],
+    requestedColumns: string[],
+  ): string[] {
+    const requested = new Set(requestedColumns);
+    const validated = tableColumns.map((column) => column.column_name).filter((column) => requested.has(column));
     if (validated.length === 0) {
       throw new PostgresClientError(`No valid columns found for table "${tableName}"`);
     }
     return validated;
+  }
+
+  private async withTransaction<T>(fn: (tx: PoolClient) => Promise<T>): Promise<T> {
+    const tx = await this.pool.connect();
+    try {
+      await tx.query('BEGIN');
+      const result = await fn(tx);
+      await tx.query('COMMIT');
+      return result;
+    } catch (error) {
+      await tx.query('ROLLBACK');
+      throw error;
+    } finally {
+      tx.release();
+    }
   }
 
   /**

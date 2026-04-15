@@ -87,6 +87,28 @@ type PublishFromGitProgress = {
   renameFilesPlanned?: number;
 };
 
+function hasPublishFailures(job: JobStatus | undefined): boolean {
+  const progress = job?.publicProgress as PublishFromGitProgress | undefined;
+  return (progress?.failedCount ?? 0) > 0;
+}
+
+function getPublishFailureMessage(job: JobStatus): string {
+  const progress = job.publicProgress as PublishFromGitProgress | undefined;
+  const failedCount = progress?.failedCount ?? 0;
+  const currentPhase = progress?.currentPhase;
+
+  if (job.failedReason && failedCount > 0 && currentPhase) {
+    return `${job.failedReason} (${failedCount} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase})`;
+  }
+  if (job.failedReason) {
+    return job.failedReason;
+  }
+  if (failedCount > 0 && currentPhase) {
+    return `${failedCount} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase}.`;
+  }
+  return 'One or more publish jobs did not complete successfully.';
+}
+
 const PHASE_ORDER = ['edit', 'create', 'delete', 'backfill', 'rename'] as const;
 type Phase = (typeof PHASE_ORDER)[number];
 
@@ -155,6 +177,7 @@ function PublishingProgress({ jobIds, jobs }: { jobIds: string[]; jobs: JobStatu
         const hasProgress = total > 0;
         const rows = progress ? computePhaseRows(progress) : null;
         const currentTable = progress?.currentTableName;
+        const failedReason = job?.failedReason;
 
         return (
           <Box key={jobId}>
@@ -178,6 +201,17 @@ function PublishingProgress({ jobIds, jobs }: { jobIds: string[]; jobs: JobStatu
             {hasProgress && (
               <>
                 <Progress value={pct} size="sm" mb="sm" animated={job?.state === 'active'} />
+
+                {(progress?.successCount ?? 0) > 0 || (progress?.failedCount ?? 0) > 0 ? (
+                  <Group gap="xs" mb="xs">
+                    <Badge color="green" variant="light">
+                      {(progress?.successCount ?? 0).toLocaleString()} succeeded
+                    </Badge>
+                    <Badge color="red" variant="light">
+                      {(progress?.failedCount ?? 0).toLocaleString()} failed
+                    </Badge>
+                  </Group>
+                ) : null}
 
                 <Table withColumnBorders fz="xs">
                   <Table.Thead>
@@ -216,6 +250,12 @@ function PublishingProgress({ jobIds, jobs }: { jobIds: string[]; jobs: JobStatu
                     })}
                   </Table.Tbody>
                 </Table>
+
+                {failedReason && (
+                  <Alert color="red" mt="sm" title="Failure details">
+                    {failedReason}
+                  </Alert>
+                )}
               </>
             )}
 
@@ -255,6 +295,7 @@ export function PublishChangesModal({
   const [closing, setClosing] = useState(false);
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
+  const [publishErrorDetails, setPublishErrorDetails] = useState<string[]>([]);
 
   const refreshPlans = useCallback(async (): Promise<LocalPublishPlan[]> => {
     if (!localPath) {
@@ -303,6 +344,7 @@ export function PublishChangesModal({
     setPublishing(false);
     setJobIds([]);
     setJobs([]);
+    setPublishErrorDetails([]);
     planningSessionIdRef.current = null;
 
     try {
@@ -368,6 +410,7 @@ export function PublishChangesModal({
       setMode('publishing');
       setJobIds([]);
       setJobs([]);
+      setPublishErrorDetails([]);
       await window.scratchDesktop.pushWorkspaceChanges(localPath);
       const result = await window.scratchDesktop.triggerPublishFromGit(localPath);
 
@@ -445,6 +488,19 @@ export function PublishChangesModal({
 
     let cancelled = false;
 
+    const pullLatestWorkspaceState = async () => {
+      if (!localPath) {
+        return;
+      }
+
+      try {
+        await window.scratchDesktop.pullWorkspaceChanges(localPath);
+        onDataRefresh();
+      } catch (err) {
+        console.debug('Post-publish pull failed:', err);
+      }
+    };
+
     const poll = async () => {
       try {
         const statuses = await jobApi.getJobsStatus(jobIds);
@@ -459,27 +515,27 @@ export function PublishChangesModal({
         setJobs(hydrated);
 
         if (hydrated.every((job) => isTerminalState(job.state))) {
-          setPublishing(false);
           if (pollingIntervalRef.current !== null) {
             window.clearInterval(pollingIntervalRef.current);
             pollingIntervalRef.current = null;
           }
 
-          if (hydrated.every((job) => job.state === 'completed')) {
-            setMode('complete');
-            if (localPath) {
-              window.scratchDesktop
-                .pullWorkspaceChanges(localPath)
-                .then(onDataRefresh)
-                .catch((err) => {
-                  console.debug('Post-publish pull failed:', err);
-                });
-            }
+          await pullLatestWorkspaceState();
+          if (cancelled) {
             return;
           }
 
+          setPublishing(false);
+          const failedJobs = hydrated.filter((job) => job.state !== 'completed' || hasPublishFailures(job));
+
+          if (failedJobs.length === 0) {
+            setMode('complete');
+            return;
+          }
+
+          setPublishErrorDetails(failedJobs.map((job) => getPublishFailureMessage(job)));
           setMode('error');
-          setError('One or more publish jobs did not complete successfully.');
+          setError(failedJobs.map((job) => getPublishFailureMessage(job)).join(' '));
         }
       } catch (err) {
         if (cancelled) {
@@ -662,13 +718,30 @@ export function PublishChangesModal({
                 <Alert color="red" title="Publish failed">
                   {error || 'Something went wrong while publishing changes.'}
                 </Alert>
+                {publishErrorDetails.length > 0 && (
+                  <Stack gap="xs">
+                    {publishErrorDetails.map((message, index) => (
+                      <Text key={`${index}-${message}`} size="sm">
+                        {message}
+                      </Text>
+                    ))}
+                  </Stack>
+                )}
+                <PublishingProgress jobIds={jobIds} jobs={jobs} />
                 {jobs.length > 0 && (
                   <Stack gap="sm">
                     {jobs.map((job) => (
-                      <Group key={job.bullJobId ?? job.dbJobId ?? job.type} justify="space-between">
-                        <Code>{job.bullJobId ?? job.dbJobId ?? job.type}</Code>
-                        <Badge color={statusColor(job.state)}>{job.state}</Badge>
-                      </Group>
+                      <Stack key={job.bullJobId ?? job.dbJobId ?? job.type} gap={4}>
+                        <Group justify="space-between">
+                          <Code>{job.bullJobId ?? job.dbJobId ?? job.type}</Code>
+                          <Badge color={statusColor(job.state)}>{job.state}</Badge>
+                        </Group>
+                        {job.failedReason && (
+                          <Text size="xs" c="red">
+                            {job.failedReason}
+                          </Text>
+                        )}
+                      </Stack>
                     ))}
                   </Stack>
                 )}

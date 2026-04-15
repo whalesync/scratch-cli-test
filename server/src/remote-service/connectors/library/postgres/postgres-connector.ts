@@ -19,6 +19,16 @@ import {
 } from './postgres-types';
 
 const READ_BATCH_SIZE = 500;
+const DEFAULT_POSTGRES_PUBLISH_BATCH_SIZE = 100;
+export const LOCAL_POSTGRES_PUBLISH_BATCH_SIZE_ENV = 'LOCAL_POSTGRES_PUBLISH_BATCH_SIZE';
+
+function getPostgresPublishBatchSize(): number {
+  const raw = process.env[LOCAL_POSTGRES_PUBLISH_BATCH_SIZE_ENV];
+  if (!raw) return DEFAULT_POSTGRES_PUBLISH_BATCH_SIZE;
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_POSTGRES_PUBLISH_BATCH_SIZE;
+}
 
 /**
  * Map a PostgreSQL data type to a TypeBox schema and internal PostgresColumnType.
@@ -281,7 +291,7 @@ export class PostgresConnector extends Connector {
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getBatchSize(_operation: 'create' | 'update' | 'delete'): number {
-    return 100;
+    return getPostgresPublishBatchSize();
   }
 
   /**
@@ -289,29 +299,27 @@ export class PostgresConnector extends Connector {
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    const results: ConnectorFile[] = [];
-
-    for (const file of files) {
-      const result = await this.client.insertRow(tableName, file);
-      results.push(result as ConnectorFile);
-    }
-
-    return results;
+    const results = await this.client.insertRows(tableName, files as Record<string, unknown>[]);
+    return results as ConnectorFile[];
   }
 
   /**
    * Update records by ID.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields?: (Record<string, unknown> | undefined)[],
+  ): Promise<void> {
     const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
     const pkColumn = tableSpec.idColumnRemoteId || 'id';
-
-    for (const file of files) {
-      const id = file[pkColumn];
-      const data = { ...file };
+    const updates = files.map((file, index) => {
+      const data = { ...(changedFields?.[index] ?? file) };
       delete data[pkColumn];
-      await this.client.updateRow(tableName, pkColumn, id, data);
-    }
+      return { id: file[pkColumn], data };
+    });
+
+    await this.client.updateRows(tableName, pkColumn, updates);
   }
 
   /**
@@ -320,10 +328,11 @@ export class PostgresConnector extends Connector {
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
     const pkColumn = tableSpec.idColumnRemoteId || 'id';
-
-    for (const file of files) {
-      await this.client.deleteRow(tableName, pkColumn, file[pkColumn]);
-    }
+    await this.client.deleteRows(
+      tableName,
+      pkColumn,
+      files.map((file) => file[pkColumn]),
+    );
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
