@@ -174,9 +174,11 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
           cause: error as Error,
         });
       }
+      // Revalidate folder list so lock fields are picked up (shows spinning icons)
+      await globalMutate(SWR_KEYS.dataFolders.list(id));
       await useActiveJobsStore.getState().refreshJobs();
     },
-    [id, setWorkbookError],
+    [id, globalMutate, setWorkbookError],
   );
 
   return {

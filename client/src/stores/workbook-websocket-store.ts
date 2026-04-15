@@ -52,6 +52,21 @@ let suppressionTimeout: ReturnType<typeof setTimeout> | null = null;
 const SUPPRESSION_SAFETY_TIMEOUT_MS = 30_000;
 const SUPPRESSION_GRACE_PERIOD_MS = 2_000;
 
+/**
+ * Debounced folder list revalidation. Multiple rapid folder-updated events
+ * (e.g. lock set on N folders at once) collapse into a single SWR revalidation.
+ */
+let folderListRevalidateTimeout: ReturnType<typeof setTimeout> | null = null;
+const FOLDER_LIST_REVALIDATE_DELAY_MS = 300;
+
+function debouncedFolderListRevalidate(workbookId: WorkbookId) {
+  if (folderListRevalidateTimeout) clearTimeout(folderListRevalidateTimeout);
+  folderListRevalidateTimeout = setTimeout(() => {
+    folderListRevalidateTimeout = null;
+    mutate(SWR_KEYS.dataFolders.list(workbookId), undefined, { revalidate: true });
+  }, FOLDER_LIST_REVALIDATE_DELAY_MS);
+}
+
 export function suppressFolderMutations() {
   folderMutationSuppressed = true;
 
@@ -176,6 +191,7 @@ export const useWorkbookWebSocketStore = create<WorkbookWebSocketStore>((set, ge
       mutate(SWR_KEYS.dataFolders.detail(event.data.entityId as DataFolderId), undefined, {
         revalidate: true,
       });
+      debouncedFolderListRevalidate(workbookId);
       return;
     }
 

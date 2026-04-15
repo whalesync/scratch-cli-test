@@ -37,6 +37,8 @@ export type PullLinkedFolderFilesProgress = {
   folderName: string;
   connector: string;
   status: 'pending' | 'active' | 'completed' | 'failed';
+  /** All folder IDs being pulled (v2 multi-folder jobs). */
+  dataFolderIds?: string[];
   createdPaths?: string[];
   updatedPaths?: string[];
   deletedPaths?: string[];

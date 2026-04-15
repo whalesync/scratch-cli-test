@@ -223,7 +223,12 @@ export function getDataFolderIdsFromJob(job: JobEntity): string[] {
   const progress = job.publicProgress as Record<string, unknown> | undefined;
   if (!progress) return [];
 
-  // Pull jobs store a single folderId
+  // V2 pull jobs store all folder IDs
+  if (Array.isArray(progress.dataFolderIds)) {
+    return (progress.dataFolderIds as string[]).filter((id): id is string => typeof id === 'string');
+  }
+
+  // V1 pull jobs store a single folderId
   if (typeof progress.folderId === 'string') {
     return [progress.folderId];
   }

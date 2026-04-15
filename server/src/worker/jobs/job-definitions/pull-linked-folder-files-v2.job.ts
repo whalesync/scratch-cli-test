@@ -202,6 +202,7 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       connector: connectorService,
       filter: null,
       status: 'active',
+      dataFolderIds: folderContexts.map((fc) => fc.dataFolder.id),
       createdPaths: [],
       updatedPaths: [],
       deletedPaths: [],
