@@ -33,6 +33,18 @@ struct BareFixture {
     local_bare: PathBuf,
 }
 
+fn make_connection_context(root: &Path, bare_repo: &Path) -> ConnectionContext {
+    ConnectionContext {
+        conn_dir_name: "Conn".to_string(),
+        dirty_dir: root.join("Conn"),
+        reviewed_dirty_dir: root.join(".scratch/connections/reviewed-dirty/Conn"),
+        scratch_dir: root.join(".scratch/connections/scratch/Conn"),
+        master_dir: root.join(".scratch/connections/master/Conn"),
+        bare_repo: bare_repo.to_path_buf(),
+        db_path: root.join(".repos/conn.db"),
+    }
+}
+
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
@@ -326,6 +338,162 @@ fn git_push_force_overwrites_diverged_remote_dirty_branch() {
 
     let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
     assert_eq!(remote_dirty, local_commit);
+}
+
+#[test]
+fn upload_single_repo_uses_real_merge_base_for_local_dirty() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    let original_remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
+
+    write_file(
+        &fixture.source_dir.join("posts/rec1.json"),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"remote\"\n}\n",
+    );
+    commit_all(&fixture.source_dir, "remote dirty update");
+    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
+
+    let stale_local_parent = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
+    let mut local_files = read_git_tree(&fixture.local_bare, &stale_local_parent).unwrap();
+    local_files.insert(
+        "posts/rec1.json".to_string(),
+        b"{\n  \"id\": \"rec1\",\n  \"name\": \"local\"\n}\n".to_vec(),
+    );
+    commit_file_map_to_dirty_ref(
+        &fixture.local_bare,
+        Some(stale_local_parent.as_str()),
+        &local_files,
+        "local approved update",
+    )
+    .unwrap();
+
+    materialize_treeish_to_worktree(&ctx.bare_repo, "dirty", &ctx.dirty_dir).unwrap();
+
+    let result = upload_single_repo(&ctx, "test-token", false).unwrap();
+    assert_eq!(result.status, "uploaded");
+
+    let final_remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
+    let merge_base = crate::git_ops::merge_base_to_string(
+        &fixture.remote_bare,
+        "refs/heads/dirty",
+        &original_remote_dirty,
+    )
+    .unwrap();
+    assert_eq!(merge_base, Some(original_remote_dirty.clone()));
+
+    let final_remote_map = read_git_tree(&fixture.remote_bare, &final_remote_dirty).unwrap();
+    assert_eq!(
+        String::from_utf8(final_remote_map["posts/rec1.json"].clone()).unwrap(),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"local\"\n}\n"
+    );
+}
+
+#[test]
+fn download_single_repo_uses_real_merge_base_and_rebases_working_tree() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    write_file(
+        &fixture.source_dir.join("posts/rec1.json"),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"draft\",\n  \"note\": \"base\"\n}\n",
+    );
+    commit_all(&fixture.source_dir, "rich base");
+    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
+
+    crate::git_ops::fetch_origin(&fixture.local_bare, "test-token").unwrap();
+    let rich_base_hash = git_rev_parse(&fixture.local_bare, "refs/remotes/origin/dirty").unwrap();
+    git_update_ref(&fixture.local_bare, "refs/heads/dirty", &rich_base_hash).unwrap();
+
+    write_file(
+        &fixture.source_dir.join("posts/rec1.json"),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"published\",\n  \"note\": \"base\"\n}\n",
+    );
+    commit_all(&fixture.source_dir, "remote dirty update");
+    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
+    let latest_remote_hash = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
+
+    let local_parent = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
+    let mut local_files = read_git_tree(&fixture.local_bare, &local_parent).unwrap();
+    local_files.insert(
+        "posts/rec1.json".to_string(),
+        b"{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"draft\",\n  \"note\": \"base\"\n}\n".to_vec(),
+    );
+    commit_file_map_to_dirty_ref(
+        &fixture.local_bare,
+        Some(local_parent.as_str()),
+        &local_files,
+        "local approved update",
+    )
+    .unwrap();
+
+    materialize_treeish_to_worktree(&ctx.bare_repo, "dirty", &ctx.dirty_dir).unwrap();
+    write_file(
+        &ctx.dirty_dir.join("posts/rec1.json"),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"draft\",\n  \"note\": \"local note\"\n}\n",
+    );
+
+    let result = download_single_repo(&ctx, "test-token").unwrap();
+    assert_eq!(result.status, "downloaded");
+
+    let final_local_dirty = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
+    let merge_base = crate::git_ops::merge_base_to_string(
+        &fixture.local_bare,
+        "refs/heads/dirty",
+        "refs/remotes/origin/dirty",
+    )
+    .unwrap();
+    assert_eq!(merge_base, Some(latest_remote_hash));
+
+    let final_dirty_map = read_git_tree(&fixture.local_bare, &final_local_dirty).unwrap();
+    assert_eq!(
+        String::from_utf8(final_dirty_map["posts/rec1.json"].clone()).unwrap(),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"published\",\n  \"note\": \"base\"\n}\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"published\",\n  \"note\": \"local note\"\n}\n"
+    );
+}
+
+#[test]
+fn apply_remote_changes_to_working_copy_rebases_unapproved_edits() {
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &tmp.path().join("repo.git"));
+
+    std::fs::create_dir_all(ctx.dirty_dir.join("posts")).unwrap();
+    write_file(
+        &ctx.dirty_dir.join("posts/rec1.json"),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"local\",\n  \"status\": \"draft\"\n}\n",
+    );
+
+    let old_map = HashMap::from([(
+        "posts/rec1.json".to_string(),
+        b"{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"draft\"\n}\n".to_vec(),
+    )]);
+    let new_map = HashMap::from([(
+        "posts/rec1.json".to_string(),
+        b"{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"published\"\n}\n".to_vec(),
+    )]);
+
+    apply_remote_changes_to_working_copy(&ctx, &old_map, &new_map).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"local\",\n  \"status\": \"published\"\n}\n"
+    );
 }
 
 #[test]

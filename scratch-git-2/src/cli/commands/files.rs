@@ -1380,26 +1380,49 @@ fn update_reviewed_dirty(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<
 fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<DownloadResult> {
     crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
 
-    let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
+    let local_dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
     let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
 
-    if base_hash == remote_hash {
+    if local_dirty_hash == remote_hash {
         return Ok(DownloadResult {
             status: "up_to_date".to_string(),
             ..Default::default()
         });
     }
 
-    let base_map = read_git_tree(&ctx.bare_repo, &base_hash)?;
+    let local_dirty_map = read_git_tree(&ctx.bare_repo, &local_dirty_hash)?;
     let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
+    let merge_base_hash = crate::git_ops::merge_base_to_string(
+        &ctx.bare_repo,
+        "refs/heads/dirty",
+        "refs/remotes/origin/dirty",
+    )?
+    .ok_or_else(|| anyhow::anyhow!("No merge base found between local dirty and origin/dirty"))?;
+    let merge_base_map = read_git_tree(&ctx.bare_repo, &merge_base_hash)?;
+    let (merged_dirty_map, _, mut messages) =
+        prepare_upload_merge(&merge_base_map, &local_dirty_map, &remote_map, 0);
+
+    let new_dirty_hash = if maps_equal(&merged_dirty_map, &remote_map) {
+        git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
+        remote_hash.clone()
+    } else {
+        commit_file_map_to_dirty_ref(
+            &ctx.bare_repo,
+            Some(remote_hash.as_str()),
+            &merged_dirty_map,
+            "Download from Scratch CLI",
+        )?
+    };
+
     let local_map = read_materialized_repo(ctx)?;
-    let actions = compute_merge_actions(&base_map, &local_map, &remote_map);
+    let actions = compute_merge_actions(&local_dirty_map, &local_map, &merged_dirty_map);
 
     let mut result = DownloadResult {
         status: "downloaded".to_string(),
+        messages: std::mem::take(&mut messages),
         ..Default::default()
     };
-    let mut target_map = remote_map.clone();
+    let mut target_map = merged_dirty_map.clone();
 
     for act in &actions {
         match act {
@@ -1413,7 +1436,7 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
             },
             MergeAction::WriteRemote { path, content } => {
                 if let Some(content) = content {
-                    if base_map.contains_key(path.as_str()) {
+                    if local_dirty_map.contains_key(path.as_str()) {
                         result.files_updated += 1;
                     } else {
                         result.files_created += 1;
@@ -1445,10 +1468,9 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
         }
     }
 
-    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
     materialize_local_repo(ctx, &target_map)?;
-    update_dirty_worktree_index(ctx, &remote_hash)?;
-    update_reviewed_dirty(ctx, &remote_hash)?;
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(result)
 }
@@ -1463,10 +1485,11 @@ fn upload_single_repo(
     if verbose {
         eprint!("  Reading local state...");
     }
-    let base_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
-    // Clone base_map out of the cache so we can continue mutating the cache for
+    let local_dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
+    // Clone local_dirty_map out of the cache so we can continue mutating the cache for
     // remote tree reads without holding a borrow.
-    let base_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &base_hash)?.clone();
+    let local_dirty_map =
+        cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &local_dirty_hash)?.clone();
     sync_schema_files_from_master(ctx)?;
     let local_unreviewed = unreviewed_entries_cached(&mut tree_cache, ctx)?;
     let local_plan_map = read_local_publish_plan_map(ctx)?;
@@ -1485,7 +1508,7 @@ fn upload_single_repo(
 
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
         let remote_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?;
-        if maps_equal(&base_map, remote_map) {
+        if maps_equal(&local_dirty_map, remote_map) {
             return Ok(UploadResult {
                 status: "no_changes".to_string(),
                 ..Default::default()
@@ -1506,12 +1529,20 @@ fn upload_single_repo(
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
         let remote_map =
             cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?.clone();
+        let merge_base_hash = crate::git_ops::merge_base_to_string(
+            &ctx.bare_repo,
+            "refs/heads/dirty",
+            "refs/remotes/origin/dirty",
+        )?
+        .ok_or_else(|| anyhow::anyhow!("No merge base found between local dirty and origin/dirty"))?;
+        let merge_base_map =
+            cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &merge_base_hash)?.clone();
 
         if verbose {
             eprint!("  Merging...");
         }
         let (mut merged, mut result, mut messages) =
-            prepare_upload_merge(&base_map, &base_map, &remote_map, attempt);
+            prepare_upload_merge(&merge_base_map, &local_dirty_map, &remote_map, attempt);
         if verbose {
             eprintln!(" done");
         }
@@ -1532,7 +1563,7 @@ fn upload_single_repo(
         if maps_equal(&merged, &remote_map) {
             git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
             sync_schema_files_from_master(ctx)?;
-            apply_remote_changes_to_working_copy(ctx, &base_map, &remote_map, &local_unreviewed)?;
+            apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &remote_map)?;
             update_dirty_worktree_index(ctx, &remote_hash)?;
             update_reviewed_dirty(ctx, &remote_hash)?;
             return Ok(UploadResult {
@@ -1558,7 +1589,7 @@ fn upload_single_repo(
                     eprintln!(" done");
                 }
                 sync_schema_files_from_master(ctx)?;
-                apply_remote_changes_to_working_copy(ctx, &base_map, &merged, &local_unreviewed)?;
+                apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &merged)?;
                 update_dirty_worktree_index(ctx, &new_dirty_hash)?;
                 update_reviewed_dirty(ctx, &new_dirty_hash)?;
                 result.files_plan = plan_file_count;
@@ -1572,7 +1603,7 @@ fn upload_single_repo(
                 if err.to_string().contains("non-fast-forward")
                     || err.to_string().contains("rejected")
                 {
-                    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &base_hash)?;
+                    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &local_dirty_hash)?;
                     continue;
                 }
                 return Err(err);
@@ -2155,32 +2186,43 @@ fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Res
     Ok(())
 }
 
-/// Apply only the files that changed between `old_map` and `new_map` to the working copy,
-/// skipping paths that have unreviewed local edits so user changes are preserved.
+/// Rebase the current working tree from `old_map` to `new_map`, treating the
+/// working tree as local edits on top of `old_map`.
 fn apply_remote_changes_to_working_copy(
     ctx: &ConnectionContext,
     old_map: &FileMap,
     new_map: &FileMap,
-    unreviewed: &[UnreviewedEntry],
 ) -> anyhow::Result<()> {
-    let skip: std::collections::HashSet<&str> =
-        unreviewed.iter().map(|e| e.path.as_str()).collect();
+    let old_data_map = data_only_map(old_map);
+    let new_data_map = data_only_map(new_map);
 
-    let changed: std::collections::HashSet<&str> = old_map
-        .keys()
-        .chain(new_map.keys())
-        .map(|s| s.as_str())
-        .filter(|p| !p.starts_with(".scratch") && old_map.get(*p) != new_map.get(*p))
-        .collect();
+    let mut working_tree_map = FileMap::new();
+    read_dirty_disk(&ctx.dirty_dir, &ctx.dirty_dir, &mut working_tree_map)?;
 
-    for path in changed {
-        if skip.contains(path) {
+    let actions = compute_merge_actions(&old_data_map, &working_tree_map, &new_data_map);
+
+    for act in actions {
+        let (path, next_content) = match act {
+            MergeAction::KeepLocal { path, content, .. } => (path, content),
+            MergeAction::WriteRemote { path, content } => (path, content),
+            MergeAction::Delete { path, .. } => (path, None),
+            MergeAction::Merge {
+                path,
+                base,
+                local,
+                remote,
+            } => (path.clone(), Some(merge_content(&path, Some(&base), Some(&local), Some(&remote)))),
+        };
+
+        let current_content = working_tree_map.get(path.as_str());
+        if current_content == next_content.as_ref() {
             continue;
         }
-        match new_map.get(path) {
-            Some(content) => write_file(&ctx.dirty_dir.join(path), content)?,
+
+        match next_content {
+            Some(content) => write_file(&ctx.dirty_dir.join(&path), &content)?,
             None => {
-                let _ = std::fs::remove_file(ctx.dirty_dir.join(path));
+                let _ = std::fs::remove_file(ctx.dirty_dir.join(&path));
             }
         }
     }

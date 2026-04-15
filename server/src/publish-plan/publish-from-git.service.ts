@@ -508,12 +508,16 @@ export class PublishFromGitService {
         const { folderPath, filename } = parsePath(entry.relPath);
         const filenameMap = await this.scratchGitService.lookupFilenamesByFolder(repoId, folderPath, [filename]);
         remoteId = filenameMap.get(filename) ?? null;
+        if (!remoteId) {
+          throw new Error(`Could not resolve remote ID for entry: ${entry.relPath}`);
+        }
+        // id was absent from content — inject the looked-up string id so the
+        // connector and git both see a consistent value
+        resolvedContent = { ...resolvedContent, [idField]: remoteId } as ParsedContent;
       }
-      if (!remoteId) {
-        throw new Error(`Could not resolve remote ID for entry: ${entry.relPath}`);
-      }
-
-      resolvedContent = { ...resolvedContent, [idField]: remoteId } as ParsedContent;
+      // When contentId was already present we leave resolvedContent[idField]
+      // untouched so its native type (e.g. numeric Postgres id) is preserved
+      // in git. remoteId (string) is kept for internal lookup only.
 
       if (entry.changedFields && Object.keys(entry.changedFields).length === 0) continue;
 

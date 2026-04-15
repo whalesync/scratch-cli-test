@@ -127,6 +127,8 @@ Options:
                              publish-plan-created After plan-publish runs, before files upload
                              upload-complete  After files upload runs and approved local files are checked, before publish-from-git
                              publish-queued   After publish-from-git, job IDs known, before job wait
+                             remote-verified  After remote DB verification, before final local files download
+                             local-download-complete After final local files download, before local-state verification
   --stop=<mode>            Exit cleanly at a breakpoint (same step names as --pause)
   --no-cleanup             Keep the local workspace, remote workbook, and test DB
   --count <n>              Number of sample records to create (default: 3)
@@ -547,6 +549,37 @@ function summarizeApprovedFilesAfterUpload(files, expectedNames) {
   return { preserved, reverted, missing };
 }
 
+function getConnectionDir(workspaceDir) {
+  return path.join(workspaceDir, "POSTGRES - Smoke Postgres");
+}
+
+function listModifiedRecordPaths(workspaceDir) {
+  const connectionDir = getConnectionDir(workspaceDir);
+  const result = spawnSync("git", ["-C", connectionDir, "status", "--short"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 30_000,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (typeof result.status === "number" && result.status !== 0) {
+    const stderr = (result.stderr || "").trim();
+    throw new Error(
+      stderr
+        ? `git status failed: ${stderr}`
+        : "git status failed",
+    );
+  }
+
+  return (result.stdout || "")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => line.slice(3));
+}
+
 function findBareRepo(workspaceDir) {
   const reposDir = path.join(workspaceDir, ".repos");
   if (!fs.existsSync(reposDir)) {
@@ -768,6 +801,8 @@ const VALID_BREAKPOINTS = new Set([
   "publish-plan-created",
   "upload-complete",
   "publish-queued",
+  "remote-verified",
+  "local-download-complete",
 ]);
 
 async function main() {
@@ -1203,7 +1238,78 @@ async function main() {
       );
     }
     console.log(
-      `Verified ${finalRows.length} rows in Postgres (${acceptedIds.size} edited, ${finalRows.length - acceptedIds.size} unchanged).`,
+        `Verified ${finalRows.length} rows in Postgres (${acceptedIds.size} edited, ${finalRows.length - acceptedIds.size} unchanged).`,
+      );
+
+    const unreviewedFiles = editedFiles.slice(acceptCount);
+    const expectedUnreviewedNames = captureExpectedNames(unreviewedFiles);
+
+    printSection("Download published changes");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "remote-verified",
+      "Download published changes",
+      [`Workspace: ${state.workspaceDir}`],
+    );
+    runCli(binary, serverUrl, ["files", "download"], {
+      cwd: state.workspaceDir,
+      noJson: true,
+    });
+
+    printSection("Verify local workspace state");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "local-download-complete",
+      "Verify local workspace state",
+      [`Workspace: ${state.workspaceDir}`],
+    );
+
+    const approvedAfterDownload = summarizeApprovedFilesAfterUpload(
+      acceptedFiles,
+      expectedAcceptedNames,
+    );
+    const unreviewedAfterDownload = summarizeApprovedFilesAfterUpload(
+      unreviewedFiles,
+      expectedUnreviewedNames,
+    );
+    const modifiedPaths = listModifiedRecordPaths(state.workspaceDir);
+    const expectedModifiedPaths = unreviewedFiles.map((file) =>
+      path.relative(getConnectionDir(state.workspaceDir), file),
+    );
+
+    if (
+      approvedAfterDownload.reverted.length > 0 ||
+      approvedAfterDownload.missing.length > 0
+    ) {
+      throw new Error(
+        `Approved files were not preserved after final download (${approvedAfterDownload.reverted.length} reverted, ${approvedAfterDownload.missing.length} missing).`,
+      );
+    }
+
+    if (
+      unreviewedAfterDownload.reverted.length > 0 ||
+      unreviewedAfterDownload.missing.length > 0
+    ) {
+      throw new Error(
+        `Unreviewed files were not preserved after final download (${unreviewedAfterDownload.reverted.length} reverted, ${unreviewedAfterDownload.missing.length} missing).`,
+      );
+    }
+
+    const expectedModifiedSet = new Set(expectedModifiedPaths);
+    const matchesModifiedSet =
+      modifiedPaths.length === expectedModifiedPaths.length &&
+      modifiedPaths.every((value) => expectedModifiedSet.has(value));
+
+    if (!matchesModifiedSet) {
+      throw new Error(
+        `Unexpected modified paths after final download. Expected: ${expectedModifiedPaths.join(", ") || "(none)"}; got: ${modifiedPaths.join(", ") || "(none)"}.`,
+      );
+    }
+
+    console.log(
+      `Local workspace verified after final download: ${acceptedFiles.length} approved preserved, ${unreviewedFiles.length} unreviewed preserved, ${modifiedPaths.length} modified path(s) remaining.`,
     );
 
     console.log("\nDriver completed successfully.");
