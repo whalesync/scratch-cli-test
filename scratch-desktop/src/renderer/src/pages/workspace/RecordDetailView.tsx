@@ -1,8 +1,10 @@
 import { Box, Group, Loader, ScrollArea, Stack } from '@mantine/core';
-import { Braces, Check, ChevronDown, ChevronUp, RotateCcw, Upload, X } from 'lucide-react';
+import { Braces, Check, ChevronDown, ChevronUp, RotateCcw, Upload, Wrench, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ButtonSecondaryGhost, IconButtonGhost } from '../../components/base/buttons';
-import { Text12Regular, TextMono12Regular, TextTitle2 } from '../../components/base/text';
+import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
+import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
+import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
+import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { flattenObject } from '../../utils/flatten-object';
 import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
@@ -191,6 +193,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   onPublishFile,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
+  const [rawEditorOpen, setRawEditorOpen] = useState(false);
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
@@ -210,6 +213,13 @@ export const RecordDetailView = memo(function RecordDetailView({
   const currentFilename =
     recordData?.row.__filename ?? (typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined);
 
+  /** Working copy path on disk for the selected record (same as invalid-json list `workingFilePath`). */
+  const workingRecordFilePath = useMemo(() => {
+    if (!currentFilename || !folderPath) return null;
+    const dir = folderPath.replace(/\/$/, '');
+    return `${dir}/${currentFilename.replace(/^\//, '')}`;
+  }, [folderPath, currentFilename]);
+
   const currentRecordCliPath = useMemo(() => {
     const filename = typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined;
     if (!filename || !folderPath.startsWith(workspacePath)) return null;
@@ -218,6 +228,8 @@ export const RecordDetailView = memo(function RecordDetailView({
   }, [currentRow, folderPath, workspacePath]);
 
   const displayData = recordData?.displayData ?? null;
+
+  const rawJsonText = useMemo(() => (displayData ? JSON.stringify(displayData, null, 2) : ''), [displayData]);
 
   const selectedFilename = (() => {
     const row = rows[selectedIndex];
@@ -277,6 +289,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   useEffect(() => {
     editingFieldRef.current = null;
     setEditingFieldName(null);
+    setRawEditorOpen(false);
   }, [selectedIndex]);
 
   const handlePrev = useCallback(() => {
@@ -372,6 +385,11 @@ export const RecordDetailView = memo(function RecordDetailView({
     },
     [clearFieldEdit, folderPath, workspacePath, onRecordChanged],
   );
+
+  const handleRawFileSaved = useCallback(() => {
+    setRecordReloadKey((k) => k + 1);
+    onRecordChanged?.();
+  }, [onRecordChanged]);
 
   const beginFieldEdit = useCallback((fieldName: string) => {
     editingFieldRef.current = fieldName;
@@ -472,251 +490,302 @@ export const RecordDetailView = memo(function RecordDetailView({
   ]);
 
   return (
-    <Box
-      style={{
-        position: 'absolute',
-        inset: 0,
-        zIndex: 10,
-        display: 'flex',
-        backgroundColor: 'var(--bg-base)',
-        border: '0.5px solid var(--fg-divider)',
-        borderRadius: 4,
-        overflow: 'hidden',
-      }}
-    >
-      {/* Left panel — record navigator */}
+    <>
       <Box
         style={{
-          width: 240,
-          minWidth: 240,
-          borderRight: '0.5px solid var(--fg-divider)',
+          position: 'absolute',
+          inset: 0,
+          zIndex: 10,
           display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: 'var(--bg-panel)',
+          backgroundColor: 'var(--bg-base)',
+          border: '0.5px solid var(--fg-divider)',
+          borderRadius: 4,
+          overflow: 'hidden',
         }}
       >
-        <Group
-          gap={4}
-          align="center"
-          wrap="nowrap"
-          style={{ padding: '6px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}
+        {/* Left panel — record navigator */}
+        <Box
+          style={{
+            width: 240,
+            minWidth: 240,
+            borderRight: '0.5px solid var(--fg-divider)',
+            display: 'flex',
+            flexDirection: 'column',
+            backgroundColor: 'var(--bg-panel)',
+          }}
         >
-          <Text12Regular c="var(--fg-muted)" style={{ flex: 1 }}>
-            {selectedIndex + 1} of {rows.length}
-          </Text12Regular>
-          <IconButtonGhost
-            size="compact-xs"
-            onClick={handlePrev}
-            disabled={selectedIndex === 0}
-            styles={{
-              root: {
-                background: 'none',
-                '&:disabled': { background: 'none', border: 'none' },
-              },
-            }}
+          <Group
+            gap={4}
+            align="center"
+            wrap="nowrap"
+            style={{ padding: '6px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}
           >
-            <StyledLucideIcon
-              Icon={ChevronUp}
-              size="sm"
-              c={selectedIndex === 0 ? 'var(--fg-divider)' : 'var(--fg-muted)'}
-            />
-          </IconButtonGhost>
-          <IconButtonGhost
-            size="compact-xs"
-            onClick={handleNext}
-            disabled={selectedIndex === rows.length - 1}
-            styles={{
-              root: {
-                background: 'none',
-                '&:disabled': { background: 'none', border: 'none' },
-              },
-            }}
-          >
-            <StyledLucideIcon
-              Icon={ChevronDown}
-              size="sm"
-              c={selectedIndex === rows.length - 1 ? 'var(--fg-divider)' : 'var(--fg-muted)'}
-            />
-          </IconButtonGhost>
-        </Group>
-        <ScrollArea style={{ flex: 1 }}>
-          {rows.map((row, i) => {
-            const isDeletedReview = row.__rowStatus === 'deleted';
-            const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
-            const hasUnreviewed =
-              row.__rowStatus === 'added' ||
-              isDeletedReview ||
-              (Array.isArray(row.__changedFields) && row.__changedFields.length > 0);
-            const hasApproved =
-              isDeletedApproved || (Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0);
-            const barColor = isDeletedReview
-              ? 'var(--delete-needs-review-stroke)'
-              : isDeletedApproved
-                ? 'var(--delete-approved-stroke)'
-                : hasUnreviewed
-                  ? 'var(--needs-review-stroke)'
-                  : hasApproved
-                    ? 'var(--approved-stroke)'
-                    : undefined;
+            <Text12Regular c="var(--fg-muted)" style={{ flex: 1 }}>
+              {selectedIndex + 1} of {rows.length}
+            </Text12Regular>
+            <IconButtonGhost
+              size="compact-xs"
+              onClick={handlePrev}
+              disabled={selectedIndex === 0}
+              styles={{
+                root: {
+                  background: 'none',
+                  '&:disabled': { background: 'none', border: 'none' },
+                },
+              }}
+            >
+              <StyledLucideIcon
+                Icon={ChevronUp}
+                size="sm"
+                c={selectedIndex === 0 ? 'var(--fg-divider)' : 'var(--fg-muted)'}
+              />
+            </IconButtonGhost>
+            <IconButtonGhost
+              size="compact-xs"
+              onClick={handleNext}
+              disabled={selectedIndex === rows.length - 1}
+              styles={{
+                root: {
+                  background: 'none',
+                  '&:disabled': { background: 'none', border: 'none' },
+                },
+              }}
+            >
+              <StyledLucideIcon
+                Icon={ChevronDown}
+                size="sm"
+                c={selectedIndex === rows.length - 1 ? 'var(--fg-divider)' : 'var(--fg-muted)'}
+              />
+            </IconButtonGhost>
+          </Group>
+          <ScrollArea style={{ flex: 1 }}>
+            {rows.map((row, i) => {
+              const isDeletedReview = row.__rowStatus === 'deleted';
+              const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
+              const hasUnreviewed =
+                row.__rowStatus === 'added' ||
+                isDeletedReview ||
+                (Array.isArray(row.__changedFields) && row.__changedFields.length > 0);
+              const hasApproved =
+                isDeletedApproved || (Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0);
+              const barColor = isDeletedReview
+                ? 'var(--delete-needs-review-stroke)'
+                : isDeletedApproved
+                  ? 'var(--delete-approved-stroke)'
+                  : hasUnreviewed
+                    ? 'var(--needs-review-stroke)'
+                    : hasApproved
+                      ? 'var(--approved-stroke)'
+                      : undefined;
 
-            return (
+              return (
+                <Box
+                  key={i}
+                  component="button"
+                  ref={i === selectedIndex ? selectedItemRef : undefined}
+                  onClick={() => onSelectIndex(i)}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    padding: '6px 12px',
+                    border: 'none',
+                    borderLeft: barColor ? `3px solid ${barColor}` : '3px solid transparent',
+                    backgroundColor: i === selectedIndex ? 'var(--highlight-fill)' : 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <Text12Regular
+                    c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
+                    lineClamp={1}
+                    style={
+                      row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished'
+                        ? { textDecoration: 'line-through' }
+                        : undefined
+                    }
+                  >
+                    {getRecordName(row, titleColumnId)}
+                  </Text12Regular>
+                </Box>
+              );
+            })}
+          </ScrollArea>
+        </Box>
+
+        {/* Right panel — record detail */}
+        <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+          {recordData?.row.__rowStatus === 'invalidJson' && (
+            <Box
+              style={{
+                padding: '8px 12px',
+                borderBottom: '0.5px solid var(--fg-divider)',
+                backgroundColor: '#fff7ed',
+              }}
+            >
+              <Group align="flex-start" gap="sm" wrap="wrap">
+                <Text12Regular c="var(--mantine-color-orange-8)" style={{ whiteSpace: 'pre-wrap' }}>
+                  {typeof recordData.row.__parseError === 'string' && recordData.row.__parseError.length > 0
+                    ? recordData.row.__parseError
+                    : 'This record file is not valid JSON on disk.'}
+                </Text12Regular>
+                {workingRecordFilePath && (
+                  <ButtonSecondaryOutline
+                    size="compact-xs"
+                    style={{ flexShrink: 0 }}
+                    leftSection={<Wrench size={12} />}
+                    onClick={() => setRawEditorOpen(true)}
+                  >
+                    Fix file
+                  </ButtonSecondaryOutline>
+                )}
+              </Group>
+            </Box>
+          )}
+          {recordData?.row.__rowStatus !== 'invalidJson' &&
+            typeof recordData?.row.__parseError === 'string' &&
+            recordData.row.__parseError.length > 0 && (
               <Box
-                key={i}
-                component="button"
-                ref={i === selectedIndex ? selectedItemRef : undefined}
-                onClick={() => onSelectIndex(i)}
                 style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: '6px 12px',
-                  border: 'none',
-                  borderLeft: barColor ? `3px solid ${barColor}` : '3px solid transparent',
-                  backgroundColor: i === selectedIndex ? 'var(--highlight-fill)' : 'transparent',
-                  cursor: 'pointer',
-                  textAlign: 'left',
+                  padding: '8px 12px',
+                  borderBottom: '0.5px solid var(--fg-divider)',
+                  backgroundColor: '#fff7ed',
                 }}
               >
-                <Text12Regular
-                  c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
-                  lineClamp={1}
+                <Text12Regular c="var(--mantine-color-orange-8)">{recordData.row.__parseError}</Text12Regular>
+              </Box>
+            )}
+          {/* Header */}
+          <Box style={{ padding: '8px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
+            <Group justify="space-between" align="center" wrap="nowrap">
+              <TextTitle2 lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
+                {recordName}
+              </TextTitle2>
+
+              <Group gap={6} align="center" wrap="nowrap">
+                {hasUnreviewedChanges && (
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="green.8"
+                    leftSection={<Check size={12} />}
+                    onClick={handleAccept}
+                    disabled={!currentRecordCliPath || !hasUnreviewedChanges}
+                  >
+                    Approve changes
+                  </ButtonSecondaryGhost>
+                )}
+                {hasUnreviewedChanges && (
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="red.8"
+                    leftSection={<RotateCcw size={12} />}
+                    onClick={handleReject}
+                    disabled={!currentRecordCliPath || !hasUnreviewedChanges}
+                  >
+                    Reject changes
+                  </ButtonSecondaryGhost>
+                )}
+                {onPublishFile && hasPublishableChanges && (
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    leftSection={<Upload size={12} />}
+                    onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
+                    disabled={!currentRecordCliPath || !hasPublishableChanges}
+                  >
+                    Publish
+                  </ButtonSecondaryGhost>
+                )}
+                <IconButtonGhost
+                  size="compact-xs"
+                  onClick={() => setViewRaw((v) => !v)}
                   style={
-                    row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished'
-                      ? { textDecoration: 'line-through' }
+                    viewRaw
+                      ? {
+                          backgroundColor: 'var(--highlight-fill)',
+                          outline: '1px solid var(--highlight-border)',
+                        }
                       : undefined
                   }
                 >
-                  {getRecordName(row, titleColumnId)}
-                </Text12Regular>
+                  <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
+                </IconButtonGhost>
+                <IconButtonGhost onClick={onClose}>
+                  <StyledLucideIcon Icon={X} size="md" />
+                </IconButtonGhost>
+              </Group>
+            </Group>
+          </Box>
+
+          {/* Content */}
+          {loading && (
+            <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Loader size="sm" />
+            </Box>
+          )}
+
+          {!loading && displayData && !viewRaw && (
+            <Box
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                backgroundColor: isDeleted
+                  ? recordData?.row.__rowStatus === 'deleted'
+                    ? 'var(--delete-needs-review-bg)'
+                    : 'var(--delete-approved-bg)'
+                  : undefined,
+              }}
+            >
+              <RecordFieldsGrid rows={fieldRows} />
+            </Box>
+          )}
+
+          {!loading && displayData && viewRaw && (
+            <Box
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                backgroundColor: isDeleted
+                  ? recordData?.row.__rowStatus === 'deleted'
+                    ? 'var(--delete-needs-review-bg)'
+                    : 'var(--delete-approved-bg)'
+                  : undefined,
+              }}
+            >
+              <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                <ScratchJsonCodeMirror
+                  value={rawJsonText}
+                  readOnly
+                  surfaceBackgroundColor={
+                    isDeleted
+                      ? recordData?.row.__rowStatus === 'deleted'
+                        ? 'var(--delete-needs-review-bg)'
+                        : 'var(--delete-approved-bg)'
+                      : undefined
+                  }
+                />
               </Box>
-            );
-          })}
-        </ScrollArea>
+            </Box>
+          )}
+
+          {!loading && !displayData && (
+            <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Text12Regular c="dimmed">No data available</Text12Regular>
+            </Box>
+          )}
+        </Stack>
       </Box>
 
-      {/* Right panel — record detail */}
-      <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
-        {typeof recordData?.row.__parseError === 'string' && recordData.row.__parseError.length > 0 && (
-          <Box
-            style={{
-              padding: '8px 12px',
-              borderBottom: '0.5px solid var(--fg-divider)',
-              backgroundColor: '#fff7ed',
-            }}
-          >
-            <Text12Regular c="var(--mantine-color-orange-8)">{recordData.row.__parseError}</Text12Regular>
-          </Box>
-        )}
-        {/* Header */}
-        <Box style={{ padding: '8px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}>
-          <Group justify="space-between" align="center" wrap="nowrap">
-            <TextTitle2 lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
-              {recordName}
-            </TextTitle2>
-
-            <Group gap={6} align="center" wrap="nowrap">
-              {hasUnreviewedChanges && (
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="green.8"
-                  leftSection={<Check size={12} />}
-                  onClick={handleAccept}
-                  disabled={!currentRecordCliPath || !hasUnreviewedChanges}
-                >
-                  Approve changes
-                </ButtonSecondaryGhost>
-              )}
-              {hasUnreviewedChanges && (
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="red.8"
-                  leftSection={<RotateCcw size={12} />}
-                  onClick={handleReject}
-                  disabled={!currentRecordCliPath || !hasUnreviewedChanges}
-                >
-                  Reject changes
-                </ButtonSecondaryGhost>
-              )}
-              {onPublishFile && hasPublishableChanges && (
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  leftSection={<Upload size={12} />}
-                  onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
-                  disabled={!currentRecordCliPath || !hasPublishableChanges}
-                >
-                  Publish
-                </ButtonSecondaryGhost>
-              )}
-              <IconButtonGhost
-                size="compact-xs"
-                onClick={() => setViewRaw((v) => !v)}
-                style={
-                  viewRaw
-                    ? {
-                        backgroundColor: 'var(--highlight-fill)',
-                        outline: '1px solid var(--highlight-border)',
-                      }
-                    : undefined
-                }
-              >
-                <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
-              </IconButtonGhost>
-              <IconButtonGhost onClick={onClose}>
-                <StyledLucideIcon Icon={X} size="md" />
-              </IconButtonGhost>
-            </Group>
-          </Group>
-        </Box>
-
-        {/* Content */}
-        {loading && (
-          <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Loader size="sm" />
-          </Box>
-        )}
-
-        {!loading && displayData && !viewRaw && (
-          <Box
-            style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              backgroundColor: isDeleted
-                ? recordData?.row.__rowStatus === 'deleted'
-                  ? 'var(--delete-needs-review-bg)'
-                  : 'var(--delete-approved-bg)'
-                : undefined,
-            }}
-          >
-            <RecordFieldsGrid rows={fieldRows} />
-          </Box>
-        )}
-
-        {!loading && displayData && viewRaw && (
-          <ScrollArea
-            style={{
-              flex: 1,
-              backgroundColor: isDeleted
-                ? recordData?.row.__rowStatus === 'deleted'
-                  ? 'var(--delete-needs-review-bg)'
-                  : 'var(--delete-approved-bg)'
-                : undefined,
-            }}
-          >
-            <Box style={{ padding: 12 }}>
-              <TextMono12Regular component="pre" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
-                {JSON.stringify(displayData, null, 2)}
-              </TextMono12Regular>
-            </Box>
-          </ScrollArea>
-        )}
-
-        {!loading && !displayData && (
-          <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Text12Regular c="dimmed">No data available</Text12Regular>
-          </Box>
-        )}
-      </Stack>
-    </Box>
+      <RecordRawJsonFileEditorModal
+        opened={rawEditorOpen}
+        onClose={() => setRawEditorOpen(false)}
+        filePath={workingRecordFilePath ?? ''}
+        title={currentFilename ?? 'record.json'}
+        onFileSaved={handleRawFileSaved}
+      />
+    </>
   );
 });

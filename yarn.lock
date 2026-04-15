@@ -735,7 +735,7 @@
     "@lezer/highlight" "^1.2.0"
     "@lezer/lr" "^1.4.0"
 
-"@codemirror/lang-json@^6.0.0":
+"@codemirror/lang-json@^6.0.0", "@codemirror/lang-json@^6.0.1":
   version "6.0.2"
   resolved "https://registry.yarnpkg.com/@codemirror/lang-json/-/lang-json-6.0.2.tgz#054b160671306667e25d80385286049841836179"
   integrity sha512-x2OtO+AvwEHrEwR0FyyPtfDUiloG3rnVTSZV1W8UteaLL8/MajQd8DpvUb2YVzC+/T18aSDv0H9mu+xw0EStoQ==
@@ -933,6 +933,15 @@
   version "6.9.2"
   resolved "https://registry.npmjs.org/@codemirror/lint/-/lint-6.9.2.tgz"
   integrity sha512-sv3DylBiIyi+xKwRCJAAsBZZZWo82shJ/RTMymLabAdtbkV5cSKwWDeCgtUq3v8flTaXS2y1kKkICuRYtUswyQ==
+  dependencies:
+    "@codemirror/state" "^6.0.0"
+    "@codemirror/view" "^6.35.0"
+    crelt "^1.0.5"
+
+"@codemirror/lint@^6.9.2":
+  version "6.9.5"
+  resolved "https://registry.yarnpkg.com/@codemirror/lint/-/lint-6.9.5.tgz#c7da006f3335a33014799a7375c82df558e89f90"
+  integrity sha512-GElsbU9G7QT9xXhpUg1zWGmftA/7jamh+7+ydKRuT0ORpWS3wOSP0yT1FOlIZa7mIJjpVPipErsyvVqB9cfTFA==
   dependencies:
     "@codemirror/state" "^6.0.0"
     "@codemirror/view" "^6.35.0"
@@ -7377,7 +7386,7 @@ co@^4.6.0:
   resolved "https://registry.npmjs.org/co/-/co-4.6.0.tgz"
   integrity sha512-QVb0dM5HvG+uaxitm8wONl7jltx8dqhfU33DcqtOZcLSVIKSDDLDi7+0LbAKiyI8hD9u42m2YxXSkMGWThaecQ==
 
-codemirror@^6.0.0:
+codemirror@^6.0.0, codemirror@^6.0.1:
   version "6.0.2"
   resolved "https://registry.npmjs.org/codemirror/-/codemirror-6.0.2.tgz"
   integrity sha512-VhydHotNW5w1UGK0Qj96BwSk/Zqbp9WbnyK2W/eVMv4QyF41INRGpjUhFJY7/uDNuudSc33a/PKr4iDqRduvHw==
