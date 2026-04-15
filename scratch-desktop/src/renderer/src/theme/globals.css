@@ -15,6 +15,15 @@
   --fg-muted: var(--mantine-color-gray-7);
   --fg-divider: var(--mantine-color-gray-4);
 
+  /* Needs-review (unreviewed) indicator colours */
+  --needs-review-bg: #e0e7ff;
+  --needs-review-stroke: #0551cd;
+  /* #3730a3; */
+
+  /* Approved (unpublished) indicator colours */
+  --approved-bg: #f1f5f9;
+  --approved-stroke: #94a3b8;
+
   /* Yellow highlight system — shared design tokens */
   --highlight-fill: #fefb8a;
   --highlight-border: #d4c800;
@@ -129,13 +138,13 @@ body[data-grid-editor-diff='none'] {
 }
 
 body[data-grid-editor-diff='unreviewed'] {
-  --grid-editor-bg: #dbeafe;
-  --grid-editor-rail: #60a5fa;
+  --grid-editor-bg: var(--needs-review-bg);
+  --grid-editor-rail: var(--needs-review-stroke);
 }
 
 body[data-grid-editor-diff='unpublished'] {
-  --grid-editor-bg: #eff6ff;
-  --grid-editor-rail: #93c5fd;
+  --grid-editor-bg: var(--approved-bg);
+  --grid-editor-rail: var(--approved-stroke);
 }
 
 #portal .gdg-style,

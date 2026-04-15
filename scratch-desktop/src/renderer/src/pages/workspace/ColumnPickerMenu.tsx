@@ -1,6 +1,6 @@
-import { Box, Checkbox, Divider, Group, Portal, Stack, TextInput } from '@mantine/core';
+import { Box, Checkbox, Divider, Group, Stack, TextInput } from '@mantine/core';
 import { GripVertical } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ButtonSecondaryOutline } from '../../components/base/buttons';
 import { Text12Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -18,10 +18,7 @@ interface ColumnPickerMenuProps {
   unreviewedColumnIds: string[];
   /** Column IDs that have approved (unpublished) changes in at least one row. */
   approvedColumnIds: string[];
-  /** Bounding rect of the trigger button, used for positioning. */
-  anchorRect: DOMRect;
   onChangeVisible: (columnIds: string[]) => void;
-  onClose: () => void;
 }
 
 export function ColumnPickerMenu({
@@ -30,27 +27,11 @@ export function ColumnPickerMenu({
   titleColumnId,
   unreviewedColumnIds,
   approvedColumnIds,
-  anchorRect,
   onChangeVisible,
-  onClose,
 }: ColumnPickerMenuProps) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const [search, setSearch] = useState('');
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-
-  // Close on outside click
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      if (menuRef.current?.contains(target)) return;
-      onClose();
-    };
-
-    window.addEventListener('mousedown', handlePointerDown, true);
-    return () => window.removeEventListener('mousedown', handlePointerDown, true);
-  }, [onClose]);
 
   // Reorderable columns = visible minus title column
   const reorderableColumns = useMemo(
@@ -145,117 +126,87 @@ export function ColumnPickerMenu({
     setDragOverIdx(null);
   }, []);
 
-  // Positioning
-  const menuWidth = 420;
-  const left = Math.max(12, Math.min(anchorRect.left, window.innerWidth - menuWidth - 12));
-  const top = Math.max(12, Math.min(anchorRect.bottom + 4, window.innerHeight - 420));
-
   return (
-    <Portal target="#portal">
-      <Box
-        ref={menuRef}
+    <Stack gap="xs">
+      {/* Preset buttons */}
+      <Group gap={4} px={4} pb={4}>
+        <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('all')}>
+          All
+        </ButtonSecondaryOutline>
+        <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('none')}>
+          None
+        </ButtonSecondaryOutline>
+        <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('needs-review')}>
+          Needs review
+        </ButtonSecondaryOutline>
+        <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('approved')}>
+          Approved
+        </ButtonSecondaryOutline>
+      </Group>
+
+      <Divider my={4} />
+
+      {/* Search */}
+      <Box px={4} pb={4}>
+        <TextInput
+          placeholder="Search columns..."
+          size="xs"
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+        />
+      </Box>
+
+      {/* Column list */}
+      <Stack
+        gap={0}
         style={{
-          position: 'fixed',
-          left,
-          top,
-          zIndex: 10020,
-          width: menuWidth,
-          maxHeight: 420,
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: 'var(--bg-base)',
-          border: '1px solid var(--fg-divider)',
-          borderRadius: 10,
-          boxShadow: '0 18px 32px rgba(15, 23, 42, 0.16)',
-          padding: 8,
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
         }}
       >
-        {/* Preset buttons */}
-        <Group gap={4} px={4} pb={4}>
-          <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('all')}>
-            All
-          </ButtonSecondaryOutline>
-          <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('none')}>
-            None
-          </ButtonSecondaryOutline>
-          <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('needs-review')}>
-            Needs review
-          </ButtonSecondaryOutline>
-          <ButtonSecondaryOutline size="compact-xs" style={{ flex: 1 }} onClick={() => applyPreset('approved')}>
-            Approved
-          </ButtonSecondaryOutline>
-        </Group>
+        {/* Title column — always first, not toggleable (only show if it's a real data column) */}
+        {titleColumnId &&
+          allColumns.includes(titleColumnId) &&
+          (!search.trim() || titleColumnId.toLowerCase().includes(search.trim().toLowerCase())) && (
+            <ColumnRow columnId={titleColumnId} checked={true} disabled={true} draggable={false} onToggle={() => {}} />
+          )}
 
-        <Divider my={4} />
+        {/* Remaining columns in display order (visible first for reorder, then hidden) */}
+        {reorderableColumns
+          .filter((c) => filteredColumns.includes(c))
+          .map((columnId, idx) => (
+            <ColumnRow
+              key={columnId}
+              columnId={columnId}
+              checked={true}
+              disabled={false}
+              draggable={true}
+              highlight={dragOverIdx === idx && dragIdx !== idx}
+              onToggle={() => toggleColumn(columnId)}
+              onDragStart={(e) => onDragStart(e, idx)}
+              onDragOver={(e) => onDragOver(e, idx)}
+              onDrop={(e) => onDrop(e, idx)}
+              onDragEnd={onDragEnd}
+            />
+          ))}
 
-        {/* Search */}
-        <Box px={4} pb={4}>
-          <TextInput
-            placeholder="Search columns..."
-            size="xs"
-            value={search}
-            onChange={(e) => setSearch(e.currentTarget.value)}
-          />
-        </Box>
-
-        {/* Column list */}
-        <Stack
-          gap={0}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-          }}
-        >
-          {/* Title column — always first, not toggleable (only show if it's a real data column) */}
-          {titleColumnId &&
-            allColumns.includes(titleColumnId) &&
-            (!search.trim() || titleColumnId.toLowerCase().includes(search.trim().toLowerCase())) && (
-              <ColumnRow
-                columnId={titleColumnId}
-                checked={true}
-                disabled={true}
-                draggable={false}
-                onToggle={() => {}}
-              />
-            )}
-
-          {/* Remaining columns in display order (visible first for reorder, then hidden) */}
-          {reorderableColumns
-            .filter((c) => filteredColumns.includes(c))
-            .map((columnId, idx) => (
-              <ColumnRow
-                key={columnId}
-                columnId={columnId}
-                checked={true}
-                disabled={false}
-                draggable={true}
-                highlight={dragOverIdx === idx && dragIdx !== idx}
-                onToggle={() => toggleColumn(columnId)}
-                onDragStart={(e) => onDragStart(e, idx)}
-                onDragOver={(e) => onDragOver(e, idx)}
-                onDrop={(e) => onDrop(e, idx)}
-                onDragEnd={onDragEnd}
-              />
-            ))}
-
-          {/* Hidden columns */}
-          {filteredColumns
-            .filter((c) => c !== titleColumnId && !visibleSet.has(c))
-            .map((columnId) => (
-              <ColumnRow
-                key={columnId}
-                columnId={columnId}
-                checked={false}
-                disabled={false}
-                draggable={false}
-                onToggle={() => toggleColumn(columnId)}
-              />
-            ))}
-        </Stack>
-      </Box>
-    </Portal>
+        {/* Hidden columns */}
+        {filteredColumns
+          .filter((c) => c !== titleColumnId && !visibleSet.has(c))
+          .map((columnId) => (
+            <ColumnRow
+              key={columnId}
+              columnId={columnId}
+              checked={false}
+              disabled={false}
+              draggable={false}
+              onToggle={() => toggleColumn(columnId)}
+            />
+          ))}
+      </Stack>
+    </Stack>
   );
 }
 

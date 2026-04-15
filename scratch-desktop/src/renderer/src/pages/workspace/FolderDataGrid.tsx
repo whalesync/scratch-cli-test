@@ -1,3 +1,4 @@
+import { ButtonSecondaryGhost } from '@/components/base/buttons';
 import DataEditor, {
   GridCellKind,
   GridColumnMenuIcon,
@@ -12,7 +13,7 @@ import DataEditor, {
   type Rectangle,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Portal, Stack, UnstyledButton } from '@mantine/core';
+import { Box, Group, Loader, Popover, Portal, Stack, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Columns3, Maximize2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -93,12 +94,16 @@ const GRID_THEME = {
   accentLight: '#FEFB8A', // highlight fill
 };
 
-// ── Diff colours ──
+// ── Diff colours (resolved from CSS vars in globals.css) ──
 
-const DIFF_WORKING_BG = '#dbeafe'; // blue-100  — unreviewed (w != d)
-const DIFF_WORKING_BORDER = '#60a5fa'; // blue-400
-const DIFF_UNPUBLISHED_BG = '#eff6ff'; // blue-50   — unpublished (d != m, w == d)
-const DIFF_UNPUBLISHED_BORDER = '#93c5fd'; // blue-300
+function getCssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const DIFF_WORKING_BG = () => getCssVar('--needs-review-bg');
+const DIFF_WORKING_BORDER = () => getCssVar('--needs-review-stroke');
+const DIFF_UNPUBLISHED_BG = () => getCssVar('--approved-bg');
+const DIFF_UNPUBLISHED_BORDER = () => getCssVar('--approved-stroke');
 
 // ── Helpers ──
 
@@ -303,11 +308,13 @@ function FilterPill({
   label,
   count,
   active,
+  bulletColor,
   onClick,
 }: {
   label: string;
   count: number;
   active: boolean;
+  bulletColor: string;
   onClick: () => void;
 }) {
   return (
@@ -326,6 +333,7 @@ function FilterPill({
         lineHeight: 1,
       }}
     >
+      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: bulletColor, flexShrink: 0 }} />
       <Text12Medium
         c={active ? 'var(--highlight-text)' : 'var(--fg-muted)'}
         fw={active ? 500 : undefined}
@@ -399,7 +407,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [visibleColumnIds, setVisibleColumnIds] = useState<string[] | null>(null);
-  const [columnPickerRect, setColumnPickerRect] = useState<DOMRect | null>(null);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -480,7 +487,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setPage(1);
     setReloadKey(0);
     setVisibleColumnIds(null);
-    setColumnPickerRect(null);
   }, [selectedFolderPath]);
 
   useEffect(() => {
@@ -584,11 +590,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const titleColumnId = useMemo(() => {
     const raw = schema?.titleColumnRemoteId;
+    const cols = diffData?.columns ?? [];
+    // WORKAROUND(ryder): The titleColumnRemoteId isn't always set properly in the schema, or at least doesn't match
+    // what we are comparing it to. If it give us an invalid value, then fall back to the first column as the title.
     if (Array.isArray(raw) && raw.length > 0 && raw.every((s) => typeof s === 'string')) {
-      return raw.join('.');
+      const realValue = raw.join('.');
+      if (cols.includes(realValue)) {
+        return realValue;
+      }
     }
-    return null;
-  }, [schema]);
+    // Fallback to the first column as the title.
+    return cols[0] ?? null;
+  }, [schema, diffData?.columns]);
 
   /** All column IDs in schema order, with title column first. */
   const allColumnIds: string[] = useMemo(() => {
@@ -619,7 +632,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }));
   }, [allColumnIds, columnWidths, effectiveVisibleColumns]);
 
-  /** Column IDs that have unreviewed changes in at least one row. */
+  /** Column IDs that have unreviewed changes in at least one row (from current page). */
   const unreviewedColumnIds: string[] = useMemo(() => {
     if (!diffData) return [];
     const set = new Set<string>();
@@ -629,7 +642,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return allColumnIds.filter((c) => set.has(c));
   }, [allColumnIds, diffData]);
 
-  /** Column IDs that have approved (unpublished) changes in at least one row. */
+  /** Column IDs that have approved (unpublished) changes in at least one row (from current page). */
   const approvedColumnIds: string[] = useMemo(() => {
     if (!diffData) return [];
     const set = new Set<string>();
@@ -638,6 +651,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
     return allColumnIds.filter((c) => set.has(c));
   }, [allColumnIds, diffData]);
+
+  // Snapshot column lists from unfiltered data so filter toggles can reference them
+  // even when the current rows are already filtered to a different kind.
+  const unfilteredColsRef = useRef<{ unreviewed: string[]; approved: string[] }>({
+    unreviewed: [],
+    approved: [],
+  });
+  const hasGlobalFilterActive = activeFilters.some((f) => f.scope === 'global');
+  useEffect(() => {
+    if (!hasGlobalFilterActive && diffData) {
+      unfilteredColsRef.current = { unreviewed: unreviewedColumnIds, approved: approvedColumnIds };
+    }
+  }, [hasGlobalFilterActive, diffData, unreviewedColumnIds, approvedColumnIds]);
 
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
@@ -888,9 +914,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const { diffKind } = getCellDiffState(r, colId);
       const diffTheme =
         diffKind === 'unreviewed'
-          ? { bgCell: DIFF_WORKING_BG }
+          ? { bgCell: DIFF_WORKING_BG(), textDark: DIFF_WORKING_BORDER() }
           : diffKind === 'unpublished'
-            ? { bgCell: DIFF_UNPUBLISHED_BG }
+            ? { bgCell: DIFF_UNPUBLISHED_BG() }
             : {};
       const themeOverride = { ...rowTheme, ...diffTheme };
       const allowOverlay = status !== 'deleted';
@@ -1016,7 +1042,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const { diffKind } = getCellDiffState(row, colId);
       if (diffKind !== null) {
         args.ctx.save();
-        args.ctx.fillStyle = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER : DIFF_UNPUBLISHED_BORDER;
+        args.ctx.fillStyle = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER() : DIFF_UNPUBLISHED_BORDER();
         args.ctx.fillRect(args.rect.x, args.rect.y, 3, args.rect.height);
         args.ctx.restore();
       }
@@ -1127,15 +1153,27 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [columns],
   );
 
-  const handleGlobalFilterToggle = useCallback((kind: FilterKind) => {
-    setActiveFilters((current) => {
-      const exists = current.some((filter) => filter.scope === 'global' && filter.kind === kind);
-      if (exists) {
-        return current.filter((filter) => !(filter.scope === 'global' && filter.kind === kind));
+  const handleGlobalFilterToggle = useCallback(
+    (kind: FilterKind) => {
+      const alreadyActive = activeFilters.some((f) => f.scope === 'global' && f.kind === kind);
+      const withoutGlobal = activeFilters.filter((f) => f.scope !== 'global');
+
+      if (alreadyActive) {
+        // Clearing the filter — reset columns to show all
+        setActiveFilters(withoutGlobal);
+        setVisibleColumnIds(null);
+      } else {
+        // Applying a filter — use the unfiltered snapshot so switching between
+        // filters works even when the current rows are already filtered.
+        setActiveFilters([...withoutGlobal, { scope: 'global', kind }]);
+        const { unreviewed, approved } = unfilteredColsRef.current;
+        const matchingCols = kind === 'unreviewed' ? unreviewed : approved;
+        const locked = titleColumnId ? [titleColumnId] : [];
+        setVisibleColumnIds([...locked, ...matchingCols.filter((c) => c !== titleColumnId)]);
       }
-      return [...current, { scope: 'global', kind }];
-    });
-  }, []);
+    },
+    [activeFilters, titleColumnId],
+  );
 
   const handleAddColumnFilter = useCallback(
     (kind: FilterKind) => {
@@ -1230,12 +1268,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               label="Needs review"
               count={filterCounts?.unreviewed ?? 0}
               active={hasGlobalFilter('unreviewed')}
+              bulletColor="var(--needs-review-stroke)"
               onClick={() => handleGlobalFilterToggle('unreviewed')}
             />
             <FilterPill
               label="Approved"
               count={filterCounts?.unpublished ?? 0}
               active={hasGlobalFilter('unpublished')}
+              bulletColor="var(--approved-stroke)"
               onClick={() => handleGlobalFilterToggle('unpublished')}
             />
             {activeColumnFilters.map((filter) => (
@@ -1246,47 +1286,48 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               />
             ))}
           </Group>
-          <Box
-            component="button"
-            type="button"
-            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-              if (columnPickerRect) {
-                setColumnPickerRect(null);
-              } else {
-                setColumnPickerRect(e.currentTarget.getBoundingClientRect());
-              }
-            }}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '2px 8px',
-              borderRadius: 10,
-              border: columnPickerRect ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
-              backgroundColor: columnPickerRect ? 'var(--mantine-color-blue-0)' : 'transparent',
-              cursor: 'pointer',
-              lineHeight: 1,
-            }}
-          >
-            <StyledLucideIcon Icon={Columns3} size="xs" c="var(--fg-muted)" />
-            <Text12Medium c={columnPickerRect ? 'var(--mantine-color-blue-7)' : 'var(--fg-muted)'} component="span">
-              Columns
-              {visibleColumnIds && visibleColumnIds.length < allColumnIds.length ? ` (${visibleColumnIds.length})` : ''}
-            </Text12Medium>
-          </Box>
+          <Popover>
+            <Popover.Target>
+              <ButtonSecondaryGhost
+                size="xs"
+                leftSection={<Columns3 size={18} />}
+                // onClick={() => {
+                //   if (columnPickerRect) {
+                //     setColumnPickerRect(null);
+                //   } else {
+                //     // setColumnPickerRect(e.currentTarget.getBoundingClientRect());
+                //   }
+                // }}
+                // style={{
+                //   display: 'inline-flex',
+                //   alignItems: 'center',
+                //   gap: 4,
+                //   padding: '2px 8px',
+                //   borderRadius: 10,
+                //   border: columnPickerRect ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
+                //   backgroundColor: columnPickerRect ? 'var(--mantine-color-blue-0)' : 'transparent',
+                //   cursor: 'pointer',
+                //   lineHeight: 1,
+                // }}
+              >
+                Columns
+                {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
+                  ? ` (${visibleColumnIds.length})`
+                  : ''}
+              </ButtonSecondaryGhost>
+            </Popover.Target>
+            <Popover.Dropdown w={420}>
+              <ColumnPickerMenu
+                allColumns={allColumnIds}
+                visibleColumns={effectiveVisibleColumns}
+                titleColumnId={titleColumnId}
+                unreviewedColumnIds={unreviewedColumnIds}
+                approvedColumnIds={approvedColumnIds}
+                onChangeVisible={setVisibleColumnIds}
+              />
+            </Popover.Dropdown>
+          </Popover>
         </Box>
-      )}
-      {columnPickerRect && (
-        <ColumnPickerMenu
-          allColumns={allColumnIds}
-          visibleColumns={effectiveVisibleColumns}
-          titleColumnId={titleColumnId}
-          unreviewedColumnIds={unreviewedColumnIds}
-          approvedColumnIds={approvedColumnIds}
-          anchorRect={columnPickerRect}
-          onChangeVisible={setVisibleColumnIds}
-          onClose={() => setColumnPickerRect(null)}
-        />
       )}
 
       {!selectedFolderPath && (
@@ -1449,14 +1490,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   )}
                   {summary.modified > 0 && (
                     <Group gap={4}>
-                      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: DIFF_WORKING_BORDER }} />
+                      <Box
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: 'var(--needs-review-stroke)',
+                        }}
+                      />
                       <Text12Regular c="var(--fg-muted)">{summary.modified} modified</Text12Regular>
                     </Group>
                   )}
                   {summary.unpublished > 0 && (
                     <Group gap={4}>
                       <Box
-                        style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: DIFF_UNPUBLISHED_BORDER }}
+                        style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--approved-stroke)' }}
                       />
                       <Text12Regular c="var(--fg-muted)">{summary.unpublished} unpublished</Text12Regular>
                     </Group>

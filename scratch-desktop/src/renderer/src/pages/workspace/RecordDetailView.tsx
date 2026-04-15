@@ -517,28 +517,41 @@ export const RecordDetailView = memo(function RecordDetailView({
           </IconButtonGhost>
         </Group>
         <ScrollArea style={{ flex: 1 }}>
-          {rows.map((row, i) => (
-            <Box
-              key={i}
-              component="button"
-              ref={i === selectedIndex ? selectedItemRef : undefined}
-              onClick={() => onSelectIndex(i)}
-              style={{
-                display: 'block',
-                width: '100%',
-                padding: '6px 12px',
-                border: 'none',
-                borderLeft: 'none',
-                backgroundColor: i === selectedIndex ? 'var(--highlight-fill)' : 'transparent',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <Text12Regular c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'} lineClamp={1}>
-                {getRecordName(row, titleColumnId)}
-              </Text12Regular>
-            </Box>
-          ))}
+          {rows.map((row, i) => {
+            const hasUnreviewed =
+              row.__rowStatus === 'added' ||
+              row.__rowStatus === 'deleted' ||
+              (Array.isArray(row.__changedFields) && row.__changedFields.length > 0);
+            const hasApproved = Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0;
+            const barColor = hasUnreviewed
+              ? 'var(--needs-review-stroke)'
+              : hasApproved
+                ? 'var(--approved-stroke)'
+                : undefined;
+
+            return (
+              <Box
+                key={i}
+                component="button"
+                ref={i === selectedIndex ? selectedItemRef : undefined}
+                onClick={() => onSelectIndex(i)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: '6px 12px',
+                  border: 'none',
+                  borderLeft: barColor ? `3px solid ${barColor}` : '3px solid transparent',
+                  backgroundColor: i === selectedIndex ? 'var(--highlight-fill)' : 'transparent',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <Text12Regular c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'} lineClamp={1}>
+                  {getRecordName(row, titleColumnId)}
+                </Text12Regular>
+              </Box>
+            );
+          })}
         </ScrollArea>
       </Box>
 

@@ -144,9 +144,9 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                   style={{
                     borderLeft: `4px solid ${
                       row.diffKind === 'unreviewed'
-                        ? '#60a5fa'
+                        ? 'var(--needs-review-stroke)'
                         : row.diffKind === 'unpublished'
-                          ? '#93c5fd'
+                          ? 'var(--approved-stroke)'
                           : 'transparent'
                     }`,
                   }}
