@@ -512,9 +512,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
             if (prev.has(tableKey)) return prev;
             const next = new Map(prev);
             const detectedNameField =
-              result.titleColumnRemoteId && result.titleColumnRemoteId.length > 0
-                ? result.titleColumnRemoteId
-                : null;
+              result.titleColumnRemoteId && result.titleColumnRemoteId.length > 0 ? result.titleColumnRemoteId : null;
             next.set(tableKey, {
               idField: result.idColumnRemoteId,
               nameField: detectedNameField,
@@ -1048,11 +1046,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                                 value={findIndexByPath(currentSelection?.nameField)}
                                 onChange={(value) => {
                                   const picked = value != null ? schemaFields[Number(value)] : null;
-                                  handleFieldSelectionChange(
-                                    entry.tableKey,
-                                    'nameField',
-                                    picked ? picked.path : null,
-                                  );
+                                  handleFieldSelectionChange(entry.tableKey, 'nameField', picked ? picked.path : null);
                                 }}
                                 placeholder="None (use ID for filenames)"
                                 clearable

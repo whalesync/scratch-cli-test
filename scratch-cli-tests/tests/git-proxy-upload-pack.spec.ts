@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { ScratchCli } from "../src/cli";
-import { deleteWorkspace, TEST_CONNECTOR_SERVICE, uniqueName } from "../src/helpers";
+import {
+  deleteWorkspace,
+  TEST_CONNECTOR_SERVICE,
+  uniqueName,
+} from "../src/helpers";
 import { setupTestTable, teardownTestTable } from "../src/postgres";
 
 const cli = new ScratchCli();
@@ -45,103 +49,117 @@ function resolveHeadOid(gitUrl: string, token: string): string {
 }
 
 function uploadPackPostUrl(gitUrl: string): string {
-  return gitUrl.endsWith("/") ? `${gitUrl}git-upload-pack` : `${gitUrl}/git-upload-pack`;
+  return gitUrl.endsWith("/")
+    ? `${gitUrl}git-upload-pack`
+    : `${gitUrl}/git-upload-pack`;
 }
 
-describeIfPostgres("Git HTTP proxy — POST git-upload-pack (raw vs gzip)", () => {
-  let workspaceId: string;
-  let gitUrl: string;
-  let workspaceDir: string;
+describeIfPostgres(
+  "Git HTTP proxy — POST git-upload-pack (raw vs gzip)",
+  () => {
+    let workspaceId: string;
+    let gitUrl: string;
+    let workspaceDir: string;
 
-  beforeAll(async () => {
-    if (!apiKey) {
-      throw new Error("SCRATCH_API_KEY is required");
-    }
-
-    await setupTestTable();
-
-    const ws = cli.json<{ id: string }>(["workspaces", "create", uniqueName("git-proxy-up")]);
-    workspaceId = ws.id;
-
-    cli.json<{ id: string }>([
-      "connections",
-      "--workspace",
-      workspaceId,
-      "add",
-      "--service",
-      TEST_CONNECTOR_SERVICE,
-      "--param",
-      `connectionString=${postgresUrl}`,
-    ]);
-
-    const parentDir = path.join(cli.home, "test-git-proxy-upload-pack");
-    fs.mkdirSync(parentDir, { recursive: true });
-    const initResult = cli.json<{ directory: string }>(["workspaces", "init", workspaceId], {
-      cwd: parentDir,
-    });
-    workspaceDir = path.join(parentDir, initResult.directory);
-
-    const show = cli.json<{
-      connectorAccounts?: Array<{ gitUrl: string }>;
-    }>(["workspaces", "show", workspaceId]);
-    const ca = show.connectorAccounts?.[0];
-    if (!ca?.gitUrl) {
-      throw new Error("Expected connector gitUrl from workspaces show");
-    }
-    gitUrl = ca.gitUrl;
-  });
-
-  afterAll(async () => {
-    if (workspaceId) deleteWorkspace(cli, workspaceId);
-    if (workspaceDir) {
-      try {
-        fs.rmSync(workspaceDir, { recursive: true, force: true });
-      } catch {
-        /* best effort */
+    beforeAll(async () => {
+      if (!apiKey) {
+        throw new Error("SCRATCH_API_KEY is required");
       }
-    }
-    await teardownTestTable();
-  });
 
-  it("succeeds with a raw pkt-line body through Nest → scratch-git-2", async () => {
-    const headOid = resolveHeadOid(gitUrl, apiKey!);
-    const requestBody = buildUploadPackRequestBody(headOid);
-    const postUrl = uploadPackPostUrl(gitUrl);
+      await setupTestTable();
 
-    const res = await fetch(postUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `API-Token ${apiKey}`,
-        "Content-Type": "application/x-git-upload-pack-request",
-      },
-      body: requestBody,
+      const ws = cli.json<{ id: string }>([
+        "workspaces",
+        "create",
+        uniqueName("git-proxy-up"),
+      ]);
+      workspaceId = ws.id;
+
+      cli.json<{ id: string }>([
+        "connections",
+        "--workspace",
+        workspaceId,
+        "add",
+        "--service",
+        TEST_CONNECTOR_SERVICE,
+        "--param",
+        `connectionString=${postgresUrl}`,
+      ]);
+
+      const parentDir = path.join(cli.home, "test-git-proxy-upload-pack");
+      fs.mkdirSync(parentDir, { recursive: true });
+      const initResult = cli.json<{ directory: string }>(
+        ["workspaces", "init", workspaceId],
+        {
+          cwd: parentDir,
+        },
+      );
+      workspaceDir = path.join(parentDir, initResult.directory);
+
+      const show = cli.json<{
+        connectorAccounts?: Array<{ gitUrl: string }>;
+      }>(["workspaces", "show", workspaceId]);
+      const ca = show.connectorAccounts?.[0];
+      if (!ca?.gitUrl) {
+        throw new Error("Expected connector gitUrl from workspaces show");
+      }
+      gitUrl = ca.gitUrl;
     });
 
-    const body = Buffer.from(await res.arrayBuffer());
-    expect(res.status).toBe(200);
-    expect(body.length).toBeGreaterThan(0);
-  });
-
-  it("succeeds with a gzip-compressed body through Nest → scratch-git-2", async () => {
-    const headOid = resolveHeadOid(gitUrl, apiKey!);
-    const requestBody = buildUploadPackRequestBody(headOid);
-    const compressed = gzipSync(Buffer.from(requestBody, "utf8"));
-    expect(compressed.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b]))).toBe(true);
-
-    const postUrl = uploadPackPostUrl(gitUrl);
-
-    const res = await fetch(postUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `API-Token ${apiKey}`,
-        "Content-Type": "application/x-git-upload-pack-request",
-        "Content-Encoding": "gzip",
-      },
-      body: compressed,
+    afterAll(async () => {
+      if (workspaceId) deleteWorkspace(cli, workspaceId);
+      if (workspaceDir) {
+        try {
+          fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+      await teardownTestTable();
     });
 
-    const body = Buffer.from(await res.arrayBuffer());
-    expect(res.status).toBe(200);
-    expect(body.length).toBeGreaterThan(0);
-  });
-});
+    it("succeeds with a raw pkt-line body through Nest → scratch-git-2", async () => {
+      const headOid = resolveHeadOid(gitUrl, apiKey!);
+      const requestBody = buildUploadPackRequestBody(headOid);
+      const postUrl = uploadPackPostUrl(gitUrl);
+
+      const res = await fetch(postUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `API-Token ${apiKey}`,
+          "Content-Type": "application/x-git-upload-pack-request",
+        },
+        body: requestBody,
+      });
+
+      const body = Buffer.from(await res.arrayBuffer());
+      expect(res.status).toBe(200);
+      expect(body.length).toBeGreaterThan(0);
+    });
+
+    it("succeeds with a gzip-compressed body through Nest → scratch-git-2", async () => {
+      const headOid = resolveHeadOid(gitUrl, apiKey!);
+      const requestBody = buildUploadPackRequestBody(headOid);
+      const compressed = gzipSync(Buffer.from(requestBody, "utf8"));
+      expect(compressed.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b]))).toBe(
+        true,
+      );
+
+      const postUrl = uploadPackPostUrl(gitUrl);
+
+      const res = await fetch(postUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `API-Token ${apiKey}`,
+          "Content-Type": "application/x-git-upload-pack-request",
+          "Content-Encoding": "gzip",
+        },
+        body: compressed,
+      });
+
+      const body = Buffer.from(await res.arrayBuffer());
+      expect(res.status).toBe(200);
+      expect(body.length).toBeGreaterThan(0);
+    });
+  },
+);

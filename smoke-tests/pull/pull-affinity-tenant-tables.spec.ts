@@ -141,9 +141,7 @@ function seedTenantData() {
         fields: [],
       },
     ],
-    tenantOpportunities: [
-      { id: 10001, name: "Tenant Opp One", listId: 9999 },
-    ],
+    tenantOpportunities: [{ id: 10001, name: "Tenant Opp One", listId: 9999 }],
   };
 }
 
@@ -193,8 +191,7 @@ describe("Affinity tenant tables (pull)", () => {
     expect(filesRes.status).toBe(200);
 
     const files = filesRes.data.items.filter(
-      (item: any) =>
-        item.type === "file" && item.name !== ".schema.json",
+      (item: any) => item.type === "file" && item.name !== ".schema.json",
     );
     // Three persons seeded → three files committed.
     expect(files).toHaveLength(3);
@@ -221,8 +218,7 @@ describe("Affinity tenant tables (pull)", () => {
       { folderId: workspace.dataFolderId },
     );
     const files = filesRes.data.items.filter(
-      (item: any) =>
-        item.type === "file" && item.name !== ".schema.json",
+      (item: any) => item.type === "file" && item.name !== ".schema.json",
     );
     expect(files).toHaveLength(2);
   });
@@ -249,8 +245,7 @@ describe("Affinity tenant tables (pull)", () => {
       { folderId: workspace.dataFolderId },
     );
     const files = filesRes.data.items.filter(
-      (item: any) =>
-        item.type === "file" && item.name !== ".schema.json",
+      (item: any) => item.type === "file" && item.name !== ".schema.json",
     );
     expect(files).toHaveLength(1);
   });
@@ -273,8 +268,7 @@ describe("Affinity tenant tables (pull)", () => {
       { folderId: workspace.dataFolderId },
     );
     const files = filesRes.data.items.filter(
-      (item: any) =>
-        item.type === "file" && item.name !== ".schema.json",
+      (item: any) => item.type === "file" && item.name !== ".schema.json",
     );
 
     // Find Alice (the one with the populated fields).
@@ -300,9 +294,7 @@ describe("Affinity tenant tables (pull)", () => {
     // field is addressable by its remote id (`fields.field-1234`).
     expect(content.fields).not.toBeNull();
     expect(Array.isArray(content.fields)).toBe(false);
-    expect(content.fields).toHaveProperty(
-      "affinity-data-current-organization",
-    );
+    expect(content.fields).toHaveProperty("affinity-data-current-organization");
     expect(content.fields).toHaveProperty("affinity-data-job-titles");
     expect(
       content.fields["affinity-data-current-organization"].value.data.name,
@@ -352,8 +344,7 @@ describe("Affinity tenant tables (pull)", () => {
           { folderId },
         );
         return res.data.items.filter(
-          (item: any) =>
-            item.type === "file" && item.name !== ".schema.json",
+          (item: any) => item.type === "file" && item.name !== ".schema.json",
         ).length;
       }),
     );
@@ -497,9 +488,7 @@ describe("Affinity tenant tables (pull)", () => {
     expect(job.state).toBe("completed");
 
     // The DataFolder's lock should be cleared — not stuck at 'pull'.
-    const folderRes = await api.get(
-      `/data-folder/${workspace.dataFolderId}`,
-    );
+    const folderRes = await api.get(`/data-folder/${workspace.dataFolderId}`);
     expect(folderRes.status).toBe(200);
     expect(folderRes.data.lock).toBeNull();
   });
@@ -567,8 +556,7 @@ describe("Affinity tenant tables (pull)", () => {
       { folderId: companies.dataFolderId },
     );
     const files = filesRes.data.items.filter(
-      (item: any) =>
-        item.type === "file" && item.name !== ".schema.json",
+      (item: any) => item.type === "file" && item.name !== ".schema.json",
     );
     expect(files).toHaveLength(2);
   });

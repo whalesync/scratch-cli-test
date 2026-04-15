@@ -7,8 +7,8 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import MainContent from '@/app/components/layouts/MainContent';
 import { useDesktopRelease } from '@/hooks/use-desktop-release';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { DesktopReleaseAsset, DesktopReleaseResponse } from '@spinner/shared-types';
 import { Center, Group, Stack } from '@mantine/core';
+import { DesktopReleaseAsset, DesktopReleaseResponse } from '@spinner/shared-types';
 import { Download, ExternalLink } from 'lucide-react';
 
 const GITHUB_REPO = 'whalesync/scratch-cli';
@@ -48,7 +48,11 @@ export default function DownloadPage() {
       <MainContent.Body p="xl">
         <Center h="100%" w="100%">
           <Stack gap="lg" maw={720} w="100%" align="center">
-            {!release || error ? <UnavailableState /> : <ReleaseDetails release={release} showDevTools={isDevToolsEnabled} />}
+            {!release || error ? (
+              <UnavailableState />
+            ) : (
+              <ReleaseDetails release={release} showDevTools={isDevToolsEnabled} />
+            )}
           </Stack>
         </Center>
       </MainContent.Body>
