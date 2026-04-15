@@ -109,7 +109,7 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`
-Usage: node scripts/driver-setup.js [options]
+Usage: node scripts/driver-run.js [options]
 
 Creates a fresh workbook and a fresh Postgres database, pulls records locally,
 edits them, accepts the changes, uploads them, triggers publish-from-git, and
@@ -119,12 +119,14 @@ Options:
   --pause=<mode>           Pause interactively at a breakpoint (waits for Enter then continues). Modes:
                              nowhere          Never pause (default)
                              everywhere       Pause after every step
-                             database-created After DB is seeded
-                             workbook-created After workbook + connection added
-                             records-downloaded After pull + file download
-                             records-edited   After local JSON files mutated
-                             publish-plan-created After plan-publish runs
-                             publish-queued   After publish-from-git, job IDs known
+                             database-created After DB is seeded, before workbook creation
+                             workbook-created After workbook + connection are created, before workspace init
+                             records-downloaded After pull + file download, before local edits
+                             records-edited   After local JSON files are mutated, before local accept
+                             remote-dirty-commit Before injecting a remote dirty commit
+                             publish-plan-created After plan-publish runs, before files upload
+                             upload-complete  After files upload runs and approved local files are checked, before publish-from-git
+                             publish-queued   After publish-from-git, job IDs known, before job wait
   --stop=<mode>            Exit cleanly at a breakpoint (same step names as --pause)
   --no-cleanup             Keep the local workspace, remote workbook, and test DB
   --count <n>              Number of sample records to create (default: 3)
@@ -300,7 +302,7 @@ function resolveBinary(binaryArg) {
 }
 
 function printSection(title) {
-  console.log(`\n=== ${title} ===`);
+  console.log(`\n\n=== ${title} ===`);
 }
 
 function runCommand(command, args, options = {}) {
@@ -388,6 +390,11 @@ async function pauseIfNeeded(pause, step, label, details = []) {
   } finally {
     rl.close();
   }
+}
+
+async function checkpointIfNeeded(stop, pause, step, label, details = []) {
+  stopIfNeeded(stop, step, label, details);
+  await pauseIfNeeded(pause, step, label, details);
 }
 
 async function createDatabase(adminDbUrl, dbName) {
@@ -501,6 +508,43 @@ function editLocalRecords(workspaceDir, runName, count = Infinity) {
   }
 
   return touched;
+}
+
+function captureExpectedNames(files) {
+  const expectedNames = new Map();
+
+  for (const file of files) {
+    const record = JSON.parse(fs.readFileSync(file, "utf8"));
+    expectedNames.set(file, record?.name);
+  }
+
+  return expectedNames;
+}
+
+function summarizeApprovedFilesAfterUpload(files, expectedNames) {
+  const preserved = [];
+  const reverted = [];
+  const missing = [];
+
+  for (const file of files) {
+    const expectedName = expectedNames.get(file);
+    if (!fs.existsSync(file)) {
+      missing.push({ file, expectedName });
+      continue;
+    }
+
+    const record = JSON.parse(fs.readFileSync(file, "utf8"));
+    const currentName = record?.name;
+    const row = { file, expectedName, currentName };
+
+    if (currentName === expectedName) {
+      preserved.push(row);
+    } else {
+      reverted.push(row);
+    }
+  }
+
+  return { preserved, reverted, missing };
 }
 
 function findBareRepo(workspaceDir) {
@@ -720,7 +764,9 @@ const VALID_BREAKPOINTS = new Set([
   "workbook-created",
   "records-downloaded",
   "records-edited",
+  "remote-dirty-commit",
   "publish-plan-created",
+  "upload-complete",
   "publish-queued",
 ]);
 
@@ -839,25 +885,37 @@ async function main() {
     runCommand(binary, ["--version"]);
 
     printSection("Server health check");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__server-health",
+      "Server health check",
+      [`Server URL: ${serverUrl}`],
+    );
     await ensureServerHealthy(serverUrl);
     console.log(`Server is healthy at ${serverUrl}.`);
 
     printSection("Create test database");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__create-test-database",
+      "Create test database",
+      [`Database: ${dbName}`, `Rows planned: ${recordCount}`],
+    );
     await createDatabase(adminDbUrl, dbName);
     await seedDatabase(databaseUrl, recordCount);
     const seededRows = await readRows(databaseUrl);
     console.log(`Seeded ${seededRows.length} rows into ${TABLE_NAME}.`);
 
-    stopIfNeeded(cliArgs.stop, "database-created", "Database created", [
-      `Database: ${dbName}`,
-      `Rows: ${seededRows.length}`,
-    ]);
-    await pauseIfNeeded(cliArgs.pause, "database-created", "Database created", [
-      `Database: ${dbName}`,
-      `Rows: ${seededRows.length}`,
-    ]);
-
     printSection("Create workbook");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "database-created",
+      "Create workbook",
+      [`Database: ${dbName}`, `Rows: ${seededRows.length}`],
+    );
     const createdWorkbook = sanitizeJsonOutput(
       runCli(binary, serverUrl, ["workspaces", "create", workbookName]).stdout,
     );
@@ -865,6 +923,13 @@ async function main() {
     console.log(`Workbook ID: ${state.workbookId}`);
 
     printSection("Add Postgres connection");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__add-postgres-connection",
+      "Add Postgres connection",
+      [`Workbook ID: ${state.workbookId}`],
+    );
     const connection = sanitizeJsonOutput(
       runCli(binary, serverUrl, [
         "connections",
@@ -881,20 +946,14 @@ async function main() {
     );
     console.log(`Connection ID: ${connection.id}`);
 
-    stopIfNeeded(
+    printSection("Init local workspace");
+    await checkpointIfNeeded(
       cliArgs.stop,
-      "workbook-created",
-      "Workbook and connection created",
-      [`Workbook ID: ${state.workbookId}`, `Connection ID: ${connection.id}`],
-    );
-    await pauseIfNeeded(
       cliArgs.pause,
       "workbook-created",
-      "Workbook and connection created",
+      "Init local workspace",
       [`Workbook ID: ${state.workbookId}`, `Connection ID: ${connection.id}`],
     );
-
-    printSection("Init local workspace");
     const initResult = sanitizeJsonOutput(
       runCli(binary, serverUrl, [
         "workspaces",
@@ -911,6 +970,13 @@ async function main() {
     console.log(`Workspace dir: ${state.workspaceDir}`);
 
     printSection("Link test table");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__link-test-table",
+      "Link test table",
+      [`Workspace: ${state.workspaceDir}`],
+    );
     const tables = sanitizeJsonOutput(
       runCli(
         binary,
@@ -941,6 +1007,13 @@ async function main() {
     console.log(`Linked folder ID: ${linkedFolder.id}`);
 
     printSection("Pull and download records");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__pull-and-download-records",
+      "Pull and download records",
+      [`Workspace: ${state.workspaceDir}`],
+    );
     runCli(
       binary,
       serverUrl,
@@ -955,20 +1028,14 @@ async function main() {
     const downloadedFiles = listRecordFiles(state.workspaceDir);
     console.log(`Downloaded ${downloadedFiles.length} local record files.`);
 
-    stopIfNeeded(
+    printSection("Edit local records");
+    await checkpointIfNeeded(
       cliArgs.stop,
-      "records-downloaded",
-      "Records downloaded locally",
-      [`Workspace: ${state.workspaceDir}`, `Files: ${downloadedFiles.length}`],
-    );
-    await pauseIfNeeded(
       cliArgs.pause,
       "records-downloaded",
-      "Records downloaded locally",
-      [`Workspace: ${state.workspaceDir}`, `Files: ${downloadedFiles.length}`],
+      "Edit local records",
+      [`Workspace: ${state.workspaceDir}`, `Files downloaded: ${downloadedFiles.length}`],
     );
-
-    printSection("Edit local records");
     const editedFiles = editLocalRecords(
       state.workspaceDir,
       runName,
@@ -978,24 +1045,24 @@ async function main() {
       `Edited ${editedFiles.length} of ${downloadedFiles.length} record files.`,
     );
 
-    stopIfNeeded(cliArgs.stop, "records-edited", "Local records edited", [
-      `Edited files: ${editedFiles.length}`,
-    ]);
-    await pauseIfNeeded(
+    printSection("Accept local changes");
+    await checkpointIfNeeded(
+      cliArgs.stop,
       cliArgs.pause,
       "records-edited",
-      "Local records edited",
+      "Accept local changes",
       [`Edited files: ${editedFiles.length}`],
     );
-
-    printSection("Accept local changes");
+    let acceptedFiles;
     if (acceptCount === editedFiles.length) {
+      acceptedFiles = [...editedFiles];
       runCli(binary, serverUrl, ["files", "accept-all"], {
         cwd: state.workspaceDir,
         noJson: true,
       });
     } else {
       const filesToAccept = editedFiles.slice(0, acceptCount);
+      acceptedFiles = [...filesToAccept];
       const relPaths = filesToAccept.map((file) =>
         path.relative(state.workspaceDir, file),
       );
@@ -1010,32 +1077,75 @@ async function main() {
 
     if (remoteDirtyRecord !== null) {
       printSection("Inject remote dirty commit");
+      await checkpointIfNeeded(
+        cliArgs.stop,
+        cliArgs.pause,
+        "remote-dirty-commit",
+        "Inject remote dirty commit",
+        [`Record: ${remoteDirtyRecord}`],
+      );
       changeRemoteDirty(state.workspaceDir, remoteDirtyRecord, apiToken);
     }
 
     printSection("Create publish plan");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__create-publish-plan",
+      "Create publish plan",
+      [`Workspace: ${state.workspaceDir}`],
+    );
     runCli(binary, serverUrl, ["plan-publish"], {
       cwd: state.workspaceDir,
       noJson: true,
     });
 
-    stopIfNeeded(cliArgs.stop, "publish-plan-created", "Publish plan created", [
-      `Workspace: ${state.workspaceDir}`,
-    ]);
-    await pauseIfNeeded(
+    printSection("Upload reviewed changes");
+    await checkpointIfNeeded(
+      cliArgs.stop,
       cliArgs.pause,
       "publish-plan-created",
-      "Publish plan created",
+      "Upload reviewed changes",
       [`Workspace: ${state.workspaceDir}`],
     );
-
-    printSection("Upload reviewed changes");
+    const expectedAcceptedNames = captureExpectedNames(acceptedFiles);
     runCli(binary, serverUrl, ["files", "upload"], {
       cwd: state.workspaceDir,
       noJson: true,
     });
 
+    printSection("Check approved local files after upload");
+    const uploadCheck = summarizeApprovedFilesAfterUpload(
+      acceptedFiles,
+      expectedAcceptedNames,
+    );
+    console.log(
+      `Approved files checked: ${acceptedFiles.length} (${uploadCheck.preserved.length} preserved, ${uploadCheck.reverted.length} reverted, ${uploadCheck.missing.length} missing).`,
+    );
+    for (const row of uploadCheck.reverted.slice(0, 5)) {
+      console.log(
+        `  reverted: ${path.relative(state.workspaceDir, row.file)} | expected="${row.expectedName}" | current="${row.currentName}"`,
+      );
+    }
+    for (const row of uploadCheck.missing.slice(0, 5)) {
+      console.log(
+        `  missing:  ${path.relative(state.workspaceDir, row.file)} | expected="${row.expectedName}"`,
+      );
+    }
+
     printSection("Trigger publish-from-git");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "upload-complete",
+      "Trigger publish-from-git",
+      [
+        `Approved files: ${acceptedFiles.length}`,
+        `Preserved: ${uploadCheck.preserved.length}`,
+        `Reverted: ${uploadCheck.reverted.length}`,
+        `Missing: ${uploadCheck.missing.length}`,
+      ],
+    );
     const publishResult = runCli(binary, serverUrl, ["publish-from-git"], {
       cwd: state.workspaceDir,
       noJson: true,
@@ -1046,18 +1156,25 @@ async function main() {
     }
     console.log(`Queued job IDs: ${jobIds.join(", ")}`);
 
-    stopIfNeeded(cliArgs.stop, "publish-queued", "Publish job queued", [
-      `Job IDs: ${jobIds.join(", ")}`,
-    ]);
-    await pauseIfNeeded(cliArgs.pause, "publish-queued", "Publish job queued", [
-      `Job IDs: ${jobIds.join(", ")}`,
-    ]);
-
     printSection("Wait for publish job completion");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "publish-queued",
+      "Wait for publish job completion",
+      [`Job IDs: ${jobIds.join(", ")}`],
+    );
     await waitForJobs(serverUrl, apiToken, jobIds);
     console.log("All publish jobs completed.");
 
     printSection("Verify remote database state");
+    await checkpointIfNeeded(
+      cliArgs.stop,
+      cliArgs.pause,
+      "__verify-remote-database-state",
+      "Verify remote database state",
+      [`Database: ${dbName}`],
+    );
     const finalRows = await readRows(databaseUrl);
     const acceptedIds = new Set(
       editedFiles.slice(0, acceptCount).map((f) => {
@@ -1100,6 +1217,13 @@ async function main() {
   } finally {
     if (!cliArgs.noCleanup) {
       printSection("Cleanup");
+      await checkpointIfNeeded(
+        cliArgs.stop,
+        cliArgs.pause,
+        "__cleanup",
+        "Cleanup",
+        [`Workspace: ${state.workspaceDir ?? "(none)"}`],
+      );
 
       if (state.workspaceDir && state.workbookId) {
         try {

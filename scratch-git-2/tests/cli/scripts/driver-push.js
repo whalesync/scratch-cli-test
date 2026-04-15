@@ -6,11 +6,11 @@
  * Re-edits local record files in an existing driver workspace and
  * pushes the changes through the full publish pipeline.
  *
- * Use this for edit-push-repeat testing after driver-setup has already
+ * Use this for edit-push-repeat testing after driver-run / driver-setup has already
  * set up a workspace (with --no-cleanup or --stop/--pause).
  *
  * Typical loop:
- *   1. yarn driver:setup -- --count 1000 --no-cleanup
+ *   1. yarn driver:run -- --count 1000 --no-cleanup
  *   2. yarn driver:push -- --workspace <path>   (repeat as needed)
  */
 

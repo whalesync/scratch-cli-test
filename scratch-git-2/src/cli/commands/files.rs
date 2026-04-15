@@ -106,6 +106,9 @@ pub enum FilesCommands {
     /// Force-push local state to the server, skipping merge (fast)
     #[command(name = "force-upload")]
     ForceUpload,
+    /// Find the actual git merge base of local dirty and origin/dirty for each connection
+    #[command(name = "find-merge-base", alias = "merge-base")]
+    FindMergeBase,
 }
 
 #[derive(Clone)]
@@ -152,6 +155,22 @@ struct UploadResult {
     deleted_paths: Vec<String>,
 }
 
+#[derive(serde::Serialize)]
+struct MergeBaseResult {
+    #[serde(rename = "connectionName")]
+    connection_name: String,
+    #[serde(rename = "masterHash")]
+    master_hash: Option<String>,
+    #[serde(rename = "dirtyHash")]
+    dirty_hash: Option<String>,
+    #[serde(rename = "originDirtyHash")]
+    origin_dirty_hash: Option<String>,
+    #[serde(rename = "mergeBaseHash")]
+    merge_base_hash: Option<String>,
+    #[serde(rename = "equalsLocalMaster")]
+    equals_local_master: bool,
+}
+
 #[derive(Default)]
 struct AcceptAllResult {
     files_accepted: i32,
@@ -193,6 +212,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
         FilesCommands::Upload => run_upload(&cwd, server_url, json),
         FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
+        FilesCommands::FindMergeBase => run_find_merge_base(&cwd, server_url, json),
     }
 }
 
@@ -438,6 +458,79 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     };
 
     print_upload_result(&result, started.elapsed().as_millis(), json)
+}
+
+fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let (_, _, contexts, workspace_server_url) = resolve_workspace_and_connections(cwd, server_url)?;
+    let token = get_token(&workspace_server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut results = Vec::new();
+    for ctx in &contexts {
+        crate::git_ops::fetch_origin(&ctx.bare_repo, &token)?;
+
+        let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+        let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+        let origin_dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
+
+        let merge_base_hash = if dirty_hash.is_some() && origin_dirty_hash.is_some() {
+            crate::git_ops::merge_base_to_string(
+                &ctx.bare_repo,
+                "refs/heads/dirty",
+                "refs/remotes/origin/dirty",
+            )?
+        } else {
+            None
+        };
+
+        let equals_local_master = match (&merge_base_hash, &master_hash) {
+            (Some(merge_base), Some(master)) => merge_base == master,
+            _ => false,
+        };
+
+        results.push(MergeBaseResult {
+            connection_name: ctx.conn_dir_name.clone(),
+            master_hash,
+            dirty_hash,
+            origin_dirty_hash,
+            merge_base_hash,
+            equals_local_master,
+        });
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
+
+    for result in results {
+        println!("{}", result.connection_name);
+        println!(
+            "  dirty:        {}",
+            result.dirty_hash.as_deref().unwrap_or("(missing)")
+        );
+        println!(
+            "  origin/dirty: {}",
+            result.origin_dirty_hash.as_deref().unwrap_or("(missing)")
+        );
+        println!(
+            "  merge-base:   {}",
+            result.merge_base_hash.as_deref().unwrap_or("(none)")
+        );
+        println!(
+            "  master:       {}",
+            result.master_hash.as_deref().unwrap_or("(missing)")
+        );
+        println!(
+            "  merge-base == local master: {}",
+            if result.equals_local_master { "yes" } else { "no" }
+        );
+    }
+
+    Ok(())
 }
 
 fn run_accept_all(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {

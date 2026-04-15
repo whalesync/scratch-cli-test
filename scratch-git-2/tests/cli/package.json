@@ -7,7 +7,8 @@
   "scripts": {
     "test:integration": "jest --runInBand --forceExit",
     "test:watch": "jest --runInBand --watch --forceExit",
-    "driver:setup": "node scripts/driver-setup.js",
+    "driver:run": "node scripts/driver-run.js",
+    "driver:setup": "node scripts/driver-run.js",
     "driver:push": "node scripts/driver-push.js",
     "driver:cleanup": "node scripts/driver-cleanup.js"
   },

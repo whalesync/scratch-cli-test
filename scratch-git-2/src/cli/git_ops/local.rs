@@ -31,6 +31,34 @@ pub(crate) fn rev_parse_optional_to_string(
     }
 }
 
+pub(crate) fn merge_base_to_string(
+    bare_repo: &Path,
+    rev_a: &str,
+    rev_b: &str,
+) -> anyhow::Result<Option<String>> {
+    let git_dir = bare_repo.to_str().unwrap_or_default();
+    let output = Command::new("git")
+        .args(["--git-dir", git_dir, "merge-base", rev_a, rev_b])
+        .output()
+        .context("failed to run git merge-base")?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stdout.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(stdout));
+    }
+
+    // `git merge-base` exits 1 when there is no merge base.
+    if output.status.code() == Some(1) {
+        return Ok(None);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!("git merge-base failed: {}", stderr.trim());
+}
+
 pub(crate) fn update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
     let repo = open_bare_repo(bare_repo)?;
     let oid = gix::ObjectId::from_hex(object.as_bytes())
