@@ -12,6 +12,7 @@ export const htmlToAirmarkTransformer: FieldTransformer = {
 
   paramType: () => Type.String(),
   returnType: () => Type.String(),
+  optionsSchema: [],
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue } = ctx;

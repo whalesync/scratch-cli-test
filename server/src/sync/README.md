@@ -305,12 +305,34 @@ During sync, `transformRecordAsync` applies each mapping's transformer within a 
 
 If a transformer fails, the record is skipped and an error is added to the sync result.
 
+### Adding a New Transformer
+
+Adding a transformer is a single server-side change. Create a new file in `transformers/implementations/` that:
+
+1. Implements the `FieldTransformer` interface (`type`, `transform`, optional `paramType`/`returnType`)
+2. Declares an `optionsSchema` array describing the UI fields for its options
+3. Calls `registerTransformer()` at the bottom of the file
+4. Is imported in `transformers/index.ts`
+
+The client renders transformer option forms generically from the `optionsSchema` metadata served by `GET /sync/transformers/metadata`. See [TRANSFORMER_TYPE_SYSTEM.md](transformers/TRANSFORMER_TYPE_SYSTEM.md) for details on the type system.
+
 ### Available Transformers
 
-| Type                   | Phase                 | Description                                                                                                                                                                                                                                    |
-| ---------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source_fk_to_dest_fk` | `FOREIGN_KEY_MAPPING` | Resolves a source foreign key ID to the corresponding destination ID via `SyncRemoteIdMapping`. Passes through the raw value in `DATA` phase. Options: `referencedDataFolderId`.                                                               |
-| `lookup_field`         | `DATA`                | Looks up a field value from a record referenced by a foreign key using the `SyncForeignKeyRecord` cache. Skips in `FOREIGN_KEY_MAPPING` phase. Options: `referencedDataFolderId`, `referencedFieldPath` (dot-path into the referenced record). |
+The full list of transformer types, labels, and options is defined in `@spinner/shared-types` (`TRANSFORMER_TYPES` array) and served at runtime via `GET /sync/transformers/metadata`. Key transformers:
+
+| Type                         | Phase                 | Description                                                         |
+| ---------------------------- | --------------------- | ------------------------------------------------------------------- |
+| `source_fk_to_dest_fk`       | `FOREIGN_KEY_MAPPING` | Resolves source FK IDs to destination IDs via `SyncRemoteIdMapping` |
+| `source_asset_to_dest_asset` | `FOREIGN_KEY_MAPPING` | Resolves source asset remote IDs to destination asset remote IDs    |
+| `lookup_field`               | `DATA`                | Looks up a field value from a record referenced by a foreign key    |
+| `auto_convert`               | `DATA`                | Generic type conversion (string, number, integer, boolean, array)   |
+| `jsonpath`                   | `DATA`                | Extracts values using RFC 9535 JSONPath expressions                 |
+| `map_array`                  | `DATA`                | Applies a nested transformer to each element of an array            |
+| `wrap_object`                | `DATA`                | Wraps a value into a template object (`"$value"` placeholder)       |
+| `ensure_type`                | `DATA`                | Validates runtime type with configurable fallback behavior          |
+| `replace_regex`              | `DATA`                | Pattern-based text replacement with capture groups                  |
+
+See `transformers/implementations/` for the complete set of 24 transformers.
 
 ## Key Files
 

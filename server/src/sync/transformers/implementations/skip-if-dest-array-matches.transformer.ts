@@ -24,6 +24,29 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const skipIfDestArrayMatchesTransformer: FieldTransformer = {
   type: TransformerTypes.SkipIfDestArrayMatches,
 
+  optionsSchema: [
+    {
+      key: 'sourceElementExpression',
+      widget: 'text',
+      label: 'Source Element Expression',
+      description: 'JSONPath to extract a comparable value from each source element (default: $ = whole element)',
+      placeholder: '$',
+    },
+    {
+      key: 'destinationElementExpression',
+      widget: 'text',
+      label: 'Destination Element Expression',
+      description: 'JSONPath to extract a comparable value from each destination element (default: $ = whole element)',
+      placeholder: '$.name',
+    },
+    {
+      key: 'matchOrdering',
+      widget: 'checkbox',
+      label: 'Match ordering (elements must appear in the same order)',
+      defaultValue: false,
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

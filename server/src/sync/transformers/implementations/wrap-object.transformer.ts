@@ -17,6 +17,16 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const wrapObjectTransformer: FieldTransformer = {
   type: TransformerTypes.WrapObject,
 
+  optionsSchema: [
+    {
+      key: 'template',
+      widget: 'json_editor',
+      label: 'Template',
+      description: 'JSON object where "$value" is replaced with the source value',
+      defaultValue: {},
+    },
+  ],
+
   returnType: () => Type.Object({}),
   paramType: () => Type.Any(),
 

@@ -16,6 +16,27 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const lookupFieldTransformer: FieldTransformer = {
   type: TransformerTypes.LookupField,
 
+  optionsSchema: [
+    {
+      key: 'referencedDataFolderId',
+      widget: 'folder_picker',
+      label: 'Referenced Folder',
+      description: 'The folder containing the records referenced by this foreign key',
+      placeholder: 'Select folder',
+      required: true,
+      defaultValue: '',
+    },
+    {
+      key: 'referencedFieldPath',
+      widget: 'text',
+      label: 'Field Path',
+      description: "The field to extract from the referenced record (e.g. 'name' or 'company.displayName')",
+      placeholder: 'e.g. name',
+      required: true,
+      defaultValue: '',
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

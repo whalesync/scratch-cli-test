@@ -18,6 +18,39 @@ import { FieldTransformer, FkMappingResult, TransformContext, TransformResult } 
 export const sourceFkToDestFkTransformer: FieldTransformer = {
   type: TransformerTypes.SourceFkToDestFk,
 
+  optionsSchema: [
+    {
+      key: 'referencedDataFolderId',
+      widget: 'folder_picker',
+      label: 'Referenced Folder',
+      description: 'The folder containing the records referenced by this foreign key',
+      placeholder: 'Select folder',
+      required: true,
+      defaultValue: '',
+    },
+    {
+      key: 'outputType',
+      widget: 'select',
+      label: 'Output type',
+      description: 'Whether to output multiple values (array) or a single value',
+      defaultValue: 'array',
+      selectOptions: [
+        { value: 'array', label: 'Multiple values (array)' },
+        { value: 'single', label: 'Single value (first item)' },
+      ],
+    },
+    {
+      key: 'onUnresolved',
+      widget: 'select',
+      label: 'When a referenced record cannot be found',
+      defaultValue: 'fail',
+      selectOptions: [
+        { value: 'fail', label: 'Stop and fail the sync' },
+        { value: 'ignore', label: 'Ignore missing record and sync the rest' },
+      ],
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

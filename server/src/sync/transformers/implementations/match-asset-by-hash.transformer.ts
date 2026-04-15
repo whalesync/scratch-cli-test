@@ -19,6 +19,63 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const matchAssetByHashTransformer: FieldTransformer = {
   type: TransformerTypes.MatchAssetByHash,
 
+  optionsSchema: [
+    {
+      key: 'sourceDataFolderId',
+      widget: 'folder_picker',
+      label: 'Source Asset Folder',
+      description: 'The folder containing the source assets',
+      placeholder: 'Select asset folder',
+      required: true,
+      defaultValue: '',
+    },
+    {
+      key: 'destinationDataFolderId',
+      widget: 'folder_picker',
+      label: 'Destination Asset Folder',
+      description: 'The folder to search for matching asset hashes',
+      placeholder: 'Select asset folder',
+      required: true,
+      defaultValue: '',
+      assetFoldersOnly: true,
+    },
+    {
+      key: 'sourceIdPath',
+      widget: 'text',
+      label: 'Source ID Path',
+      description: "Dot-path to extract the asset ID from each source element (e.g. 'id')",
+      placeholder: 'e.g. id',
+    },
+    {
+      key: 'destinationIdPath',
+      widget: 'text',
+      label: 'Destination ID Path',
+      description: "Dot-path to extract the asset ID from each destination element (e.g. 'fileId')",
+      placeholder: 'e.g. fileId',
+    },
+    {
+      key: 'outputType',
+      widget: 'select',
+      label: 'Output type',
+      description: 'Whether to output multiple values (array) or a single value',
+      defaultValue: 'array',
+      selectOptions: [
+        { value: 'array', label: 'Multiple values (array)' },
+        { value: 'single', label: 'Single value (first item)' },
+      ],
+    },
+    {
+      key: 'onUnresolved',
+      widget: 'select',
+      label: 'When no hash match is found',
+      defaultValue: 'fail',
+      selectOptions: [
+        { value: 'fail', label: 'Stop and fail the sync' },
+        { value: 'ignore', label: 'Ignore missing record and sync the rest' },
+      ],
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

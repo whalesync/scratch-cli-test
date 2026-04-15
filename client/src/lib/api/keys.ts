@@ -5,6 +5,9 @@ export const SWR_KEYS = {
   connectorsMetadata: {
     all: () => ['connectors-metadata', 'all'] as const,
   },
+  transformerMetadata: {
+    all: () => ['transformer-metadata', 'all'] as const,
+  },
   connectorAccounts: {
     list: (workbookId: string) => ['connector-accounts', 'list', workbookId],
     detail: (workbookId: string, id: string) => ['connector-accounts', 'detail', workbookId, id],

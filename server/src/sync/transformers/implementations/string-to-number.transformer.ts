@@ -17,6 +17,21 @@ function getSchemaType(schema: TSchema): string | undefined {
 export const stringToNumberTransformer: FieldTransformer = {
   type: TransformerTypes.StringToNumber,
 
+  optionsSchema: [
+    {
+      key: 'stripCurrency',
+      widget: 'checkbox',
+      label: 'Strip currency symbols ($, \u20ac, \u00a3, \u00a5, etc.)',
+      defaultValue: false,
+    },
+    {
+      key: 'parseInteger',
+      widget: 'checkbox',
+      label: 'Parse as integer (truncate decimals)',
+      defaultValue: false,
+    },
+  ],
+
   returnType: (inputType: TSchema) => {
     const t = getSchemaType(inputType);
     if (t !== 'string' && t !== 'number') {

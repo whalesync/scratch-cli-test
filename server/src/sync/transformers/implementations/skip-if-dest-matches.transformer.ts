@@ -21,6 +21,23 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const skipIfDestMatchesTransformer: FieldTransformer = {
   type: TransformerTypes.SkipIfDestMatches,
 
+  optionsSchema: [
+    {
+      key: 'sourceExpression',
+      widget: 'text',
+      label: 'Source Expression',
+      description: 'JSONPath to extract from source value (default: $ = whole value)',
+      placeholder: '$',
+    },
+    {
+      key: 'destinationExpression',
+      widget: 'text',
+      label: 'Destination Expression',
+      description: 'JSONPath to extract from destination value (default: $ = whole value)',
+      placeholder: '$.url',
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

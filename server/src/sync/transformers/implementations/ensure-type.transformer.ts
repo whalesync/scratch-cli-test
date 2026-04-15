@@ -10,6 +10,46 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const ensureTypeTransformer: FieldTransformer = {
   type: TransformerTypes.EnsureType,
 
+  optionsSchema: [
+    {
+      key: 'expectedType',
+      widget: 'select',
+      label: 'Expected Type',
+      description: 'The type of value that actual values will be checked against',
+      required: true,
+      defaultValue: 'string',
+      selectOptions: [
+        { value: 'string', label: 'String' },
+        { value: 'number', label: 'Number' },
+        { value: 'boolean', label: 'Boolean' },
+        { value: 'object', label: 'Object' },
+        { value: 'array', label: 'Array' },
+      ],
+    },
+    {
+      key: 'onFailure',
+      widget: 'select',
+      label: 'When validation fails',
+      description: 'Action to take if the value does not match the expected type',
+      required: true,
+      defaultValue: 'null',
+      selectOptions: [
+        { value: 'error', label: 'Throw error' },
+        { value: 'null', label: 'Return null' },
+        { value: 'omit', label: 'Omit field' },
+        { value: 'other', label: 'Use fallback value' },
+      ],
+    },
+    {
+      key: 'fallbackValue',
+      widget: 'text',
+      label: 'Fallback Value',
+      description: 'Value to use when validation fails',
+      placeholder: 'e.g. 0, unknown, etc.',
+      visibleWhen: { field: 'onFailure', value: 'other' },
+    },
+  ],
+
   returnType: (inputType, options) => {
     const typedOptions = options as EnsureTypeOptions;
     switch (typedOptions.expectedType) {

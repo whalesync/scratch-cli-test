@@ -13,6 +13,26 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const replaceRegexTransformer: FieldTransformer = {
   type: TransformerTypes.ReplaceRegex,
 
+  optionsSchema: [
+    {
+      key: 'pattern',
+      widget: 'text',
+      label: 'Pattern',
+      description: 'Regular expression pattern (applied globally)',
+      placeholder: 'https?://youtu\\.be/',
+      required: true,
+      defaultValue: '',
+    },
+    {
+      key: 'replacement',
+      widget: 'text',
+      label: 'Replacement',
+      description: 'Replacement string (supports $1, $2 capture groups). Leave empty to delete matches.',
+      placeholder: 'https://youtube.com/watch?v=',
+      defaultValue: '',
+    },
+  ],
+
   paramType: () => Type.String(),
   returnType: () => Type.String(),
 

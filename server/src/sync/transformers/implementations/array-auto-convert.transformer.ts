@@ -12,6 +12,23 @@ import { autoConvertTransformer } from './auto-convert.transformer';
 export const arrayAutoConvertTransformer: FieldTransformer = {
   type: TransformerTypes.ArrayAutoConvert,
 
+  optionsSchema: [
+    {
+      key: 'targetType',
+      widget: 'select',
+      label: 'Target Element Type',
+      description: 'The data type to convert each array element to',
+      required: true,
+      defaultValue: 'string',
+      selectOptions: [
+        { value: 'string', label: 'String' },
+        { value: 'number', label: 'Number' },
+        { value: 'integer', label: 'Integer' },
+        { value: 'boolean', label: 'Boolean' },
+      ],
+    },
+  ],
+
   paramType: () => Type.Array(Type.Any()),
   returnType: () => Type.Array(Type.Any()),
 

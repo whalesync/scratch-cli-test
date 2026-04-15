@@ -17,6 +17,7 @@ export * from './ids';
 export * from './job-types';
 export * from './subscription';
 export * from './sync-mapping';
+export * from './transformer-metadata';
 export * from './whalesync-import';
 export * from './workbook-events';
 

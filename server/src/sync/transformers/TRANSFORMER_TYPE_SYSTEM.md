@@ -6,16 +6,18 @@ Each field transformer can declare the schema types it accepts (`paramType`) and
 
 ## Transformer Type Declarations
 
-The `FieldTransformer` interface has two optional methods:
+The `FieldTransformer` interface has two optional type-prediction methods and a UI schema property:
 
 ```ts
 paramType?(options?: TransformerOptions): TSchema;  // what this transformer accepts as input
 returnType?(inputType: TSchema, options?: TransformerOptions): TSchema;  // what it produces as output
+optionsSchema?: TransformerFieldDescriptor[];  // UI field descriptors for the options form
 ```
 
 - **`paramType`** — declares the expected input type. A transformer that only works on strings (e.g. `Slugify`, `HtmlToAirmark`) returns `Type.String()`. A transformer that works on anything returns `Type.Any()`.
 - **`returnType`** — predicts the output type, optionally based on the input type or options. `StringToNumber` always returns `Type.Number()`. `EnsureType` returns the type declared in its options. `AutoConvert` returns the target type from its `targetType` option.
 - **`Type.Any()`** (an empty JSON Schema `{}`) means "accepts everything" or "could be anything" — it is always compatible with any other type in validation.
+- **`optionsSchema`** — declares the UI fields for configuring this transformer's options. The client fetches all transformer metadata via `GET /sync/transformers/metadata` and renders forms generically from these descriptors. Adding a new transformer only requires a server-side implementation file — no client changes needed.
 
 ## Three Levels of Validation
 

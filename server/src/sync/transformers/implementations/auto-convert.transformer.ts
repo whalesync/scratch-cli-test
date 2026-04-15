@@ -12,6 +12,31 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const autoConvertTransformer: FieldTransformer = {
   type: TransformerTypes.AutoConvert,
 
+  optionsSchema: [
+    {
+      key: 'targetType',
+      widget: 'select',
+      label: 'Target Type',
+      description: 'The data type to convert the source value to',
+      required: true,
+      defaultValue: 'string',
+      selectOptions: [
+        { value: 'string', label: 'String' },
+        { value: 'number', label: 'Number' },
+        { value: 'integer', label: 'Integer' },
+        { value: 'boolean', label: 'Boolean' },
+        { value: 'array', label: 'Array' },
+      ],
+    },
+    {
+      key: 'preserveNull',
+      widget: 'checkbox',
+      label: 'Preserve null values',
+      description: 'When enabled, null values pass through as null instead of being converted (e.g. to empty string)',
+      defaultValue: false,
+    },
+  ],
+
   returnType: (_inputType, options) => {
     const typedOptions = options as AutoConvertOptions;
     const targetType = typedOptions?.targetType;

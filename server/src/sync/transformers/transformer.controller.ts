@@ -2,13 +2,20 @@ import {
   Body,
   ClassSerializerInterceptor,
   Controller,
+  Get,
   NotFoundException,
   Post,
   Req,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { Service, TestTransformerDto, TestTransformerResponse, WorkbookId } from '@spinner/shared-types';
+import {
+  Service,
+  TestTransformerDto,
+  TestTransformerResponse,
+  TransformerMetadata,
+  WorkbookId,
+} from '@spinner/shared-types';
 import get from 'lodash/get';
 
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -17,7 +24,7 @@ import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { FilesService } from '../../workbook/files.service';
-import { getTransformer } from './transformer-registry';
+import { getAllTransformerMetadata, getTransformer } from './transformer-registry';
 import { TransformContext } from './transformer.types';
 
 @Controller('sync/transformers')
@@ -25,6 +32,11 @@ import { TransformContext } from './transformer.types';
 @UseInterceptors(ClassSerializerInterceptor)
 export class TransformerController {
   constructor(private readonly filesService: FilesService) {}
+
+  @Get('metadata')
+  getTransformerMetadata(): TransformerMetadata[] {
+    return getAllTransformerMetadata();
+  }
 
   @Post('test')
   async testTransformer(

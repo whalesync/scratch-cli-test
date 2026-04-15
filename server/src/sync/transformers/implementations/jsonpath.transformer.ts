@@ -14,6 +14,32 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const jsonpathTransformer: FieldTransformer = {
   type: TransformerTypes.JSONPath,
 
+  optionsSchema: [
+    {
+      key: 'expression',
+      widget: 'text',
+      label: 'JSONPath Expression',
+      description: 'JSONPath expression (e.g. $.store.book[0].title)',
+      placeholder: '$.path.to.value',
+      required: true,
+      defaultValue: '',
+    },
+    {
+      key: 'arrayHandling',
+      widget: 'select',
+      label: 'Multiple results',
+      description: 'How to handle when the expression matches multiple values',
+      defaultValue: 'first',
+      selectOptions: [
+        { value: 'first', label: 'First value' },
+        { value: 'array', label: 'Array' },
+        { value: 'concat', label: 'Join without delimiter' },
+        { value: 'join_space', label: 'Join with spaces' },
+        { value: 'join_comma', label: 'Join with commas' },
+      ],
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

@@ -1,9 +1,8 @@
 'use client';
 
-import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
+import { useTransformerMetadata } from '@/hooks/use-transformer-metadata';
 import { syncApi } from '@/lib/api/sync';
-import { assertUnreachable } from '@/utils/helpers';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -11,8 +10,6 @@ import {
   Badge,
   Box,
   Button,
-  Checkbox,
-  ComboboxItem,
   Flex,
   Group,
   Modal,
@@ -21,23 +18,21 @@ import {
   Select,
   Stack,
   Text,
-  TextInput,
   Tooltip,
   useMantineColorScheme,
 } from '@mantine/core';
 import type {
   DataFolder,
   DataFolderId,
-  EnsureTypeOptions,
   MappingTypeTraceResponse,
-  SourceFkToDestFkOptions,
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
-import { getTransformerLabel, TRANSFORMER_TYPES, TransformerTypes, type TransformerType } from '@spinner/shared-types';
+import { getTransformerLabel } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { AlertTriangle, ArrowRight, Code, Plus, X } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { defaultConfigFromMetadata, TransformerStepFormGeneric } from './TransformerStepFormGeneric';
 
 export interface MappingContextForValidation {
   workbookId: WorkbookId;
@@ -160,528 +155,29 @@ function ArrowWrapper({
   );
 }
 
-/** Default config for a new step (used when inserting or when switching type). */
-function defaultConfigForType(type: TransformerType): TransformerConfig {
-  switch (type) {
-    case TransformerTypes.AutoConvert:
-      return { type: TransformerTypes.AutoConvert, options: { targetType: 'string' } };
-    case TransformerTypes.ArrayAutoConvert:
-      return { type: TransformerTypes.ArrayAutoConvert, options: { targetType: 'string' } };
-    case TransformerTypes.StringToNumber:
-      return { type: TransformerTypes.StringToNumber, options: {} };
-    case TransformerTypes.SourceFkToDestFk:
-      return {
-        type: TransformerTypes.SourceFkToDestFk,
-        options: { referencedDataFolderId: '' as DataFolderId },
-      };
-    case TransformerTypes.LookupField:
-      return {
-        type: TransformerTypes.LookupField,
-        options: { referencedDataFolderId: '' as DataFolderId, referencedFieldPath: '' },
-      };
-    case TransformerTypes.JSONPath:
-      return { type: TransformerTypes.JSONPath, options: { expression: '' } };
-    case TransformerTypes.SourceAssetToDestAsset:
-      return {
-        type: TransformerTypes.SourceAssetToDestAsset,
-        options: { sourceDataFolderId: '' as DataFolderId, destinationDataFolderId: '' as DataFolderId },
-      };
-    case TransformerTypes.EnsureType:
-      return {
-        type: TransformerTypes.EnsureType,
-        options: { expectedType: 'string', onFailure: 'null' },
-      };
-    case TransformerTypes.NotionToHtml:
-    case TransformerTypes.AirmarkToHtml:
-    case TransformerTypes.HtmlToAirmark:
-    case TransformerTypes.WebflowOption:
-    case TransformerTypes.WebflowOptionIdToValue:
-    case TransformerTypes.Slugify:
-    case TransformerTypes.NotionFileUrl:
-    case TransformerTypes.EscapeHtml:
-    case TransformerTypes.Trim:
-    case TransformerTypes.ReplaceNewlines:
-    case TransformerTypes.SkipIfDestMatches:
-    case TransformerTypes.SkipIfDestArrayMatches:
-      return { type, options: {} };
-    case TransformerTypes.WrapObject:
-      return { type: TransformerTypes.WrapObject, options: { template: {} } };
-    case TransformerTypes.MapArray:
-      return {
-        type: TransformerTypes.MapArray,
-        options: { elementTransformer: { type: TransformerTypes.WrapObject, options: { template: {} } } },
-      };
-    case TransformerTypes.ReplaceRegex:
-      return { type: TransformerTypes.ReplaceRegex, options: { pattern: '' } };
-    case TransformerTypes.MatchAssetByHash:
-      return {
-        type: TransformerTypes.MatchAssetByHash,
-        options: { sourceDataFolderId: '' as DataFolderId, destinationDataFolderId: '' as DataFolderId },
-      };
-    default:
-      return assertUnreachable(type);
-  }
-}
-
-const transformerSelectData = TRANSFORMER_TYPES.map((t) => ({ value: t.type, label: t.label }));
-
-/** Returns true if a transformer config has all required fields filled in (non-empty). */
+/**
+ * Returns true if a transformer config has all required fields filled in (non-empty).
+ * This is a lightweight check that doesn't require metadata — used by SyncEditor
+ * and validation logic that doesn't have metadata loaded.
+ */
 export function isTransformerConfigComplete(config: TransformerConfig): boolean {
-  switch (config.type) {
-    case TransformerTypes.SourceFkToDestFk:
-      return !!config.options?.referencedDataFolderId;
-    case TransformerTypes.LookupField:
-      return !!config.options?.referencedDataFolderId && !!config.options?.referencedFieldPath;
-    case TransformerTypes.SourceAssetToDestAsset:
-      return !!config.options?.sourceDataFolderId && !!config.options?.destinationDataFolderId;
-    default:
-      return true;
-  }
+  const opts = config.options as Record<string, unknown> | undefined;
+  if (!opts) return true;
+
+  // Check common required fields by convention
+  const requiredFieldsByType: Record<string, string[]> = {
+    source_fk_to_dest_fk: ['referencedDataFolderId'],
+    lookup_field: ['referencedDataFolderId', 'referencedFieldPath'],
+    source_asset_to_dest_asset: ['sourceDataFolderId', 'destinationDataFolderId'],
+    match_asset_by_hash: ['sourceDataFolderId', 'destinationDataFolderId'],
+  };
+
+  const requiredFields = requiredFieldsByType[config.type];
+  if (!requiredFields) return true;
+  return requiredFields.every((key) => !!opts[key]);
 }
 
 const sourceDestBorderStyle = { borderColor: 'var(--mantine-color-gray-8)' };
-
-const ON_UNRESOLVED_OPTIONS: { value: NonNullable<SourceFkToDestFkOptions['onUnresolved']>; label: string }[] = [
-  { value: 'fail', label: 'Stop and fail the sync' },
-  { value: 'ignore', label: 'Ignore missing record and sync the rest' },
-];
-
-/** Single edit form for one transformer step (max-width 200px). */
-function TransformerStepForm({
-  config,
-  onChange,
-  allFolders,
-}: {
-  config: TransformerConfig;
-  onChange: (c: TransformerConfig) => void;
-  allFolders: DataFolder[];
-}) {
-  const folderSelectData = allFolders.map((f) => ({
-    value: f.id,
-    label: f.name ?? f.id,
-    connectorService: f.connectorService,
-  }));
-  const destAssetFolderSelectData = allFolders
-    .filter((f) => f.isAssetTable)
-    .map((f) => ({
-      value: f.id,
-      label: f.name ?? f.id,
-      connectorService: f.connectorService,
-    }));
-
-  const { colorScheme } = useMantineColorScheme();
-
-  const updateOptions = useCallback(
-    (opts: Record<string, unknown>) => {
-      onChange({ ...config, options: opts } as TransformerConfig);
-    },
-    [config, onChange],
-  );
-
-  return (
-    <Stack gap="xs" style={{ maxWidth: 400 }}>
-      <Select
-        size="xs"
-        label="Type"
-        data={transformerSelectData}
-        value={config.type}
-        onChange={(value) => value && onChange(defaultConfigForType(value as TransformerType))}
-      />
-      {config.type === TransformerTypes.AutoConvert && config.options && (
-        <>
-          <Select
-            size="xs"
-            label="Target Type"
-            description="The data type to convert the source value to"
-            data={[
-              { value: 'string', label: 'String' },
-              { value: 'number', label: 'Number' },
-              { value: 'integer', label: 'Integer' },
-              { value: 'boolean', label: 'Boolean' },
-              { value: 'array', label: 'Array' },
-            ]}
-            value={config.options.targetType}
-            onChange={(v) => v && updateOptions({ ...config.options, targetType: v })}
-          />
-          <Checkbox
-            size="xs"
-            label="Preserve null values"
-            description="When enabled, null values pass through as null instead of being converted (e.g. to empty string)"
-            checked={config.options.preserveNull ?? false}
-            onChange={(e) => updateOptions({ ...config.options, preserveNull: e.currentTarget.checked || undefined })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.ArrayAutoConvert && config.options && (
-        <Select
-          size="xs"
-          label="Target Element Type"
-          description="The data type to convert each array element to"
-          data={[
-            { value: 'string', label: 'String' },
-            { value: 'number', label: 'Number' },
-            { value: 'integer', label: 'Integer' },
-            { value: 'boolean', label: 'Boolean' },
-          ]}
-          value={config.options.targetType}
-          onChange={(v) => v && updateOptions({ ...config.options, targetType: v })}
-        />
-      )}
-      {config.type === TransformerTypes.StringToNumber && (
-        <Stack gap="xs">
-          <Checkbox
-            size="xs"
-            label="Strip currency symbols ($, €, £, ¥, etc.)"
-            checked={config.options?.stripCurrency ?? false}
-            onChange={(e) => updateOptions({ ...config.options, stripCurrency: e.currentTarget.checked })}
-          />
-          <Checkbox
-            size="xs"
-            label="Parse as integer (truncate decimals)"
-            checked={config.options?.parseInteger ?? false}
-            onChange={(e) => updateOptions({ ...config.options, parseInteger: e.currentTarget.checked })}
-          />
-        </Stack>
-      )}
-      {config.type === TransformerTypes.SourceFkToDestFk && config.options && (
-        <>
-          <Select
-            size="xs"
-            label="Referenced Folder"
-            description="The folder containing the records referenced by this foreign key"
-            placeholder="Select folder"
-            data={folderSelectData}
-            value={config.options.referencedDataFolderId || null}
-            onChange={(v) => v && updateOptions({ ...config.options, referencedDataFolderId: v })}
-            renderOption={renderFolderOption}
-            searchable
-          />
-          <Select
-            size="xs"
-            label="Output type"
-            description="Whether to output multiple values (array) or a single value"
-            data={[
-              { value: 'array', label: 'Multiple values (array)' },
-              { value: 'single', label: 'Single value (first item)' },
-            ]}
-            value={(config.options as SourceFkToDestFkOptions).outputType ?? 'array'}
-            onChange={(v) => v && updateOptions({ ...config.options, outputType: v })}
-          />
-          <Select
-            size="xs"
-            label="When a referenced record cannot be found"
-            data={ON_UNRESOLVED_OPTIONS}
-            value={(config.options as SourceFkToDestFkOptions).onUnresolved ?? 'fail'}
-            onChange={(v) => v && updateOptions({ ...config.options, onUnresolved: v })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.LookupField && config.options && (
-        <>
-          <Select
-            size="xs"
-            label="Referenced Folder"
-            description="The folder containing the records referenced by this foreign key"
-            placeholder="Select folder"
-            data={folderSelectData}
-            value={config.options.referencedDataFolderId || null}
-            onChange={(v) => v && updateOptions({ ...config.options, referencedDataFolderId: v })}
-            renderOption={renderFolderOption}
-            searchable
-          />
-          <TextInput
-            size="xs"
-            label="Field Path"
-            description="The field to extract from the referenced record (e.g. 'name' or 'company.displayName')"
-            placeholder="e.g. name"
-            value={config.options.referencedFieldPath ?? ''}
-            onChange={(e) => updateOptions({ ...config.options, referencedFieldPath: e.currentTarget.value })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.JSONPath && config.options && (
-        <>
-          <TextInput
-            size="xs"
-            label="JSONPath Expression"
-            description="JSONPath expression (e.g. $.store.book[0].title)"
-            placeholder="$.path.to.value"
-            value={config.options.expression ?? ''}
-            onChange={(e) => updateOptions({ ...config.options, expression: e.currentTarget.value })}
-          />
-          <Select
-            size="xs"
-            label="Multiple results"
-            description="How to handle when the expression matches multiple values"
-            data={[
-              { value: 'first', label: 'First value' },
-              { value: 'array', label: 'Array' },
-              { value: 'concat', label: 'Join without delimiter' },
-              { value: 'join_space', label: 'Join with spaces' },
-              { value: 'join_comma', label: 'Join with commas' },
-            ]}
-            value={config.options.arrayHandling ?? 'first'}
-            onChange={(v) => v && updateOptions({ ...config.options, arrayHandling: v })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.SourceAssetToDestAsset && config.options && (
-        <>
-          <Select
-            size="xs"
-            label="Source Asset Folder"
-            description="The asset folder on the source side containing the referenced files"
-            placeholder="Select asset folder"
-            data={folderSelectData}
-            value={config.options.sourceDataFolderId || null}
-            onChange={(v) => v && updateOptions({ ...config.options, sourceDataFolderId: v })}
-            renderOption={renderFolderOption}
-            searchable
-          />
-          <Select
-            size="xs"
-            label="Destination Asset Folder"
-            description="The asset folder on the destination side where assets will be created"
-            placeholder="Select asset folder"
-            data={destAssetFolderSelectData}
-            value={config.options.destinationDataFolderId || null}
-            onChange={(v) => v && updateOptions({ ...config.options, destinationDataFolderId: v })}
-            renderOption={renderFolderOption}
-            searchable
-          />
-          <Select
-            size="xs"
-            label="Output type"
-            description="Whether to output multiple values (array) or a single value"
-            data={[
-              { value: 'array', label: 'Multiple values (array)' },
-              { value: 'single', label: 'Single value (first item)' },
-            ]}
-            value={config.options.outputType ?? 'array'}
-            onChange={(v) => v && updateOptions({ ...config.options, outputType: v })}
-          />
-          <Select
-            size="xs"
-            label="When a source asset cannot be found"
-            data={ON_UNRESOLVED_OPTIONS}
-            value={config.options.onUnresolved ?? 'fail'}
-            onChange={(v) => v && updateOptions({ ...config.options, onUnresolved: v })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.EnsureType && config.options && (
-        <>
-          <Select
-            size="xs"
-            label="Expected Type"
-            description="The type of value that actual values will be checked against"
-            data={[
-              { value: 'string', label: 'String' },
-              { value: 'number', label: 'Number' },
-              { value: 'boolean', label: 'Boolean' },
-              { value: 'object', label: 'Object' },
-              { value: 'array', label: 'Array' },
-            ]}
-            value={config.options.expectedType}
-            onChange={(v) => v && updateOptions({ ...config.options, expectedType: v })}
-          />
-          <Select
-            size="xs"
-            label="When validation fails"
-            description="Action to take if the value does not match the expected type"
-            data={[
-              { value: 'error', label: 'Throw error' },
-              { value: 'null', label: 'Return null' },
-              { value: 'omit', label: 'Omit field' },
-              { value: 'other', label: 'Use fallback value' },
-            ]}
-            value={config.options.onFailure}
-            onChange={(v) => v && updateOptions({ ...config.options, onFailure: v })}
-          />
-          {config.options.onFailure === 'other' && (
-            <TextInput
-              size="xs"
-              label="Fallback Value"
-              description="Value to use when validation fails"
-              placeholder="e.g. 0, unknown, etc."
-              value={(config.options as EnsureTypeOptions).fallbackValue ?? ''}
-              onChange={(e) => updateOptions({ ...config.options, fallbackValue: e.currentTarget.value })}
-            />
-          )}
-        </>
-      )}
-      {config.type === TransformerTypes.NotionFileUrl && (
-        <Select
-          size="xs"
-          label="Multiple results"
-          description="How to handle multiple file URLs"
-          data={[
-            { value: 'array', label: 'Array (default)' },
-            { value: 'first', label: 'First value' },
-          ]}
-          value={config.options?.arrayHandling ?? 'array'}
-          onChange={(v) => v && updateOptions({ ...config.options, arrayHandling: v })}
-        />
-      )}
-      {config.type === TransformerTypes.ReplaceNewlines && (
-        <TextInput
-          size="xs"
-          label="Replacement"
-          description="String to substitute for each newline (e.g. <br>). Leave empty to strip newlines."
-          placeholder="<br>"
-          value={config.options?.replacement ?? ''}
-          onChange={(e) => updateOptions({ ...config.options, replacement: e.currentTarget.value })}
-        />
-      )}
-      {config.type === TransformerTypes.ReplaceRegex && config.options && (
-        <>
-          <TextInput
-            size="xs"
-            label="Pattern"
-            description="Regular expression pattern (applied globally)"
-            placeholder="https?://youtu\\.be/"
-            value={config.options.pattern ?? ''}
-            onChange={(e) => updateOptions({ ...config.options, pattern: e.currentTarget.value })}
-          />
-          <TextInput
-            size="xs"
-            label="Replacement"
-            description="Replacement string (supports $1, $2 capture groups). Leave empty to delete matches."
-            placeholder="https://youtube.com/watch?v="
-            value={config.options.replacement ?? ''}
-            onChange={(e) => updateOptions({ ...config.options, replacement: e.currentTarget.value })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.SkipIfDestMatches && (
-        <>
-          <TextInput
-            size="xs"
-            label="Source Expression"
-            description="JSONPath to extract from source value (default: $ = whole value)"
-            placeholder="$"
-            value={config.options?.sourceExpression ?? ''}
-            onChange={(e) => updateOptions({ ...config.options, sourceExpression: e.currentTarget.value || undefined })}
-          />
-          <TextInput
-            size="xs"
-            label="Destination Expression"
-            description="JSONPath to extract from destination value (default: $ = whole value)"
-            placeholder="$.url"
-            value={config.options?.destinationExpression ?? ''}
-            onChange={(e) =>
-              updateOptions({ ...config.options, destinationExpression: e.currentTarget.value || undefined })
-            }
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.SkipIfDestArrayMatches && (
-        <>
-          <TextInput
-            size="xs"
-            label="Source Element Expression"
-            description="JSONPath to extract a comparable value from each source element (default: $ = whole element)"
-            placeholder="$"
-            value={config.options?.sourceElementExpression ?? ''}
-            onChange={(e) =>
-              updateOptions({ ...config.options, sourceElementExpression: e.currentTarget.value || undefined })
-            }
-          />
-          <TextInput
-            size="xs"
-            label="Destination Element Expression"
-            description="JSONPath to extract a comparable value from each destination element (default: $ = whole element)"
-            placeholder="$.name"
-            value={config.options?.destinationElementExpression ?? ''}
-            onChange={(e) =>
-              updateOptions({ ...config.options, destinationElementExpression: e.currentTarget.value || undefined })
-            }
-          />
-          <Checkbox
-            size="xs"
-            label="Match ordering (elements must appear in the same order)"
-            checked={config.options?.matchOrdering ?? false}
-            onChange={(e) => updateOptions({ ...config.options, matchOrdering: e.currentTarget.checked })}
-          />
-        </>
-      )}
-      {config.type === TransformerTypes.WrapObject && config.options && (
-        <Box
-          style={{
-            border: '1px solid var(--mantine-color-default-border)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
-          }}
-        >
-          <Text size="xs" fw={500} mb={4}>
-            Template
-          </Text>
-          <Text size="xs" c="dimmed" mb={4}>
-            JSON object where {'"$value"'} is replaced with the source value
-          </Text>
-          <CodeMirror
-            value={JSON.stringify(config.options.template ?? {}, null, 2)}
-            extensions={[json(), EditorView.lineWrapping]}
-            theme={colorScheme === 'dark' ? 'dark' : 'light'}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: false,
-              highlightActiveLine: false,
-            }}
-            style={{ fontSize: '12px' }}
-            onChange={(value) => {
-              try {
-                const parsed: unknown = JSON.parse(value);
-                if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-                  updateOptions({ ...config.options, template: parsed as Record<string, unknown> });
-                }
-              } catch {
-                // Don't update on invalid JSON
-              }
-            }}
-          />
-        </Box>
-      )}
-      {config.type === TransformerTypes.MapArray && config.options && (
-        <Box
-          style={{
-            border: '1px solid var(--mantine-color-default-border)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
-          }}
-        >
-          <Text size="xs" fw={500} mb={4}>
-            Element Transformer
-          </Text>
-          <Text size="xs" c="dimmed" mb={4}>
-            Transformer config applied to each array element (as JSON)
-          </Text>
-          <CodeMirror
-            value={JSON.stringify(config.options.elementTransformer ?? {}, null, 2)}
-            extensions={[json(), EditorView.lineWrapping]}
-            theme={colorScheme === 'dark' ? 'dark' : 'light'}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: false,
-              highlightActiveLine: false,
-            }}
-            style={{ fontSize: '12px' }}
-            onChange={(value) => {
-              try {
-                const parsed: unknown = JSON.parse(value);
-                if (typeof parsed === 'object' && parsed !== null && 'type' in parsed) {
-                  updateOptions({ ...config.options, elementTransformer: parsed as TransformerConfig });
-                }
-              } catch {
-                // Don't update on invalid JSON
-              }
-            }}
-          />
-        </Box>
-      )}
-    </Stack>
-  );
-}
 
 export function TransformerConfigModal({
   opened,
@@ -691,6 +187,7 @@ export function TransformerConfigModal({
   allFolders,
   mappingContext,
 }: TransformerConfigModalProps) {
+  const { metadata: transformerMetadata } = useTransformerMetadata();
   const [typeTrace, setTypeTrace] = useState<MappingTypeTraceResponse | { error: string } | null>(null);
   /** Raw result for admin submodal (includes error responses); main UI uses typeTrace (null when failed). */
   const [lastValidationResult, setLastValidationResult] = useState<MappingTypeTraceResponse | { error: string } | null>(
@@ -723,11 +220,11 @@ export function TransformerConfigModal({
   const insertAt = useCallback(
     (index: number) => {
       const next = [...currentConfigs];
-      next.splice(index, 0, defaultConfigForType(TransformerTypes.AutoConvert));
+      next.splice(index, 0, defaultConfigFromMetadata('auto_convert', transformerMetadata ?? []));
       onSave(next);
       setEditIndex(index);
     },
-    [currentConfigs, onSave],
+    [currentConfigs, onSave, transformerMetadata],
   );
 
   const removeAt = useCallback(
@@ -814,12 +311,14 @@ export function TransformerConfigModal({
         ? '…'
         : (mappingContext?.destFieldType ?? '—');
   const addFirstTransformer = useCallback(
-    (type: TransformerType) => {
-      onSave([defaultConfigForType(type)]);
+    (type: string) => {
+      onSave([defaultConfigFromMetadata(type, transformerMetadata ?? [])]);
       setEditIndex(0);
     },
-    [onSave],
+    [onSave, transformerMetadata],
   );
+
+  const transformerSelectData = (transformerMetadata ?? []).map((m) => ({ value: m.type, label: m.label }));
 
   const modalTitle =
     mappingContext != null ? (
@@ -1114,7 +613,7 @@ export function TransformerConfigModal({
                     placeholder="Select type"
                     data={transformerSelectData}
                     value={null}
-                    onChange={(value) => value && addFirstTransformer(value as TransformerType)}
+                    onChange={(value) => value && addFirstTransformer(value)}
                   />
                 </>
               ) : editIndex != null && currentConfigs[editIndex] != null ? (
@@ -1133,7 +632,8 @@ export function TransformerConfigModal({
                       <X size={14} />
                     </ActionIcon>
                   </Flex>
-                  <TransformerStepForm
+                  <TransformerStepFormGeneric
+                    allMetadata={transformerMetadata ?? []}
                     config={currentConfigs[editIndex]}
                     onChange={(c) => updateAt(editIndex!, c)}
                     allFolders={allFolders}
@@ -1200,10 +700,3 @@ export function TransformerConfigModal({
     </>
   );
 }
-
-const renderFolderOption = ({ option }: { option: ComboboxItem & { connectorService?: string | null } }) => (
-  <Group gap="xs" wrap="nowrap">
-    {option.connectorService && <ConnectorIcon connector={option.connectorService} size={16} p={0} />}
-    <Text size="sm">{option.label}</Text>
-  </Group>
-);

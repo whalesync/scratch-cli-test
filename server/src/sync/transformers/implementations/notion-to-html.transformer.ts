@@ -23,6 +23,7 @@ export const NotionToHtmlTransformer = {
 
   paramType: () => Type.Array(Type.Any()),
   returnType: () => Type.String(),
+  optionsSchema: [],
 
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const blocks = await Promise.resolve(ctx.sourceValue as ConvertedNotionBlock[]);

@@ -17,6 +17,16 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const mapArrayTransformer: FieldTransformer = {
   type: TransformerTypes.MapArray,
 
+  optionsSchema: [
+    {
+      key: 'elementTransformer',
+      widget: 'transformer_config',
+      label: 'Element Transformer',
+      description: 'Transformer config applied to each array element (as JSON)',
+      defaultValue: { type: 'wrap_object', options: { template: {} } },
+    },
+  ],
+
   returnType: () => Type.Array(Type.Any()),
   paramType: () => Type.Array(Type.Any()),
 

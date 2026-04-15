@@ -28,6 +28,7 @@ export const webflowOptionIdToValueTransformer: FieldTransformer = {
   type: TransformerTypes.WebflowOptionIdToValue,
 
   returnType: () => Type.String(),
+  optionsSchema: [],
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

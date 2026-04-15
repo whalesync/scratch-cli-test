@@ -26,6 +26,20 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const notionFileUrlTransformer: FieldTransformer = {
   type: TransformerTypes.NotionFileUrl,
 
+  optionsSchema: [
+    {
+      key: 'arrayHandling',
+      widget: 'select',
+      label: 'Multiple results',
+      description: 'How to handle multiple file URLs',
+      defaultValue: 'array',
+      selectOptions: [
+        { value: 'array', label: 'Array (default)' },
+        { value: 'first', label: 'First value' },
+      ],
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

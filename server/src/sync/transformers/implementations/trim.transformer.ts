@@ -11,6 +11,7 @@ export const trimTransformer: FieldTransformer = {
 
   paramType: () => Type.String(),
   returnType: () => Type.String(),
+  optionsSchema: [],
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {

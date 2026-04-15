@@ -15,6 +15,17 @@ import { FieldTransformer, TransformContext, TransformResult } from '../transfor
 export const replaceNewlinesTransformer: FieldTransformer = {
   type: TransformerTypes.ReplaceNewlines,
 
+  optionsSchema: [
+    {
+      key: 'replacement',
+      widget: 'text',
+      label: 'Replacement',
+      description: 'String to substitute for each newline (e.g. <br>). Leave empty to strip newlines.',
+      placeholder: '<br>',
+      defaultValue: '',
+    },
+  ],
+
   paramType: () => Type.String(),
   returnType: () => Type.String(),
 

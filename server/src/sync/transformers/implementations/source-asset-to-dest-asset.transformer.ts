@@ -25,6 +25,49 @@ import { AssetMappingResult, FieldTransformer, TransformContext, TransformResult
 export const sourceAssetToDestAssetTransformer: FieldTransformer = {
   type: TransformerTypes.SourceAssetToDestAsset,
 
+  optionsSchema: [
+    {
+      key: 'sourceDataFolderId',
+      widget: 'folder_picker',
+      label: 'Source Asset Folder',
+      description: 'The asset folder on the source side containing the referenced files',
+      placeholder: 'Select asset folder',
+      required: true,
+      defaultValue: '',
+    },
+    {
+      key: 'destinationDataFolderId',
+      widget: 'folder_picker',
+      label: 'Destination Asset Folder',
+      description: 'The asset folder on the destination side where assets will be created',
+      placeholder: 'Select asset folder',
+      required: true,
+      defaultValue: '',
+      assetFoldersOnly: true,
+    },
+    {
+      key: 'outputType',
+      widget: 'select',
+      label: 'Output type',
+      description: 'Whether to output multiple values (array) or a single value',
+      defaultValue: 'array',
+      selectOptions: [
+        { value: 'array', label: 'Multiple values (array)' },
+        { value: 'single', label: 'Single value (first item)' },
+      ],
+    },
+    {
+      key: 'onUnresolved',
+      widget: 'select',
+      label: 'When a source asset cannot be found',
+      defaultValue: 'fail',
+      selectOptions: [
+        { value: 'fail', label: 'Stop and fail the sync' },
+        { value: 'ignore', label: 'Ignore missing record and sync the rest' },
+      ],
+    },
+  ],
+
   paramType: () => Type.Any(),
   returnType: () => Type.Any(),
 

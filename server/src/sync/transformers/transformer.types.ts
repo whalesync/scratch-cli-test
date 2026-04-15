@@ -1,4 +1,10 @@
-import { DataFolderId, Service, TransformerOptions, TransformerType } from '@spinner/shared-types';
+import {
+  DataFolderId,
+  Service,
+  TransformerFieldDescriptor,
+  TransformerOptions,
+  TransformerType,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
 
 export type SyncPhase = 'DATA' | 'FOREIGN_KEY_MAPPING';
@@ -176,4 +182,7 @@ export interface FieldTransformer {
    * @param options The transformer-specific configuration options.
    */
   paramType?(options?: TransformerOptions): TSchema;
+
+  /** UI field descriptors for the options form. If absent, transformer has no configurable options. */
+  readonly optionsSchema?: TransformerFieldDescriptor[];
 }
