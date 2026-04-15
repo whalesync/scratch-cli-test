@@ -1,4 +1,5 @@
-import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import axios, { AxiosInstance, isAxiosError, RawAxiosRequestHeaders } from 'axios';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
   AudiencefulCreatePersonRequest,
@@ -27,6 +28,17 @@ export class AudiencefulError extends Error {
   }
 }
 
+const AUDIENCEFUL_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isAxiosError(error) && error.response?.status === 429,
+  getRetryAfterS: (error) => {
+    if (!isAxiosError(error)) return undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const header = error.response?.headers?.['retry-after'];
+    const seconds = header ? parseInt(String(header), 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
+};
+
 /**
  * Low-level API client for the Audienceful API.
  *
@@ -34,8 +46,9 @@ export class AudiencefulError extends Error {
  */
 export class AudiencefulApiClient {
   private readonly client: AxiosInstance;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     const headers: RawAxiosRequestHeaders = {
       'X-Api-Key': apiKey,
       'Content-Type': 'application/json',
@@ -46,6 +59,14 @@ export class AudiencefulApiClient {
       baseURL: AUDIENCEFUL_API_BASE_URL,
       headers,
     });
+    this.rateLimiter = opts?.rateLimiter;
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, AUDIENCEFUL_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, AUDIENCEFUL_RETRY_OPTS);
   }
 
   /**
@@ -55,7 +76,7 @@ export class AudiencefulApiClient {
   async validateCredentials(): Promise<void> {
     try {
       // The API uses /people/ with trailing slash
-      await this.client.get<AudiencefulPaginatedResponse<AudiencefulPerson>>('/people/');
+      await this.withRetry(() => this.client.get<AudiencefulPaginatedResponse<AudiencefulPerson>>('/people/'));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new AudiencefulError('Invalid API key', 401, error.response?.data);
@@ -77,7 +98,9 @@ export class AudiencefulApiClient {
     do {
       const url: string = nextPageUrl ?? '/people/'; // NextPageUrl is the full URI for pagination, but the base page is relative to the API base URL.
 
-      const response = await this.client.get<AudiencefulPaginatedResponse<AudiencefulPerson>>(url);
+      const response = await this.withRetry(() =>
+        this.client.get<AudiencefulPaginatedResponse<AudiencefulPerson>>(url),
+      );
       nextPageUrl = response.data.next;
 
       if (response.data.results && response.data.results.length > 0) {
@@ -93,7 +116,7 @@ export class AudiencefulApiClient {
    */
   async getPerson(uid: string): Promise<AudiencefulPerson | null> {
     try {
-      const response = await this.client.get<AudiencefulPerson>(`/people/${uid}/`);
+      const response = await this.withRetry(() => this.client.get<AudiencefulPerson>(`/people/${uid}/`));
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -109,7 +132,7 @@ export class AudiencefulApiClient {
    * @returns The created person.
    */
   async createPerson(data: AudiencefulCreatePersonRequest): Promise<AudiencefulPerson> {
-    const response = await this.client.post<AudiencefulPerson>('/people/', data);
+    const response = await this.withRetry(() => this.client.post<AudiencefulPerson>('/people/', data));
     return response.data;
   }
 
@@ -119,7 +142,7 @@ export class AudiencefulApiClient {
    * @returns The updated person.
    */
   async updatePerson(data: AudiencefulUpdatePersonRequest): Promise<AudiencefulPerson> {
-    const response = await this.client.put<AudiencefulPerson>('/people/', data);
+    const response = await this.withRetry(() => this.client.put<AudiencefulPerson>('/people/', data));
     return response.data;
   }
 
@@ -130,7 +153,7 @@ export class AudiencefulApiClient {
    */
   async deletePerson(data: AudiencefulDeletePersonRequest): Promise<void> {
     try {
-      await this.client.delete('/people/', { data });
+      await this.withRetry(() => this.client.delete('/people/', { data }));
     } catch (error) {
       // Ignore 404 errors - the person may already be deleted
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -146,7 +169,7 @@ export class AudiencefulApiClient {
    */
   async listFields(): Promise<AudiencefulField[]> {
     // The fields endpoint is under /people/fields/
-    const response = await this.client.get<AudiencefulFieldsResponse>('/people/fields/');
+    const response = await this.withRetry(() => this.client.get<AudiencefulFieldsResponse>('/people/fields/'));
     return response.data;
   }
 }

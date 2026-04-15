@@ -20,6 +20,7 @@ import {
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -33,6 +34,16 @@ import { convertToNotionBlocks } from './conversion/notion-rich-text-push';
 import { ConvertedNotionBlock } from './conversion/notion-rich-text-push-types';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
+
+const NOTION_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => APIResponseError.isAPIResponseError(error) && error.code === APIErrorCode.RateLimited,
+  getRetryAfterS: (error) => {
+    if (!APIResponseError.isAPIResponseError(error)) return undefined;
+    const header = (error.headers as Record<string, string> | undefined)?.['retry-after'];
+    const seconds = header ? parseInt(String(header), 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
+};
 
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
@@ -109,10 +120,19 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   private readonly client: Client;
   private readonly schemaParser = new NotionSchemaParser();
   private readonly markdownConverter = new NotionMarkdownConverter();
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
     this.client = new Client({ auth: apiKey });
+    this.rateLimiter = opts?.rateLimiter;
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, NOTION_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, NOTION_RETRY_OPTS);
   }
 
   get tableDiscoveryMode(): TableDiscoveryMode {
@@ -121,10 +141,12 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
   async testConnection(): Promise<void> {
     // Just don't throw.
-    await this.client.search({
-      filter: { property: 'object', value: 'database' },
-      page_size: 1,
-    });
+    await this.withRetry(() =>
+      this.client.search({
+        filter: { property: 'object', value: 'database' },
+        page_size: 1,
+      }),
+    );
   }
 
   /**
@@ -136,11 +158,13 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     let startCursor: string | undefined = undefined;
 
     while (hasMore) {
-      const response = await this.client.blocks.children.list({
-        block_id: blockId,
-        start_cursor: startCursor,
-        page_size: 100,
-      });
+      const response = await this.withRetry(() =>
+        this.client.blocks.children.list({
+          block_id: blockId,
+          start_cursor: startCursor,
+          page_size: 100,
+        }),
+      );
 
       for (const block of response.results) {
         // Add children property to match ConvertedNotionBlock type
@@ -164,20 +188,24 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   async listTables(): Promise<TablePreview[]> {
-    const response = await this.client.search({
-      query: '',
-      filter: { property: 'object', value: 'database' },
-      page_size: 10,
-    });
+    const response = await this.withRetry(() =>
+      this.client.search({
+        query: '',
+        filter: { property: 'object', value: 'database' },
+        page_size: 10,
+      }),
+    );
     const databases = response.results.filter((r): r is DatabaseObjectResponse => r.object === 'database');
     return databases.map((db) => this.schemaParser.parseDatabaseTablePreview(db));
   }
 
   async searchTables(searchTerm: string): Promise<{ tables: TablePreview[]; hasMore: boolean }> {
-    const response = await this.client.search({
-      query: searchTerm,
-      filter: { property: 'object', value: 'database' },
-    });
+    const response = await this.withRetry(() =>
+      this.client.search({
+        query: searchTerm,
+        filter: { property: 'object', value: 'database' },
+      }),
+    );
 
     const databases = response.results.filter((r): r is DatabaseObjectResponse => r.object === 'database');
     const tables = databases.map((db) => this.schemaParser.parseDatabaseTablePreview(db));
@@ -190,7 +218,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [databaseId] = id.remoteId;
-    const database = (await this.client.databases.retrieve({ database_id: databaseId })) as DatabaseObjectResponse;
+    const database = (await this.withRetry(() =>
+      this.client.databases.retrieve({ database_id: databaseId }),
+    )) as DatabaseObjectResponse;
     return buildNotionJsonTableSpec(id, database);
   }
 
@@ -265,12 +295,14 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     }
 
     while (hasMore) {
-      const response = await this.client.databases.query({
-        database_id: databaseId,
-        start_cursor: nextCursor,
-        page_size: options.pageSize ?? 100,
-        filter: notionFilter,
-      });
+      const response = await this.withRetry(() =>
+        this.client.databases.query({
+          database_id: databaseId,
+          start_cursor: nextCursor,
+          page_size: options.pageSize ?? 100,
+          filter: notionFilter,
+        }),
+      );
 
       // Return raw page objects as ConnectorFiles
       const files: ConnectorFile[] = [];
@@ -316,7 +348,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
     for (const pageId of ids) {
       try {
-        const page = (await this.client.pages.retrieve({ page_id: pageId })) as PageObjectResponse;
+        const page = (await this.withRetry(() =>
+          this.client.pages.retrieve({ page_id: pageId }),
+        )) as PageObjectResponse;
         const connectorFile = page as unknown as ConnectorFile;
 
         try {
@@ -374,10 +408,12 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       // Transform properties from read format to create format (same rules as update)
       const properties = this.transformPropertiesForUpdate(rawProperties);
 
-      const newPage = await this.client.pages.create({
-        parent: { database_id: databaseId },
-        properties: properties as CreatePageParameters['properties'],
-      });
+      const newPage = await this.withRetry(() =>
+        this.client.pages.create({
+          parent: { database_id: databaseId },
+          properties: properties as CreatePageParameters['properties'],
+        }),
+      );
       results.push(newPage as unknown as ConnectorFile);
     }
 
@@ -400,7 +436,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     pageContent: ConvertedNotionBlock;
     statistics: { maxDepth: number; maxBreadth: number; totalCalls: number };
   }> {
-    const response = await this.client.blocks.retrieve({ block_id: blockId });
+    const response = await this.withRetry(() => this.client.blocks.retrieve({ block_id: blockId }));
     const pageContent = response as unknown as ConvertedNotionBlock;
 
     if (_.has(response, 'has_children') && (response as BlockObjectResponse).has_children) {
@@ -462,11 +498,13 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         break;
       }
 
-      const response = await this.client.blocks.children.list({
-        block_id: blockId,
-        start_cursor: startCursor,
-        page_size: NotionConnector.PAGE_CONTENT_PAGE_SIZE,
-      });
+      const response = await this.withRetry(() =>
+        this.client.blocks.children.list({
+          block_id: blockId,
+          start_cursor: startCursor,
+          page_size: NotionConnector.PAGE_CONTENT_PAGE_SIZE,
+        }),
+      );
 
       for (const result of response.results) {
         const block = result as unknown as ConvertedNotionBlock;
@@ -545,10 +583,12 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const properties = this.transformPropertiesForUpdate(rawProperties);
 
       if (Object.keys(properties).length > 0) {
-        await this.client.pages.update({
-          page_id: pageId,
-          properties: properties as CreatePageParameters['properties'],
-        });
+        await this.withRetry(() =>
+          this.client.pages.update({
+            page_id: pageId,
+            properties: properties as CreatePageParameters['properties'],
+          }),
+        );
       }
     }
   }
@@ -560,10 +600,12 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   async deleteRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     for (const file of files) {
       const pageId = file.id as string;
-      await this.client.pages.update({
-        page_id: pageId,
-        archived: true,
-      });
+      await this.withRetry(() =>
+        this.client.pages.update({
+          page_id: pageId,
+          archived: true,
+        }),
+      );
     }
   }
 
@@ -808,18 +850,20 @@ connectorRegistry.register({
   metadata: NotionConnector.metadata,
   advancedSettings: NotionConnector.advancedSettings,
   supportedAuthMethods: ['oauth', 'user_provided_params'],
+  rateLimiterSpec: { points: 3, duration: 1 }, // Notion: 3 req/s per integration
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Notion', Service.NOTION);
     }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
       const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new NotionConnector(accessToken);
+      return new NotionConnector(accessToken, { rateLimiter });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Notion', Service.NOTION);
       }
-      return new NotionConnector(ctx.decryptedCredentials.apiKey);
+      return new NotionConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
     }
   },
 });

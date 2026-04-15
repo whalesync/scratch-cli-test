@@ -5,6 +5,7 @@ import { members } from '@wix/members';
 import { createClient, OAuthStrategy, TokenRole } from '@wix/sdk';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, hashUrl } from '../../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../../connector';
@@ -30,6 +31,26 @@ interface WixErrorShape {
   status?: number;
   statusCode?: number;
 }
+
+const WIX_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => {
+    if (error && typeof error === 'object') {
+      const err = error as WixErrorShape;
+      const status = err.response?.status ?? err.status ?? err.statusCode;
+      return status === 429;
+    }
+    return false;
+  },
+  getRetryAfterS: (error) => {
+    if (error && typeof error === 'object') {
+      const err = error as { response?: { headers?: Record<string, string> } };
+      const header = err.response?.headers?.['retry-after'];
+      const seconds = header ? parseInt(String(header), 10) : NaN;
+      return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+    }
+    return undefined;
+  },
+};
 
 export const WIX_DEFAULT_BATCH_SIZE = 100; // Wix API supports up to 100
 
@@ -57,8 +78,9 @@ export class WixBlogConnector extends Connector {
     >
   >;
   private readonly schemaParser = new WixBlogSchemaParser();
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(accessToken: string) {
+  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
     this.wixClient = createClient({
       auth: OAuthStrategy({
@@ -79,13 +101,23 @@ export class WixBlogConnector extends Connector {
         members,
       },
     });
+    this.rateLimiter = opts?.rateLimiter;
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, WIX_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, WIX_RETRY_OPTS);
   }
 
   public async testConnection(): Promise<void> {
     // Test that we have access to the draft posts API and that the creds work.
-    await this.wixClient.draftPosts.listDraftPosts({
-      paging: { limit: 1, offset: 0 },
-    });
+    await this.withRetry(() =>
+      this.wixClient.draftPosts.listDraftPosts({
+        paging: { limit: 1, offset: 0 },
+      }),
+    );
   }
 
   async listTables(): Promise<TablePreview[]> {
@@ -140,9 +172,11 @@ export class WixBlogConnector extends Connector {
     for (const file of files) {
       const draftPostData = file as unknown as DraftPost;
 
-      const response = await this.wixClient.draftPosts.createDraftPost(draftPostData, {
-        fieldsets: ['RICH_CONTENT'],
-      });
+      const response = await this.withRetry(() =>
+        this.wixClient.draftPosts.createDraftPost(draftPostData, {
+          fieldsets: ['RICH_CONTENT'],
+        }),
+      );
 
       if (!response.draftPost?._id) {
         throw new Error('Failed to create draft post: no ID returned');
@@ -164,9 +198,11 @@ export class WixBlogConnector extends Connector {
       const postId = (file._id || file.id) as string;
       const postData = file as unknown as DraftPost;
 
-      await this.wixClient.draftPosts.updateDraftPost(postId, postData, {
-        fieldsets: ['RICH_CONTENT'],
-      });
+      await this.withRetry(() =>
+        this.wixClient.draftPosts.updateDraftPost(postId, postData, {
+          fieldsets: ['RICH_CONTENT'],
+        }),
+      );
     }
   }
 
@@ -178,9 +214,11 @@ export class WixBlogConnector extends Connector {
     // Wix doesn't support bulk delete, so we delete one at a time
     for (const file of files) {
       const postId = (file._id || file.id) as string;
-      await this.wixClient.draftPosts.deleteDraftPost(postId, {
-        permanent: true,
-      });
+      await this.withRetry(() =>
+        this.wixClient.draftPosts.deleteDraftPost(postId, {
+          permanent: true,
+        }),
+      );
     }
   }
 
@@ -298,14 +336,16 @@ connectorRegistry.register({
   service: Service.WIX_BLOG,
   metadata: WixBlogConnector.metadata,
   advancedSettings: [],
+  rateLimiterSpec: { points: 180, duration: 60 }, // Wix: ~200 req/min
   supportedAuthMethods: ['oauth'],
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Wix', Service.WIX_BLOG);
     }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     if (ctx.connectorAccount.authType === 'OAUTH') {
       const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new WixBlogConnector(accessToken);
+      return new WixBlogConnector(accessToken, { rateLimiter });
     } else {
       throw new Error('Wix requires either OAuth or API key authentication');
     }

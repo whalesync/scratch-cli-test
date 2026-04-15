@@ -1,5 +1,6 @@
 import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -41,9 +42,9 @@ export class AudiencefulConnector extends Connector {
 
   private readonly client: AudiencefulApiClient;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new AudiencefulApiClient(apiKey);
+    this.client = new AudiencefulApiClient(apiKey, opts);
   }
 
   /**
@@ -304,6 +305,7 @@ connectorRegistry.register({
   service: Service.AUDIENCEFUL,
   metadata: AudiencefulConnector.metadata,
   advancedSettings: [],
+  rateLimiterSpec: { points: 10, duration: 1 }, // Audienceful: 10 req/s
   supportedAuthMethods: ['user_provided_params'],
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
@@ -313,6 +315,7 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('API key is required for Audienceful', Service.AUDIENCEFUL);
     }
-    return new AudiencefulConnector(ctx.decryptedCredentials.apiKey);
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    return new AudiencefulConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
   },
 });

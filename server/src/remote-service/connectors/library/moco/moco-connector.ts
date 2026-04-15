@@ -1,6 +1,7 @@
 import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -71,9 +72,9 @@ export class MocoConnector extends Connector {
 
   private readonly client: MocoApiClient;
 
-  constructor(credentials: MocoCredentials) {
+  constructor(credentials: MocoCredentials, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new MocoApiClient(credentials);
+    this.client = new MocoApiClient(credentials, opts);
   }
 
   /**
@@ -390,6 +391,7 @@ connectorRegistry.register({
   metadata: MocoConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
+  rateLimiterSpec: { points: 100, duration: 120 }, // Moco standard plan: 120 req/2min
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
@@ -401,6 +403,10 @@ connectorRegistry.register({
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('API key is required for Moco', Service.MOCO);
     }
-    return new MocoConnector({ domain: ctx.decryptedCredentials.domain, apiKey: ctx.decryptedCredentials.apiKey });
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    return new MocoConnector(
+      { domain: ctx.decryptedCredentials.domain, apiKey: ctx.decryptedCredentials.apiKey },
+      { rateLimiter },
+    );
   },
 });

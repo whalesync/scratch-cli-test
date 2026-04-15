@@ -1,6 +1,18 @@
-import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
+import axios, { AxiosInstance, isAxiosError, RawAxiosRequestHeaders } from 'axios';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import { MocoCompany, MocoContact, MocoCredentials, MocoEntityType, MocoPagination, MocoProject } from './moco-types';
+
+const MOCO_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isAxiosError(error) && error.response?.status === 429,
+  getRetryAfterS: (error) => {
+    if (!isAxiosError(error)) return undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const header = error.response?.headers?.['retry-after'];
+    const seconds = header ? parseInt(String(header), 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
+};
 
 /**
  * Custom error class for Moco API errors.
@@ -28,9 +40,11 @@ export class MocoError extends Error {
 export class MocoApiClient {
   private readonly client: AxiosInstance;
   private readonly domain: string;
+  private readonly rateLimiter?: RateLimiter;
 
-  constructor(credentials: MocoCredentials) {
+  constructor(credentials: MocoCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.domain = credentials.domain;
+    this.rateLimiter = opts?.rateLimiter;
 
     const headers: RawAxiosRequestHeaders = {
       Authorization: `Token token=${credentials.apiKey}`,
@@ -42,6 +56,13 @@ export class MocoApiClient {
       baseURL: `https://${credentials.domain}.mocoapp.com/api/v1`,
       headers,
     });
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, MOCO_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, MOCO_RETRY_OPTS);
   }
 
   /**
@@ -66,7 +87,7 @@ export class MocoApiClient {
    */
   async validateCredentials(): Promise<void> {
     try {
-      await this.client.get('/companies', { params: { page: 1, per_page: 1 } });
+      await this.withRetry(() => this.client.get('/companies', { params: { page: 1, per_page: 1 } }));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new MocoError('Invalid API key', 401, 'UNAUTHORIZED', error.response?.data);
@@ -96,9 +117,11 @@ export class MocoApiClient {
     let hasMore = true;
 
     while (hasMore) {
-      const response = await this.client.get<MocoCompany[]>('/companies', {
-        params: { page, per_page: perPage },
-      });
+      const response = await this.withRetry(() =>
+        this.client.get<MocoCompany[]>('/companies', {
+          params: { page, per_page: perPage },
+        }),
+      );
 
       const pagination = this.parsePagination(response.headers as Record<string, unknown>);
 
@@ -115,7 +138,7 @@ export class MocoApiClient {
    * Get a single company by ID
    */
   async getCompany(id: number): Promise<MocoCompany> {
-    const response = await this.client.get<MocoCompany>(`/companies/${id}`);
+    const response = await this.withRetry(() => this.client.get<MocoCompany>(`/companies/${id}`));
     return response.data;
   }
 
@@ -123,7 +146,7 @@ export class MocoApiClient {
    * Create a new company
    */
   async createCompany(fields: Partial<Omit<MocoCompany, 'id' | 'created_at' | 'updated_at'>>): Promise<MocoCompany> {
-    const response = await this.client.post<MocoCompany>('/companies', fields);
+    const response = await this.withRetry(() => this.client.post<MocoCompany>('/companies', fields));
     return response.data;
   }
 
@@ -134,7 +157,7 @@ export class MocoApiClient {
     id: number,
     fields: Partial<Omit<MocoCompany, 'id' | 'created_at' | 'updated_at'>>,
   ): Promise<MocoCompany> {
-    const response = await this.client.put<MocoCompany>(`/companies/${id}`, fields);
+    const response = await this.withRetry(() => this.client.put<MocoCompany>(`/companies/${id}`, fields));
     return response.data;
   }
 
@@ -142,7 +165,7 @@ export class MocoApiClient {
    * Delete a company
    */
   async deleteCompany(id: number): Promise<void> {
-    await this.client.delete(`/companies/${id}`);
+    await this.withRetry(() => this.client.delete(`/companies/${id}`));
   }
 
   // ============= Contacts =============
@@ -156,9 +179,11 @@ export class MocoApiClient {
     let hasMore = true;
 
     while (hasMore) {
-      const response = await this.client.get<MocoContact[]>('/contacts/people', {
-        params: { page, per_page: perPage },
-      });
+      const response = await this.withRetry(() =>
+        this.client.get<MocoContact[]>('/contacts/people', {
+          params: { page, per_page: perPage },
+        }),
+      );
 
       const pagination = this.parsePagination(response.headers as Record<string, unknown>);
 
@@ -175,7 +200,7 @@ export class MocoApiClient {
    * Get a single contact by ID
    */
   async getContact(id: number): Promise<MocoContact> {
-    const response = await this.client.get<MocoContact>(`/contacts/people/${id}`);
+    const response = await this.withRetry(() => this.client.get<MocoContact>(`/contacts/people/${id}`));
     return response.data;
   }
 
@@ -183,7 +208,7 @@ export class MocoApiClient {
    * Create a new contact
    */
   async createContact(fields: Partial<Omit<MocoContact, 'id' | 'created_at' | 'updated_at'>>): Promise<MocoContact> {
-    const response = await this.client.post<MocoContact>('/contacts/people', fields);
+    const response = await this.withRetry(() => this.client.post<MocoContact>('/contacts/people', fields));
     return response.data;
   }
 
@@ -194,7 +219,7 @@ export class MocoApiClient {
     id: number,
     fields: Partial<Omit<MocoContact, 'id' | 'created_at' | 'updated_at'>>,
   ): Promise<MocoContact> {
-    const response = await this.client.put<MocoContact>(`/contacts/people/${id}`, fields);
+    const response = await this.withRetry(() => this.client.put<MocoContact>(`/contacts/people/${id}`, fields));
     return response.data;
   }
 
@@ -202,7 +227,7 @@ export class MocoApiClient {
    * Delete a contact
    */
   async deleteContact(id: number): Promise<void> {
-    await this.client.delete(`/contacts/people/${id}`);
+    await this.withRetry(() => this.client.delete(`/contacts/people/${id}`));
   }
 
   // ============= Projects =============
@@ -216,9 +241,11 @@ export class MocoApiClient {
     let hasMore = true;
 
     while (hasMore) {
-      const response = await this.client.get<MocoProject[]>('/projects', {
-        params: { page, per_page: perPage },
-      });
+      const response = await this.withRetry(() =>
+        this.client.get<MocoProject[]>('/projects', {
+          params: { page, per_page: perPage },
+        }),
+      );
 
       const pagination = this.parsePagination(response.headers as Record<string, unknown>);
 
@@ -235,7 +262,7 @@ export class MocoApiClient {
    * Get a single project by ID
    */
   async getProject(id: number): Promise<MocoProject> {
-    const response = await this.client.get<MocoProject>(`/projects/${id}`);
+    const response = await this.withRetry(() => this.client.get<MocoProject>(`/projects/${id}`));
     return response.data;
   }
 
@@ -243,7 +270,7 @@ export class MocoApiClient {
    * Create a new project
    */
   async createProject(fields: Partial<Omit<MocoProject, 'id' | 'created_at' | 'updated_at'>>): Promise<MocoProject> {
-    const response = await this.client.post<MocoProject>('/projects', fields);
+    const response = await this.withRetry(() => this.client.post<MocoProject>('/projects', fields));
     return response.data;
   }
 
@@ -254,7 +281,7 @@ export class MocoApiClient {
     id: number,
     fields: Partial<Omit<MocoProject, 'id' | 'created_at' | 'updated_at'>>,
   ): Promise<MocoProject> {
-    const response = await this.client.put<MocoProject>(`/projects/${id}`, fields);
+    const response = await this.withRetry(() => this.client.put<MocoProject>(`/projects/${id}`, fields));
     return response.data;
   }
 
@@ -262,7 +289,7 @@ export class MocoApiClient {
    * Delete a project
    */
   async deleteProject(id: number): Promise<void> {
-    await this.client.delete(`/projects/${id}`);
+    await this.withRetry(() => this.client.delete(`/projects/${id}`));
   }
 
   // ============= Generic Entity Operations =============
@@ -387,6 +414,6 @@ export class MocoApiClient {
 /**
  * Create a Moco client from credentials
  */
-export function createMocoClient(credentials: MocoCredentials): MocoApiClient {
-  return new MocoApiClient(credentials);
+export function createMocoClient(credentials: MocoCredentials, opts?: { rateLimiter?: RateLimiter }): MocoApiClient {
+  return new MocoApiClient(credentials, opts);
 }
