@@ -24,6 +24,14 @@
   --approved-bg: #f1f5f9;
   --approved-stroke: #94a3b8;
 
+  /* Delete-needs-review indicator colours */
+  --delete-needs-review-bg: #ffe4e6; /* rose-100 — light pink wash */
+  --delete-needs-review-stroke: #be123c; /* rose-700 — vivid, urgent red */
+
+  /* Delete-approved indicator colours */
+  --delete-approved-bg: #f0e8e9; /* slightly more pink than before, reads as rose-tinted not just gray */
+  --delete-approved-stroke: #a08085; /* enough warmth to read as "related to the delete red" not just gray */
+
   /* Yellow highlight system — shared design tokens */
   --highlight-fill: #fefb8a;
   --highlight-border: #d4c800;

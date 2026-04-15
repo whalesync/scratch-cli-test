@@ -297,7 +297,14 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 
 export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
 export type GridVersion = 'working' | 'dirty' | 'main';
-export type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
+export type RowStatus =
+  | 'added'
+  | 'modified'
+  | 'unpublished'
+  | 'deleted'
+  | 'deletedUnpublished'
+  | 'unchanged'
+  | 'invalidJson';
 export type DiffGridFilterKind = 'unreviewed' | 'unpublished';
 
 export type DiffGridFilter =
@@ -981,10 +988,9 @@ function compareFlattenedRecordVersions(
   }
 
   if (!workingRow && !dirtyRow && masterRow) {
-    const unpublishedFields = Object.keys(masterRow);
-    for (const k of unpublishedFields) columnSet.add(k);
+    for (const k of Object.keys(masterRow)) columnSet.add(k);
     return {
-      row: makeDiffRow({}, 'unpublished', [], {}, unpublishedFields, masterRow, filename),
+      row: makeDiffRow(masterRow, 'deletedUnpublished', [], {}, [], masterRow, filename),
       columns: Array.from(columnSet),
     };
   }
@@ -1151,7 +1157,7 @@ export async function readDiffGridDataPage(
     added: rows.filter((r) => r.__rowStatus === 'added').length,
     modified: rows.filter((r) => r.__rowStatus === 'modified').length,
     unpublished: rows.filter((r) => r.__rowStatus === 'unpublished').length,
-    deleted: rows.filter((r) => r.__rowStatus === 'deleted').length,
+    deleted: rows.filter((r) => r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished').length,
     invalidJson: rows.filter((r) => r.__rowStatus === 'invalidJson').length,
   };
 
@@ -1186,7 +1192,7 @@ function rowHasUnreviewedChanges(row: DiffRow): boolean {
 }
 
 function rowHasUnpublishedChanges(row: DiffRow): boolean {
-  return row.__unpublishedFields.length > 0;
+  return row.__rowStatus === 'deletedUnpublished' || row.__unpublishedFields.length > 0;
 }
 
 function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter): boolean {

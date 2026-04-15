@@ -9,7 +9,7 @@ import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
 
 interface DiffRecordData {
   row: Record<string, unknown> & {
-    __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
+    __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'deletedUnpublished' | 'unchanged' | 'invalidJson';
     __changedFields: string[];
     __fromFields: Record<string, unknown>;
     __unpublishedFields: string[];
@@ -46,7 +46,14 @@ interface RecordDetailViewProps {
 function rowHasUnreviewedChanges(
   row:
     | (Record<string, unknown> & {
-        __rowStatus?: 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
+        __rowStatus?:
+          | 'added'
+          | 'modified'
+          | 'unpublished'
+          | 'deleted'
+          | 'deletedUnpublished'
+          | 'unchanged'
+          | 'invalidJson';
         __changedFields?: string[];
       })
     | null
@@ -97,7 +104,12 @@ function diffValuesEqual(a: unknown, b: unknown): boolean {
 type DiffRow = DiffRecordData['row'];
 
 function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
-  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__rowStatus === 'invalidJson') {
+  if (
+    row.__rowStatus === 'added' ||
+    row.__rowStatus === 'deleted' ||
+    row.__rowStatus === 'deletedUnpublished' ||
+    row.__rowStatus === 'invalidJson'
+  ) {
     return row.__rowStatus;
   }
   if (row.__changedFields.length > 0) {
@@ -192,7 +204,9 @@ export const RecordDetailView = memo(function RecordDetailView({
   const hasPublishableChanges =
     (recordData?.row.__unpublishedFields?.length ?? 0) > 0 ||
     recordData?.row.__rowStatus === 'added' ||
-    recordData?.row.__rowStatus === 'deleted';
+    recordData?.row.__rowStatus === 'deleted' ||
+    recordData?.row.__rowStatus === 'deletedUnpublished';
+  const isDeleted = recordData?.row.__rowStatus === 'deleted' || recordData?.row.__rowStatus === 'deletedUnpublished';
   const currentFilename =
     recordData?.row.__filename ?? (typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined);
 
@@ -428,17 +442,19 @@ export const RecordDetailView = memo(function RecordDetailView({
         fromValue,
         diffKind,
         displayMode: isUnreviewed ? 'diff' : 'current',
-        editing: editingFieldName === fieldName,
+        editing: !isDeleted && editingFieldName === fieldName,
         referenceValue: diffKind !== null ? fromValue : undefined,
-        onClick: () => beginFieldEdit(fieldName),
-        onEditCommit: (nextValue: string) => commitFieldEdit(fieldName, value, nextValue),
-        onEditCancel: () => cancelFieldEdit(fieldName),
-        onApprove: isUnreviewed ? () => handleAcceptCellChange(fieldName, value, 'approve') : undefined,
-        onUndo: isUnreviewed
-          ? () => handleDiscardUnreviewedCellChange(fieldName, fromValue)
-          : isUnpublished
-            ? () => handleUndoApprovedCellChange(fieldName)
-            : undefined,
+        onClick: isDeleted ? undefined : () => beginFieldEdit(fieldName),
+        onEditCommit: isDeleted ? undefined : (nextValue: string) => commitFieldEdit(fieldName, value, nextValue),
+        onEditCancel: isDeleted ? undefined : () => cancelFieldEdit(fieldName),
+        onApprove: isDeleted || !isUnreviewed ? undefined : () => handleAcceptCellChange(fieldName, value, 'approve'),
+        onUndo: isDeleted
+          ? undefined
+          : isUnreviewed
+            ? () => handleDiscardUnreviewedCellChange(fieldName, fromValue)
+            : isUnpublished
+              ? () => handleUndoApprovedCellChange(fieldName)
+              : undefined,
       };
     });
   }, [
@@ -448,6 +464,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     commitFieldEdit,
     displayData,
     editingFieldName,
+    isDeleted,
     recordData,
     handleAcceptCellChange,
     handleDiscardUnreviewedCellChange,
@@ -524,16 +541,23 @@ export const RecordDetailView = memo(function RecordDetailView({
         </Group>
         <ScrollArea style={{ flex: 1 }}>
           {rows.map((row, i) => {
+            const isDeletedReview = row.__rowStatus === 'deleted';
+            const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
             const hasUnreviewed =
               row.__rowStatus === 'added' ||
-              row.__rowStatus === 'deleted' ||
+              isDeletedReview ||
               (Array.isArray(row.__changedFields) && row.__changedFields.length > 0);
-            const hasApproved = Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0;
-            const barColor = hasUnreviewed
-              ? 'var(--needs-review-stroke)'
-              : hasApproved
-                ? 'var(--approved-stroke)'
-                : undefined;
+            const hasApproved =
+              isDeletedApproved || (Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0);
+            const barColor = isDeletedReview
+              ? 'var(--delete-needs-review-stroke)'
+              : isDeletedApproved
+                ? 'var(--delete-approved-stroke)'
+                : hasUnreviewed
+                  ? 'var(--needs-review-stroke)'
+                  : hasApproved
+                    ? 'var(--approved-stroke)'
+                    : undefined;
 
             return (
               <Box
@@ -552,7 +576,15 @@ export const RecordDetailView = memo(function RecordDetailView({
                   textAlign: 'left',
                 }}
               >
-                <Text12Regular c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'} lineClamp={1}>
+                <Text12Regular
+                  c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
+                  lineClamp={1}
+                  style={
+                    row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished'
+                      ? { textDecoration: 'line-through' }
+                      : undefined
+                  }
+                >
                   {getRecordName(row, titleColumnId)}
                 </Text12Regular>
               </Box>
@@ -642,10 +674,35 @@ export const RecordDetailView = memo(function RecordDetailView({
           </Box>
         )}
 
-        {!loading && displayData && !viewRaw && <RecordFieldsGrid rows={fieldRows} />}
+        {!loading && displayData && !viewRaw && (
+          <Box
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              backgroundColor: isDeleted
+                ? recordData?.row.__rowStatus === 'deleted'
+                  ? 'var(--delete-needs-review-bg)'
+                  : 'var(--delete-approved-bg)'
+                : undefined,
+            }}
+          >
+            <RecordFieldsGrid rows={fieldRows} />
+          </Box>
+        )}
 
         {!loading && displayData && viewRaw && (
-          <ScrollArea style={{ flex: 1 }}>
+          <ScrollArea
+            style={{
+              flex: 1,
+              backgroundColor: isDeleted
+                ? recordData?.row.__rowStatus === 'deleted'
+                  ? 'var(--delete-needs-review-bg)'
+                  : 'var(--delete-approved-bg)'
+                : undefined,
+            }}
+          >
             <Box style={{ padding: 12 }}>
               <TextMono12Regular component="pre" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
                 {JSON.stringify(displayData, null, 2)}

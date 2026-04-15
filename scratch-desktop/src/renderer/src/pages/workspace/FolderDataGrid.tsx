@@ -1,5 +1,6 @@
 import { ButtonSecondaryGhost, ButtonSecondaryOutline } from '@/components/base/buttons';
 import DataEditor, {
+  CompactSelection,
   GridCellKind,
   GridColumnMenuIcon,
   type DataEditorRef,
@@ -13,7 +14,7 @@ import DataEditor, {
   type Rectangle,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Modal, Popover, Portal, Stack, UnstyledButton } from '@mantine/core';
+import { Box, Divider, Group, Loader, Modal, Popover, Portal, Stack, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Check, Columns3, Maximize2, RotateCcw } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,7 +29,7 @@ import { RecordDetailView } from './RecordDetailView';
 
 // ── Types ──
 
-type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'unchanged' | 'invalidJson';
+type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'deletedUnpublished' | 'unchanged' | 'invalidJson';
 
 interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
@@ -93,7 +94,8 @@ interface FolderDataGridProps {
 // ── Constants ──
 
 const PAGE_SIZE = 100;
-const ROW_MARKER_WIDTH = 88;
+const STATUS_COL_WIDTH = 50;
+const STATUS_COL_ID = '__status';
 const INSPECT_BUTTON_SIZE = 18;
 const FLOATING_PANEL_GAP = 5;
 
@@ -114,6 +116,10 @@ const DIFF_WORKING_BG = () => getCssVar('--needs-review-bg');
 const DIFF_WORKING_BORDER = () => getCssVar('--needs-review-stroke');
 const DIFF_UNPUBLISHED_BG = () => getCssVar('--approved-bg');
 const DIFF_UNPUBLISHED_BORDER = () => getCssVar('--approved-stroke');
+const DIFF_DELETE_REVIEW_BG = () => getCssVar('--delete-needs-review-bg');
+const DIFF_DELETE_REVIEW_BORDER = () => getCssVar('--delete-needs-review-stroke');
+const DIFF_DELETE_APPROVED_BG = () => getCssVar('--delete-approved-bg');
+const DIFF_DELETE_APPROVED_BORDER = () => getCssVar('--delete-approved-stroke');
 
 // ── Helpers ──
 
@@ -152,7 +158,12 @@ function diffValuesEqual(a: unknown, b: unknown): boolean {
 }
 
 function deriveRowStatusAfterEdit(row: DiffRow): RowStatus {
-  if (row.__rowStatus === 'added' || row.__rowStatus === 'deleted' || row.__rowStatus === 'invalidJson') {
+  if (
+    row.__rowStatus === 'added' ||
+    row.__rowStatus === 'deleted' ||
+    row.__rowStatus === 'deletedUnpublished' ||
+    row.__rowStatus === 'invalidJson'
+  ) {
     return row.__rowStatus;
   }
   if (row.__changedFields.length > 0) {
@@ -189,15 +200,19 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
     nextRow.__rowStatus === 'deleted' ||
     nextRow.__rowStatus === 'invalidJson' ||
     nextRow.__changedFields.length > 0;
-  const prevHadUnpublished = prevRow.__unpublishedFields.length > 0;
-  const nextHasUnpublished = nextRow.__unpublishedFields.length > 0;
+  const prevHadUnpublished = prevRow.__rowStatus === 'deletedUnpublished' || prevRow.__unpublishedFields.length > 0;
+  const nextHasUnpublished = nextRow.__rowStatus === 'deletedUnpublished' || nextRow.__unpublishedFields.length > 0;
 
   const summary: DiffGridResult['summary'] = {
     total: result.summary.total,
     added: recomputeSummaryCount(prevRow, nextRow, 'added', result.summary.added),
     modified: recomputeSummaryCount(prevRow, nextRow, 'modified', result.summary.modified),
     unpublished: recomputeSummaryCount(prevRow, nextRow, 'unpublished', result.summary.unpublished),
-    deleted: recomputeSummaryCount(prevRow, nextRow, 'deleted', result.summary.deleted),
+    deleted: recomputeFilterCount(
+      prevRow.__rowStatus === 'deleted' || prevRow.__rowStatus === 'deletedUnpublished',
+      nextRow.__rowStatus === 'deleted' || nextRow.__rowStatus === 'deletedUnpublished',
+      result.summary.deleted,
+    ),
     invalidJson: recomputeSummaryCount(prevRow, nextRow, 'invalidJson', result.summary.invalidJson),
   };
 
@@ -311,14 +326,20 @@ function filterLabel(filter: GridFilter): string {
 
 // ── Row colours ──
 
-const ROW_TINT: Record<RowStatus, string | undefined> = {
-  added: '#f0fdf4',
-  modified: undefined,
-  unpublished: undefined,
-  deleted: '#fef2f2',
-  unchanged: undefined,
-  invalidJson: '#fff7ed',
-};
+function getRowTint(status: RowStatus): string | undefined {
+  switch (status) {
+    case 'added':
+      return '#f0fdf4';
+    case 'deleted':
+      return DIFF_DELETE_REVIEW_BG();
+    case 'deletedUnpublished':
+      return DIFF_DELETE_APPROVED_BG();
+    case 'invalidJson':
+      return '#fff7ed';
+    default:
+      return undefined;
+  }
+}
 
 // ── Filter pill ──
 
@@ -639,10 +660,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [visibleColumnIds, allColumnIds],
   );
 
+  const statusColumn: GridColumn = useMemo(
+    () => ({
+      id: STATUS_COL_ID,
+      title: '',
+      width: STATUS_COL_WIDTH,
+      hasMenu: false,
+      themeOverride: { borderColor: 'transparent' },
+    }),
+    [],
+  );
+
   const columns: GridColumn[] = useMemo(() => {
     const visibleSet = new Set(effectiveVisibleColumns);
     const ordered = effectiveVisibleColumns.filter((c) => allColumnIds.includes(c));
-    return ordered
+    const dataCols = ordered
       .filter((name) => visibleSet.has(name))
       .map((name) => ({
         id: name,
@@ -651,7 +683,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         hasMenu: true,
         menuIcon: GridColumnMenuIcon.Dots,
       }));
-  }, [allColumnIds, columnWidths, effectiveVisibleColumns]);
+    return [statusColumn, ...dataCols];
+  }, [allColumnIds, columnWidths, effectiveVisibleColumns, statusColumn]);
 
   /** Column IDs that have unreviewed changes in at least one row (from current page). */
   const unreviewedColumnIds: string[] = useMemo(() => {
@@ -688,9 +721,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
+      if (col === 0) return null; // Status column
       const record = pagedRows[row] as DiffRow | undefined;
       const columnId = columns[col]?.id;
-      if (!record || !columnId || record.__rowStatus === 'deleted' || record.__rowStatus === 'invalidJson') {
+      if (
+        !record ||
+        !columnId ||
+        record.__rowStatus === 'deleted' ||
+        record.__rowStatus === 'deletedUnpublished' ||
+        record.__rowStatus === 'invalidJson'
+      ) {
         return null;
       }
 
@@ -948,7 +988,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
           if (unreviewedFilenames.length === 0) return;
 
-          const folderPrefix = selectedFolderPath?.replace(/^\//, '') ?? '';
+          const relativeFolderPath =
+            selectedFolderPath && workspacePath && selectedFolderPath.startsWith(workspacePath)
+              ? selectedFolderPath.slice(workspacePath.length).replace(/^\//, '')
+              : (selectedFolderPath?.replace(/^\//, '') ?? '');
+          const folderPrefix = relativeFolderPath;
           for (const filename of unreviewedFilenames) {
             const recordPath = folderPrefix ? `${folderPrefix}/${filename}` : filename;
             const result = await window.scratchDesktop.rejectRecord(workspacePath, recordPath);
@@ -985,6 +1029,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const getCellContent = useCallback(
     ([col, row]: Item) => {
       const r = pagedRows[row] as DiffRow | undefined;
+
+      // Status column — empty, non-editable cell (drawing handled by drawCell)
+      if (col === 0) {
+        const rowBg = r ? getRowTint(r.__rowStatus) : undefined;
+        return {
+          kind: GridCellKind.Text as const,
+          data: '',
+          displayData: '',
+          allowOverlay: false as const,
+          themeOverride: rowBg ? { bgCell: rowBg } : undefined,
+        };
+      }
+
       const colId = columns[col]?.id;
 
       if (!r || colId === undefined) {
@@ -992,7 +1049,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       const status = r.__rowStatus;
-      const rowBg = ROW_TINT[status];
+      const rowBg = getRowTint(status);
       const rowTheme = rowBg ? { bgCell: rowBg } : {};
       const val = r[colId];
       const { diffKind } = getCellDiffState(r, colId);
@@ -1003,9 +1060,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             ? { bgCell: DIFF_UNPUBLISHED_BG() }
             : {};
       const themeOverride = { ...rowTheme, ...diffTheme };
-      const allowOverlay = status !== 'deleted' && status !== 'invalidJson';
+      const allowOverlay = status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
 
-      if (col === 0) {
+      if (col === 1) {
         const kind = inferCellKind(val);
         if (kind === GridCellKind.Boolean) {
           return {
@@ -1072,6 +1129,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onHeaderClicked = useCallback(
     (colIndex: number) => {
+      // TODO: sort by approval status when clicking the status column header
+      if (colIndex === 0) return;
       const colId = columns[colIndex]?.id;
       if (!colId) return;
       setSort((prev) => {
@@ -1084,6 +1143,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const openHeaderMenu = useCallback(
     (colIndex: number, bounds: Rectangle) => {
+      if (colIndex === 0) return; // Status column
       const column = columns[colIndex];
       if (!column) {
         return;
@@ -1116,8 +1176,53 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const drawCell: DrawCellCallback = useCallback(
     (args, drawContent) => {
-      drawContent();
       const row = pagedRows[args.row] as DiffRow | undefined;
+
+      // Status column — draw row number + vertical status bar
+      if (args.col === 0) {
+        drawContent();
+        const { ctx, rect } = args;
+
+        // Row number
+        const rowNum = (page - 1) * PAGE_SIZE + args.row + 1;
+        ctx.save();
+        ctx.font = '11px Inter, sans-serif';
+        ctx.fillStyle = '#999';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(rowNum), rect.x + rect.width - 8, rect.y + rect.height / 2);
+        ctx.restore();
+
+        if (!row) return;
+        const isDeletedReview = row.__rowStatus === 'deleted';
+        const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
+        const hasUnreviewed =
+          row.__rowStatus === 'added' ||
+          isDeletedReview ||
+          row.__rowStatus === 'invalidJson' ||
+          row.__changedFields.length > 0;
+        const hasApproved = isDeletedApproved || row.__unpublishedFields.length > 0;
+        if (hasUnreviewed || hasApproved) {
+          const barWidth = 4;
+          const barX = rect.x + 6;
+          const barInset = 4;
+          ctx.save();
+          ctx.fillStyle = isDeletedReview
+            ? DIFF_DELETE_REVIEW_BORDER()
+            : isDeletedApproved
+              ? DIFF_DELETE_APPROVED_BORDER()
+              : hasUnreviewed
+                ? DIFF_WORKING_BORDER()
+                : DIFF_UNPUBLISHED_BORDER();
+          ctx.beginPath();
+          ctx.roundRect(barX, rect.y + barInset, barWidth, rect.height - barInset * 2, 2);
+          ctx.fill();
+          ctx.restore();
+        }
+        return;
+      }
+
+      drawContent();
       const colId = columns[args.col]?.id;
       if (!row || !colId) {
         return;
@@ -1130,22 +1235,53 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         args.ctx.fillRect(args.rect.x, args.rect.y, 3, args.rect.height);
         args.ctx.restore();
       }
+
+      // Strikethrough for deleted rows
+      if (row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished') {
+        const cell = args.cell;
+        const displayText =
+          'displayData' in cell && typeof cell.displayData === 'string' ? cell.displayData : undefined;
+        if (displayText) {
+          const { ctx, rect, theme } = args;
+          const pad = theme.cellHorizontalPadding ?? 8;
+          ctx.save();
+          ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
+          const textWidth = Math.min(ctx.measureText(displayText).width, rect.width - pad * 2);
+          ctx.strokeStyle = '#999';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(rect.x + pad, rect.y + rect.height / 2);
+          ctx.lineTo(rect.x + pad + textWidth, rect.y + rect.height / 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
     },
-    [columns, pagedRows],
+    [columns, page, pagedRows],
   );
 
-  const onCellClicked = useCallback(() => {
-    setHeaderMenu(null);
-  }, []);
+  const onCellClicked = useCallback(
+    (cell: Item) => {
+      setHeaderMenu(null);
+      if (cell[0] === 0) {
+        setGridSelection({
+          current: undefined,
+          columns: CompactSelection.empty(),
+          rows: CompactSelection.empty().add(cell[1]),
+        });
+      }
+    },
+    [setGridSelection],
+  );
 
   const recomputeInspectRect = useCallback((rowIdx: number | null) => {
     if (rowIdx === null) {
       setInspectButtonRect(null);
       return;
     }
-    // Use col 0 (first data column) for reliable bounds; the marker column lives
-    // immediately to its left, so we anchor the button off col 0's left edge.
-    const bounds = gridRef.current?.getBounds(0, rowIdx);
+    // Use col 1 (first data column) for reliable bounds; the marker and status
+    // columns live immediately to its left, so we anchor the button off col 1's left edge.
+    const bounds = gridRef.current?.getBounds(1, rowIdx);
     const wrapperRect = wrapperElRef.current?.getBoundingClientRect();
     if (!bounds || bounds.height === 0 || !wrapperRect) {
       setInspectButtonRect(null);
@@ -1181,11 +1317,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
+      if (col === 0) return; // Status column
       setHeaderMenu(null);
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
-      if (r.__rowStatus === 'deleted' || r.__rowStatus === 'invalidJson') return;
+      if (r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished' || r.__rowStatus === 'invalidJson')
+        return;
       const { diffKind } = getCellDiffState(r, colId);
       setActiveEditorDiffKind(diffKind ?? 'none');
       setEditingCell([col, row]);
@@ -1200,9 +1338,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onCellEdited = useCallback(
     ([col, row]: Item, newValue: EditableGridCell) => {
+      if (col === 0) return; // Status column
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
-      if (!r || !colId || r.__rowStatus === 'deleted' || r.__rowStatus === 'invalidJson') {
+      if (
+        !r ||
+        !colId ||
+        r.__rowStatus === 'deleted' ||
+        r.__rowStatus === 'deletedUnpublished' ||
+        r.__rowStatus === 'invalidJson'
+      ) {
         return;
       }
 
@@ -1230,6 +1375,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onColumnResize = useCallback(
     (column: GridColumn, newSize: number, colIndex: number) => {
+      if (colIndex === 0) return; // Status column is not resizable
       const columnId = columns[colIndex]?.id ?? column.id;
       if (columnId === undefined) return;
       setColumnWidths((current) => ({ ...current, [String(columnId)]: newSize }));
@@ -1377,25 +1523,27 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           </Group>
           <Group gap={6} align="center">
             {(filterCounts?.unreviewed ?? 0) > 0 && (
-              <ButtonSecondaryGhost
-                size="compact-xs"
-                c="green.8"
-                leftSection={<Check size={12} />}
-                onClick={() => setBulkActionConfirm('approve')}
-              >
-                Approve all
-              </ButtonSecondaryGhost>
+              <>
+                <Divider orientation="vertical" />
+                <ButtonSecondaryGhost
+                  size="compact-xs"
+                  c="green.8"
+                  leftSection={<Check size={12} />}
+                  onClick={() => setBulkActionConfirm('approve')}
+                >
+                  Approve all
+                </ButtonSecondaryGhost>
+                <ButtonSecondaryGhost
+                  size="compact-xs"
+                  c="red.8"
+                  leftSection={<RotateCcw size={12} />}
+                  onClick={() => setBulkActionConfirm('reject')}
+                >
+                  Reject all
+                </ButtonSecondaryGhost>
+              </>
             )}
-            {(filterCounts?.unreviewed ?? 0) > 0 && (
-              <ButtonSecondaryGhost
-                size="compact-xs"
-                c="red.8"
-                leftSection={<RotateCcw size={12} />}
-                onClick={() => setBulkActionConfirm('reject')}
-              >
-                Reject all
-              </ButtonSecondaryGhost>
-            )}
+            <Divider orientation="vertical" />
             <Popover>
               <Popover.Target>
                 <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
@@ -1461,7 +1609,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 smoothScrollX
                 smoothScrollY
                 gridSelection={gridSelection}
-                onGridSelectionChange={setGridSelection}
+                onGridSelectionChange={(sel) => {
+                  // Prevent selecting the status column via header click
+                  if (sel.columns.hasIndex(0)) {
+                    setGridSelection({ ...sel, columns: sel.columns.remove(0) });
+                  } else {
+                    setGridSelection(sel);
+                  }
+                }}
                 onSelectionCleared={() => {
                   setGridSelection(undefined);
                   setCellPopover(null);
@@ -1480,9 +1635,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 cellActivationBehavior="double-click"
                 onColumnResize={onColumnResize}
                 drawCell={drawCell}
-                rowMarkers="number"
-                rowMarkerWidth={ROW_MARKER_WIDTH}
-                freezeColumns={titleColumnId && columns[0]?.id === titleColumnId ? 1 : 0}
+                verticalBorder={(col) => col !== 0}
+                rowMarkers="none"
+                freezeColumns={titleColumnId && columns[1]?.id === titleColumnId ? 2 : 1}
               />
             )}
             {inspectButtonRect && hoveredRowIdx !== null && (
