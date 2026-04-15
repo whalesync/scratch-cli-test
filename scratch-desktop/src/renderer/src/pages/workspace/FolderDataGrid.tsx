@@ -1,4 +1,4 @@
-import { ButtonSecondaryGhost } from '@/components/base/buttons';
+import { ButtonSecondaryGhost, ButtonSecondaryOutline } from '@/components/base/buttons';
 import DataEditor, {
   GridCellKind,
   GridColumnMenuIcon,
@@ -13,11 +13,11 @@ import DataEditor, {
   type Rectangle,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Group, Loader, Popover, Portal, Stack, UnstyledButton } from '@mantine/core';
+import { Box, Group, Loader, Modal, Popover, Portal, Stack, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { Columns3, Maximize2 } from 'lucide-react';
+import { Check, Columns3, Maximize2, RotateCcw } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Text12Medium, Text12Regular, Text13Regular } from '../../components/base/text';
+import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
@@ -434,6 +434,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [hoveredRowIdx, setHoveredRowIdx] = useState<number | null>(null);
   const [inspectButtonRect, setInspectButtonRect] = useState<{ x: number; y: number; height: number } | null>(null);
   const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
+  const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | null>(null);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
     wrapperElRef.current = el;
@@ -915,6 +917,69 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       });
   }, [closeGridEditorChrome, headerMenu, refreshGridData, selectedFolderPath, workspacePath]);
 
+  const handleBulkAction = useCallback(
+    async (action: 'approve' | 'reject') => {
+      if (!workspacePath) return;
+
+      setBulkActionLoading(true);
+      try {
+        if (action === 'approve') {
+          const result = await window.scratchDesktop.acceptAllChanges(workspacePath);
+          if (result.exitCode !== 0) {
+            throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve changes');
+          }
+          notifications.show({
+            color: 'green',
+            title: 'All changes approved',
+            message: `Approved all pending changes.`,
+          });
+        } else {
+          // Reject all: gather unreviewed filenames and reject each
+          const rows = diffData?.rows ?? [];
+          const unreviewedFilenames = rows
+            .filter(
+              (r) =>
+                r.__rowStatus === 'added' ||
+                r.__rowStatus === 'deleted' ||
+                r.__rowStatus === 'invalidJson' ||
+                r.__changedFields.length > 0,
+            )
+            .map((r) => r.__filename);
+
+          if (unreviewedFilenames.length === 0) return;
+
+          const folderPrefix = selectedFolderPath?.replace(/^\//, '') ?? '';
+          for (const filename of unreviewedFilenames) {
+            const recordPath = folderPrefix ? `${folderPrefix}/${filename}` : filename;
+            const result = await window.scratchDesktop.rejectRecord(workspacePath, recordPath);
+            if (result.exitCode !== 0) {
+              throw new Error(
+                result.stderr.trim() || result.stdout.trim() || `Failed to reject changes for ${filename}`,
+              );
+            }
+          }
+          notifications.show({
+            color: 'green',
+            title: 'All changes rejected',
+            message: `Rejected ${unreviewedFilenames.length} pending change${unreviewedFilenames.length === 1 ? '' : 's'}.`,
+          });
+        }
+        refreshGridData();
+      } catch (err) {
+        console.error(`[handleBulkAction] ${action} failed:`, err);
+        notifications.show({
+          color: 'red',
+          title: `Failed to ${action} changes`,
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
+      } finally {
+        setBulkActionLoading(false);
+        setBulkActionConfirm(null);
+      }
+    },
+    [workspacePath, diffData?.rows, selectedFolderPath, refreshGridData],
+  );
+
   // ── Cell content ──
 
   const getCellContent = useCallback(
@@ -1310,47 +1375,48 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               />
             ))}
           </Group>
-          <Popover>
-            <Popover.Target>
+          <Group gap={6} align="center">
+            {(filterCounts?.unreviewed ?? 0) > 0 && (
               <ButtonSecondaryGhost
-                size="xs"
-                leftSection={<Columns3 size={18} />}
-                // onClick={() => {
-                //   if (columnPickerRect) {
-                //     setColumnPickerRect(null);
-                //   } else {
-                //     // setColumnPickerRect(e.currentTarget.getBoundingClientRect());
-                //   }
-                // }}
-                // style={{
-                //   display: 'inline-flex',
-                //   alignItems: 'center',
-                //   gap: 4,
-                //   padding: '2px 8px',
-                //   borderRadius: 10,
-                //   border: columnPickerRect ? '1px solid var(--mantine-color-blue-4)' : '1px solid var(--fg-divider)',
-                //   backgroundColor: columnPickerRect ? 'var(--mantine-color-blue-0)' : 'transparent',
-                //   cursor: 'pointer',
-                //   lineHeight: 1,
-                // }}
+                size="compact-xs"
+                c="green.8"
+                leftSection={<Check size={12} />}
+                onClick={() => setBulkActionConfirm('approve')}
               >
-                Columns
-                {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
-                  ? ` (${visibleColumnIds.length})`
-                  : ''}
+                Approve all
               </ButtonSecondaryGhost>
-            </Popover.Target>
-            <Popover.Dropdown w={420}>
-              <ColumnPickerMenu
-                allColumns={allColumnIds}
-                visibleColumns={effectiveVisibleColumns}
-                titleColumnId={titleColumnId}
-                unreviewedColumnIds={unreviewedColumnIds}
-                approvedColumnIds={approvedColumnIds}
-                onChangeVisible={setVisibleColumnIds}
-              />
-            </Popover.Dropdown>
-          </Popover>
+            )}
+            {(filterCounts?.unreviewed ?? 0) > 0 && (
+              <ButtonSecondaryGhost
+                size="compact-xs"
+                c="red.8"
+                leftSection={<RotateCcw size={12} />}
+                onClick={() => setBulkActionConfirm('reject')}
+              >
+                Reject all
+              </ButtonSecondaryGhost>
+            )}
+            <Popover>
+              <Popover.Target>
+                <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
+                  Columns
+                  {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
+                    ? ` (${visibleColumnIds.length})`
+                    : ''}
+                </ButtonSecondaryGhost>
+              </Popover.Target>
+              <Popover.Dropdown w={420}>
+                <ColumnPickerMenu
+                  allColumns={allColumnIds}
+                  visibleColumns={effectiveVisibleColumns}
+                  titleColumnId={titleColumnId}
+                  unreviewedColumnIds={unreviewedColumnIds}
+                  approvedColumnIds={approvedColumnIds}
+                  onChangeVisible={setVisibleColumnIds}
+                />
+              </Popover.Dropdown>
+            </Popover>
+          </Group>
         </Box>
       )}
 
@@ -1612,6 +1678,36 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         entries={diffData?.invalidJsonFiles ?? []}
         onFileSaved={refreshGridData}
       />
+
+      <Modal
+        opened={bulkActionConfirm !== null}
+        onClose={() => setBulkActionConfirm(null)}
+        title={
+          <Text13Medium>
+            {bulkActionConfirm === 'approve' ? 'Approve' : 'Reject'} {filterCounts?.unreviewed ?? 0} pending{' '}
+            {(filterCounts?.unreviewed ?? 0) === 1 ? 'change' : 'changes'} in{' '}
+            {selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder'}?
+          </Text13Medium>
+        }
+        size="sm"
+        padding="md"
+      >
+        <Group justify="flex-end" mt="md">
+          <ButtonSecondaryOutline size="compact-sm" onClick={() => setBulkActionConfirm(null)}>
+            Cancel
+          </ButtonSecondaryOutline>
+          <ButtonSecondaryGhost
+            size="compact-sm"
+            c={bulkActionConfirm === 'approve' ? 'green.8' : 'red.8'}
+            loading={bulkActionLoading}
+            onClick={() => {
+              if (bulkActionConfirm) void handleBulkAction(bulkActionConfirm);
+            }}
+          >
+            {bulkActionConfirm === 'approve' ? 'Approve all' : 'Reject all'}
+          </ButtonSecondaryGhost>
+        </Group>
+      </Modal>
 
       {cellPopover &&
         selectedFolderPath &&
