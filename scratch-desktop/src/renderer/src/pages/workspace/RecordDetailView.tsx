@@ -518,8 +518,16 @@ export const RecordDetailView = memo(function RecordDetailView({
       return [];
     }
 
-    const changedFields = new Set(recordData.row.__changedFields);
-    const unpublishedFields = new Set(recordData.row.__unpublishedFields);
+    // Row-level statuses (added, deleted) are styled at the record level — don't overlay
+    // per-field diff colours on top.
+    const isRowLevel =
+      recordData.row.__rowStatus === 'added' ||
+      recordData.row.__rowStatus === 'addedUnpublished' ||
+      recordData.row.__rowStatus === 'deleted' ||
+      recordData.row.__rowStatus === 'deletedUnpublished' ||
+      recordData.row.__rowStatus === 'invalidJson';
+    const changedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__changedFields);
+    const unpublishedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__unpublishedFields);
     const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
     const visibleFields = columnOrder.filter((fieldName) => recordColumnIdSet.has(fieldName));
     const hiddenFields = showAllFields

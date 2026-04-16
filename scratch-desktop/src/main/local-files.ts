@@ -941,8 +941,9 @@ function compareFlattenedRecordVersions(
   const columnSet = new Set<string>();
 
   if (workingRow && !dirtyRow) {
-    for (const k of Object.keys(workingRow)) columnSet.add(k);
-    return { row: makeDiffRow(workingRow, 'added', [], {}, [], {}, filename), columns: Array.from(columnSet) };
+    const allFields = Object.keys(workingRow);
+    for (const k of allFields) columnSet.add(k);
+    return { row: makeDiffRow(workingRow, 'added', allFields, {}, [], {}, filename), columns: Array.from(columnSet) };
   }
 
   if (!workingRow && dirtyRow) {

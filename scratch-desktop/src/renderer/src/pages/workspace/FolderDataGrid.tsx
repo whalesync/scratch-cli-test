@@ -328,6 +328,17 @@ function applyAcceptedCellChange(
 }
 
 function getCellDiffState(row: DiffRow, fieldName: string): { diffKind: FieldValueDiffKind; fromValue: string } {
+  // Row-level statuses (added, deleted, invalidJson) are styled at the row level — don't
+  // overlay per-cell diff colours on top.
+  if (
+    row.__rowStatus === 'added' ||
+    row.__rowStatus === 'addedUnpublished' ||
+    row.__rowStatus === 'deleted' ||
+    row.__rowStatus === 'deletedUnpublished' ||
+    row.__rowStatus === 'invalidJson'
+  ) {
+    return { diffKind: null, fromValue: '' };
+  }
   const isUnreviewed = row.__changedFields.includes(fieldName);
   const isUnpublished = !isUnreviewed && row.__unpublishedFields.includes(fieldName);
   if (isUnreviewed) {
@@ -1362,7 +1373,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (args.col === 0) {
         // Tint status cell background for modified/unpublished rows
         // (creates/deletes get status-cell-only tint via getStatusCellTint in getCellContent)
-        if (row && (row.__changedFields.length > 0 || row.__unpublishedFields.length > 0)) {
+        if (
+          row &&
+          row.__rowStatus !== 'added' &&
+          row.__rowStatus !== 'addedUnpublished' &&
+          row.__rowStatus !== 'deleted' &&
+          row.__rowStatus !== 'deletedUnpublished' &&
+          row.__rowStatus !== 'invalidJson' &&
+          (row.__changedFields.length > 0 || row.__unpublishedFields.length > 0)
+        ) {
           const bg = row.__changedFields.length > 0 ? DIFF_WORKING_BG() : DIFF_UNPUBLISHED_BG();
           args.ctx.save();
           args.ctx.fillStyle = bg;
