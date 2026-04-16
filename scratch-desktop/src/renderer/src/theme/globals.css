@@ -16,21 +16,29 @@
   --fg-divider: var(--mantine-color-gray-4);
 
   /* Needs-review (unreviewed) indicator colours */
-  --needs-review-bg: #e0e7ff;
-  --needs-review-stroke: #0551cd;
+  --modified-needs-review-bg: #e0e7ff;
+  --modified-needs-review-stroke: #0551cd;
   /* #3730a3; */
 
   /* Approved (unpublished) indicator colours */
-  --approved-bg: #f1f5f9;
-  --approved-stroke: #94a3b8;
+  --modified-approved-bg: #f1f5f9;
+  --modified-approved-stroke: #94a3b8;
+
+  /* Create-needs-review indicator colours */
+  --create-needs-review-bg: #dcfce7; /* green-100 — light green wash */
+  --create-needs-review-stroke: #15803d; /* green-700 — vivid green */
+
+  /* Create-approved indicator colours */
+  --create-approved-bg: #f0f4f1; /* barely green — same weight as #f1f5f9 but with a green tint */
+  --create-approved-stroke: #708a78; /* enough warmth to read as "related to the create green" */
 
   /* Delete-needs-review indicator colours */
   --delete-needs-review-bg: #ffe4e6; /* rose-100 — light pink wash */
   --delete-needs-review-stroke: #be123c; /* rose-700 — vivid, urgent red */
 
   /* Delete-approved indicator colours */
-  --delete-approved-bg: #f0e8e9; /* slightly more pink than before, reads as rose-tinted not just gray */
-  --delete-approved-stroke: #a08085; /* enough warmth to read as "related to the delete red" not just gray */
+  --delete-approved-bg: #f4f0f1; /* barely pink — same weight as #f1f5f9 but with a rose tint */
+  --delete-approved-stroke: #a07880; /* enough warmth to read as "related to the delete red" not just gray */
 
   /* Yellow highlight system — shared design tokens */
   --highlight-fill: #fefb8a;
@@ -146,13 +154,13 @@ body[data-grid-editor-diff='none'] {
 }
 
 body[data-grid-editor-diff='unreviewed'] {
-  --grid-editor-bg: var(--needs-review-bg);
-  --grid-editor-rail: var(--needs-review-stroke);
+  --grid-editor-bg: var(--modified-needs-review-bg);
+  --grid-editor-rail: var(--modified-needs-review-stroke);
 }
 
 body[data-grid-editor-diff='unpublished'] {
-  --grid-editor-bg: var(--approved-bg);
-  --grid-editor-rail: var(--approved-stroke);
+  --grid-editor-bg: var(--modified-approved-bg);
+  --grid-editor-rail: var(--modified-approved-stroke);
 }
 
 #portal .gdg-style,

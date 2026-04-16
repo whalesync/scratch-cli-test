@@ -16,8 +16,8 @@ interface FieldValuePanelProps {
   onUndo?: () => void;
 }
 
-const DIFF_WORKING_BG = 'var(--needs-review-bg)';
-const DIFF_UNPUBLISHED_BG = 'var(--approved-bg)';
+const DIFF_WORKING_BG = 'var(--modified-needs-review-bg)';
+const DIFF_UNPUBLISHED_BG = 'var(--modified-approved-bg)';
 const DIFF_REMOVED_BG = '#fee2e2'; // red-100
 const MAX_CONTENT_HEIGHT = 'calc(1.5em * 5 + 12px)';
 const ACTION_BUTTON_SIZE = 24;
@@ -158,7 +158,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                     backgroundColor: diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG,
-                    color: 'var(--needs-review-stroke)',
+                    color: 'var(--modified-needs-review-stroke)',
                     boxDecorationBreak: 'clone',
                     WebkitBoxDecorationBreak: 'clone',
                     padding: '0 2px',

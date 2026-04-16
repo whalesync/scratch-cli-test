@@ -332,6 +332,10 @@ const scratchFiles = {
     filename: string,
     fieldName: string,
   ): Promise<void> => invoke('files:undo-approved-cell-change', folderPath, workspacePath, filename, fieldName),
+  restoreDeletedRecord: (folderPath: string, workspacePath: string, filename: string): Promise<void> =>
+    invoke('files:restore-deleted-record', folderPath, workspacePath, filename),
+  discardCreatedRecord: (folderPath: string, workspacePath: string, filename: string): Promise<void> =>
+    invoke('files:discard-created-record', folderPath, workspacePath, filename),
   acceptFieldChanges: (
     folderPath: string,
     workspacePath: string,

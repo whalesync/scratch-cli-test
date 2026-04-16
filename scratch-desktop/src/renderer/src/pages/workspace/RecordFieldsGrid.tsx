@@ -21,6 +21,7 @@ export interface RecordFieldRow {
 
 interface RecordFieldsGridProps {
   rows: RecordFieldRow[];
+  footer?: React.ReactNode;
 }
 
 const FLOATING_PANEL_GAP = 5;
@@ -73,7 +74,7 @@ const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) 
   );
 });
 
-export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordFieldsGridProps) {
+export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows, footer }: RecordFieldsGridProps) {
   const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
   const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
 
@@ -144,9 +145,9 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
                   style={{
                     borderLeft: `4px solid ${
                       row.diffKind === 'unreviewed'
-                        ? 'var(--needs-review-stroke)'
+                        ? 'var(--modified-needs-review-stroke)'
                         : row.diffKind === 'unpublished'
-                          ? 'var(--approved-stroke)'
+                          ? 'var(--modified-approved-stroke)'
                           : 'transparent'
                     }`,
                   }}
@@ -174,6 +175,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows }: RecordF
           ))}
         </Table.Tbody>
       </Table>
+      {footer}
 
       {editingRow?.referenceValue != null && editingRow.onUndo && editingAnchorRect && (
         <Portal target="#portal">

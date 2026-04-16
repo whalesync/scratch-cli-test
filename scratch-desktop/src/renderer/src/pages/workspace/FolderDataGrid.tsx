@@ -14,9 +14,21 @@ import DataEditor, {
   type Rectangle,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { Box, Divider, Group, Loader, Modal, Popover, Portal, Stack, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Box,
+  Divider,
+  Group,
+  Loader,
+  Modal,
+  Popover,
+  Portal,
+  Stack,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { Check, Columns3, Maximize2, RotateCcw } from 'lucide-react';
+import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -29,7 +41,15 @@ import { RecordDetailView } from './RecordDetailView';
 
 // ── Types ──
 
-type RowStatus = 'added' | 'modified' | 'unpublished' | 'deleted' | 'deletedUnpublished' | 'unchanged' | 'invalidJson';
+type RowStatus =
+  | 'added'
+  | 'addedUnpublished'
+  | 'modified'
+  | 'unpublished'
+  | 'deleted'
+  | 'deletedUnpublished'
+  | 'unchanged'
+  | 'invalidJson';
 
 interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
@@ -48,9 +68,11 @@ interface DiffGridResult {
   summary: {
     total: number;
     added: number;
+    addedApproved: number;
     modified: number;
     unpublished: number;
     deleted: number;
+    deletedApproved: number;
     invalidJson: number;
   };
   filterCounts: { unreviewed: number; unpublished: number };
@@ -80,6 +102,8 @@ interface CellPopoverState {
   fromValue: string;
   diffKind: FieldValueDiffKind;
   bounds: { x: number; y: number; width: number; height: number };
+  recordLevel?: boolean;
+  recordAction?: 'added' | 'deleted';
 }
 
 interface FolderDataGridProps {
@@ -97,7 +121,7 @@ const PAGE_SIZE = 100;
 const STATUS_COL_WIDTH = 50;
 const STATUS_COL_ID = '__status';
 const INSPECT_BUTTON_SIZE = 18;
-const FLOATING_PANEL_GAP = 5;
+const FLOATING_PANEL_GAP = 0;
 
 /** Glide grid accent — uses the yellow highlight design tokens */
 const GRID_THEME = {
@@ -112,14 +136,55 @@ function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-const DIFF_WORKING_BG = () => getCssVar('--needs-review-bg');
-const DIFF_WORKING_BORDER = () => getCssVar('--needs-review-stroke');
-const DIFF_UNPUBLISHED_BG = () => getCssVar('--approved-bg');
-const DIFF_UNPUBLISHED_BORDER = () => getCssVar('--approved-stroke');
+const DIFF_WORKING_BG = () => getCssVar('--modified-needs-review-bg');
+const DIFF_WORKING_BORDER = () => getCssVar('--modified-needs-review-stroke');
+const DIFF_UNPUBLISHED_BG = () => getCssVar('--modified-approved-bg');
+const DIFF_UNPUBLISHED_BORDER = () => getCssVar('--modified-approved-stroke');
+const DIFF_CREATE_REVIEW_BG = () => getCssVar('--create-needs-review-bg');
+const DIFF_CREATE_APPROVED_BG = () => getCssVar('--create-approved-bg');
 const DIFF_DELETE_REVIEW_BG = () => getCssVar('--delete-needs-review-bg');
-const DIFF_DELETE_REVIEW_BORDER = () => getCssVar('--delete-needs-review-stroke');
 const DIFF_DELETE_APPROVED_BG = () => getCssVar('--delete-approved-bg');
+const DIFF_CREATE_REVIEW_BORDER = () => getCssVar('--create-needs-review-stroke');
+const DIFF_CREATE_APPROVED_BORDER = () => getCssVar('--create-approved-stroke');
+const DIFF_DELETE_REVIEW_BORDER = () => getCssVar('--delete-needs-review-stroke');
 const DIFF_DELETE_APPROVED_BORDER = () => getCssVar('--delete-approved-stroke');
+
+// ── Status icon canvas drawing (lucide Plus / Minus / Diff, viewBox 0 0 24 24) ──
+
+type StatusIconKind = 'plus' | 'minus' | 'diff';
+
+function drawStatusIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, kind: StatusIconKind): void {
+  ctx.save();
+  const s = size / 24;
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (kind === 'plus') {
+    ctx.beginPath();
+    ctx.moveTo(5, 12);
+    ctx.lineTo(19, 12);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(12, 5);
+    ctx.lineTo(12, 19);
+    ctx.stroke();
+  } else if (kind === 'minus') {
+    ctx.beginPath();
+    ctx.moveTo(5, 12);
+    ctx.lineTo(19, 12);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(12, 12, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
 
 // ── Helpers ──
 
@@ -160,6 +225,7 @@ function diffValuesEqual(a: unknown, b: unknown): boolean {
 function deriveRowStatusAfterEdit(row: DiffRow): RowStatus {
   if (
     row.__rowStatus === 'added' ||
+    row.__rowStatus === 'addedUnpublished' ||
     row.__rowStatus === 'deleted' ||
     row.__rowStatus === 'deletedUnpublished' ||
     row.__rowStatus === 'invalidJson'
@@ -200,12 +266,23 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
     nextRow.__rowStatus === 'deleted' ||
     nextRow.__rowStatus === 'invalidJson' ||
     nextRow.__changedFields.length > 0;
-  const prevHadUnpublished = prevRow.__rowStatus === 'deletedUnpublished' || prevRow.__unpublishedFields.length > 0;
-  const nextHasUnpublished = nextRow.__rowStatus === 'deletedUnpublished' || nextRow.__unpublishedFields.length > 0;
+  const prevHadUnpublished =
+    prevRow.__rowStatus === 'addedUnpublished' ||
+    prevRow.__rowStatus === 'deletedUnpublished' ||
+    prevRow.__unpublishedFields.length > 0;
+  const nextHasUnpublished =
+    nextRow.__rowStatus === 'addedUnpublished' ||
+    nextRow.__rowStatus === 'deletedUnpublished' ||
+    nextRow.__unpublishedFields.length > 0;
 
   const summary: DiffGridResult['summary'] = {
     total: result.summary.total,
-    added: recomputeSummaryCount(prevRow, nextRow, 'added', result.summary.added),
+    added: recomputeFilterCount(
+      prevRow.__rowStatus === 'added' || prevRow.__rowStatus === 'addedUnpublished',
+      nextRow.__rowStatus === 'added' || nextRow.__rowStatus === 'addedUnpublished',
+      result.summary.added,
+    ),
+    addedApproved: recomputeSummaryCount(prevRow, nextRow, 'addedUnpublished', result.summary.addedApproved),
     modified: recomputeSummaryCount(prevRow, nextRow, 'modified', result.summary.modified),
     unpublished: recomputeSummaryCount(prevRow, nextRow, 'unpublished', result.summary.unpublished),
     deleted: recomputeFilterCount(
@@ -213,6 +290,7 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
       nextRow.__rowStatus === 'deleted' || nextRow.__rowStatus === 'deletedUnpublished',
       result.summary.deleted,
     ),
+    deletedApproved: recomputeSummaryCount(prevRow, nextRow, 'deletedUnpublished', result.summary.deletedApproved),
     invalidJson: recomputeSummaryCount(prevRow, nextRow, 'invalidJson', result.summary.invalidJson),
   };
 
@@ -326,14 +404,38 @@ function filterLabel(filter: GridFilter): string {
 
 // ── Row colours ──
 
-function getRowTint(status: RowStatus): string | undefined {
+function getStatusCellTint(status: RowStatus): string | undefined {
   switch (status) {
     case 'added':
-      return '#f0fdf4';
+      return DIFF_CREATE_REVIEW_BG();
+    case 'addedUnpublished':
+      return DIFF_CREATE_APPROVED_BG();
     case 'deleted':
       return DIFF_DELETE_REVIEW_BG();
     case 'deletedUnpublished':
       return DIFF_DELETE_APPROVED_BG();
+    case 'invalidJson':
+      return '#fff7ed';
+    default:
+      return undefined;
+  }
+}
+
+function getRowTextColor(status: RowStatus): string | undefined {
+  switch (status) {
+    case 'added':
+    case 'addedUnpublished':
+      return DIFF_CREATE_REVIEW_BORDER();
+    case 'deleted':
+    case 'deletedUnpublished':
+      return DIFF_DELETE_REVIEW_BORDER();
+    default:
+      return undefined;
+  }
+}
+
+function getRowTint(status: RowStatus): string | undefined {
+  switch (status) {
     case 'invalidJson':
       return '#fff7ed';
     default:
@@ -372,7 +474,15 @@ function FilterPill({
         lineHeight: 1,
       }}
     >
-      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: bulletColor, flexShrink: 0 }} />
+      <Box
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          backgroundColor: bulletColor,
+          flexShrink: 0,
+        }}
+      />
       <Text12Medium
         c={active ? 'var(--highlight-text)' : 'var(--fg-muted)'}
         fw={active ? 500 : undefined}
@@ -621,7 +731,26 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // ── Derived ──
 
-  const pagedRows = useMemo(() => diffData?.rows ?? [], [diffData?.rows]);
+  const pagedRows = useMemo(() => {
+    const rows = diffData?.rows ?? [];
+    if (sort.column !== STATUS_COL_ID || !sort.direction) return rows;
+    const statusOrder: Record<string, number> = {
+      added: 1,
+      addedUnpublished: 2,
+      modified: 3,
+      unpublished: 4,
+      deleted: 5,
+      deletedUnpublished: 6,
+      unchanged: 7,
+      invalidJson: 8,
+    };
+    const sorted = [...rows].sort((a, b) => {
+      const aOrder = statusOrder[a.__rowStatus] ?? 99;
+      const bOrder = statusOrder[b.__rowStatus] ?? 99;
+      return sort.direction === 'asc' ? aOrder - bOrder : bOrder - aOrder;
+    });
+    return sorted;
+  }, [diffData?.rows, sort.column, sort.direction]);
   const totalPages = Math.max(1, Math.ceil((diffData?.total ?? 0) / PAGE_SIZE));
 
   useEffect(() => {
@@ -721,16 +850,32 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
-      if (col === 0) return null; // Status column
       const record = pagedRows[row] as DiffRow | undefined;
+      if (!record || record.__rowStatus === 'invalidJson') return null;
+
+      // Record-level popover for needs-review creates/deletes
+      if (record.__rowStatus === 'added' || record.__rowStatus === 'deleted') {
+        const titleColIndex = columns.findIndex((c) => c.id === titleColumnId);
+        const targetCol = titleColIndex >= 0 ? titleColIndex : 1;
+        const bounds = gridRef.current?.getBounds(targetCol, row);
+        if (!bounds) return null;
+        return {
+          col: targetCol,
+          row,
+          filename: record.__filename,
+          fieldName: '',
+          value: '',
+          fromValue: '',
+          diffKind: 'unreviewed',
+          bounds,
+          recordLevel: true,
+          recordAction: record.__rowStatus,
+        };
+      }
+
+      if (col === 0) return null; // Status column
       const columnId = columns[col]?.id;
-      if (
-        !record ||
-        !columnId ||
-        record.__rowStatus === 'deleted' ||
-        record.__rowStatus === 'deletedUnpublished' ||
-        record.__rowStatus === 'invalidJson'
-      ) {
+      if (!columnId || record.__rowStatus === 'deletedUnpublished') {
         return null;
       }
 
@@ -755,7 +900,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         bounds,
       };
     },
-    [columns, pagedRows],
+    [columns, pagedRows, titleColumnId],
   );
 
   useEffect(() => {
@@ -1032,13 +1177,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       // Status column — empty, non-editable cell (drawing handled by drawCell)
       if (col === 0) {
-        const rowBg = r ? getRowTint(r.__rowStatus) : undefined;
+        const statusBg = r ? getStatusCellTint(r.__rowStatus) : undefined;
         return {
           kind: GridCellKind.Text as const,
           data: '',
           displayData: '',
           allowOverlay: false as const,
-          themeOverride: rowBg ? { bgCell: rowBg } : undefined,
+          themeOverride: statusBg ? { bgCell: statusBg } : undefined,
         };
       }
 
@@ -1050,7 +1195,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       const status = r.__rowStatus;
       const rowBg = getRowTint(status);
-      const rowTheme = rowBg ? { bgCell: rowBg } : {};
+      const rowTextColor = getRowTextColor(status);
+      const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
       const val = r[colId];
       const { diffKind } = getCellDiffState(r, colId);
       const diffTheme =
@@ -1129,8 +1275,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onHeaderClicked = useCallback(
     (colIndex: number) => {
-      // TODO: sort by approval status when clicking the status column header
-      if (colIndex === 0) return;
+      if (colIndex === 0) {
+        setSort((prev) => {
+          if (prev.column === STATUS_COL_ID && prev.direction === 'asc')
+            return { column: STATUS_COL_ID, direction: 'desc' };
+          return { column: STATUS_COL_ID, direction: 'asc' };
+        });
+        return;
+      }
       const colId = columns[colIndex]?.id;
       if (!colId) return;
       setSort((prev) => {
@@ -1178,8 +1330,17 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     (args, drawContent) => {
       const row = pagedRows[args.row] as DiffRow | undefined;
 
-      // Status column — draw row number + vertical status bar
+      // Status column — draw row number + status icon
       if (args.col === 0) {
+        // Tint status cell background for modified/unpublished rows
+        // (creates/deletes get status-cell-only tint via getStatusCellTint in getCellContent)
+        if (row && (row.__changedFields.length > 0 || row.__unpublishedFields.length > 0)) {
+          const bg = row.__changedFields.length > 0 ? DIFF_WORKING_BG() : DIFF_UNPUBLISHED_BG();
+          args.ctx.save();
+          args.ctx.fillStyle = bg;
+          args.ctx.fillRect(args.rect.x, args.rect.y, args.rect.width, args.rect.height);
+          args.ctx.restore();
+        }
         drawContent();
         const { ctx, rect } = args;
 
@@ -1194,29 +1355,32 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         ctx.restore();
 
         if (!row) return;
+        const isCreateReview = row.__rowStatus === 'added';
+        const isCreateApproved = row.__rowStatus === 'addedUnpublished';
         const isDeletedReview = row.__rowStatus === 'deleted';
         const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
         const hasUnreviewed =
-          row.__rowStatus === 'added' ||
-          isDeletedReview ||
-          row.__rowStatus === 'invalidJson' ||
-          row.__changedFields.length > 0;
-        const hasApproved = isDeletedApproved || row.__unpublishedFields.length > 0;
+          isCreateReview || isDeletedReview || row.__rowStatus === 'invalidJson' || row.__changedFields.length > 0;
+        const hasApproved = isCreateApproved || isDeletedApproved || row.__unpublishedFields.length > 0;
         if (hasUnreviewed || hasApproved) {
-          const barWidth = 4;
-          const barX = rect.x + 6;
-          const barInset = 4;
+          const kind: StatusIconKind =
+            isCreateReview || isCreateApproved ? 'plus' : isDeletedReview || isDeletedApproved ? 'minus' : 'diff';
+          const color = isCreateReview
+            ? DIFF_CREATE_REVIEW_BORDER()
+            : isCreateApproved
+              ? DIFF_CREATE_APPROVED_BORDER()
+              : isDeletedReview
+                ? DIFF_DELETE_REVIEW_BORDER()
+                : isDeletedApproved
+                  ? DIFF_DELETE_APPROVED_BORDER()
+                  : hasUnreviewed
+                    ? DIFF_WORKING_BORDER()
+                    : DIFF_UNPUBLISHED_BORDER();
+          const iconSize = 14;
           ctx.save();
-          ctx.fillStyle = isDeletedReview
-            ? DIFF_DELETE_REVIEW_BORDER()
-            : isDeletedApproved
-              ? DIFF_DELETE_APPROVED_BORDER()
-              : hasUnreviewed
-                ? DIFF_WORKING_BORDER()
-                : DIFF_UNPUBLISHED_BORDER();
-          ctx.beginPath();
-          ctx.roundRect(barX, rect.y + barInset, barWidth, rect.height - barInset * 2, 2);
-          ctx.fill();
+          ctx.strokeStyle = color;
+          ctx.fillStyle = color;
+          drawStatusIcon(ctx, rect.x + 3, rect.y + (rect.height - iconSize) / 2, iconSize, kind);
           ctx.restore();
         }
         return;
@@ -1503,14 +1667,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               label="Needs review"
               count={filterCounts?.unreviewed ?? 0}
               active={hasGlobalFilter('unreviewed')}
-              bulletColor="var(--needs-review-stroke)"
+              bulletColor="var(--modified-needs-review-stroke)"
               onClick={() => handleGlobalFilterToggle('unreviewed')}
             />
             <FilterPill
               label="Approved"
               count={filterCounts?.unpublished ?? 0}
               active={hasGlobalFilter('unpublished')}
-              bulletColor="var(--approved-stroke)"
+              bulletColor="var(--modified-approved-stroke)"
               onClick={() => handleGlobalFilterToggle('unpublished')}
             />
             {activeColumnFilters.map((filter) => (
@@ -1522,7 +1686,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             ))}
           </Group>
           <Group gap={6} align="center">
-            {(filterCounts?.unreviewed ?? 0) > 0 && (
+            {(filterCounts?.unreviewed ?? 0) > 0 && detailRowIndex === null && (
               <>
                 <Divider orientation="vertical" />
                 <ButtonSecondaryGhost
@@ -1719,45 +1883,53 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               {(diffData?.total ?? 0).toLocaleString()} rows &middot; {columns.length} columns
               {sort.column && (
                 <span style={{ marginLeft: 8 }}>
-                  &middot; Sorted by {sort.column} {sort.direction === 'desc' ? '\u2193' : '\u2191'}
+                  &middot; Sorted by {sort.column === STATUS_COL_ID ? 'Status' : sort.column}{' '}
+                  {sort.direction === 'desc' ? '\u2193' : '\u2191'}
                 </span>
               )}
             </Text12Regular>
 
-            <Group gap={8} align="center">
+            <Group gap={10} align="center">
+              {(filterCounts?.unreviewed ?? 0) > 0 && (
+                <Group gap={3}>
+                  <Box
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--modified-needs-review-stroke)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Text12Regular c="var(--fg-muted)">{filterCounts?.unreviewed} needs review</Text12Regular>
+                </Group>
+              )}
               {hasChanges && (
                 <Group gap={10}>
-                  {summary.added > 0 && (
-                    <Group gap={4}>
-                      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#22c55e' }} />
-                      <Text12Regular c="var(--fg-muted)">{summary.added} added</Text12Regular>
+                  {summary.addedApproved > 0 && (
+                    <Group gap={3}>
+                      <Plus size={12} color="var(--create-approved-stroke)" />
+                      <Text12Regular c="var(--fg-muted)">{summary.addedApproved} added</Text12Regular>
                     </Group>
                   )}
-                  {summary.modified > 0 && (
-                    <Group gap={4}>
+                  {summary.unpublished > 0 && (
+                    <Group gap={3}>
                       <Box
                         style={{
                           width: 8,
                           height: 8,
                           borderRadius: '50%',
-                          backgroundColor: 'var(--needs-review-stroke)',
+                          backgroundColor: 'var(--modified-approved-stroke)',
+                          flexShrink: 0,
                         }}
                       />
-                      <Text12Regular c="var(--fg-muted)">{summary.modified} modified</Text12Regular>
+                      <Text12Regular c="var(--fg-muted)">{summary.unpublished} modified</Text12Regular>
                     </Group>
                   )}
-                  {summary.unpublished > 0 && (
-                    <Group gap={4}>
-                      <Box
-                        style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--approved-stroke)' }}
-                      />
-                      <Text12Regular c="var(--fg-muted)">{summary.unpublished} unpublished</Text12Regular>
-                    </Group>
-                  )}
-                  {summary.deleted > 0 && (
-                    <Group gap={4}>
-                      <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ef4444' }} />
-                      <Text12Regular c="var(--fg-muted)">{summary.deleted} deleted</Text12Regular>
+                  {summary.deletedApproved > 0 && (
+                    <Group gap={3}>
+                      <Minus size={12} color="var(--delete-approved-stroke)" />
+                      <Text12Regular c="var(--fg-muted)">{summary.deletedApproved} deleted</Text12Regular>
                     </Group>
                   )}
                   {summary.invalidJson > 0 && (
@@ -1774,8 +1946,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                         cursor: 'pointer',
                       }}
                     >
-                      <Group gap={4}>
-                        <Box style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ea580c' }} />
+                      <Group gap={3}>
+                        <Box
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            backgroundColor: '#ea580c',
+                            flexShrink: 0,
+                          }}
+                        />
                         <Text12Regular c="var(--fg-muted)" style={{ textDecoration: 'underline' }}>
                           {summary.invalidJson} invalid files
                         </Text12Regular>
@@ -1871,6 +2051,136 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           const { bounds, diffKind, value, fromValue, filename, fieldName } = cellPopover;
           const popoverWidth = Math.max(280, Math.floor(bounds.width));
           const left = Math.max(12, Math.min(bounds.x, window.innerWidth - popoverWidth - 12));
+
+          // Record-level popover for creates/deletes
+          if (cellPopover.recordLevel && cellPopover.recordAction) {
+            const relativeFolderPath = selectedFolderPath.startsWith(workspacePath)
+              ? selectedFolderPath.slice(workspacePath.length).replace(/^\//, '')
+              : selectedFolderPath.replace(/^\//, '');
+            const recordPath = relativeFolderPath ? `${relativeFolderPath}/${filename}` : filename;
+            const handleRecordApprove = () => {
+              void window.scratchDesktop.acceptRecord(workspacePath, recordPath).then((result) => {
+                if (result.exitCode === 0) {
+                  setCellPopover(null);
+                  refreshGridData();
+                }
+              });
+            };
+            const handleRecordReject = () => {
+              void window.scratchDesktop.rejectRecord(workspacePath, recordPath).then((result) => {
+                if (result.exitCode === 0) {
+                  setCellPopover(null);
+                  refreshGridData();
+                }
+              });
+            };
+
+            return (
+              <Portal target="#portal">
+                <Box
+                  className="click-outside-ignore"
+                  ref={cellPopoverRef}
+                  style={{
+                    position: 'fixed',
+                    left,
+                    top: Math.max(FLOATING_PANEL_GAP, bounds.y - FLOATING_PANEL_GAP),
+                    transform: 'translateY(-100%)',
+                    zIndex: 10010,
+                    width: popoverWidth,
+                    maxWidth: Math.max(280, window.innerWidth - 24),
+                    backgroundColor: 'var(--bg-base)',
+                    border: '1px solid var(--fg-divider)',
+                    borderRadius: 0,
+                    boxShadow: 'none',
+                    padding: 0,
+                  }}
+                >
+                  <Group align="stretch" gap={8} wrap="nowrap">
+                    <Box
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '8px 12px',
+                      }}
+                    >
+                      <UnstyledButton
+                        onClick={() => {
+                          setCellPopover(null);
+                          setDetailRowIndex(cellPopover.row);
+                        }}
+                      >
+                        <Text12Medium
+                          style={{
+                            color: 'var(--fg-secondary)',
+                            whiteSpace: 'nowrap',
+                            textDecoration: 'underline',
+                          }}
+                        >
+                          {cellPopover.recordAction === 'added' ? 'Record added' : 'Record removed'}
+                        </Text12Medium>
+                      </UnstyledButton>
+                    </Box>
+                    <Stack
+                      gap={6}
+                      align="center"
+                      justify="center"
+                      style={{ flexShrink: 0, width: 28, padding: '2px 0' }}
+                    >
+                      <Tooltip label="Approve" position="left" withArrow zIndex={10020}>
+                        <ActionIcon
+                          variant="transparent"
+                          size={24}
+                          radius={3}
+                          aria-label="Approve"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={handleRecordApprove}
+                          styles={{
+                            root: {
+                              backgroundColor: 'var(--mantine-color-green-1)',
+                              color: 'var(--mantine-color-green-8)',
+                              border: '1px solid var(--mantine-color-green-3)',
+                              minWidth: 24,
+                              minHeight: 24,
+                              padding: 3,
+                              boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
+                            },
+                          }}
+                        >
+                          <StyledLucideIcon Icon={Check} size={14} strokeWidth={2.25} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Reject" position="left" withArrow zIndex={10020}>
+                        <ActionIcon
+                          variant="transparent"
+                          size={24}
+                          radius={3}
+                          aria-label="Reject"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={handleRecordReject}
+                          styles={{
+                            root: {
+                              backgroundColor: 'var(--mantine-color-red-1)',
+                              color: 'var(--mantine-color-red-8)',
+                              border: '1px solid var(--mantine-color-red-3)',
+                              minWidth: 24,
+                              minHeight: 24,
+                              padding: 3,
+                              boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
+                            },
+                          }}
+                        >
+                          <StyledLucideIcon Icon={RotateCcw} size={14} strokeWidth={2.25} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Stack>
+                  </Group>
+                </Box>
+              </Portal>
+            );
+          }
+
           const isEditingPopover =
             editingCell != null && editingCell[0] === cellPopover.col && editingCell[1] === cellPopover.row;
           let undoAction: (() => void) | undefined;

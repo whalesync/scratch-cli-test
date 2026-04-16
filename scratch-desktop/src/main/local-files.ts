@@ -8,7 +8,7 @@
  */
 
 import { execFile } from 'child_process';
-import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
+import { copyFile, mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { basename, dirname, extname, join, relative, sep } from 'path';
 
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
@@ -299,6 +299,7 @@ export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
 export type GridVersion = 'working' | 'dirty' | 'main';
 export type RowStatus =
   | 'added'
+  | 'addedUnpublished'
   | 'modified'
   | 'unpublished'
   | 'deleted'
@@ -939,9 +940,11 @@ export async function readFolderStatuses(folderPath: string, workspacePath: stri
 export interface DiffGridSummary {
   total: number;
   added: number;
+  addedApproved: number;
   modified: number;
   unpublished: number;
   deleted: number;
+  deletedApproved: number;
   invalidJson: number;
 }
 
@@ -1021,11 +1024,27 @@ function compareFlattenedRecordVersions(
       }
     }
 
-    const status: RowStatus =
-      changedFields.length > 0 ? 'modified' : unpublishedFields.length > 0 ? 'unpublished' : 'unchanged';
+    const isNewRecord = !masterRow;
+    const status: RowStatus = isNewRecord
+      ? changedFields.length > 0
+        ? 'added'
+        : 'addedUnpublished'
+      : changedFields.length > 0
+        ? 'modified'
+        : unpublishedFields.length > 0
+          ? 'unpublished'
+          : 'unchanged';
 
     return {
-      row: makeDiffRow(workingRow, status, changedFields, fromFields, unpublishedFields, masterFields, filename),
+      row: makeDiffRow(
+        workingRow,
+        status,
+        changedFields,
+        fromFields,
+        isNewRecord ? [] : unpublishedFields,
+        masterFields,
+        filename,
+      ),
       columns: Array.from(columnSet),
     };
   }
@@ -1154,10 +1173,12 @@ export async function readDiffGridDataPage(
 
   const summary: DiffGridSummary = {
     total: rows.length,
-    added: rows.filter((r) => r.__rowStatus === 'added').length,
+    added: rows.filter((r) => r.__rowStatus === 'added' || r.__rowStatus === 'addedUnpublished').length,
+    addedApproved: rows.filter((r) => r.__rowStatus === 'addedUnpublished').length,
     modified: rows.filter((r) => r.__rowStatus === 'modified').length,
     unpublished: rows.filter((r) => r.__rowStatus === 'unpublished').length,
     deleted: rows.filter((r) => r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished').length,
+    deletedApproved: rows.filter((r) => r.__rowStatus === 'deletedUnpublished').length,
     invalidJson: rows.filter((r) => r.__rowStatus === 'invalidJson').length,
   };
 
@@ -1192,7 +1213,11 @@ function rowHasUnreviewedChanges(row: DiffRow): boolean {
 }
 
 function rowHasUnpublishedChanges(row: DiffRow): boolean {
-  return row.__rowStatus === 'deletedUnpublished' || row.__unpublishedFields.length > 0;
+  return (
+    row.__rowStatus === 'addedUnpublished' ||
+    row.__rowStatus === 'deletedUnpublished' ||
+    row.__unpublishedFields.length > 0
+  );
 }
 
 function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter): boolean {
@@ -1368,6 +1393,45 @@ export async function undoApprovedCellChange(
 
   await commitReviewedDirtyFile(folderPath, workspacePath, filename);
   console.debug('[undoApprovedCellChange] dirty ref updated');
+}
+
+/**
+ * Restores a deleted record that was already approved (deletedUnpublished).
+ * Copies the master file back to both working and dirty locations.
+ */
+export async function restoreDeletedRecord(folderPath: string, workspacePath: string, filename: string): Promise<void> {
+  const workingFile = join(folderPath, filename);
+  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+  const dirtyFile = join(dirtyPath, filename);
+  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
+  const masterFile = join(masterPath, filename);
+
+  console.debug('[restoreDeletedRecord] master:', masterFile);
+  console.debug('[restoreDeletedRecord] → working:', workingFile);
+  console.debug('[restoreDeletedRecord] → dirty:  ', dirtyFile);
+
+  await copyFile(masterFile, workingFile);
+  await mkdir(dirtyPath, { recursive: true });
+  await copyFile(masterFile, dirtyFile);
+  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
+  console.debug('[restoreDeletedRecord] restored');
+}
+
+/**
+ * Discards a created record by removing its working and dirty files.
+ */
+export async function discardCreatedRecord(folderPath: string, workspacePath: string, filename: string): Promise<void> {
+  const workingFile = join(folderPath, filename);
+  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
+  const dirtyFile = join(dirtyPath, filename);
+
+  console.debug('[discardCreatedRecord] removing working:', workingFile);
+  console.debug('[discardCreatedRecord] removing dirty:  ', dirtyFile);
+
+  await unlink(workingFile).catch(() => {});
+  await unlink(dirtyFile).catch(() => {});
+  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
+  console.debug('[discardCreatedRecord] discarded');
 }
 
 async function patchJsonField(filePath: string, fieldName: string, value: unknown): Promise<void> {

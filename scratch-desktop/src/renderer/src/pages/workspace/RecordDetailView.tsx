@@ -1,5 +1,18 @@
-import { Box, Group, Loader, ScrollArea, Stack } from '@mantine/core';
-import { Braces, Check, ChevronDown, ChevronUp, RotateCcw, Upload, Wrench, X } from 'lucide-react';
+import { Box, Group, Loader, ScrollArea, Stack, UnstyledButton } from '@mantine/core';
+import {
+  Braces,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  FilePlus,
+  Minus,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Upload,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
@@ -11,7 +24,15 @@ import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
 
 interface DiffRecordData {
   row: Record<string, unknown> & {
-    __rowStatus: 'added' | 'modified' | 'unpublished' | 'deleted' | 'deletedUnpublished' | 'unchanged' | 'invalidJson';
+    __rowStatus:
+      | 'added'
+      | 'addedUnpublished'
+      | 'modified'
+      | 'unpublished'
+      | 'deleted'
+      | 'deletedUnpublished'
+      | 'unchanged'
+      | 'invalidJson';
     __changedFields: string[];
     __fromFields: Record<string, unknown>;
     __unpublishedFields: string[];
@@ -50,6 +71,7 @@ function rowHasUnreviewedChanges(
     | (Record<string, unknown> & {
         __rowStatus?:
           | 'added'
+          | 'addedUnpublished'
           | 'modified'
           | 'unpublished'
           | 'deleted'
@@ -108,6 +130,7 @@ type DiffRow = DiffRecordData['row'];
 function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
   if (
     row.__rowStatus === 'added' ||
+    row.__rowStatus === 'addedUnpublished' ||
     row.__rowStatus === 'deleted' ||
     row.__rowStatus === 'deletedUnpublished' ||
     row.__rowStatus === 'invalidJson'
@@ -198,6 +221,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
+  const [showAllFields, setShowAllFields] = useState(false);
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
 
@@ -206,10 +230,10 @@ export const RecordDetailView = memo(function RecordDetailView({
   const hasUnreviewedChanges = rowHasUnreviewedChanges(recordData?.row ?? currentRow);
   const hasPublishableChanges =
     (recordData?.row.__unpublishedFields?.length ?? 0) > 0 ||
-    recordData?.row.__rowStatus === 'added' ||
-    recordData?.row.__rowStatus === 'deleted' ||
+    recordData?.row.__rowStatus === 'addedUnpublished' ||
     recordData?.row.__rowStatus === 'deletedUnpublished';
   const isDeleted = recordData?.row.__rowStatus === 'deleted' || recordData?.row.__rowStatus === 'deletedUnpublished';
+  const isCreated = recordData?.row.__rowStatus === 'added' || recordData?.row.__rowStatus === 'addedUnpublished';
   const currentFilename =
     recordData?.row.__filename ?? (typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined);
 
@@ -323,6 +347,33 @@ export const RecordDetailView = memo(function RecordDetailView({
         console.debug('rejectRecord failed', err);
       });
   }, [workspacePath, currentRecordCliPath, onRecordChanged]);
+
+  const handleRestore = useCallback(() => {
+    const filename = filenameRef.current;
+    if (!filename) return;
+    void window.scratchFiles
+      .restoreDeletedRecord(folderPath, workspacePath, filename)
+      .then(() => {
+        setRecordReloadKey((k) => k + 1);
+        onRecordChanged?.();
+      })
+      .catch((err: unknown) => {
+        console.debug('restoreDeletedRecord failed', err);
+      });
+  }, [folderPath, workspacePath, onRecordChanged]);
+
+  const handleDiscardCreate = useCallback(() => {
+    const filename = filenameRef.current;
+    if (!filename) return;
+    void window.scratchFiles
+      .discardCreatedRecord(folderPath, workspacePath, filename)
+      .then(() => {
+        onRecordChanged?.();
+      })
+      .catch((err: unknown) => {
+        console.debug('discardCreatedRecord failed', err);
+      });
+  }, [folderPath, workspacePath, onRecordChanged]);
 
   const clearFieldEdit = useCallback(() => {
     editingFieldRef.current = null;
@@ -441,7 +492,11 @@ export const RecordDetailView = memo(function RecordDetailView({
     const changedFields = new Set(recordData.row.__changedFields);
     const unpublishedFields = new Set(recordData.row.__unpublishedFields);
     const recordColumnSet = new Set(recordData.columns);
-    const orderedFields = columnOrder.filter((fieldName) => recordColumnSet.has(fieldName));
+    const visibleFields = columnOrder.filter((fieldName) => recordColumnSet.has(fieldName));
+    const hiddenFields = showAllFields
+      ? recordData.columns.filter((fieldName) => !columnOrder.includes(fieldName))
+      : [];
+    const orderedFields = [...visibleFields, ...hiddenFields];
 
     return orderedFields.map((fieldName) => {
       const isUnreviewed = changedFields.has(fieldName);
@@ -484,6 +539,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     editingFieldName,
     isDeleted,
     recordData,
+    showAllFields,
     handleAcceptCellChange,
     handleDiscardUnreviewedCellChange,
     handleUndoApprovedCellChange,
@@ -560,23 +616,34 @@ export const RecordDetailView = memo(function RecordDetailView({
           </Group>
           <ScrollArea style={{ flex: 1 }}>
             {rows.map((row, i) => {
+              const isCreateReview = row.__rowStatus === 'added';
+              const isCreateApproved = row.__rowStatus === 'addedUnpublished';
               const isDeletedReview = row.__rowStatus === 'deleted';
               const isDeletedApproved = row.__rowStatus === 'deletedUnpublished';
               const hasUnreviewed =
-                row.__rowStatus === 'added' ||
+                isCreateReview ||
                 isDeletedReview ||
                 (Array.isArray(row.__changedFields) && row.__changedFields.length > 0);
               const hasApproved =
-                isDeletedApproved || (Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0);
-              const barColor = isDeletedReview
-                ? 'var(--delete-needs-review-stroke)'
-                : isDeletedApproved
-                  ? 'var(--delete-approved-stroke)'
-                  : hasUnreviewed
-                    ? 'var(--needs-review-stroke)'
-                    : hasApproved
-                      ? 'var(--approved-stroke)'
-                      : undefined;
+                isCreateApproved ||
+                isDeletedApproved ||
+                (Array.isArray(row.__unpublishedFields) && row.__unpublishedFields.length > 0);
+              const StatusIcon =
+                isCreateReview || isCreateApproved ? Plus : isDeletedReview || isDeletedApproved ? Minus : undefined;
+              const isModified = !StatusIcon && (hasUnreviewed || hasApproved);
+              const iconColor = isCreateReview
+                ? 'var(--create-needs-review-stroke)'
+                : isCreateApproved
+                  ? 'var(--create-approved-stroke)'
+                  : isDeletedReview
+                    ? 'var(--delete-needs-review-stroke)'
+                    : isDeletedApproved
+                      ? 'var(--delete-approved-stroke)'
+                      : hasUnreviewed
+                        ? 'var(--modified-needs-review-stroke)'
+                        : hasApproved
+                          ? 'var(--modified-approved-stroke)'
+                          : undefined;
 
               return (
                 <Box
@@ -585,24 +652,47 @@ export const RecordDetailView = memo(function RecordDetailView({
                   ref={i === selectedIndex ? selectedItemRef : undefined}
                   onClick={() => onSelectIndex(i)}
                   style={{
-                    display: 'block',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
                     width: '100%',
                     padding: '6px 12px',
                     border: 'none',
-                    borderLeft: barColor ? `3px solid ${barColor}` : '3px solid transparent',
                     backgroundColor: i === selectedIndex ? 'var(--highlight-fill)' : 'transparent',
                     cursor: 'pointer',
                     textAlign: 'left',
                   }}
                 >
+                  <span
+                    style={{
+                      width: 14,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {StatusIcon && <StatusIcon size={14} color={iconColor} />}
+                    {isModified && (
+                      <Box
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: iconColor,
+                        }}
+                      />
+                    )}
+                  </span>
                   <Text12Regular
                     c={i === selectedIndex ? 'var(--fg-primary)' : 'var(--fg-secondary)'}
                     lineClamp={1}
-                    style={
-                      row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished'
+                    style={{
+                      minWidth: 0,
+                      ...(row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished'
                         ? { textDecoration: 'line-through' }
-                        : undefined
-                    }
+                        : undefined),
+                    }}
                   >
                     {getRecordName(row, titleColumnId)}
                   </Text12Regular>
@@ -662,7 +752,7 @@ export const RecordDetailView = memo(function RecordDetailView({
               </TextTitle2>
 
               <Group gap={6} align="center" wrap="nowrap">
-                {hasUnreviewedChanges && (
+                {hasUnreviewedChanges && !isDeleted && !isCreated && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="green.8"
@@ -673,7 +763,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     Approve changes
                   </ButtonSecondaryGhost>
                 )}
-                {hasUnreviewedChanges && (
+                {hasUnreviewedChanges && !isDeleted && !isCreated && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="red.8"
@@ -715,6 +805,126 @@ export const RecordDetailView = memo(function RecordDetailView({
             </Group>
           </Box>
 
+          {/* Delete banner */}
+          {isDeleted && recordData && (
+            <Group
+              gap={8}
+              align="center"
+              wrap="nowrap"
+              mb="xs"
+              style={{
+                padding: '8px 12px',
+                backgroundColor:
+                  recordData.row.__rowStatus === 'deleted'
+                    ? 'var(--delete-needs-review-bg)'
+                    : 'var(--delete-approved-bg)',
+                color:
+                  recordData.row.__rowStatus === 'deleted'
+                    ? 'var(--delete-needs-review-stroke)'
+                    : 'var(--delete-approved-stroke)',
+              }}
+            >
+              <StyledLucideIcon Icon={Trash2} size="sm" c="currentColor" />
+              <Text12Regular c="currentColor" style={{ flex: 1 }}>
+                {recordData.row.__rowStatus === 'deleted'
+                  ? 'Record removed'
+                  : 'This record will be deleted on next publish'}
+              </Text12Regular>
+              {recordData.row.__rowStatus === 'deleted' && (
+                <>
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="currentColor"
+                    leftSection={<Check size={12} />}
+                    onClick={handleAccept}
+                    disabled={!currentRecordCliPath}
+                  >
+                    Approve
+                  </ButtonSecondaryGhost>
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="currentColor"
+                    leftSection={<RotateCcw size={12} />}
+                    onClick={handleReject}
+                    disabled={!currentRecordCliPath}
+                  >
+                    Reject
+                  </ButtonSecondaryGhost>
+                </>
+              )}
+              {recordData.row.__rowStatus === 'deletedUnpublished' && (
+                <ButtonSecondaryGhost
+                  size="compact-xs"
+                  c="currentColor"
+                  leftSection={<RotateCcw size={12} />}
+                  onClick={handleRestore}
+                >
+                  Restore
+                </ButtonSecondaryGhost>
+              )}
+            </Group>
+          )}
+
+          {/* Create banner */}
+          {isCreated && recordData && (
+            <Group
+              gap={8}
+              align="center"
+              wrap="nowrap"
+              mb="xs"
+              style={{
+                padding: '8px 12px',
+                backgroundColor:
+                  recordData.row.__rowStatus === 'added'
+                    ? 'var(--create-needs-review-bg)'
+                    : 'var(--create-approved-bg)',
+                color:
+                  recordData.row.__rowStatus === 'added'
+                    ? 'var(--create-needs-review-stroke)'
+                    : 'var(--create-approved-stroke)',
+              }}
+            >
+              <StyledLucideIcon Icon={FilePlus} size="sm" c="currentColor" />
+              <Text12Regular c="currentColor" style={{ flex: 1 }}>
+                {recordData.row.__rowStatus === 'added'
+                  ? 'Record added'
+                  : 'This record will be created on next publish'}
+              </Text12Regular>
+              {recordData.row.__rowStatus === 'added' && (
+                <>
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="currentColor"
+                    leftSection={<Check size={12} />}
+                    onClick={handleAccept}
+                    disabled={!currentRecordCliPath}
+                  >
+                    Approve
+                  </ButtonSecondaryGhost>
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="currentColor"
+                    leftSection={<RotateCcw size={12} />}
+                    onClick={handleReject}
+                    disabled={!currentRecordCliPath}
+                  >
+                    Reject
+                  </ButtonSecondaryGhost>
+                </>
+              )}
+              {recordData.row.__rowStatus === 'addedUnpublished' && (
+                <ButtonSecondaryGhost
+                  size="compact-xs"
+                  c="currentColor"
+                  leftSection={<Trash2 size={12} />}
+                  onClick={handleDiscardCreate}
+                >
+                  Discard
+                </ButtonSecondaryGhost>
+              )}
+            </Group>
+          )}
+
           {/* Content */}
           {loading && (
             <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -722,23 +932,68 @@ export const RecordDetailView = memo(function RecordDetailView({
             </Box>
           )}
 
-          {!loading && displayData && !viewRaw && (
-            <Box
-              style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0,
-                backgroundColor: isDeleted
-                  ? recordData?.row.__rowStatus === 'deleted'
-                    ? 'var(--delete-needs-review-bg)'
-                    : 'var(--delete-approved-bg)'
-                  : undefined,
-              }}
-            >
-              <RecordFieldsGrid rows={fieldRows} />
-            </Box>
-          )}
+          {!loading &&
+            displayData &&
+            !viewRaw &&
+            (() => {
+              const totalRecordFields = recordData?.columns.length ?? 0;
+              const visibleCount = columnOrder.filter((f) => recordData?.columns.includes(f)).length;
+              const hiddenCount = totalRecordFields - visibleCount;
+              return (
+                <Box
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 0,
+                  }}
+                >
+                  <RecordFieldsGrid
+                    rows={fieldRows}
+                    footer={
+                      hiddenCount > 0 ? (
+                        <Box style={{ padding: '8px 12px' }}>
+                          <Text12Regular c="var(--fg-muted)">
+                            {showAllFields ? (
+                              <>
+                                Showing all fields{' \u2022 '}
+                                <UnstyledButton
+                                  component="span"
+                                  onClick={() => setShowAllFields(false)}
+                                  style={{
+                                    textDecoration: 'underline',
+                                    color: 'var(--fg-muted)',
+                                    fontSize: 'inherit',
+                                  }}
+                                >
+                                  Hide extra
+                                </UnstyledButton>
+                              </>
+                            ) : (
+                              <>
+                                {hiddenCount} more {hiddenCount === 1 ? 'field' : 'fields'} hidden in view
+                                {' \u2022 '}
+                                <UnstyledButton
+                                  component="span"
+                                  onClick={() => setShowAllFields(true)}
+                                  style={{
+                                    textDecoration: 'underline',
+                                    color: 'var(--fg-muted)',
+                                    fontSize: 'inherit',
+                                  }}
+                                >
+                                  Show all
+                                </UnstyledButton>
+                              </>
+                            )}
+                          </Text12Regular>
+                        </Box>
+                      ) : undefined
+                    }
+                  />
+                </Box>
+              );
+            })()}
 
           {!loading && displayData && viewRaw && (
             <Box
@@ -748,25 +1003,10 @@ export const RecordDetailView = memo(function RecordDetailView({
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
-                backgroundColor: isDeleted
-                  ? recordData?.row.__rowStatus === 'deleted'
-                    ? 'var(--delete-needs-review-bg)'
-                    : 'var(--delete-approved-bg)'
-                  : undefined,
               }}
             >
               <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-                <ScratchJsonCodeMirror
-                  value={rawJsonText}
-                  readOnly
-                  surfaceBackgroundColor={
-                    isDeleted
-                      ? recordData?.row.__rowStatus === 'deleted'
-                        ? 'var(--delete-needs-review-bg)'
-                        : 'var(--delete-approved-bg)'
-                      : undefined
-                  }
-                />
+                <ScratchJsonCodeMirror value={rawJsonText} readOnly />
               </Box>
             </Box>
           )}

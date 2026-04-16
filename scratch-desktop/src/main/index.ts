@@ -10,6 +10,7 @@ import {
   type FilterStatus,
   acceptCellChange,
   countWorkspaceFiles,
+  discardCreatedRecord,
   getFolderMetadata,
   listFiles,
   listFolders,
@@ -22,6 +23,7 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
+  restoreDeletedRecord,
   undoApprovedCellChange,
   writeFileTextRaw,
 } from './local-files';
@@ -627,6 +629,12 @@ ipcMain.handle(
   'files:undo-approved-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
+);
+ipcMain.handle('files:restore-deleted-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
+  restoreDeletedRecord(folderPath, workspacePath, filename),
+);
+ipcMain.handle('files:discard-created-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
+  discardCreatedRecord(folderPath, workspacePath, filename),
 );
 ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
   acceptFieldChanges(workspacePath, folderPath, fieldName),
