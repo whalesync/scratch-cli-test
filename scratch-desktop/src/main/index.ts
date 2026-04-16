@@ -506,11 +506,29 @@ ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
 });
 ipcMain.on(
   'scratch:show-native-context-menu',
-  (event, items: Array<{ id: string; label: string; type?: 'separator'; danger?: boolean }>) => {
+  (
+    event,
+    items: Array<{
+      id: string;
+      label: string;
+      type?: 'separator';
+      danger?: boolean;
+      submenu?: Array<{ id: string; label: string }>;
+    }>,
+  ) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
     const template = items.map((item) => {
       if (item.type === 'separator') return { type: 'separator' as const };
+      if (item.submenu) {
+        return {
+          label: item.label,
+          submenu: item.submenu.map((sub) => ({
+            label: sub.label,
+            click: () => event.sender.send('scratch:native-context-menu-click', sub.id),
+          })),
+        };
+      }
       return {
         label: item.label,
         click: () => event.sender.send('scratch:native-context-menu-click', item.id),

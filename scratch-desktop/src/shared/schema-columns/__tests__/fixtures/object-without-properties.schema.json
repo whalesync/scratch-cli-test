@@ -1,0 +1,13 @@
+{
+  "slug": "opaque",
+  "name": "Opaque Object",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "metadata": {
+        "type": "object",
+        "description": "Opaque bag of key-value pairs"
+      }
+    }
+  }
+}

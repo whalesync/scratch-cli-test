@@ -1,0 +1,279 @@
+{
+  "id": {
+    "wsId": "contacts",
+    "remoteId": ["contacts"]
+  },
+  "slug": "contacts",
+  "name": "Contacts",
+  "schema": {
+    "$id": "moco/contacts",
+    "title": "Contacts",
+    "type": "object",
+    "required": ["id", "gender", "lastname", "created_at", "updated_at"],
+    "properties": {
+      "id": {
+        "description": "Unique identifier (read-only)",
+        "x-scratch-readonly": true,
+        "type": "number"
+      },
+      "gender": {
+        "description": "Gender (required): F=Female, M=Male, U=Unknown",
+        "anyOf": [
+          {
+            "const": "F",
+            "type": "string"
+          },
+          {
+            "const": "M",
+            "type": "string"
+          },
+          {
+            "const": "U",
+            "type": "string"
+          }
+        ]
+      },
+      "firstname": {
+        "description": "First name",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "lastname": {
+        "description": "Last name (required)",
+        "type": "string"
+      },
+      "title": {
+        "description": "Title (e.g., Dr. med.)",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "job_position": {
+        "description": "Job position/role",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mobile_phone": {
+        "description": "Mobile phone number",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "work_phone": {
+        "description": "Work phone number",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "work_email": {
+        "description": "Work email address",
+        "anyOf": [
+          {
+            "format": "email",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "work_fax": {
+        "description": "Work fax number",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "work_address": {
+        "description": "Work address",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "home_address": {
+        "description": "Home address",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "home_email": {
+        "description": "Home email address",
+        "anyOf": [
+          {
+            "format": "email",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "home_phone": {
+        "description": "Home phone number",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "birthday": {
+        "description": "Birthday (YYYY-MM-DD)",
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "salutation": {
+        "description": "Salutation",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "info": {
+        "description": "Additional information",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "avatar_url": {
+        "description": "Profile image URL (read-only)",
+        "x-scratch-readonly": true,
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tags": {
+        "description": "Tags/labels",
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "custom_properties": {
+        "description": "Custom properties (key-value pairs)",
+        "type": "object",
+        "patternProperties": {
+          "^(.*)$": {}
+        }
+      },
+      "company": {
+        "description": "Associated company (read-only, use company_id for create/update)",
+        "x-scratch-readonly": true,
+        "x-scratch-foreign-key": {
+          "linkedTableId": "companies"
+        },
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "user": {
+        "description": "Assigned user (read-only, use user_id for create/update)",
+        "x-scratch-readonly": true,
+        "type": "object",
+        "required": ["id", "firstname", "lastname"],
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "firstname": {
+            "type": "string"
+          },
+          "lastname": {
+            "type": "string"
+          }
+        }
+      },
+      "created_at": {
+        "description": "Created timestamp (read-only)",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "type": "string"
+      },
+      "updated_at": {
+        "description": "Updated timestamp (read-only)",
+        "format": "date-time",
+        "x-scratch-readonly": true,
+        "type": "string"
+      }
+    }
+  },
+  "idColumnRemoteId": "id",
+  "titleColumnRemoteId": ["lastname"],
+  "mainContentColumnRemoteId": ["info"],
+  "basePath": [],
+  "generatedAt": "2026-04-15T22:56:20.174Z"
+}

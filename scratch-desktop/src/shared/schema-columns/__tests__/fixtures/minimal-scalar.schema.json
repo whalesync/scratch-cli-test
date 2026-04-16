@@ -1,0 +1,25 @@
+{
+  "slug": "flat",
+  "name": "Flat Scalar",
+  "schema": {
+    "$id": "flat",
+    "type": "object",
+    "required": ["id", "name"],
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Primary key"
+      },
+      "name": {
+        "type": "string",
+        "description": "Display name"
+      },
+      "active": {
+        "type": "boolean"
+      },
+      "score": {
+        "type": "number"
+      }
+    }
+  }
+}

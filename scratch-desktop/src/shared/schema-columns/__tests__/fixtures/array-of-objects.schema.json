@@ -1,0 +1,20 @@
+{
+  "slug": "attachments",
+  "name": "Attachments",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string" },
+            "size": { "type": "integer" }
+          }
+        },
+        "x-scratch-connector-data-type": "multipleAttachments"
+      }
+    }
+  }
+}

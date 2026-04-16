@@ -1,0 +1,30 @@
+{
+  "slug": "readonly",
+  "name": "Read Only Flags",
+  "schema": {
+    "type": "object",
+    "required": ["id"],
+    "properties": {
+      "id": {
+        "type": "string",
+        "x-scratch-readonly": true
+      },
+      "fields": {
+        "type": "object",
+        "required": ["Name"],
+        "properties": {
+          "Name": {
+            "type": "string"
+          },
+          "Computed": {
+            "type": "string",
+            "x-scratch-readonly": true
+          },
+          "Editable": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

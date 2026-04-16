@@ -1,0 +1,23 @@
+{
+  "slug": "appMinimal",
+  "name": "Minimal",
+  "schema": {
+    "$id": "appMinimal/tblMinimal",
+    "title": "Minimal",
+    "type": "object",
+    "required": ["id", "fields"],
+    "properties": {
+      "id": { "type": "string" },
+      "fields": {
+        "type": "object",
+        "properties": {
+          "Name": {
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "fldName"
+          }
+        }
+      }
+    }
+  }
+}

@@ -129,7 +129,12 @@ const scratchDesktop = {
   /** Reveals a file in Finder / Explorer (shell.showItemInFolder). */
   showItemInFolder: (filePath: string): Promise<void> => invoke('scratch:show-item-in-folder', filePath),
   showNativeContextMenu: (
-    items: Array<{ id: string; label: string; type?: 'separator' }>,
+    items: Array<{
+      id: string;
+      label: string;
+      type?: 'separator';
+      submenu?: Array<{ id: string; label: string }>;
+    }>,
     onClick: (id: string) => void,
   ): void => {
     ipcRenderer.send('scratch:show-native-context-menu', items);

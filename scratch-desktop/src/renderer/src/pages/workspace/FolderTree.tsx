@@ -3,6 +3,7 @@ import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, UnstyledButton } from '@mantine/core';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import classes from './FolderTree.module.css';
 import { LocalFolder } from './WorkspaceContent';
 
@@ -84,27 +85,23 @@ const INDENT_PX = 16;
 
 const isMac = window.electron?.process?.platform === 'darwin';
 
-function showFolderContextMenu(folderPath: string): void {
-  window.scratchDesktop.showNativeContextMenu(
-    [
-      { id: 'reveal', label: isMac ? 'Open in Finder' : 'Open in Explorer' },
-      { id: 'terminal', label: isMac ? 'Open in Terminal' : 'Open in PowerShell' },
-    ],
-    (id) => {
-      if (id === 'reveal') void window.scratchDesktop.showInFolder(folderPath);
-      if (id === 'terminal') void window.scratchDesktop.openInTerminal(folderPath);
-    },
-  );
-}
-
 interface FolderTreeNodeProps {
   node: TreeNode;
   depth: number;
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
+  isDevToolsEnabled: boolean;
+  onShowColumnDefs?: (folderPath: string) => void;
 }
 
-function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: FolderTreeNodeProps) {
+function FolderTreeNodeRow({
+  node,
+  depth,
+  selectedFolderPath,
+  onSelectFolder,
+  isDevToolsEnabled,
+  onShowColumnDefs,
+}: FolderTreeNodeProps) {
   const hasChildren = node.children.size > 0;
   const [expanded, setExpanded] = useState(true);
 
@@ -115,6 +112,34 @@ function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: 
       setExpanded((prev) => !prev);
     }
   }, [node.folder, hasChildren, onSelectFolder]);
+
+  const showContextMenu = useCallback(
+    (path: string) => {
+      const items: Array<{
+        id: string;
+        label: string;
+        type?: 'separator';
+        submenu?: Array<{ id: string; label: string }>;
+      }> = [
+        { id: 'reveal', label: isMac ? 'Open in Finder' : 'Open in Explorer' },
+        { id: 'terminal', label: isMac ? 'Open in Terminal' : 'Open in PowerShell' },
+      ];
+      if (isDevToolsEnabled && node.folder) {
+        items.push({ id: 'sep', label: '', type: 'separator' });
+        items.push({
+          id: 'dev-tools',
+          label: 'Dev Tools',
+          submenu: [{ id: 'column-defs', label: 'Column Definitions…' }],
+        });
+      }
+      window.scratchDesktop.showNativeContextMenu(items, (id) => {
+        if (id === 'reveal') void window.scratchDesktop.showInFolder(path);
+        if (id === 'terminal') void window.scratchDesktop.openInTerminal(path);
+        if (id === 'column-defs') onShowColumnDefs?.(path);
+      });
+    },
+    [isDevToolsEnabled, node.folder, onShowColumnDefs],
+  );
 
   const isSelected = node.folder != null && selectedFolderPath === node.folder.path;
   const sortedChildren = useMemo(() => Array.from(node.children.values()), [node.children]);
@@ -129,7 +154,7 @@ function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: 
           folderPath
             ? (e: React.MouseEvent) => {
                 e.preventDefault();
-                showFolderContextMenu(folderPath);
+                showContextMenu(folderPath);
               }
             : undefined
         }
@@ -179,7 +204,7 @@ function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: 
             component="span"
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
-              showFolderContextMenu(folderPath);
+              showContextMenu(folderPath);
             }}
             style={{
               display: 'flex',
@@ -205,6 +230,8 @@ function FolderTreeNodeRow({ node, depth, selectedFolderPath, onSelectFolder }: 
               depth={depth + 1}
               selectedFolderPath={selectedFolderPath}
               onSelectFolder={onSelectFolder}
+              isDevToolsEnabled={isDevToolsEnabled}
+              onShowColumnDefs={onShowColumnDefs}
             />
           ))}
         </>
@@ -219,11 +246,24 @@ interface FolderTreeProps {
   localFolders: LocalFolder[];
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
+  workspacePath: string | null;
+  isDevToolsEnabled: boolean;
 }
 
-export function FolderTree({ localFolders, selectedFolderPath, onSelectFolder }: FolderTreeProps) {
+export function FolderTree({
+  localFolders,
+  selectedFolderPath,
+  onSelectFolder,
+  workspacePath,
+  isDevToolsEnabled,
+}: FolderTreeProps) {
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
+  const [columnDefsFolder, setColumnDefsFolder] = useState<string | null>(null);
+
+  const handleShowColumnDefs = useCallback((folderPath: string) => {
+    setColumnDefsFolder(folderPath);
+  }, []);
 
   return (
     <>
@@ -234,8 +274,18 @@ export function FolderTree({ localFolders, selectedFolderPath, onSelectFolder }:
           depth={0}
           selectedFolderPath={selectedFolderPath}
           onSelectFolder={onSelectFolder}
+          isDevToolsEnabled={isDevToolsEnabled}
+          onShowColumnDefs={handleShowColumnDefs}
         />
       ))}
+
+      {columnDefsFolder && workspacePath && (
+        <ColumnDefinitionsModal
+          folderPath={columnDefsFolder}
+          workspacePath={workspacePath}
+          onClose={() => setColumnDefsFolder(null)}
+        />
+      )}
     </>
   );
 }

@@ -96,7 +96,12 @@ interface ScratchDesktopAPI {
   showInFolder: (folderPath: string) => Promise<void>;
   showItemInFolder: (filePath: string) => Promise<void>;
   showNativeContextMenu: (
-    items: Array<{ id: string; label: string; type?: 'separator' }>,
+    items: Array<{
+      id: string;
+      label: string;
+      type?: 'separator';
+      submenu?: Array<{ id: string; label: string }>;
+    }>,
     onClick: (id: string) => void,
   ) => void;
   openInTerminal: (folderPath: string) => Promise<void>;

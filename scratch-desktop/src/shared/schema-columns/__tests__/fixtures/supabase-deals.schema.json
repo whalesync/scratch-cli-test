@@ -1,0 +1,114 @@
+{
+  "id": {
+    "wsId": "imjgmmiylssreunihfzh",
+    "remoteId": ["imjgmmiylssreunihfzh", "public", "Deals"]
+  },
+  "slug": "Deals",
+  "name": "Deals",
+  "schema": {
+    "$id": "supabase/public.Deals",
+    "title": "Deals",
+    "type": "object",
+    "required": ["id"],
+    "properties": {
+      "id": {
+        "type": "number",
+        "x-scratch-connector-data-type": "numeric",
+        "x-scratch-readonly": true
+      },
+      "created_at": {
+        "format": "date-time",
+        "type": "string",
+        "x-scratch-connector-data-type": "timestamp",
+        "x-scratch-readonly": true
+      },
+      "name": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "text"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "text"
+      },
+      "priority": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "numeric"
+      },
+      "notes": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "text"
+      },
+      "close_date": {
+        "anyOf": [
+          {
+            "format": "date-time",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "timestamp"
+      },
+      "client_id": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "numeric",
+        "x-scratch-foreign-key": {
+          "linkedTableId": "Clients"
+        }
+      },
+      "company_id": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-scratch-connector-data-type": "numeric",
+        "x-scratch-foreign-key": {
+          "linkedTableId": "companies"
+        }
+      }
+    }
+  },
+  "idColumnRemoteId": "id",
+  "basePath": ["public"],
+  "generatedAt": "2026-04-15T23:02:45.434Z"
+}

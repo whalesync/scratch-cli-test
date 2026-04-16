@@ -1,0 +1,115 @@
+{
+  "id": {
+    "wsId": "appFbJ6xLano0bGhI",
+    "remoteId": ["appFbJ6xLano0bGhI", "tblyAGtJqrSTfLjqb"]
+  },
+  "slug": "appFbJ6xLano0bGhI",
+  "name": "Semiprecious Stones",
+  "schema": {
+    "$id": "appFbJ6xLano0bGhI/tblyAGtJqrSTfLjqb",
+    "title": "Semiprecious Stones",
+    "type": "object",
+    "required": ["id", "fields", "createdTime"],
+    "properties": {
+      "id": {
+        "description": "Unique record identifier",
+        "type": "string"
+      },
+      "fields": {
+        "description": "Record field values keyed by field name",
+        "type": "object",
+        "properties": {
+          "Stone": {
+            "description": "Stone",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "fld5XniJxjXtubkA8"
+          },
+          "Hardness": {
+            "description": "Hardness",
+            "type": "number",
+            "x-scratch-connector-data-type": "number",
+            "x-scratch-remote-field-id": "fld6C2BDegZSt18Ws"
+          },
+          "Value": {
+            "description": "Value",
+            "type": "number",
+            "x-scratch-connector-data-type": "number",
+            "x-scratch-remote-field-id": "fldYBj7TzkGrWwG2d"
+          },
+          "Details": {
+            "description": "Details",
+            "type": "string",
+            "x-scratch-connector-data-type": "singleLineText",
+            "x-scratch-remote-field-id": "flda2iZNSTJIdGpfW"
+          },
+          "Primary Minerals": {
+            "description": "Primary Minerals",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleSelects",
+            "x-scratch-remote-field-id": "flde1AbIeHxr256Ba"
+          },
+          "Read Only Autonumber": {
+            "description": "Read Only Autonumber",
+            "type": "integer",
+            "x-scratch-connector-data-type": "autoNumber",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "fldPOZChylgTRZqfW"
+          },
+          "Birth Stone": {
+            "description": "Birth Stone",
+            "x-scratch-foreign-key": {
+              "linkedTableId": "tblDm2PThSGMpxyJx"
+            },
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleRecordLinks",
+            "x-scratch-remote-field-id": "fldy5Yz8mdadf5UsI"
+          },
+          "Name (from Birth Stone)": {
+            "description": "Name (from Birth Stone)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-scratch-connector-data-type": "multipleLookupValues",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "fldGsM80xPOAcTrA1"
+          },
+          "Lookup Column": {
+            "description": "Lookup Column",
+            "type": "string",
+            "x-scratch-connector-data-type": "rollup-singleLineText",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "fldbUaFm56e5xF7aA",
+            "x-scratch-suggested-transformer": {
+              "type": "ensure_type",
+              "options": {
+                "expectedType": "string",
+                "onFailure": "null"
+              }
+            }
+          }
+        }
+      },
+      "createdTime": {
+        "description": "ISO 8601 timestamp of record creation",
+        "format": "date-time",
+        "type": "string"
+      }
+    }
+  },
+  "idColumnRemoteId": "id",
+  "titleColumnRemoteId": [
+    "appFbJ6xLano0bGhI",
+    "tblyAGtJqrSTfLjqb",
+    "fld5XniJxjXtubkA8"
+  ],
+  "basePath": ["Base Alpha"],
+  "generatedAt": "2026-04-14T22:42:18.993Z"
+}

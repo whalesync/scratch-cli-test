@@ -1,0 +1,18 @@
+{
+  "slug": "unions",
+  "name": "Union Types",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "nullable_string": {
+        "type": ["string", "null"]
+      },
+      "null_only": {
+        "type": ["null"]
+      },
+      "nullable_number": {
+        "type": ["null", "number"]
+      }
+    }
+  }
+}

@@ -20,6 +20,7 @@ interface WorkspaceSidebarProps {
   maxWidth: number;
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
+  workspacePath: string | null;
 }
 
 export function WorkspaceSidebar({
@@ -32,6 +33,7 @@ export function WorkspaceSidebar({
   maxWidth,
   selectedFolderPath,
   onSelectFolder,
+  workspacePath,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
@@ -88,6 +90,8 @@ export function WorkspaceSidebar({
               localFolders={localFolders}
               selectedFolderPath={selectedFolderPath}
               onSelectFolder={onSelectFolder}
+              workspacePath={workspacePath}
+              isDevToolsEnabled={isDevToolsEnabled}
             />
           </>
         )}

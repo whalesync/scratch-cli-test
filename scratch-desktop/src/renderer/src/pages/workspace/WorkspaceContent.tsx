@@ -117,6 +117,7 @@ export function WorkspaceContent({
         maxWidth={MAX_SIDEBAR_WIDTH}
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={handleSelectFolder}
+        workspacePath={localPath}
       />
 
       {/* Resize Handle */}
