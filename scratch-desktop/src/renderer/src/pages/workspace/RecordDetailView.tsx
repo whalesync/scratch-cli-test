@@ -1,4 +1,5 @@
 import { Box, Group, Loader, ScrollArea, Stack, UnstyledButton } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import {
   Braces,
   Check,
@@ -14,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
@@ -52,6 +54,7 @@ interface RecordDetailViewProps {
   selectedIndex: number;
   folderPath: string;
   workspacePath: string;
+  schema: Record<string, unknown> | null;
   titleColumnId: string | null;
   /**
    * Field display order, matching the grid's visible column order (including
@@ -207,6 +210,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   selectedIndex,
   folderPath,
   workspacePath,
+  schema,
   titleColumnId,
   columnOrder,
   onSelectIndex,
@@ -464,23 +468,40 @@ export const RecordDetailView = memo(function RecordDetailView({
         return;
       }
 
-      clearFieldEdit();
-
       if (nextValue === currentValue) {
+        clearFieldEdit();
         return;
       }
 
+      try {
+        coerceCellInputTextWithSchema(schema, fieldName, nextValue);
+      } catch (err) {
+        notifications.show({
+          color: 'red',
+          title: 'Invalid value',
+          message: err instanceof Error ? err.message : 'The value does not match the field schema.',
+        });
+        return;
+      }
+
+      clearFieldEdit();
+
       void window.scratchFiles
-        .acceptCellChange(folderPath, workspacePath, filename, fieldName, nextValue)
+        .acceptCellInputText(folderPath, workspacePath, filename, fieldName, nextValue)
         .then((result) => {
           setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
           onRecordFieldChanged?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
           console.error('[acceptCellChange] record edit failed:', err);
+          notifications.show({
+            color: 'red',
+            title: 'Failed to save field',
+            message: err instanceof Error ? err.message : 'Unknown error',
+          });
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged],
+    [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged, schema],
   );
 
   const fieldRows = useMemo<RecordFieldRow[]>(() => {

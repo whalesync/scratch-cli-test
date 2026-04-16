@@ -30,6 +30,7 @@ import {
 import { notifications } from '@mantine/notifications';
 import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
@@ -193,19 +194,6 @@ function toDisplayString(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
-}
-
-// Mirrors parseFieldValue in src/main/local-files.ts — kept in sync by hand
-// so the renderer can predict the backend's parse result for optimistic
-// updates without an extra IPC round trip. If that function changes, update
-// this one to match.
-function parseCellValueLikeBackend(str: string): unknown {
-  const trimmed = str.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return str;
-  }
 }
 
 function diffValuesEqual(a: unknown, b: unknown): boolean {
@@ -961,16 +949,27 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       // Apply optimistically before awaiting the IPC so the grid canvas never
       // repaints the pre-edit value in the gap between the overlay closing
-      // and the backend write completing. The backend's parseFieldValue is
-      // a JSON.parse-or-string fallback, which we mirror here. On failure we
-      // trigger a full refresh to resync the grid with the authoritative
-      // on-disk state rather than trying to surgically revert — any
-      // intervening edits on other cells are preserved that way.
-      const parsedValue = parseCellValueLikeBackend(nextValue);
+      // and the backend write completing. We reuse the same shared coercion
+      // helper as the main-process save path so the optimistic value matches
+      // the value that will be written on disk. On failure we trigger a full
+      // refresh to resync the grid with the authoritative on-disk state rather
+      // than trying to surgically revert — any intervening edits on other
+      // cells are preserved that way.
+      let parsedValue: unknown;
+      try {
+        parsedValue = coerceCellInputTextWithSchema(schema, fieldName, nextValue);
+      } catch (err) {
+        notifications.show({
+          color: 'red',
+          title: 'Invalid value',
+          message: err instanceof Error ? err.message : 'The value does not match the field schema.',
+        });
+        return;
+      }
       setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, parsedValue) : prev));
 
       void window.scratchFiles
-        .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
+        .acceptCellInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
           closeGridEditorChrome();
         })
@@ -985,7 +984,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, refreshGridData, schema, selectedFolderPath, workspacePath],
   );
 
   const undoApprovedGridCellChange = useCallback(
@@ -1857,6 +1856,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 selectedIndex={detailRowIndex}
                 folderPath={selectedFolderPath}
                 workspacePath={workspacePath}
+                schema={schema}
                 titleColumnId={titleColumnId}
                 columnOrder={effectiveVisibleColumns}
                 onSelectIndex={setDetailRowIndex}

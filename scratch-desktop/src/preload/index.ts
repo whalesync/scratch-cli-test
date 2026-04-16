@@ -318,6 +318,14 @@ const scratchFiles = {
     masterData: Record<string, unknown> | null;
     displayData: Record<string, unknown> | null;
   } | null> => invoke('files:read-diff-record-data', folderPath, workspacePath, filename),
+  acceptCellInputText: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+    value: string,
+  ): Promise<{ value: unknown }> =>
+    invoke('files:accept-cell-input-text', folderPath, workspacePath, filename, fieldName, value),
   acceptCellChange: (
     folderPath: string,
     workspacePath: string,

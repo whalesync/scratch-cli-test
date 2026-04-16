@@ -11,6 +11,7 @@ import { execFile } from 'child_process';
 import { copyFile, mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { basename, dirname, extname, join, relative, sep } from 'path';
 
+import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
@@ -1324,9 +1325,9 @@ export async function readDiffRecordData(
 }
 
 /**
- * Applies a single field value to both the working copy and dirty branch file.
- * The value string is parsed as JSON if possible (restoring numbers, booleans, etc.),
- * otherwise kept as a plain string. Dot-separated fieldName paths address nested fields.
+ * Legacy string round-trip save path used by older UI flows that still pass
+ * display strings rather than raw typed values. Dot-separated fieldName paths
+ * address nested fields.
  */
 export async function acceptCellChange(
   folderPath: string,
@@ -1335,26 +1336,56 @@ export async function acceptCellChange(
   fieldName: string,
   value: string,
 ): Promise<{ value: unknown }> {
-  const parsed = parseFieldValue(value);
+  const parsed = coerceCellInputText(value);
 
+  await applyAcceptedCellValue(folderPath, workspacePath, filename, fieldName, parsed);
+
+  return { value: parsed };
+}
+
+/**
+ * Applies direct user-entered cell text using the folder schema to determine
+ * how that text should be stored on disk.
+ */
+export async function acceptCellInputText(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+  fieldName: string,
+  value: string,
+): Promise<{ value: unknown }> {
+  const relPath = relative(workspacePath, folderPath);
+  const schema = await readConnectionSchema(workspacePath, relPath);
+  const parsed = coerceCellInputTextWithSchema(schema, fieldName, value);
+
+  await applyAcceptedCellValue(folderPath, workspacePath, filename, fieldName, parsed);
+
+  return { value: parsed };
+}
+
+async function applyAcceptedCellValue(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+  fieldName: string,
+  value: unknown,
+): Promise<void> {
   const workingFile = join(folderPath, filename);
   const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
   const dirtyFile = join(dirtyPath, filename);
 
   console.debug('[acceptCellChange] working:', workingFile);
   console.debug('[acceptCellChange] dirty:  ', dirtyFile);
-  console.debug('[acceptCellChange] field:', fieldName, '→', JSON.stringify(parsed));
+  console.debug('[acceptCellChange] field:', fieldName, '→', JSON.stringify(value));
 
-  await patchJsonField(workingFile, fieldName, parsed);
+  await patchJsonField(workingFile, fieldName, value);
   console.debug('[acceptCellChange] working file patched');
 
-  await patchJsonField(dirtyFile, fieldName, parsed);
+  await patchJsonField(dirtyFile, fieldName, value);
   console.debug('[acceptCellChange] dirty file patched');
 
   await commitReviewedDirtyFile(folderPath, workspacePath, filename);
   console.debug('[acceptCellChange] dirty ref updated');
-
-  return { value: parsed };
 }
 
 /**
@@ -1529,15 +1560,6 @@ function deleteNestedValueAt(current: Record<string, unknown>, parts: string[], 
 
 function isFileNotFoundError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';
-}
-
-function parseFieldValue(str: string): unknown {
-  const trimmed = str.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return str;
-  }
 }
 
 async function statFileEntry(folderPath: string, name: string): Promise<FileEntry> {

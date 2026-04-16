@@ -9,6 +9,7 @@ import {
   type DiffGridFilter,
   type FilterStatus,
   acceptCellChange,
+  acceptCellInputText,
   countWorkspaceFiles,
   discardCreatedRecord,
   getFolderMetadata,
@@ -619,6 +620,11 @@ ipcMain.handle(
 );
 ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>
   readDiffRecordData(folderPath, workspacePath, filename),
+);
+ipcMain.handle(
+  'files:accept-cell-input-text',
+  async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
+    acceptCellInputText(folderPath, workspacePath, filename, fieldName, value),
 );
 ipcMain.handle(
   'files:accept-cell-change',

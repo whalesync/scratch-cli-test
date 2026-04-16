@@ -262,6 +262,13 @@ interface ScratchFilesAPI {
     masterData: Record<string, unknown> | null;
     displayData: Record<string, unknown> | null;
   } | null>;
+  acceptCellInputText: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+    value: string,
+  ) => Promise<{ value: unknown }>;
   acceptCellChange: (
     folderPath: string,
     workspacePath: string,
