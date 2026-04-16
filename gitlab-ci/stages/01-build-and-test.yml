@@ -283,9 +283,9 @@ build and test scratch-git:
 # Warm both fallback caches (native + cross) on every merge to master.
 # Release jobs and MR pipelines fall back to these keys when the Cargo.lock-hash
 # miss. Writes to both keys so a cold cache warms whichever job runs next.
-Fill fallback cache for scratch-git-2:
+fill fallback cache for scratch-git-2:
   stage: cleanup
-  image: unawareguitar/hasty-dolphin:latest
+  image: rust:slim-bookworm
   interruptible: true
   allow_failure: true
   variables:
@@ -295,20 +295,39 @@ Fill fallback cache for scratch-git-2:
       unprotect: true
       paths: !reference [.caches, cargo, paths]
       policy: pull-push
+  script:
+    - cd scratch-git-2
+    # Native build warms the `cargo` fallback (target/{debug,release}).
+    - cargo build --release
+  rules:
+    - !reference [.rules, on_merge_to_master]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+
+fill fallback cross-compile cache for scratch-git-2:
+  stage: cleanup
+  image: unawareguitar/hasty-dolphin:latest
+  interruptible: true
+  allow_failure: true
+  variables:
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+  cache:
     - key: scratch-git-2-cargo-cross
       unprotect: true
       paths: !reference [.caches, cargo_cross, paths]
       policy: pull-push
   script:
     - cd scratch-git-2
-    # Native build warms the `cargo` fallback (target/{debug,release}).
-    - cargo build --release --bin scratch-git-2
     # Cross builds warm the `cargo_cross` fallback (target/<triple>).
-    - cargo zigbuild --release --bin scratchmd --target aarch64-apple-darwin
-    - cargo zigbuild --release --bin scratchmd --target x86_64-unknown-linux-gnu
-    - cargo zigbuild --release --bin scratchmd --target x86_64-pc-windows-gnu
+    - cargo zigbuild --release --target aarch64-apple-darwin
+    - cargo zigbuild --release --target x86_64-unknown-linux-gnu
+    - cargo zigbuild --release --target x86_64-pc-windows-gnu
   rules:
     - !reference [.rules, on_merge_to_master]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
 
 .build-scratch-git-docker-image:
   stage: build and test

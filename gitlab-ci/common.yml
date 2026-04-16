@@ -130,6 +130,7 @@ include:
     key:
       files:
         - scratch-git-2/Cargo.lock
+      prefix: "2" # manually increment this to clear caches
     fallback_keys:
       - scratch-git-2-cargo
     unprotect: true
@@ -145,6 +146,7 @@ include:
     key:
       files:
         - scratch-git-2/Cargo.lock
+      prefix: "2" # manually increment this to clear caches
     fallback_keys:
       - scratch-git-2-cargo
     unprotect: true
