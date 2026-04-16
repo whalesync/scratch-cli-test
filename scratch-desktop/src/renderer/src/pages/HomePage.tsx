@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import logoUrl from '../assets/logo-color.svg';
 import { ButtonPrimaryLight, ButtonSecondaryGhost } from '../components/base/buttons';
 import { Text12Medium, Text12Regular, Text13Regular, TextTitle1 } from '../components/base/text';
+import { useConfirmModal } from '../components/ConfirmModal';
 import { StyledLucideIcon } from '../components/icons/StyledLucideIcon';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { UserMenu } from '../components/user-menu';
@@ -131,6 +132,7 @@ export function HomePage() {
   // Track in-flight downloads keyed by workspace id so the card can transform in place.
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+  const { confirm, confirmModal } = useConfirmModal();
   // A pending workspace promoted into the local list locally, before the next refetch resolves.
   const [optimisticLocal, setOptimisticLocal] = useState<Workspace[]>([]);
 
@@ -171,7 +173,7 @@ export function HomePage() {
 
   const handleRemove = useCallback(
     async (workspace: Workspace) => {
-      const confirmed = window.confirm(
+      const confirmed = await confirm(
         'Remove the local copy? The remote workspace will stay — you can re-download it later.',
       );
       if (!confirmed) return;
@@ -199,7 +201,7 @@ export function HomePage() {
         });
       }
     },
-    [fetchWorkspaces],
+    [confirm, fetchWorkspaces],
   );
 
   // Create-workspace modal
@@ -274,6 +276,7 @@ export function HomePage() {
 
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {confirmModal}
       <Box style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {showZeroState ? (
           <ZeroState onCreate={openCreateModal} />

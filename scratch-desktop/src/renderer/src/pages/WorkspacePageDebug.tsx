@@ -19,6 +19,7 @@ import { notifications } from '@mantine/notifications';
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useConfirmModal } from '../components/ConfirmModal';
 import { LiveCommandOutput } from '../components/LiveCommandOutput';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
@@ -90,6 +91,7 @@ export function WorkspacePageDebug() {
   const [publishAllExitCode, setPublishAllExitCode] = useState<number | null>(null);
   const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmModal } = useConfirmModal();
   const runSyncSessionIdRef = useRef<string | null>(null);
   const publishPlanSessionIdRef = useRef<string | null>(null);
   const publishFromGitSessionIdRef = useRef<string | null>(null);
@@ -180,7 +182,7 @@ export function WorkspacePageDebug() {
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       'This will remove the local files only. The remote repo and remote workspace will stay. Continue?',
     );
     if (!confirmed) {
@@ -205,7 +207,7 @@ export function WorkspacePageDebug() {
     } finally {
       setDeleting(false);
     }
-  }, [workspace]);
+  }, [confirm, workspace]);
 
   const handleAcceptAllChanges = useCallback(async () => {
     if (!workspace || !localPath) {
@@ -278,7 +280,7 @@ export function WorkspacePageDebug() {
     try {
       const unreviewed = await fetchUnreviewedChanges();
       if (unreviewed.length > 0) {
-        const confirmed = window.confirm(
+        const confirmed = await confirm(
           `${unreviewed.length} records with unreviewed changes will not be published. Continue?`,
         );
         if (!confirmed) {
@@ -302,7 +304,7 @@ export function WorkspacePageDebug() {
     } finally {
       setPushing(false);
     }
-  }, [fetchUnreviewedChanges, localPath, workspace]);
+  }, [confirm, fetchUnreviewedChanges, localPath, workspace]);
 
   const handleOpenValidateSyncs = useCallback(async () => {
     if (!localPath) {
@@ -513,7 +515,7 @@ export function WorkspacePageDebug() {
     try {
       const unreviewed = await fetchUnreviewedChanges();
       if (unreviewed.length > 0) {
-        const confirmed = window.confirm(
+        const confirmed = await confirm(
           `${unreviewed.length} records with unreviewed changes will not be published. Continue?`,
         );
         if (!confirmed) {
@@ -539,7 +541,7 @@ export function WorkspacePageDebug() {
     } finally {
       setStartingPublishAll(false);
     }
-  }, [fetchUnreviewedChanges, localPath]);
+  }, [confirm, fetchUnreviewedChanges, localPath]);
 
   useEffect(() => {
     void fetchWorkspace();
@@ -686,6 +688,8 @@ export function WorkspacePageDebug() {
 
   return (
     <Stack p="xl" gap="lg">
+      {confirmModal}
+
       <Modal
         opened={unreviewedModalOpen}
         onClose={() => {
