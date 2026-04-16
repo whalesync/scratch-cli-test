@@ -371,6 +371,7 @@ build and test scratch-desktop:
 .dummy-job:
   stage: build and test
   interruptible: true
+  allow_failure: true
   image:
   script:
     - echo "Gitlab won't merge a MR with changes only in these directories, since that doesn't trigger any pipelines"
