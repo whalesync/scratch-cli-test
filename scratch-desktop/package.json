@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "postinstall": "electron-builder install-app-deps",
     "build:mac": "electron-vite build && electron-builder --mac",
+    "build:mac:local": "bash scripts/build_mac_local.sh",
     "run:mac": "OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch",
     "build:linux": "electron-vite build && electron-builder --linux"
   },

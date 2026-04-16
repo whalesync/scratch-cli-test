@@ -6,6 +6,8 @@ import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } 
 
 export interface RecordFieldRow {
   fieldName: string;
+  /** Human-readable label for the field. Falls back to fieldName when not set. */
+  displayLabel?: string;
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
@@ -137,7 +139,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows, footer }:
                   c="var(--fg-primary)"
                   style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
                 >
-                  {row.fieldName}
+                  {row.displayLabel ?? row.fieldName}
                 </Text12Medium>
               </Table.Td>
               <Table.Td>

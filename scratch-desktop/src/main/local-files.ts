@@ -12,6 +12,8 @@ import { copyFile, mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/
 import { basename, dirname, extname, join, relative, sep } from 'path';
 
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
+import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
+import { buildColumnDefinitions, projectRecordToNormalizedRow } from '../shared/schema-columns';
 import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
@@ -33,6 +35,7 @@ interface FolderEntry {
 
 interface FolderMetadata extends FolderEntry {
   schema: Record<string, unknown> | null;
+  columnDefinitions: ColumnDefinition[];
 }
 
 interface ListFilesOptions {
@@ -161,6 +164,7 @@ export async function getFolderMetadata(folderPath: string, workspacePath: strin
     lastModified: meta.lastModified,
     totalSize: meta.totalSize,
     schema,
+    columnDefinitions: buildColumnDefinitions(schema),
   };
 }
 
@@ -339,7 +343,7 @@ export interface InvalidJsonFileEntry {
 
 export interface DiffGridResult {
   rows: DiffRow[];
-  columns: string[];
+  columns: ColumnDefinition[];
   total: number;
   summary: DiffGridSummary;
   filterCounts: {
@@ -351,7 +355,7 @@ export interface DiffGridResult {
 
 export interface DiffRecordResult {
   row: DiffRow;
-  columns: string[];
+  columns: ColumnDefinition[];
   workingData: Record<string, unknown> | null;
   dirtyData: Record<string, unknown> | null;
   masterData: Record<string, unknown> | null;
@@ -383,8 +387,8 @@ interface ReadDiffGridDataOptions {
 }
 
 interface GridDataResult {
-  rows: Array<Record<string, unknown>>;
-  columns: string[];
+  rows: NormalizedRecordRow[];
+  columns: ColumnDefinition[];
   total: number;
   offset: number;
   /** `.json` files that could not be parsed as a top-level object (separate from `rows`). */
@@ -418,6 +422,21 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
     );
   }
 
+  // Load schema and derive column definitions
+  if (!opts.workspacePath) {
+    throw new Error('readGridData requires workspacePath to load the schema.');
+  }
+  const relPath = relative(opts.workspacePath, folderPath);
+  const schemaWrapper = await readConnectionSchema(opts.workspacePath, relPath);
+  if (!schemaWrapper) {
+    const folderName = basename(folderPath);
+    throw new Error(
+      `Schema not found for folder "${folderName}" at ${join(SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json')}`,
+    );
+  }
+  let columns = buildColumnDefinitions(schemaWrapper);
+  const columnIdSet = new Set(columns.map((c) => c.id));
+
   let allNames = await getCachedFileNames(folderPath);
 
   // Only include JSON files
@@ -425,16 +444,12 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
 
   // Apply status filter
   if (opts.filterStatus) {
-    if (!opts.workspacePath) {
-      throw new Error(`readGridData filterStatus '${opts.filterStatus}' requires workspacePath to be set.`);
-    }
     const allowed = await resolveFilterStatus(opts.filterStatus, folderPath, opts.workspacePath, allNames);
     allNames = allNames.filter((name) => allowed.has(name));
   }
 
-  // Read, parse, and flatten all matching files
-  const columnSet = new Set<string>();
-  let allRows: Array<Record<string, unknown>> = [];
+  // Read, parse, and project all matching files through schema-driven columns
+  let allRows: NormalizedRecordRow[] = [];
   const invalidJsonFiles: Array<{ filename: string; error: string }> = [];
 
   for (let i = 0; i < allNames.length; i += BATCH_CONCURRENCY) {
@@ -448,9 +463,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
             invalidJsonFiles.push({ filename: name, error: parsed.error });
             return null;
           }
-          const flat = flattenObject(parsed.raw);
-          flat.__filename = name;
-          return flat;
+          return projectRecordToNormalizedRow(parsed.raw, columns, name);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           invalidJsonFiles.push({ filename: name, error: message });
@@ -460,53 +473,34 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
     );
 
     for (const row of batchRows) {
-      if (row === null) {
-        continue;
-      }
-      for (const key of Object.keys(row)) {
-        if (!key.startsWith('__')) columnSet.add(key);
-      }
-      allRows.push(row);
+      if (row !== null) allRows.push(row);
     }
   }
 
-  // Remove internal metadata from visible columns
-  columnSet.delete('__filename');
-
-  // Filter rows by column values
+  // Filter rows by column values (match against raw values)
   if (opts.filter) {
     const filterEntries = Object.entries(opts.filter);
-    allRows = allRows.filter((row) => filterEntries.every(([col, expected]) => col in row && row[col] === expected));
+    allRows = allRows.filter((row) =>
+      filterEntries.every(([col, expected]) => col in row.raw && row.raw[col] === expected),
+    );
   }
 
   const total = allRows.length;
 
   // Sort by column value
   if (opts.sortBy) {
-    const sortKey = opts.sortBy;
-    const order = opts.sortOrder ?? 'asc';
-    allRows = sortRowsByColumn(allRows, sortKey, order);
+    allRows = sortNormalizedRows(allRows, opts.sortBy, opts.sortOrder ?? 'asc');
   }
 
   // Paginate
   const offset = Math.max(0, opts.offset ?? 0);
   const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
-  let rows = allRows.slice(offset, offset + limit);
+  const rows = allRows.slice(offset, offset + limit);
 
-  let columns = Array.from(columnSet);
-
-  // If specific columns requested, filter and reorder
+  // If specific columns requested, narrow the returned column list
   if (opts.columns && opts.columns.length > 0) {
-    columns = opts.columns.filter((c) => columnSet.has(c));
-    rows = rows.map((row) => {
-      const filtered: Record<string, unknown> = { __filename: row['__filename'] };
-      for (const col of columns) {
-        if (col in row) {
-          filtered[col] = row[col];
-        }
-      }
-      return filtered;
-    });
+    const requested = new Set(opts.columns);
+    columns = columns.filter((c) => requested.has(c.id) && columnIdSet.has(c.id));
   }
 
   return { rows, columns, total, offset, invalidJsonFiles };
@@ -539,55 +533,20 @@ export async function readSchema(workspacePath: string, folderName: string): Pro
 // ── Internal helpers ──
 
 /**
- * Extracts flattened dot-separated property keys from a JSON Schema in declaration order.
- * Recurses into nested `object` type schemas so that e.g. `{ properties: { id: …, fields: { properties: { Name: … } } } }`
- * yields `['id', 'fields.Name']`.
- */
-function flattenSchemaPropertyKeys(schema: Record<string, unknown>, prefix = ''): string[] {
-  const props = schema?.properties as Record<string, Record<string, unknown>> | undefined;
-  if (!props || typeof props !== 'object') return [];
-  const keys: string[] = [];
-  for (const [key, value] of Object.entries(props)) {
-    const flatKey = prefix ? `${prefix}.${key}` : key;
-    const nested = value?.properties as Record<string, unknown> | undefined;
-    if (nested && typeof nested === 'object' && value?.type === 'object') {
-      keys.push(...flattenSchemaPropertyKeys(value, flatKey));
-    } else {
-      keys.push(flatKey);
-    }
-  }
-  return keys;
-}
-
-/**
- * Orders columns according to schema property declaration order.
- * Columns present in the schema come first (in schema order), followed by any
- * remaining columns sorted alphabetically.
- */
-function orderColumnsBySchema(columnSet: Set<string>, schema: Record<string, unknown> | null): string[] {
-  if (!schema) return Array.from(columnSet).sort((a, b) => a.localeCompare(b));
-  const schemaKeys = flattenSchemaPropertyKeys(schema);
-  const ordered: string[] = [];
-  for (const key of schemaKeys) {
-    if (columnSet.has(key)) ordered.push(key);
-  }
-  const remaining = Array.from(columnSet)
-    .filter((k) => !ordered.includes(k))
-    .sort((a, b) => a.localeCompare(b));
-  return [...ordered, ...remaining];
-}
-
-/**
  * Flattens a nested object into dot-separated keys.
  * `{ id: "a", fields: { field1: "b" } }` → `{ id: "a", "fields.field1": "b" }`
  * Arrays and non-plain-object values are kept as leaf values (not recursed into).
+ *
+ * When `leafPaths` is provided, any key path in the set is kept as a leaf value
+ * even if the value is a plain object. This prevents flattening schema-leaf columns
+ * (e.g. `originalSource` wrapped in `anyOf`) that should render as JSON.
  */
-function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string, unknown> {
+function flattenObject(obj: Record<string, unknown>, prefix = '', leafPaths?: Set<string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     const flatKey = prefix ? `${prefix}.${key}` : key;
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      Object.assign(result, flattenObject(value as Record<string, unknown>, flatKey));
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && !leafPaths?.has(flatKey)) {
+      Object.assign(result, flattenObject(value as Record<string, unknown>, flatKey, leafPaths));
     } else {
       result[flatKey] = value;
     }
@@ -614,14 +573,10 @@ type JsonFileSnapshot =
   | { kind: 'invalid'; error: string }
   | { kind: 'ok'; flat: Record<string, unknown>; raw: Record<string, unknown> };
 
-function sortRowsByColumn(
-  rows: Array<Record<string, unknown>>,
-  column: string,
-  order: 'asc' | 'desc',
-): Array<Record<string, unknown>> {
+function sortNormalizedRows(rows: NormalizedRecordRow[], column: string, order: 'asc' | 'desc'): NormalizedRecordRow[] {
   return [...rows].sort((a, b) => {
-    const va = a[column];
-    const vb = b[column];
+    const va = a.raw[column];
+    const vb = b.raw[column];
 
     // Missing values sort last regardless of order
     if (va === undefined && vb === undefined) return 0;
@@ -632,8 +587,9 @@ function sortRowsByColumn(
     if (typeof va === 'number' && typeof vb === 'number') {
       cmp = va - vb;
     } else {
-      const sa = typeof va === 'string' ? va : JSON.stringify(va);
-      const sb = typeof vb === 'string' ? vb : JSON.stringify(vb);
+      // Use pre-computed display strings for stable, locale-aware comparison
+      const sa = a.display[column] ?? '';
+      const sb = b.display[column] ?? '';
       cmp = sa.localeCompare(sb, undefined, { sensitivity: 'base', numeric: true });
     }
 
@@ -891,7 +847,7 @@ async function commitReviewedDirtyFile(folderPath: string, workspacePath: string
   }
 }
 
-async function readJsonFileSnapshot(filePath: string): Promise<JsonFileSnapshot> {
+async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): Promise<JsonFileSnapshot> {
   let content: string;
   try {
     content = await readFile(filePath, 'utf-8');
@@ -903,10 +859,13 @@ async function readJsonFileSnapshot(filePath: string): Promise<JsonFileSnapshot>
   if (!parsed.ok) {
     return { kind: 'invalid', error: parsed.error };
   }
-  return { kind: 'ok', flat: flattenObject(parsed.raw), raw: parsed.raw };
+  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths), raw: parsed.raw };
 }
 
-async function readFolderSnapshots(folderPath: string): Promise<Map<string, JsonFileSnapshot>> {
+async function readFolderSnapshots(
+  folderPath: string,
+  leafPaths?: Set<string>,
+): Promise<Map<string, JsonFileSnapshot>> {
   const result = new Map<string, JsonFileSnapshot>();
   let names: string[];
   try {
@@ -918,7 +877,7 @@ async function readFolderSnapshots(folderPath: string): Promise<Map<string, Json
     const batch = names.slice(i, i + BATCH_CONCURRENCY);
     await Promise.all(
       batch.map(async (name) => {
-        const snap = await readJsonFileSnapshot(join(folderPath, name));
+        const snap = await readJsonFileSnapshot(join(folderPath, name), leafPaths);
         result.set(name, snap);
       }),
     );
@@ -1139,12 +1098,18 @@ export async function readDiffGridDataPage(
   const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
   const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
 
+  // Load schema first so we can derive leaf column IDs for schema-aware flattening.
+  // This prevents object-type leaf columns (e.g. anyOf-wrapped objects) from being
+  // recursively flattened into sub-keys that don't match any column definition.
   const relPath = relative(workspacePath, folderPath);
-  const [workingFiles, dirtyFiles, masterFiles, schema] = await Promise.all([
-    readFolderSnapshots(workingPath),
-    readFolderSnapshots(dirtyPath),
-    readFolderSnapshots(masterPath),
-    readConnectionSchema(workspacePath, relPath),
+  const schema = await readConnectionSchema(workspacePath, relPath);
+  const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
+  const leafPaths = new Set(schemaColumns.map((c) => c.id));
+
+  const [workingFiles, dirtyFiles, masterFiles] = await Promise.all([
+    readFolderSnapshots(workingPath, leafPaths),
+    readFolderSnapshots(dirtyPath, leafPaths),
+    readFolderSnapshots(masterPath, leafPaths),
   ]);
 
   const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
@@ -1194,9 +1159,35 @@ export async function readDiffGridDataPage(
   const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
   const pagedRows = sortedRows.slice(offset, offset + limit);
 
+  // Derive column definitions from schema; fall back to data-union columns as ColumnDefinition shells
+  let columns: ColumnDefinition[];
+  if (schema) {
+    const schemaCols = buildColumnDefinitions(schema);
+    // Include any data-union columns not in the schema (e.g. unmapped fields)
+    const schemaIdSet = new Set(schemaCols.map((c) => c.id));
+    const extraIds = Array.from(columnSet)
+      .filter((id) => !schemaIdSet.has(id))
+      .sort((a, b) => a.localeCompare(b));
+    const extraCols: ColumnDefinition[] = extraIds.map((id) => ({
+      id,
+      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
+      dataType: 'unknown' as const,
+      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+    }));
+    columns = [...schemaCols, ...extraCols];
+  } else {
+    const sortedIds = Array.from(columnSet).sort((a, b) => a.localeCompare(b));
+    columns = sortedIds.map((id) => ({
+      id,
+      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
+      dataType: 'unknown' as const,
+      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+    }));
+  }
+
   return {
     rows: pagedRows,
-    columns: orderColumnsBySchema(columnSet, (schema?.schema as Record<string, unknown>) ?? null),
+    columns,
     total: filteredRows.length,
     summary,
     filterCounts,
@@ -1299,10 +1290,15 @@ export async function readDiffRecordData(
   const dirtyFile = join(getVersionFolderPath(folderPath, workspacePath, 'dirty'), filename);
   const masterFile = join(getVersionFolderPath(folderPath, workspacePath, 'main'), filename);
 
+  const relPath = relative(workspacePath, folderPath);
+  const schema = await readConnectionSchema(workspacePath, relPath);
+  const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
+  const leafPaths = new Set(schemaColumns.map((c) => c.id));
+
   const [w, d, m] = await Promise.all([
-    readJsonFileSnapshot(workingFile),
-    readJsonFileSnapshot(dirtyFile),
-    readJsonFileSnapshot(masterFile),
+    readJsonFileSnapshot(workingFile, leafPaths),
+    readJsonFileSnapshot(dirtyFile, leafPaths),
+    readJsonFileSnapshot(masterFile, leafPaths),
   ]);
 
   const compared = compareRecordSnapshots(w, d, m, filename);
@@ -1314,9 +1310,31 @@ export async function readDiffRecordData(
   const dirtyData = d.kind === 'ok' ? d.raw : null;
   const masterData = m.kind === 'ok' ? m.raw : null;
 
+  // Derive ColumnDefinition[] from schema, falling back to data-union columns
+  let columns: ColumnDefinition[];
+  if (schema) {
+    const schemaCols = buildColumnDefinitions(schema);
+    const schemaIdSet = new Set(schemaCols.map((c) => c.id));
+    const extraIds = compared.columns.filter((id) => !schemaIdSet.has(id));
+    const extraCols: ColumnDefinition[] = extraIds.map((id) => ({
+      id,
+      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
+      dataType: 'unknown' as const,
+      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+    }));
+    columns = [...schemaCols, ...extraCols];
+  } else {
+    columns = compared.columns.map((id) => ({
+      id,
+      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
+      dataType: 'unknown' as const,
+      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+    }));
+  }
+
   return {
     row: compared.row,
-    columns: compared.columns,
+    columns,
     workingData,
     dirtyData,
     masterData,

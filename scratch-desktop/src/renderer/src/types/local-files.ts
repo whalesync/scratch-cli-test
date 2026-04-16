@@ -1,5 +1,14 @@
 /** Types shared between main process (local-files.ts) and renderer for the local file access layer. */
 
+import type { ColumnDefinition } from '../../../shared/schema-columns';
+
+export type {
+  ColumnAttributes,
+  ColumnDataType,
+  ColumnDefinition,
+  NormalizedRecordRow,
+} from '../../../shared/schema-columns';
+
 export interface WorkspaceConfig {
   apiUrl: string;
   workbookId: string;
@@ -21,6 +30,8 @@ export interface FolderEntry {
 export interface FolderMetadata extends FolderEntry {
   /** Parsed .scratch/schemas/<name>.json — throws if schema is missing */
   schema: Record<string, unknown>;
+  /** Pre-computed column definitions derived from the schema */
+  columnDefinitions: ColumnDefinition[];
 }
 
 export interface ListFilesOptions {

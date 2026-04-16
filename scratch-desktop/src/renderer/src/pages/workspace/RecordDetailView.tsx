@@ -16,13 +16,19 @@ import {
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
+import { getByPath } from '../../../../shared/schema-columns';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
-import { flattenObject } from '../../utils/flatten-object';
 import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
+
+interface DiffRecordColumn {
+  id: string;
+  displayName: string;
+  attributes: { readOnly: boolean; required: boolean; nested: boolean };
+}
 
 interface DiffRecordData {
   row: Record<string, unknown> & {
@@ -42,7 +48,7 @@ interface DiffRecordData {
     __filename: string;
     __parseError?: string;
   };
-  columns: string[];
+  columns: DiffRecordColumn[];
   workingData: Record<string, unknown> | null;
   dirtyData: Record<string, unknown> | null;
   masterData: Record<string, unknown> | null;
@@ -62,6 +68,8 @@ interface RecordDetailViewProps {
    * this list are hidden from the detail view, matching the grid.
    */
   columnOrder: string[];
+  /** Map from column ID to display label. Falls back to the raw field name when missing. */
+  columnLabels?: Map<string, string>;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
@@ -213,6 +221,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   schema,
   titleColumnId,
   columnOrder,
+  columnLabels,
   onSelectIndex,
   onClose,
   onRecordChanged,
@@ -509,13 +518,12 @@ export const RecordDetailView = memo(function RecordDetailView({
       return [];
     }
 
-    const displayFields = flattenObject(displayData);
     const changedFields = new Set(recordData.row.__changedFields);
     const unpublishedFields = new Set(recordData.row.__unpublishedFields);
-    const recordColumnSet = new Set(recordData.columns);
-    const visibleFields = columnOrder.filter((fieldName) => recordColumnSet.has(fieldName));
+    const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
+    const visibleFields = columnOrder.filter((fieldName) => recordColumnIdSet.has(fieldName));
     const hiddenFields = showAllFields
-      ? recordData.columns.filter((fieldName) => !columnOrder.includes(fieldName))
+      ? recordData.columns.map((c) => c.id).filter((id) => !columnOrder.includes(id))
       : [];
     const orderedFields = [...visibleFields, ...hiddenFields];
 
@@ -523,7 +531,7 @@ export const RecordDetailView = memo(function RecordDetailView({
       const isUnreviewed = changedFields.has(fieldName);
       const isUnpublished = unpublishedFields.has(fieldName);
       const diffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
-      const value = toDisplayString(displayFields[fieldName]);
+      const value = toDisplayString(getByPath(displayData, fieldName));
       const fromValue = isUnreviewed
         ? toDisplayString(recordData.row.__fromFields[fieldName])
         : isUnpublished
@@ -532,6 +540,7 @@ export const RecordDetailView = memo(function RecordDetailView({
 
       return {
         fieldName,
+        displayLabel: columnLabels?.get(fieldName) ?? fieldName,
         value,
         fromValue,
         diffKind,
@@ -554,6 +563,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   }, [
     beginFieldEdit,
     cancelFieldEdit,
+    columnLabels,
     columnOrder,
     commitFieldEdit,
     displayData,
@@ -958,7 +968,8 @@ export const RecordDetailView = memo(function RecordDetailView({
             !viewRaw &&
             (() => {
               const totalRecordFields = recordData?.columns.length ?? 0;
-              const visibleCount = columnOrder.filter((f) => recordData?.columns.includes(f)).length;
+              const columnIdSet = new Set(recordData?.columns.map((c) => c.id));
+              const visibleCount = columnOrder.filter((f) => columnIdSet.has(f)).length;
               const hiddenCount = totalRecordFields - visibleCount;
               return (
                 <Box

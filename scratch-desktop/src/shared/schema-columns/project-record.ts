@@ -9,7 +9,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Walks a dot-separated column id against a record JSON, returning the raw value or `undefined`
  * when any segment is missing or non-object. Arrays are leaves; we never index into them.
  */
-function getByPath(source: Record<string, unknown>, id: string): unknown {
+export function getByPath(source: Record<string, unknown>, id: string): unknown {
   const segments = id.split('.');
   let current: unknown = source;
   for (const segment of segments) {

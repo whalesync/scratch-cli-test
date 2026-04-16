@@ -33,6 +33,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
@@ -64,7 +65,7 @@ interface DiffRow extends Record<string, unknown> {
 
 interface DiffGridResult {
   rows: DiffRow[];
-  columns: string[];
+  columns: ColumnDefinition[];
   total: number;
   summary: {
     total: number;
@@ -747,28 +748,48 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, [page, totalPages]);
 
+  /** Map from column ID to its ColumnDefinition for metadata lookup. */
+  const columnDefsMap = useMemo(() => {
+    const map = new Map<string, ColumnDefinition>();
+    for (const col of diffData?.columns ?? []) {
+      map.set(col.id, col);
+    }
+    return map;
+  }, [diffData?.columns]);
+
+  /** Map from column ID to display label (for column picker, header menu, etc.) */
+  const columnLabelsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const col of diffData?.columns ?? []) {
+      if (typeof col.id === 'string' && typeof col.displayName === 'string') {
+        map.set(col.id, col.displayName);
+      }
+    }
+    return map;
+  }, [diffData?.columns]);
+
   const titleColumnId = useMemo(() => {
     const raw = schema?.titleColumnRemoteId;
-    const cols = diffData?.columns ?? [];
+    const colIds = diffData?.columns?.map((c) => c.id) ?? [];
     // WORKAROUND(ryder): The titleColumnRemoteId isn't always set properly in the schema, or at least doesn't match
     // what we are comparing it to. If it give us an invalid value, then fall back to the first column as the title.
     if (Array.isArray(raw) && raw.length > 0 && raw.every((s) => typeof s === 'string')) {
       const realValue = raw.join('.');
-      if (cols.includes(realValue)) {
+      if (colIds.includes(realValue)) {
         return realValue;
       }
     }
     // Fallback to the first column as the title.
-    return cols[0] ?? null;
+    return colIds[0] ?? null;
   }, [schema, diffData?.columns]);
 
   /** All column IDs in schema order, with title column first. */
   const allColumnIds: string[] = useMemo(() => {
-    const cols = diffData?.columns ?? [];
-    if (titleColumnId && cols.includes(titleColumnId)) {
-      return [titleColumnId, ...cols.filter((c) => c !== titleColumnId)];
+    const colIds = diffData?.columns?.map((c) => c.id) ?? [];
+    if (titleColumnId && colIds.includes(titleColumnId)) {
+      return [titleColumnId, ...colIds.filter((c) => c !== titleColumnId)];
     }
-    return cols;
+    return colIds;
   }, [diffData?.columns, titleColumnId]);
 
   /** The effective list of visible column IDs (defaults to all when picker hasn't been used yet). */
@@ -793,15 +814,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     const ordered = effectiveVisibleColumns.filter((c) => allColumnIds.includes(c));
     const dataCols = ordered
       .filter((name) => visibleSet.has(name))
-      .map((name) => ({
-        id: name,
-        title: name,
-        width: columnWidths[name] ?? Math.max(120, Math.min(250, name.length * 9 + 40)),
-        hasMenu: true,
-        menuIcon: GridColumnMenuIcon.Dots,
-      }));
+      .map((name) => {
+        const def = columnDefsMap.get(name);
+        const displayName = def?.displayName ?? name;
+        return {
+          id: name,
+          title: displayName,
+          width: columnWidths[name] ?? Math.max(120, Math.min(250, displayName.length * 9 + 40)),
+          hasMenu: true,
+          menuIcon: GridColumnMenuIcon.Dots,
+        };
+      });
     return [statusColumn, ...dataCols];
-  }, [allColumnIds, columnWidths, effectiveVisibleColumns, statusColumn]);
+  }, [allColumnIds, columnDefsMap, columnWidths, effectiveVisibleColumns, statusColumn]);
 
   /** Column IDs that have unreviewed changes in at least one row (from current page). */
   const unreviewedColumnIds: string[] = useMemo(() => {
@@ -1195,6 +1220,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const status = r.__rowStatus;
       const rowBg = getRowTint(status);
       const rowTextColor = getRowTextColor(status);
+      const colDef = columnDefsMap.get(colId);
+      const isReadOnly = colDef?.attributes.readOnly === true;
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
       const val = r[colId];
       const { diffKind } = getCellDiffState(r, colId);
@@ -1204,8 +1231,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           : diffKind === 'unpublished'
             ? { bgCell: DIFF_UNPUBLISHED_BG() }
             : {};
-      const themeOverride = { ...rowTheme, ...diffTheme };
-      const allowOverlay = status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
+      const readOnlyTheme = isReadOnly ? { textDark: 'var(--fg-muted)' } : {};
+      const themeOverride = { ...rowTheme, ...diffTheme, ...readOnlyTheme };
+      const allowOverlay =
+        !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
 
       if (col === 1) {
         const kind = inferCellKind(val);
@@ -1269,7 +1298,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         themeOverride,
       };
     },
-    [pagedRows, columns],
+    [columnDefsMap, pagedRows, columns],
   );
 
   const onHeaderClicked = useCallback(
@@ -1723,6 +1752,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   titleColumnId={titleColumnId}
                   unreviewedColumnIds={unreviewedColumnIds}
                   approvedColumnIds={approvedColumnIds}
+                  columnLabels={columnLabelsMap}
                   onChangeVisible={setVisibleColumnIds}
                 />
               </Popover.Dropdown>
@@ -1859,6 +1889,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 schema={schema}
                 titleColumnId={titleColumnId}
                 columnOrder={effectiveVisibleColumns}
+                columnLabels={columnLabelsMap}
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
                 onRecordChanged={() => setReloadKey((k) => k + 1)}

@@ -1,4 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
+import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 
 type ScratchCommandEvent =
   | {
@@ -136,6 +137,7 @@ interface ScratchFilesAPI {
     lastModified: number;
     totalSize: number;
     schema: Record<string, unknown>;
+    columnDefinitions: ColumnDefinition[];
   }>;
   listFiles: (
     folderPath: string,
@@ -191,8 +193,8 @@ interface ScratchFilesAPI {
       workspacePath?: string;
     },
   ) => Promise<{
-    rows: Array<Record<string, unknown>>;
-    columns: string[];
+    rows: NormalizedRecordRow[];
+    columns: ColumnDefinition[];
     total: number;
     offset: number;
     invalidJsonFiles: Array<{ filename: string; error: string }>;
@@ -223,7 +225,7 @@ interface ScratchFilesAPI {
         __parseError?: string;
       }
     >;
-    columns: string[];
+    columns: ColumnDefinition[];
     total: number;
     summary: {
       total: number;
@@ -256,7 +258,7 @@ interface ScratchFilesAPI {
       __filename: string;
       __parseError?: string;
     };
-    columns: string[];
+    columns: ColumnDefinition[];
     workingData: Record<string, unknown> | null;
     dirtyData: Record<string, unknown> | null;
     masterData: Record<string, unknown> | null;

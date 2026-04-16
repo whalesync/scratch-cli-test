@@ -90,7 +90,10 @@ function handleDeepLink(url: string): void {
   }
 }
 
-const gotTheLock = app.requestSingleInstanceLock();
+// Packaged builds use a single-instance lock by default.
+// SCRATCH_DESKTOP_ALLOW_MULTIPLE_INSTANCES=1 to skip the lock for a packaged .app as well (e.g. two builds).
+const allowMultipleInstances = process.env.SCRATCH_DESKTOP_ALLOW_MULTIPLE_INSTANCES === '1';
+const gotTheLock = allowMultipleInstances ? true : app.requestSingleInstanceLock();
 
 if (gotTheLock) {
   if (process.defaultApp) {

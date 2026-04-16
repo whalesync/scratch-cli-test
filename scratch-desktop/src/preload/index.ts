@@ -1,5 +1,6 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invoke(channel: string, ...args: unknown[]): Promise<any> {
@@ -188,6 +189,7 @@ const scratchFiles = {
     lastModified: number;
     totalSize: number;
     schema: Record<string, unknown>;
+    columnDefinitions: ColumnDefinition[];
   }> => invoke('files:folder-metadata', folderPath, workspacePath),
   listFiles: (
     folderPath: string,
@@ -246,8 +248,8 @@ const scratchFiles = {
       workspacePath?: string;
     },
   ): Promise<{
-    rows: Array<Record<string, unknown>>;
-    columns: string[];
+    rows: NormalizedRecordRow[];
+    columns: ColumnDefinition[];
     total: number;
     offset: number;
     invalidJsonFiles: Array<{ filename: string; error: string }>;
@@ -279,7 +281,7 @@ const scratchFiles = {
         __parseError?: string;
       }
     >;
-    columns: string[];
+    columns: ColumnDefinition[];
     total: number;
     summary: {
       total: number;
@@ -312,7 +314,7 @@ const scratchFiles = {
       __filename: string;
       __parseError?: string;
     };
-    columns: string[];
+    columns: ColumnDefinition[];
     workingData: Record<string, unknown> | null;
     dirtyData: Record<string, unknown> | null;
     masterData: Record<string, unknown> | null;

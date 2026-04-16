@@ -18,6 +18,8 @@ interface ColumnPickerMenuProps {
   unreviewedColumnIds: string[];
   /** Column IDs that have approved (unpublished) changes in at least one row. */
   approvedColumnIds: string[];
+  /** Map from column ID to display label. Falls back to the raw ID when missing. */
+  columnLabels?: Map<string, string>;
   onChangeVisible: (columnIds: string[]) => void;
 }
 
@@ -27,6 +29,7 @@ export function ColumnPickerMenu({
   titleColumnId,
   unreviewedColumnIds,
   approvedColumnIds,
+  columnLabels,
   onChangeVisible,
 }: ColumnPickerMenuProps) {
   const [search, setSearch] = useState('');
@@ -44,8 +47,11 @@ export function ColumnPickerMenu({
   const filteredColumns = useMemo(() => {
     if (!search.trim()) return allColumns;
     const q = search.trim().toLowerCase();
-    return allColumns.filter((c) => c.toLowerCase().includes(q));
-  }, [allColumns, search]);
+    return allColumns.filter((c) => {
+      const label = columnLabels?.get(c) ?? c;
+      return label.toLowerCase().includes(q) || c.toLowerCase().includes(q);
+    });
+  }, [allColumns, columnLabels, search]);
 
   const toggleColumn = useCallback(
     (columnId: string) => {
@@ -169,8 +175,17 @@ export function ColumnPickerMenu({
         {/* Title column — always first, not toggleable (only show if it's a real data column) */}
         {titleColumnId &&
           allColumns.includes(titleColumnId) &&
-          (!search.trim() || titleColumnId.toLowerCase().includes(search.trim().toLowerCase())) && (
-            <ColumnRow columnId={titleColumnId} checked={true} disabled={true} draggable={false} onToggle={() => {}} />
+          (!search.trim() ||
+            (columnLabels?.get(titleColumnId) ?? titleColumnId).toLowerCase().includes(search.trim().toLowerCase()) ||
+            titleColumnId.toLowerCase().includes(search.trim().toLowerCase())) && (
+            <ColumnRow
+              columnId={titleColumnId}
+              label={columnLabels?.get(titleColumnId)}
+              checked={true}
+              disabled={true}
+              draggable={false}
+              onToggle={() => {}}
+            />
           )}
 
         {/* Remaining columns in display order (visible first for reorder, then hidden) */}
@@ -180,6 +195,7 @@ export function ColumnPickerMenu({
             <ColumnRow
               key={columnId}
               columnId={columnId}
+              label={columnLabels?.get(columnId)}
               checked={true}
               disabled={false}
               draggable={true}
@@ -199,6 +215,7 @@ export function ColumnPickerMenu({
             <ColumnRow
               key={columnId}
               columnId={columnId}
+              label={columnLabels?.get(columnId)}
               checked={false}
               disabled={false}
               draggable={false}
@@ -214,6 +231,7 @@ export function ColumnPickerMenu({
 
 function ColumnRow({
   columnId,
+  label,
   checked,
   disabled,
   draggable,
@@ -225,6 +243,7 @@ function ColumnRow({
   onDragEnd,
 }: {
   columnId: string;
+  label?: string;
   checked: boolean;
   disabled: boolean;
   draggable: boolean;
@@ -261,7 +280,7 @@ function ColumnRow({
         styles={{ input: { cursor: disabled ? 'default' : 'pointer' } }}
       />
       <Text12Regular c={disabled ? 'var(--fg-muted)' : 'var(--fg-primary)'} style={{ userSelect: 'none' }}>
-        {columnId}
+        {label ?? columnId}
       </Text12Regular>
     </Box>
   );
