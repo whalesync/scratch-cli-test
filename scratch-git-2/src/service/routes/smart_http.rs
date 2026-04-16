@@ -11,6 +11,7 @@ use tokio::process::Command;
 use tokio_util::io::ReaderStream;
 
 use crate::service::state::AppState;
+use crate::service::types::DIRTY_BRANCH;
 
 pub async fn git_backend(
     State(state): State<AppState>,
@@ -57,6 +58,20 @@ pub async fn git_backend(
         .get("content-type")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
+
+    // git-receive-pack is a write operation (git push). Acquire the dirty-branch write lock
+    // before spawning the subprocess and hold it until the child exits, preventing concurrent
+    // writes from the port-3100 REST API and the port-3101 git HTTP backend.
+    // git-upload-pack (fetch/clone) is read-only and does not need a lock.
+    let is_receive_pack = content_type.contains("git-receive-pack")
+        || repo_id_and_path.contains("git-receive-pack");
+    let repo_id_owned = repo_id.to_string();
+    let write_guard = if is_receive_pack {
+        Some(state.write_locks.acquire(&repo_id_owned, DIRTY_BRANCH).await)
+    } else {
+        None
+    };
+
     let header_content_length = headers
         .get("content-length")
         .and_then(|h| h.to_str().ok())
@@ -348,10 +363,13 @@ pub async fn git_backend(
     let stream = ReaderStream::new(reader);
     let body = Body::from_stream(stream);
 
-    // Wait for process in background and log stderr on failure
+    // Wait for process in background and log stderr on failure.
+    // The write_guard (if held for git-receive-pack) is moved into this task so the lock
+    // is held for the entire subprocess lifetime and released when the child exits.
     let log_path_info = path_info.clone();
     let log_method = method.to_string();
     tokio::spawn(async move {
+        let _guard = write_guard;
         if let Ok(status) = child.wait().await {
             if !status.success() {
                 // Give stderr reader a moment to finish collecting output

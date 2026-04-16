@@ -502,6 +502,8 @@ pub async fn rebase(
 ) -> Response {
     let strategy = body.strategy.unwrap_or_else(|| "diff3".to_string());
 
+    let _guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
+
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();
@@ -543,6 +545,10 @@ pub async fn rename(
     let message = body
         .message
         .unwrap_or_else(|| format!("Rename batch in {}", body.folder_path));
+
+    // Acquire main before dirty to maintain consistent lock ordering and prevent deadlocks.
+    let _main_guard = state.write_locks.acquire(&id, MAIN_BRANCH).await;
+    let _dirty_guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
 
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();

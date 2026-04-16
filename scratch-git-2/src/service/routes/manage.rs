@@ -96,10 +96,11 @@ pub async fn reset(
     Path(id): Path<String>,
     Json(body): Json<ResetBody>,
 ) -> Response {
+    let _guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
+
     let result = tokio::task::spawn_blocking({
         let repos_dir = state.repos_dir.clone();
         let id = id.clone();
-        let _write_locks = state.write_locks.clone();
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
 
