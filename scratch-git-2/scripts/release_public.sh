@@ -88,14 +88,14 @@ sha_for() { grep "$1" "$SHA_FILE" | awk '{print $1}'; }
 # 6. Create GitHub release tag on remote HEAD
 echo "Creating GitHub tag $NEW_VERSION..."
 REMOTE_SHA=$(git ls-remote "$GITHUB_REPO_URL" HEAD | awk '{ print $1 }')
-curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
      -H "Accept: application/vnd.github.v3+json" \
      "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
      -d "{\"ref\": \"refs/tags/$NEW_VERSION\", \"sha\": \"$REMOTE_SHA\"}"
 
 # 7. Create GitHub release and upload artifacts
 echo "Creating GitHub release $NEW_VERSION..."
-RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+RELEASE_JSON=$(curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases" \
   -d "{
@@ -112,7 +112,7 @@ for FILE in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/*.zip; do
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   echo "Uploading $FNAME..."
-  curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+  curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
     -H "Content-Type: application/octet-stream" \
     "https://uploads.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?name=${FNAME}" \
     --data-binary "@$FILE"

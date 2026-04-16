@@ -86,14 +86,20 @@ VITE_SCRATCH_API_URL="$PROD_API_URL" VITE_SCRATCH_WEB_URL="$PROD_WEB_URL" yarn b
 # TODO: Add code notarizing — set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
 #       APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID CI variables.
 #       electron-builder handles signing automatically when these are present.
-# NOTE: DMG requires dmg-license module + macOS host, so we only build ZIP on Linux CI.
-# TODO: Add DMG builds when we have a macOS runner with code signing.
-echo "Packaging macOS targets (unsigned, zip only)..."
-yarn electron-builder --mac zip --publish never
+# NOTE: DMG requires dmg-license module + macOS host, so Linux CI defaults to zip only;
+#       a macOS runner can opt into dmg via MAC_TARGETS (e.g. "dmg zip").
+MAC_TARGETS="${MAC_TARGETS:-zip}"
+echo "Packaging macOS targets ($MAC_TARGETS)..."
+yarn electron-builder --mac $MAC_TARGETS --publish never
 
-# Build Linux targets
-echo "Packaging Linux targets..."
-yarn electron-builder --linux --publish never
+# Build Linux targets (skip on hosts that can't cross-compile, e.g. macOS runners)
+BUILD_LINUX="${BUILD_LINUX:-true}"
+if [ "$BUILD_LINUX" = "true" ]; then
+  echo "Packaging Linux targets..."
+  yarn electron-builder --linux --x64 --publish never
+else
+  echo "Skipping Linux packaging (BUILD_LINUX=$BUILD_LINUX)"
+fi
 
 # 7. Collect and rename artifacts into dist-release
 DIST_DIR="./dist-release"
@@ -140,7 +146,7 @@ sha_for() { grep "$1" "$SHA_FILE" | awk '{print $1}'; }
 # 10. Create GitHub release and upload artifacts
 # The release API creates the tag on GitHub automatically — no need to push a local tag.
 echo "Creating GitHub release $NEW_VERSION..."
-RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+RELEASE_JSON=$(curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases" \
   -d "{
@@ -162,7 +168,7 @@ for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DI
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   echo "Uploading $FNAME..."
-  curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+  curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
     -H "Content-Type: application/octet-stream" \
     "https://uploads.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?name=${FNAME}" \
     --data-binary "@$FILE"

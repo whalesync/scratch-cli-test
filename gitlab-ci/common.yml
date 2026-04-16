@@ -112,3 +112,62 @@ include:
     paths:
       - client/node_modules
     unprotect: true
+  # Cargo caches for scratch-git-2. Jobs consuming these MUST set
+  # CARGO_HOME=${CI_PROJECT_DIR}/.cargo so cargo reads/writes the cached
+  # registry.
+  #
+  # We split the native and cross-compile build outputs into separate caches so
+  # jobs that cross-compile (cargo-zigbuild → multiple targets) don't overwrite
+  # the native job's cache with a snapshot that's missing the host-triple
+  # artifacts (and vice versa). Both caches carry the shared registry so either
+  # one warms dep downloads for the other.
+  #
+  #   cargo         — native host builds       (scratch-git-2/target/{debug,release,...})
+  #   cargo_cross   — cargo-zigbuild targets   (scratch-git-2/target/<triple>/...)
+  #
+  # Use *_pull variants for readers that must not evict the writer's snapshot.
+  cargo:
+    key:
+      files:
+        - scratch-git-2/Cargo.lock
+    fallback_keys:
+      - scratch-git-2-cargo
+    unprotect: true
+    paths:
+      - .cargo/registry/cache
+      - .cargo/registry/index
+      - scratch-git-2/target/debug
+      - scratch-git-2/target/release
+      - scratch-git-2/target/.rustc_info.json
+      - scratch-git-2/target/CACHEDIR.TAG
+    policy: pull-push
+  cargo_pull:
+    key:
+      files:
+        - scratch-git-2/Cargo.lock
+    fallback_keys:
+      - scratch-git-2-cargo
+    unprotect: true
+    paths:
+      - .cargo/registry/cache
+      - .cargo/registry/index
+      - scratch-git-2/target/debug
+      - scratch-git-2/target/release
+      - scratch-git-2/target/.rustc_info.json
+      - scratch-git-2/target/CACHEDIR.TAG
+    policy: pull
+  cargo_cross:
+    key:
+      files:
+        - scratch-git-2/Cargo.lock
+      prefix: cross
+    fallback_keys:
+      - scratch-git-2-cargo-cross
+    unprotect: true
+    paths:
+      - .cargo/registry/cache
+      - .cargo/registry/index
+      - scratch-git-2/target/aarch64-apple-darwin
+      - scratch-git-2/target/x86_64-unknown-linux-gnu
+      - scratch-git-2/target/x86_64-pc-windows-gnu
+    policy: pull-push

@@ -6,19 +6,10 @@
   image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
   dependencies: []
   cache:
-    - key:
-        files:
-          - scratch-git-2/Cargo.lock
-      fallback_keys:
-        - scratch-git-2-cargo
-      unprotect: true
-      paths:
-        - /usr/local/cargo/registry/cache
-        - /usr/local/cargo/registry/index
-        - scratch-git-2/target
-      policy: pull-push
+    - !reference [.caches, cargo]
   script:
     - chmod +x scratch-git-2/scripts/release_public.sh
     - scratch-git-2/scripts/release_public.sh $RELEASE_TYPE
@@ -57,19 +48,10 @@ release-rust-cli-major:
   image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
   dependencies: []
   cache:
-    - key:
-        files:
-          - scratch-git-2/Cargo.lock
-      fallback_keys:
-        - scratch-git-2-cargo
-      unprotect: true
-      paths:
-        - /usr/local/cargo/registry/cache
-        - /usr/local/cargo/registry/index
-        - scratch-git-2/target
-      policy: pull-push
+    - !reference [.caches, cargo]
   script:
     - chmod +x scratch-git-2/scripts/release_test.sh
     - scratch-git-2/scripts/release_test.sh $RELEASE_TYPE

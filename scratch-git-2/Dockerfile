@@ -1,25 +1,16 @@
-# Build the Rust API and the integrated git-http-backend
-# Run from the repository root: docker build -t spinner-scratch-git -f scratch-git-2/Dockerfile .
+# Package the prebuilt scratch-git-2 Rust binary into a slim runner image.
+# The binary is built by the `build and test scratch-git` CI job (rust:slim-bookworm,
+# glibc-compatible with debian:bookworm-slim) and passed in as a GitLab artifact.
+# Run from the repository root:
+#   docker build -t spinner-scratch-git -f scratch-git-2/Dockerfile .
 
-# --- Stage 1: Rust Builder ---
-FROM rust:slim-bookworm AS rust-builder
-WORKDIR /app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-COPY scratch-git-2/Cargo.toml scratch-git-2/Cargo.lock ./
-# Create a dummy main.rs to build dependencies first (for better caching)
-RUN mkdir -p src/service src/cli && echo "fn main() {}" > src/service/main.rs && echo "fn main() {}" > src/cli/main.rs && cargo build --release && rm -rf src
-COPY scratch-git-2/src ./src
-# Touch entry points to ensure Cargo detects them as newer than the dummy compilation
-RUN touch src/service/main.rs src/cli/main.rs
-RUN cargo build --release
-
-# --- Stage 2: Runner ---
 FROM debian:bookworm-slim AS runner
 RUN apt-get update && apt-get install -y dumb-init git git-daemon-sysvinit && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-# Copy Rust API
-COPY --from=rust-builder /app/target/release/scratch-git-2 ./scratch-git-api
+# Binary is prebuilt by CI (or locally via `cargo build --release --bin scratch-git-2`)
+# and copied directly from the repo's target dir.
+COPY scratch-git-2/target/release/scratch-git-2 ./scratch-git-api
 
 # Create the default repos directories
 RUN mkdir -p /data/repos /data/repos-v2

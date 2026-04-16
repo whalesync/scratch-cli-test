@@ -1,15 +1,60 @@
+# Pipeline-scoping variables.
+#
+# Set either of these to "true" via the "Run pipeline" UI (or API) to restrict
+# the pipeline to just the matching release jobs. They default to "false" so
+# normal branch/MR pipelines include everything.
+#
+# Note: these are consumed by `include:rules:` below, which is evaluated at
+# pipeline-creation time against variables defined here or in project/UI
+# settings (variables defined inside job scripts are NOT visible to includes).
+variables:
+  RELEASE_DESKTOP_ONLY:
+    value: "false"
+    options: ["false", "true"]
+    description: "Skip everything except the 'release desktop app' stage jobs"
+  RELEASE_CLI_ONLY:
+    value: "false"
+    options: ["false", "true"]
+    description: "Skip everything except the CLI release jobs"
+
 include:
+  # Release files — each is skipped when the *other* release is requested.
+  - local: "scratch-git-2/.gitlab-ci-release.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true"'
+  - local: "scratch-desktop/.gitlab-ci-release.yml"
+    rules:
+      - if: '$RELEASE_CLI_ONLY != "true"'
+  # Shared infra — needed regardless of which jobs run.
+  - local: "/gitlab-ci/common.yml"
+  - local: "/gitlab-ci/stages.yml"
+  - local: "/gitlab-ci/local-runners.yml"
+
+  # Everything else is skipped when either *_ONLY flag is set.
   - template: Security/Secret-Detection.gitlab-ci.yml
-  - "/gitlab-ci/common.yml"
-  - "/gitlab-ci/stages.yml"
-  - "/gitlab-ci/local-runners.yml"
-  - "/gitlab-ci/stages/01-build-and-test.yml"
-  - "/gitlab-ci/stages/01-smoke-tests.yml"
-  - "/gitlab-ci/stages/01-cli-integration-tests.yml"
-  - "/gitlab-ci/stages/02-push-to-prod.yml"
-  - "/gitlab-ci/stages/03-push-images.yml"
-  - "/gitlab-ci/stages/04-run-migrations.yml"
-  - "/gitlab-ci/stages/05-deploy.yml"
-  - "/gitlab-ci/stages/06-environment-tests.yml"
-  - "scratch-git-2/.gitlab-ci-release.yml"
-  - "scratch-desktop/.gitlab-ci-release.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/01-build-and-test.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/01-smoke-tests.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/01-cli-integration-tests.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/02-push-to-prod.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/03-push-images.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/04-run-migrations.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/05-deploy.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/06-environment-tests.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'

@@ -6,19 +6,13 @@
   image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0
+    CARGO_HOME: '${CI_PROJECT_DIR}/.cargo'
   needs: [] # allows job to run without waiting for prior stages
+  # Uses the cross-compile cache: separate from the native cache so
+  # cargo-zigbuild target dirs persist across pipelines without colliding
+  # with native jobs' scratch-git-2/target/{debug,release}.
   cache:
-    - key:
-        files:
-          - scratch-git-2/Cargo.lock
-      fallback_keys:
-        - scratch-git-2-cargo
-      unprotect: true
-      paths:
-        - /usr/local/cargo/registry/cache
-        - /usr/local/cargo/registry/index
-        - scratch-git-2/target
-      policy: pull
+    - !reference [.caches, cargo_cross]
   artifacts:
     paths:
       - scratch-git-2/cli-binaries/

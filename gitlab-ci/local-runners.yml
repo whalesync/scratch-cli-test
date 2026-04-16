@@ -200,6 +200,9 @@ local build scratch-git docker image:
     - .build-scratch-git-docker-image
     - .local-runner-defaults
     - .local-docker-build
+  needs:
+    - job: local build and test scratch-git
+      artifacts: true
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, scratch-git-docker]
@@ -240,3 +243,4 @@ local dummy job:
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, dummy]
+      when: manual

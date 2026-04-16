@@ -90,7 +90,7 @@ yarn electron-builder --mac $MAC_TARGETS --publish never
 # Build Linux targets (can be disabled via BUILD_LINUX=false)
 if [ "$BUILD_LINUX" = "true" ]; then
   echo "Packaging Linux targets..."
-  yarn electron-builder --linux --publish never
+  yarn electron-builder --linux --x64 --publish never
 fi
 
 # 7. Collect artifacts into dist-release-test
@@ -133,7 +133,7 @@ echo "Found $ARTIFACT_COUNT artifact(s)"
 
 # 10. Create GitHub release (prerelease = true, no Homebrew update)
 # The release API creates the tag on GitHub automatically — no need to push a local tag.
-RELEASE_JSON=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+RELEASE_JSON=$(curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases" \
   -d "{
@@ -156,7 +156,7 @@ for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DI
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   echo "Uploading $FNAME..."
-  curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+  curl -sS --fail-with-body -X POST -H "Authorization: token $GITHUB_TOKEN" \
     -H "Content-Type: application/octet-stream" \
     "https://uploads.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?name=${FNAME}" \
     --data-binary "@$FILE"

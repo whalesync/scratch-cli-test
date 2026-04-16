@@ -256,24 +256,20 @@ build server docker image:
   stage: build and test
   image: rust:slim-bookworm
   interruptible: true
+  variables:
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
   cache:
-    - key:
-        files:
-          - scratch-git-2/Cargo.lock
-        prefix: $CI_JOB_NAME
-      fallback_keys:
-        - scratch-git-2-cargo
-      unprotect: true
-      paths:
-        - .cargo/registry/cache
-        - .cargo/registry/index
-        - scratch-git-2/target
-      policy: pull-push
+    - !reference [.caches, cargo]
+  artifacts:
+    paths:
+      - scratch-git-2/target/release/scratch-git-2
+    expire_in: 1 hour
   script:
     - apt-get update && apt-get install -y pkg-config libssl-dev git && rm -rf /var/lib/apt/lists/*
     - command -v git && git --version
     - cd scratch-git-2
     - cargo test
+    - cargo build --release --bin scratch-git-2
 
 build and test scratch-git:
   extends: .build-and-test-scratch-git
@@ -282,10 +278,12 @@ build and test scratch-git:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: !reference [.changes, scratch-git]
     - !reference [.rules, on_merge_to_master]
+    - !reference [.rules, on_merge_to_prod]
 
-# Warm the scratch-git-2-cargo fallback cache on every merge to master.
-# Release jobs (on prod) use this key when Cargo.lock-hash misses.
-warm-scratch-git-cargo-cache:
+# Warm both fallback caches (native + cross) on every merge to master.
+# Release jobs and MR pipelines fall back to these keys when the Cargo.lock-hash
+# miss. Writes to both keys so a cold cache warms whichever job runs next.
+Fill fallback cache for scratch-git-2:
   stage: cleanup
   image: unawareguitar/hasty-dolphin:latest
   interruptible: true
@@ -295,13 +293,17 @@ warm-scratch-git-cargo-cache:
   cache:
     - key: scratch-git-2-cargo
       unprotect: true
-      paths:
-        - .cargo/registry/cache
-        - .cargo/registry/index
-        - scratch-git-2/target
+      paths: !reference [.caches, cargo, paths]
+      policy: pull-push
+    - key: scratch-git-2-cargo-cross
+      unprotect: true
+      paths: !reference [.caches, cargo_cross, paths]
       policy: pull-push
   script:
     - cd scratch-git-2
+    # Native build warms the `cargo` fallback (target/{debug,release}).
+    - cargo build --release --bin scratch-git-2
+    # Cross builds warm the `cargo_cross` fallback (target/<triple>).
     - cargo zigbuild --release --bin scratchmd --target aarch64-apple-darwin
     - cargo zigbuild --release --bin scratchmd --target x86_64-unknown-linux-gnu
     - cargo zigbuild --release --bin scratchmd --target x86_64-pc-windows-gnu
@@ -331,6 +333,9 @@ warm-scratch-git-cargo-cache:
 
 build scratch-git docker image:
   extends: .build-scratch-git-docker-image
+  needs:
+    - job: build and test scratch-git
+      artifacts: true
   rules:
     - !reference [.rules, skip_for_local_runner_users]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -376,3 +381,4 @@ dummy job:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH != "master" && $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
       changes: !reference [.changes, dummy]
+      when: manual
