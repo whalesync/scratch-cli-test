@@ -95,7 +95,7 @@ export default function ConnectionsPage() {
     };
   }, [workbookId, openWorkbook, closeWorkbook]);
 
-  useWorkbook(workbookId);
+  const { workbook } = useWorkbook(workbookId);
   const { connectorAccounts, isLoading: isLoadingConnections } = useConnectorAccounts(workbookId);
   const { dataFolderGroups, isLoading: isLoadingFolders } = useDataFolders(workbookId);
   const { metadata } = useConnectorsMetadata();
@@ -126,7 +126,12 @@ export default function ConnectionsPage() {
       <div className={styles.page}>
         {/* Top bar */}
         <div className={styles.topBar}>
-          <TextTitle2>Connections</TextTitle2>
+          <TextTitle2>
+            Connections
+            {workbook?.name && (
+              <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}> · {workbook.name}</span>
+            )}
+          </TextTitle2>
           <ButtonSecondaryOutline
             leftSection={<StyledLucideIcon Icon={PlusIcon} size="sm" />}
             onClick={openConnectionModal}
