@@ -98,7 +98,10 @@ export default function ConnectionsPage() {
   const { workbook } = useWorkbook(workbookId);
   const { connectorAccounts, isLoading: isLoadingConnections } = useConnectorAccounts(workbookId);
   const { dataFolderGroups, isLoading: isLoadingFolders } = useDataFolders(workbookId);
-  const { metadata } = useConnectorsMetadata();
+  const connectorAccountMap = useMemo(
+    () => new Map((connectorAccounts ?? []).map((account) => [account.id, account])),
+    [connectorAccounts],
+  );
 
   const [connectionModalOpened, { open: openConnectionModal, close: closeConnectionModal }] = useDisclosure(false);
   const [chooseTablesAfterCreateOpened, { open: openChooseTablesAfterCreate, close: closeChooseTablesAfterCreate }] =
@@ -191,13 +194,13 @@ export default function ConnectionsPage() {
         {/* Service blocks */}
         {!isLoading &&
           dataFolderGroups.map((group) => {
-            const connectorAccount = (connectorAccounts ?? []).find(
-              (ca) => ca.displayName === group.name || getServiceName(metadata, ca.service) === group.name,
-            );
+            const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
+            const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
+            const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
 
             return (
               <ServiceBlock
-                key={group.name}
+                key={key}
                 group={group}
                 workbookId={workbookId}
                 connectorAccount={connectorAccount}
@@ -429,10 +432,13 @@ function ServiceActions({
   const isOAuth = connectorAccount.authType === AuthType.OAUTH;
 
   if (!isConnected) {
+    const failedPrimaryAction = isOAuth ? onReauthorize : onEditConnection;
+    const failedPrimaryLabel = isOAuth ? 'Reconnect' : 'Edit settings';
+
     return (
       <div className={styles.rowActions}>
-        <button className={styles.actionBtn} onClick={onReauthorize}>
-          Reconnect
+        <button className={styles.actionBtn} onClick={failedPrimaryAction}>
+          {failedPrimaryLabel}
         </button>
         <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={onRemove}>
           Remove

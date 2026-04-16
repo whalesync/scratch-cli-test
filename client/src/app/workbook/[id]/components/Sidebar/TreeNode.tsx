@@ -280,7 +280,8 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   );
   const connectorJobs = useActiveJobsStore(useShallow(connectorJobsSelector));
 
-  const nodeId = `connection-${group.name}`;
+  const connectionId = connectorAccount?.id ?? group.dataFolders[0]?.connectorAccountId ?? group.name;
+  const nodeId = `connection-${connectionId}`;
   const isExpanded = expandedNodes.has(nodeId);
   const isScratch = group.name === SCRATCH_GROUP_NAME;
 
@@ -443,7 +444,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
                 depth={0}
                 groupName={group.name}
                 workbookId={workbookId}
-                idPrefix={group.name}
+                idPrefix={connectionId}
               />
               {showHidden && connectorAccount && (
                 <ScratchFolderNode workbookId={workbookId} connectorAccountId={connectorAccount.id} />
@@ -1096,7 +1097,7 @@ export function EmptyConnectionNode({ connectorAccount, workbookId }: EmptyConne
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
 
-  const nodeId = `connection-${connectorAccount.displayName || connectorAccount.id}`;
+  const nodeId = `connection-${connectorAccount.id}`;
   const isExpanded = expandedNodes.has(nodeId);
 
   // Connection health status

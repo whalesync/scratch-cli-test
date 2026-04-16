@@ -187,11 +187,12 @@ interface ReviewConnectionNodeProps {
   dirtyFilePaths: Map<string, FileDiffStatus>;
 }
 
-export function ReviewConnectionNode({ group, workbookId, dirtyFilePaths }: ReviewConnectionNodeProps) {
+export function ReviewConnectionNode({ group, workbookId, connectorAccount, dirtyFilePaths }: ReviewConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
 
-  const nodeId = `connection-${group.name}`;
+  const connectionId = connectorAccount?.id ?? group.dataFolders[0]?.connectorAccountId ?? group.name;
+  const nodeId = `connection-${connectionId}`;
   const isExpanded = expandedNodes.has(nodeId);
   const isScratch = group.name === SCRATCH_GROUP_NAME;
 
@@ -249,7 +250,7 @@ export function ReviewConnectionNode({ group, workbookId, dirtyFilePaths }: Revi
             groupName={group.name}
             workbookId={workbookId}
             dirtyFilePaths={dirtyFilePaths}
-            idPrefix={group.name}
+            idPrefix={connectionId}
           />
         </Stack>
       </Collapse>

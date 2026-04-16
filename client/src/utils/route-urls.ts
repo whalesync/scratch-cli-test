@@ -51,7 +51,6 @@ export class RouteUrls {
       .join('/');
     return `/workbook/${id}/review/${encoded}`;
   };
-  static workbookConnectionsPageUrl = (id: string) => `/workbook/${id}/connections`;
   static workbookSyncsPageUrl = (id: string) => `/workbook/${id}/syncs`;
   static workbookScheduledRunsPageUrl = (id: string) => `/workbook/${id}/runs/scheduled`;
   static workbookRunsPageUrl = (id: string, params?: Record<string, string>) => {

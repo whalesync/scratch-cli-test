@@ -1,6 +1,7 @@
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
+import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import {
   getOauthLabel,
@@ -167,7 +168,16 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
       });
 
       if (createdAccount.healthStatus === 'FAILED') {
-        setError(createdAccount.healthStatusMessage || 'Connection test failed. Please check your credentials.');
+        const connectionName = createdAccount.displayName || getServiceName(metadata, createdAccount.service);
+        handleClearForm();
+        props.onClose?.();
+        ScratchpadNotifications.error({
+          title: 'Connection not established',
+          message: createdAccount.healthStatusMessage
+            ? `Connection "${connectionName}" was not established. ${createdAccount.healthStatusMessage} Edit settings or remove it from Connections.`
+            : `Connection "${connectionName}" was not established. Edit settings or remove it from Connections.`,
+          autoClose: false,
+        });
         return;
       }
 

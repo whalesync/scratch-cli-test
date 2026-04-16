@@ -87,8 +87,8 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   useEffect(() => {
     if ((sortedGroups.length > 0 || emptyConnectorAccounts.length > 0) && expandedNodes.size === 0) {
       const allConnectionIds = [
-        ...sortedGroups.map((group) => `connection-${group.name}`),
-        ...emptyConnectorAccounts.map((account) => `connection-${account.displayName || account.id}`),
+        ...sortedGroups.map((group) => `connection-${group.dataFolders[0]?.connectorAccountId ?? group.name}`),
+        ...emptyConnectorAccounts.map((account) => `connection-${account.id}`),
       ];
       expandAll(allConnectionIds);
     }
