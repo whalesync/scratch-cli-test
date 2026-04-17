@@ -19,14 +19,57 @@ include:
   stage: build and test
   extends:
     - .docker_builder_image
-  cache: []
+  cache:
+    - !reference [.caches, cargo]
   services:
     - docker:26-dind
   variables:
     DOCKER_TLS_CERTDIR: ""
+    # Match scratch-git-2 CI jobs so dependency/registry caches resolve correctly.
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
     # Build images one at a time to avoid network timeouts in DinD.
     # Parallel builds compete for bandwidth, causing yarn install failures.
     COMPOSE_PARALLEL_LIMIT: "1"
+  # scratch-git-2/Dockerfile COPYs target/release/scratch-git-2 from the repo;
+  # build it here so docker compose has a binary in the build context.
+  #
+  # This runs in the *job container* (e.g. aws-dind), not on the host — a Rust
+  # install on your laptop is invisible here. The job image may be Alpine (apk)
+  # or Debian (apt-get); rustup is installed via curl when cargo is missing.
+  before_script:
+    - |
+      # Job sets CARGO_HOME to ${CI_PROJECT_DIR}/.cargo so caches align with other
+      # scratch-git jobs; rustup honors it — do not assume ~/.cargo (e.g. /root/.cargo).
+      : "${CARGO_HOME:=${HOME}/.cargo}"
+      export CARGO_HOME
+      if [ -f "${CARGO_HOME}/env" ]; then
+        . "${CARGO_HOME}/env"
+      fi
+      export PATH="${CARGO_HOME}/bin:${PATH}"
+
+      if ! command -v cargo >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update && apt-get install -y pkg-config libssl-dev git curl ca-certificates build-essential && rm -rf /var/lib/apt/lists/*
+        elif command -v apk >/dev/null 2>&1; then
+          apk add --no-cache curl ca-certificates git pkgconf openssl-dev musl-dev build-base
+        fi
+        if ! command -v curl >/dev/null 2>&1; then
+          echo "error: curl is required to install Rust (rustup) in this job image."
+          exit 1
+        fi
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+        . "${CARGO_HOME}/env"
+        export PATH="${CARGO_HOME}/bin:${PATH}"
+      fi
+
+      if ! command -v cargo >/dev/null 2>&1; then
+        echo "error: cargo not on PATH after rustup (scratch-git-2 smoke image build)."
+        exit 1
+      fi
+
+      cd "${CI_PROJECT_DIR}/scratch-git-2"
+      cargo build --release --bin scratch-git-2
+      cd "${CI_PROJECT_DIR}"
   timeout: 60m
   script:
     # Write the env file that docker compose reads for variable substitution

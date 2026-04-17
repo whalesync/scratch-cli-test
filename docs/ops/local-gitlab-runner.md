@@ -25,7 +25,7 @@ brew install gitlab-runner
 ### 2. Create the runner in GitLab
 
 1. Go to [New project runner](https://gitlab.com/whalesync/spinner/-/runners/new)
-2. In the **Tags** field, enter `local-YOUR_GITLAB_USERNAME` (e.g., `local-jdoe`). This is how GitLab matches your MR jobs to your runner.
+2. In the **Tags** field, enter **`local-YOUR_GITLAB_USERNAME`** (e.g., `local-jdoe`) **and `local-docker`**, comma-separated. The username tag routes jobs to your machine; **`local-docker` marks this as the Docker-executor runner** so the `local smoke tests` job (which requires both tags) does not get picked up by a shell-executor runner registered with the wrong tags.
 3. Click **Create runner** and copy the token it gives you
 
 ### 3. Register the runner locally

@@ -229,11 +229,17 @@ local build and test scratch-desktop:
 # Smoke Tests
 # -----------------------------------------------------------------------------
 
+# Requires tag `local-docker` in addition to `local-$GITLAB_USER_LOGIN` so this
+# job is not picked up by a mis-registered shell executor using the same user tag.
+# Add `local-docker` to your Docker-executor runner in GitLab (see docs).
 local smoke tests:
   extends:
     - .smoke-tests
     - .local-runner-defaults
     - .local-docker-build
+  tags:
+    - "local-$GITLAB_USER_LOGIN"
+    - local-docker
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, smoke-tests]
