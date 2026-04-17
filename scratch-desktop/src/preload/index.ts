@@ -68,8 +68,16 @@ const scratchDesktop = {
     opts?: { force?: boolean },
   ): Promise<{ stdout: string; stderr: string }> => invoke('scratch:init-workspace', workbookId, cwd, opts),
   removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
-  acceptAllChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-    invoke('scratch:accept-all-changes', workspacePath),
+  acceptAllChanges: (
+    workspacePath: string,
+    folderPath?: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:accept-all-changes', workspacePath, folderPath),
+  discardAllChanges: (
+    workspacePath: string,
+    folderPath?: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:discard-all-changes', workspacePath, folderPath),
   acceptRecord: (
     workspacePath: string,
     recordPath: string,

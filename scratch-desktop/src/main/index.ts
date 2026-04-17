@@ -441,9 +441,16 @@ ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: stri
 ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) =>
   runScratchmd(['workspaces', 'unsync', workbookId, '--yes']),
 );
-ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string) =>
-  runScratchmdCapture(['files', 'accept-all'], workspacePath),
-);
+ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
+  const args = ['files', 'accept-all'];
+  if (folderPath) args.push('--folder', folderPath);
+  return runScratchmdCapture(args, workspacePath);
+});
+ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
+  const args = ['files', 'discard-all'];
+  if (folderPath) args.push('--folder', folderPath);
+  return runScratchmdCapture(args, workspacePath);
+});
 ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
   runScratchmdCapture(['files', 'accept', recordPath], workspacePath),
 );

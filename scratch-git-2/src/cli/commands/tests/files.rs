@@ -1007,6 +1007,262 @@ fn accept_field_in_folder_ignores_unpublished_only_changes() {
     assert!(!result.dirty_changed);
 }
 
+/// Build a bare repo with two data folders (posts/, articles/) on both main and dirty,
+/// where dirty differs from main in BOTH folders. Returns the bare repo path and a
+/// connection context whose dirty_dir has been materialized from the dirty branch.
+fn create_multi_folder_fixture() -> (TempDir, ConnectionContext) {
+    let tmp = TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let bare_repo = tmp.path().join("repo.git");
+
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source_dir, &["checkout", "-b", "main"]);
+    write_file(&source_dir.join("posts/rec1.json"), "{\"v\":\"main-p1\"}");
+    write_file(
+        &source_dir.join("articles/rec1.json"),
+        "{\"v\":\"main-a1\"}",
+    );
+    commit_all(&source_dir, "main content");
+
+    run_git(&source_dir, &["checkout", "-b", "dirty"]);
+    // Approved-but-unpublished edits in BOTH folders.
+    write_file(&source_dir.join("posts/rec1.json"), "{\"v\":\"dirty-p1\"}");
+    write_file(
+        &source_dir.join("articles/rec1.json"),
+        "{\"v\":\"dirty-a1\"}",
+    );
+    commit_all(&source_dir, "dirty content");
+
+    run_git(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            source_dir.to_str().unwrap(),
+            bare_repo.to_str().unwrap(),
+        ],
+    );
+
+    let root = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&root, &bare_repo);
+    // Production creates dirty_dir as a sparse worktree (see
+    // `materialize_dirty_checkout` in workspaces.rs); the reset-hard in
+    // discard_all_single_repo requires that. Mirror it here.
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
+        .unwrap();
+
+    (tmp, ctx)
+}
+
+#[test]
+fn accept_all_single_repo_folder_accepts_only_target_folder() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    // Pending edits in both folders.
+    write_file(
+        &ctx.dirty_dir.join("posts/rec1.json"),
+        "{\"v\":\"pending-p1\"}",
+    );
+    write_file(
+        &ctx.dirty_dir.join("articles/rec1.json"),
+        "{\"v\":\"pending-a1\"}",
+    );
+
+    let result = accept_all_single_repo(&ctx, Some("posts")).unwrap();
+
+    assert_eq!(result.files_accepted, 1);
+    assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
+
+    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    assert_eq!(
+        tree.get("posts/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"pending-p1\"}".as_slice()),
+        "posts was accepted into dirty"
+    );
+    assert_eq!(
+        tree.get("articles/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"dirty-a1\"}".as_slice()),
+        "articles on dirty branch is unchanged"
+    );
+}
+
+#[test]
+fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+    let starting_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+
+    // Pending edit only in articles/; posts/ is unchanged from dirty.
+    write_file(
+        &ctx.dirty_dir.join("articles/rec1.json"),
+        "{\"v\":\"pending-a1\"}",
+    );
+
+    let result = accept_all_single_repo(&ctx, Some("posts")).unwrap();
+
+    assert_eq!(result.files_accepted, 0);
+    assert!(result.accepted_paths.is_empty());
+    assert_eq!(
+        git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap(),
+        starting_dirty,
+        "dirty ref should be unchanged when folder has no pending changes"
+    );
+}
+
+#[test]
+fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    // Delete the scoped folder's file from the working tree.
+    std::fs::remove_file(ctx.dirty_dir.join("posts/rec1.json")).unwrap();
+
+    let result = accept_all_single_repo(&ctx, Some("posts")).unwrap();
+
+    assert_eq!(result.files_accepted, 1);
+    assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
+
+    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    assert!(
+        !tree.contains_key("posts/rec1.json"),
+        "deleted record should be removed from dirty"
+    );
+    assert!(
+        tree.contains_key("articles/rec1.json"),
+        "articles folder should remain untouched"
+    );
+}
+
+#[test]
+fn discard_all_single_repo_folder_reverts_only_target_folder() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    // Pending edits in both folders on top of already-approved dirty-vs-main diffs.
+    write_file(
+        &ctx.dirty_dir.join("posts/rec1.json"),
+        "{\"v\":\"pending-p1\"}",
+    );
+    write_file(
+        &ctx.dirty_dir.join("articles/rec1.json"),
+        "{\"v\":\"pending-a1\"}",
+    );
+
+    let result = discard_all_single_repo(&ctx, Some("posts")).unwrap();
+
+    assert!(!result.skipped_missing_main);
+    assert_eq!(result.files_discarded, 1);
+    assert_eq!(result.discarded_paths, vec!["posts/rec1.json".to_string()]);
+
+    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    assert_eq!(
+        tree.get("posts/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"main-p1\"}".as_slice()),
+        "posts should be reverted to main content"
+    );
+    assert_eq!(
+        tree.get("articles/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"dirty-a1\"}".as_slice()),
+        "articles should retain its approved-but-unpublished state"
+    );
+
+    // Worktree for the scoped folder should be reset to main content.
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\"v\":\"main-p1\"}"
+    );
+    // Worktree for the other folder must retain its pending edit — a scoped
+    // discard must not wipe unrelated working-tree changes.
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        "{\"v\":\"pending-a1\"}"
+    );
+}
+
+#[test]
+fn discard_all_single_repo_folder_noop_when_folder_clean() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    // First, realign posts/ in BOTH main and dirty so there are no approved changes
+    // in posts. We do this by fast-forwarding main to dirty (so they match), then
+    // resetting posts/ back on dirty so dirty matches itself. Simpler: mutate main
+    // directly to match dirty content for posts, leaving articles diverged.
+    // Achieved by committing a new main tree via commit_file_map_to_dirty_ref isn't
+    // applicable since that writes to dirty. Instead, build via plumbing: read dirty
+    // tree, write it as a new main commit.
+    let dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let dirty_tree = read_git_tree(&ctx.bare_repo, &dirty_hash).unwrap();
+    // Keep articles' main version but overwrite posts to match dirty, so only
+    // articles has approved-but-unpublished changes.
+    let mut new_main = dirty_tree.clone();
+    new_main.insert(
+        "articles/rec1.json".to_string(),
+        b"{\"v\":\"main-a1\"}".to_vec(),
+    );
+    // Commit new_main onto refs/heads/main via the same helper (it writes to dirty,
+    // so instead update refs directly). Use git_update_ref after writing a tree.
+    let starting_dirty = dirty_hash.clone();
+    let commit_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        Some(starting_dirty.as_str()),
+        &new_main,
+        "align posts on main",
+    )
+    .unwrap();
+    git_update_ref(&ctx.bare_repo, "refs/heads/main", &commit_hash).unwrap();
+    // Reset dirty back to its original hash since commit_file_map_to_dirty_ref bumped it.
+    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &starting_dirty).unwrap();
+
+    // No pending edits in posts/; only articles has pending.
+    write_file(
+        &ctx.dirty_dir.join("articles/rec1.json"),
+        "{\"v\":\"pending-a1\"}",
+    );
+
+    let pre_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+
+    let result = discard_all_single_repo(&ctx, Some("posts")).unwrap();
+
+    assert!(!result.skipped_missing_main);
+    assert_eq!(result.files_discarded, 0);
+    assert!(result.discarded_paths.is_empty());
+    assert_eq!(
+        git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap(),
+        pre_dirty,
+        "dirty ref should be unchanged when target folder is clean"
+    );
+    // articles working-tree edit must remain untouched.
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        "{\"v\":\"pending-a1\"}"
+    );
+}
+
 fn run_git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(dir)

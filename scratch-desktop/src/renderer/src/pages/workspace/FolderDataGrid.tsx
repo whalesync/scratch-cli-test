@@ -28,7 +28,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw } from 'lucide-react';
+import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
@@ -565,7 +565,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [hoveredRowIdx, setHoveredRowIdx] = useState<number | null>(null);
   const [inspectButtonRect, setInspectButtonRect] = useState<{ x: number; y: number; height: number } | null>(null);
   const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
-  const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | null>(null);
+  const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | 'discard' | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
@@ -1138,13 +1138,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   }, [closeGridEditorChrome, headerMenu, refreshGridData, selectedFolderPath, workspacePath]);
 
   const handleBulkAction = useCallback(
-    async (action: 'approve' | 'reject') => {
+    async (action: 'approve' | 'reject' | 'discard') => {
       if (!workspacePath) return;
+
+      const relativeFolderPath =
+        selectedFolderPath && selectedFolderPath.startsWith(workspacePath)
+          ? selectedFolderPath.slice(workspacePath.length).replace(/^\//, '')
+          : (selectedFolderPath?.replace(/^\//, '') ?? '');
 
       setBulkActionLoading(true);
       try {
         if (action === 'approve') {
-          const result = await window.scratchDesktop.acceptAllChanges(workspacePath);
+          const result = await window.scratchDesktop.acceptAllChanges(workspacePath, relativeFolderPath || undefined);
           if (result.exitCode !== 0) {
             throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve changes');
           }
@@ -1152,6 +1157,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             color: 'green',
             title: 'All changes approved',
             message: `Approved all pending changes.`,
+          });
+        } else if (action === 'discard') {
+          const result = await window.scratchDesktop.discardAllChanges(workspacePath, relativeFolderPath || undefined);
+          if (result.exitCode !== 0) {
+            throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to discard changes');
+          }
+          notifications.show({
+            color: 'green',
+            title: 'All changes discarded',
+            message: `Discarded all pending and approved changes.`,
           });
         } else {
           // Reject all: gather unreviewed filenames and reject each
@@ -1168,13 +1183,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
           if (unreviewedFilenames.length === 0) return;
 
-          const relativeFolderPath =
-            selectedFolderPath && workspacePath && selectedFolderPath.startsWith(workspacePath)
-              ? selectedFolderPath.slice(workspacePath.length).replace(/^\//, '')
-              : (selectedFolderPath?.replace(/^\//, '') ?? '');
-          const folderPrefix = relativeFolderPath;
           for (const filename of unreviewedFilenames) {
-            const recordPath = folderPrefix ? `${folderPrefix}/${filename}` : filename;
+            const recordPath = relativeFolderPath ? `${relativeFolderPath}/${filename}` : filename;
             const result = await window.scratchDesktop.rejectRecord(workspacePath, recordPath);
             if (result.exitCode !== 0) {
               throw new Error(
@@ -1754,6 +1764,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 </ButtonSecondaryGhost>
               </>
             )}
+            {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0) > 0 && detailRowIndex === null && (
+              <>
+                {(filterCounts?.unreviewed ?? 0) === 0 && <Divider orientation="vertical" />}
+                <ButtonSecondaryGhost
+                  size="compact-xs"
+                  c="red.8"
+                  leftSection={<Trash2 size={12} />}
+                  onClick={() => setBulkActionConfirm('discard')}
+                >
+                  Discard all
+                </ButtonSecondaryGhost>
+              </>
+            )}
             <Divider orientation="vertical" />
             <Popover>
               <Popover.Target>
@@ -2069,14 +2092,36 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         onClose={() => setBulkActionConfirm(null)}
         title={
           <Text13Medium>
-            {bulkActionConfirm === 'approve' ? 'Approve' : 'Reject'} {filterCounts?.unreviewed ?? 0} pending{' '}
-            {(filterCounts?.unreviewed ?? 0) === 1 ? 'change' : 'changes'} in{' '}
-            {selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder'}?
+            {bulkActionConfirm === 'discard' ? (
+              <>
+                Discard {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0)}{' '}
+                {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0) === 1 ? 'change' : 'changes'} in{' '}
+                {selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder'}?
+              </>
+            ) : (
+              <>
+                {bulkActionConfirm === 'approve' ? 'Approve' : 'Reject'} {filterCounts?.unreviewed ?? 0} pending{' '}
+                {(filterCounts?.unreviewed ?? 0) === 1 ? 'change' : 'changes'} in{' '}
+                {selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder'}?
+              </>
+            )}
           </Text13Medium>
         }
         size="sm"
         padding="md"
       >
+        {bulkActionConfirm === 'discard' && (
+          <>
+            <Text13Regular>
+              This will discard all pending and approved changes in this table, reverting every record to its last
+              published state. This cannot be undone.
+            </Text13Regular>
+            <Text12Regular c="var(--fg-muted)" mt="xs">
+              {filterCounts?.unreviewed ?? 0} pending + {filterCounts?.unpublished ?? 0} approved ={' '}
+              {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0)} changes will be discarded.
+            </Text12Regular>
+          </>
+        )}
         <Group justify="flex-end" mt="md">
           <ButtonSecondaryOutline size="compact-sm" onClick={() => setBulkActionConfirm(null)}>
             Cancel
@@ -2089,7 +2134,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               if (bulkActionConfirm) void handleBulkAction(bulkActionConfirm);
             }}
           >
-            {bulkActionConfirm === 'approve' ? 'Approve all' : 'Reject all'}
+            {bulkActionConfirm === 'approve'
+              ? 'Approve all'
+              : bulkActionConfirm === 'discard'
+                ? 'Discard all'
+                : 'Reject all'}
           </ButtonSecondaryGhost>
         </Group>
       </Modal>

@@ -61,7 +61,20 @@ pub enum FilesCommands {
     },
     /// Commit all current working-tree record changes into the local dirty branch
     #[command(name = "accept-all")]
-    AcceptAll,
+    AcceptAll {
+        /// Optional folder to scope the accept to (e.g. "ConnectionName/folder").
+        /// When unset, accepts across every connection in the workspace.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+    },
+    /// Discard every pending and approved-but-unpublished change, reverting records to their last published state
+    #[command(name = "discard-all")]
+    DiscardAll {
+        /// Optional folder to scope the discard to (e.g. "ConnectionName/folder").
+        /// When unset, discards across every connection in the workspace.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+    },
     /// Commit one or more working-tree changes into the local dirty branch in a single commit
     Accept {
         /// Paths to accept, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
@@ -178,6 +191,13 @@ struct AcceptAllResult {
 }
 
 #[derive(Default)]
+struct DiscardAllResult {
+    files_discarded: i32,
+    discarded_paths: Vec<String>,
+    skipped_missing_main: bool,
+}
+
+#[derive(Default)]
 struct FieldCommandResult {
     changed_paths: Vec<String>,
     dirty_changed: bool,
@@ -198,7 +218,12 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Download { on_delete } => {
             run_download(&cwd, server_url, json, on_delete).await
         }
-        FilesCommands::AcceptAll => run_accept_all(&cwd, server_url, json),
+        FilesCommands::AcceptAll { folder } => {
+            run_accept_all(&cwd, server_url, folder.as_deref(), json)
+        }
+        FilesCommands::DiscardAll { folder } => {
+            run_discard_all(&cwd, server_url, folder.as_deref(), json)
+        }
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::AcceptField { folder, field } => {
             run_accept_field(&cwd, &folder, &field, json)
@@ -461,7 +486,8 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
 }
 
 fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let (_, _, contexts, workspace_server_url) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, _, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url)?;
     let token = get_token(&workspace_server_url)?;
 
     if contexts.is_empty() {
@@ -474,7 +500,8 @@ fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Resu
 
         let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
         let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-        let origin_dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
+        let origin_dirty_hash =
+            git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
 
         let merge_base_hash = if dirty_hash.is_some() && origin_dirty_hash.is_some() {
             crate::git_ops::merge_base_to_string(
@@ -526,27 +553,115 @@ fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Resu
         );
         println!(
             "  merge-base == local master: {}",
-            if result.equals_local_master { "yes" } else { "no" }
+            if result.equals_local_master {
+                "yes"
+            } else {
+                "no"
+            }
         );
     }
 
     Ok(())
 }
 
-fn run_accept_all(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+fn run_discard_all(
+    cwd: &Path,
+    server_url: &str,
+    folder: Option<&Path>,
+    json: bool,
+) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
     let mut results = Vec::new();
-    for ctx in &contexts {
-        if contexts.len() > 1 && !json {
-            println!("Accepting changes in {}...", ctx.conn_dir_name);
+    match folder {
+        Some(folder) => {
+            let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+            results.push(discard_all_single_repo(&ctx, Some(repo_folder.as_str()))?);
         }
-        results.push(accept_all_single_repo(ctx)?);
+        None => {
+            for ctx in &contexts {
+                if contexts.len() > 1 && !json {
+                    println!("Discarding changes in {}...", ctx.conn_dir_name);
+                }
+                results.push(discard_all_single_repo(ctx, None)?);
+            }
+        }
+    }
+
+    let discarded_files: Vec<String> = results
+        .iter()
+        .flat_map(|result| result.discarded_paths.iter().cloned())
+        .collect();
+    let total_discarded: i32 = results.iter().map(|result| result.files_discarded).sum();
+    let skipped_any = results.iter().any(|result| result.skipped_missing_main);
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if total_discarded == 0 { "no_changes" } else { "discarded" },
+                "filesDiscarded": total_discarded,
+                "paths": discarded_files,
+                "skippedMissingMain": skipped_any,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if total_discarded == 0 {
+        println!(
+            "No local changes to discard. ({})",
+            format_elapsed(elapsed_ms)
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Discarded {} local record change(s). ({})",
+        total_discarded,
+        format_elapsed(elapsed_ms)
+    );
+    print_file_list(&discarded_files);
+    if skipped_any {
+        println!("Note: one or more connections have no published state yet and were skipped.");
+    }
+    Ok(())
+}
+
+fn run_accept_all(
+    cwd: &Path,
+    server_url: &str,
+    folder: Option<&Path>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut results = Vec::new();
+    match folder {
+        Some(folder) => {
+            let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+            results.push(accept_all_single_repo(&ctx, Some(repo_folder.as_str()))?);
+        }
+        None => {
+            for ctx in &contexts {
+                if contexts.len() > 1 && !json {
+                    println!("Accepting changes in {}...", ctx.conn_dir_name);
+                }
+                results.push(accept_all_single_repo(ctx, None)?);
+            }
+        }
     }
 
     let accepted_files: Vec<String> = results
@@ -1534,7 +1649,9 @@ fn upload_single_repo(
             "refs/heads/dirty",
             "refs/remotes/origin/dirty",
         )?
-        .ok_or_else(|| anyhow::anyhow!("No merge base found between local dirty and origin/dirty"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("No merge base found between local dirty and origin/dirty")
+        })?;
         let merge_base_map =
             cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &merge_base_hash)?.clone();
 
@@ -1617,7 +1734,125 @@ fn upload_single_repo(
     )
 }
 
-fn accept_all_single_repo(ctx: &ConnectionContext) -> anyhow::Result<AcceptAllResult> {
+fn discard_all_single_repo(
+    ctx: &ConnectionContext,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<DiscardAllResult> {
+    let main_hash = match git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")? {
+        Some(hash) => hash,
+        None => {
+            return Ok(DiscardAllResult {
+                skipped_missing_main: true,
+                ..Default::default()
+            });
+        }
+    };
+    let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
+
+    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let dirty_map = match dirty_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(ctx)?;
+    let local_map = read_materialized_repo(ctx)?;
+
+    let all_pending = compute_unreviewed_entries(&ctx.conn_dir_name, &dirty_map, &local_map);
+    let all_approved = compute_unreviewed_entries(&ctx.conn_dir_name, &main_map, &dirty_map);
+
+    let path_in_scope = |path: &str| match repo_folder {
+        Some(folder) => is_data_path_in_folder(path, folder),
+        None => true,
+    };
+
+    let mut affected_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for entry in &all_pending {
+        if path_in_scope(&entry.path) {
+            affected_paths.insert(entry.path.clone());
+        }
+    }
+    for entry in &all_approved {
+        if path_in_scope(&entry.path) {
+            affected_paths.insert(entry.path.clone());
+        }
+    }
+
+    if affected_paths.is_empty() {
+        return Ok(DiscardAllResult {
+            ..Default::default()
+        });
+    }
+
+    // Build a new dirty tree. Scoped case: start from current dirty and overlay only
+    // the folder's data files from main. Unscoped case: keep dirty's .scratch/*
+    // entries and overlay every non-scratch file from main (previous behavior).
+    let discarded_map = match repo_folder {
+        Some(folder) => {
+            let mut map = dirty_map.clone();
+            let to_remove: Vec<String> = dirty_map
+                .keys()
+                .filter(|path| is_data_path_in_folder(path, folder))
+                .cloned()
+                .collect();
+            for path in to_remove {
+                map.remove(&path);
+            }
+            for (path, value) in &main_map {
+                if is_data_path_in_folder(path, folder) {
+                    map.insert(path.clone(), value.clone());
+                }
+            }
+            map
+        }
+        None => {
+            let mut map = scratch_only_map(&dirty_map);
+            for (path, value) in &main_map {
+                if !is_scratch_path(path) {
+                    map.insert(path.clone(), value.clone());
+                }
+            }
+            map
+        }
+    };
+
+    let commit_msg = match repo_folder {
+        Some(folder) if !folder.is_empty() => format!("Discard all local changes in {}", folder),
+        _ => "Discard all local changes".to_string(),
+    };
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        dirty_hash.as_deref(),
+        &discarded_map,
+        &commit_msg,
+    )?;
+    // Update the dirty worktree's HEAD/index to the new commit, then revert ONLY
+    // the affected paths on disk. A full `reset --hard` would blow away pending
+    // edits in folders outside the scoped --folder.
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    for path in &affected_paths {
+        let disk_path = ctx.dirty_dir.join(path);
+        match discarded_map.get(path.as_str()) {
+            Some(content) => write_file(&disk_path, content)?,
+            None => {
+                if disk_path.exists() {
+                    std::fs::remove_file(&disk_path)?;
+                }
+            }
+        }
+    }
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
+
+    Ok(DiscardAllResult {
+        files_discarded: affected_paths.len() as i32,
+        discarded_paths: affected_paths.into_iter().collect(),
+        skipped_missing_main: false,
+    })
+}
+
+fn accept_all_single_repo(
+    ctx: &ConnectionContext,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<AcceptAllResult> {
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
@@ -1625,7 +1860,15 @@ fn accept_all_single_repo(ctx: &ConnectionContext) -> anyhow::Result<AcceptAllRe
     };
     sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
-    let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+    let all_changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+
+    let changes: Vec<UnreviewedEntry> = match repo_folder {
+        Some(folder) => all_changes
+            .into_iter()
+            .filter(|entry| is_data_path_in_folder(&entry.path, folder))
+            .collect(),
+        None => all_changes,
+    };
 
     if changes.is_empty() {
         return Ok(AcceptAllResult {
@@ -1633,18 +1876,48 @@ fn accept_all_single_repo(ctx: &ConnectionContext) -> anyhow::Result<AcceptAllRe
         });
     }
 
-    let mut accepted_map = scratch_only_map(&base_map);
-    for (path, value) in &local_map {
-        if !is_scratch_path(path) {
-            accepted_map.insert(path.clone(), value.clone());
+    // When scoped to a folder, only overlay that folder's files from local_map.
+    // Otherwise overlay every non-scratch file, matching the previous behavior.
+    let mut accepted_map = base_map.clone();
+    match repo_folder {
+        Some(folder) => {
+            for (path, value) in &local_map {
+                if is_data_path_in_folder(path, folder) {
+                    accepted_map.insert(path.clone(), value.clone());
+                }
+            }
+            // Drop base entries that no longer exist locally within the folder
+            // (handles locally-deleted records inside the scoped folder).
+            let to_remove: Vec<String> = base_map
+                .keys()
+                .filter(|path| {
+                    is_data_path_in_folder(path, folder) && !local_map.contains_key(path.as_str())
+                })
+                .cloned()
+                .collect();
+            for path in to_remove {
+                accepted_map.remove(&path);
+            }
+        }
+        None => {
+            accepted_map = scratch_only_map(&base_map);
+            for (path, value) in &local_map {
+                if !is_scratch_path(path) {
+                    accepted_map.insert(path.clone(), value.clone());
+                }
+            }
         }
     }
 
+    let commit_msg = match repo_folder {
+        Some(folder) if !folder.is_empty() => format!("Accept all local changes in {}", folder),
+        _ => "Accept all local changes".to_string(),
+    };
     let new_dirty_hash = commit_file_map_to_dirty_ref(
         &ctx.bare_repo,
         base_hash.as_deref(),
         &accepted_map,
-        "Accept all local changes",
+        &commit_msg,
     )?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
     update_reviewed_dirty(ctx, &new_dirty_hash)?;
@@ -2211,7 +2484,15 @@ fn apply_remote_changes_to_working_copy(
                 base,
                 local,
                 remote,
-            } => (path.clone(), Some(merge_content(&path, Some(&base), Some(&local), Some(&remote)))),
+            } => (
+                path.clone(),
+                Some(merge_content(
+                    &path,
+                    Some(&base),
+                    Some(&local),
+                    Some(&remote),
+                )),
+            ),
         };
 
         let current_content = working_tree_map.get(path.as_str());

@@ -52,7 +52,14 @@ interface ScratchDesktopAPI {
     opts?: { force?: boolean },
   ) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
-  acceptAllChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  acceptAllChanges: (
+    workspacePath: string,
+    folderPath?: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  discardAllChanges: (
+    workspacePath: string,
+    folderPath?: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   acceptRecord: (
     workspacePath: string,
     recordPath: string,

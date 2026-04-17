@@ -63,11 +63,16 @@ pub async fn git_backend(
     // before spawning the subprocess and hold it until the child exits, preventing concurrent
     // writes from the port-3100 REST API and the port-3101 git HTTP backend.
     // git-upload-pack (fetch/clone) is read-only and does not need a lock.
-    let is_receive_pack = content_type.contains("git-receive-pack")
-        || repo_id_and_path.contains("git-receive-pack");
+    let is_receive_pack =
+        content_type.contains("git-receive-pack") || repo_id_and_path.contains("git-receive-pack");
     let repo_id_owned = repo_id.to_string();
     let write_guard = if is_receive_pack {
-        Some(state.write_locks.acquire(&repo_id_owned, DIRTY_BRANCH).await)
+        Some(
+            state
+                .write_locks
+                .acquire(&repo_id_owned, DIRTY_BRANCH)
+                .await,
+        )
     } else {
         None
     };
