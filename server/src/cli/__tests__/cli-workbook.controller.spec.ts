@@ -107,6 +107,7 @@ describe('CliWorkbookController', () => {
     } as unknown as jest.Mocked<DbService>;
 
     scratchGitService = {
+      discardChanges: jest.fn(),
       resolveConnectionRepoPath: jest.fn(),
     } as unknown as jest.Mocked<ScratchGitService>;
 
@@ -298,6 +299,21 @@ describe('CliWorkbookController', () => {
       await controller.connectorGitProxy(req, WORKBOOK_ID, CONNECTOR_ID, res);
 
       expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(CONNECTOR_ID);
+    });
+  });
+
+  describe('discardRemoteDirtyChanges', () => {
+    it('proxies the path discard to scratch git for the resolved repo', async () => {
+      const repoId = `${ACTOR_ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}` as RepoId;
+      workbookService.findOne.mockResolvedValue(makeWorkbook());
+      scratchGitService.resolveConnectionRepoPath.mockResolvedValue(repoId);
+
+      await controller.discardRemoteDirtyChanges(makeReqWithUser(), WORKBOOK_ID, CONNECTOR_ID, {
+        path: 'posts/created.json',
+      });
+
+      expect(scratchGitService.resolveConnectionRepoPath).toHaveBeenCalledWith(CONNECTOR_ID);
+      expect(scratchGitService.discardChanges).toHaveBeenCalledWith(repoId, 'posts/created.json');
     });
   });
 

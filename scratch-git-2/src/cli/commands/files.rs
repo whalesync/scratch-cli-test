@@ -114,6 +114,20 @@ pub enum FilesCommands {
         #[arg(long)]
         field: String,
     },
+    /// Restore one or more approved deletions by copying the main-branch version back into working and dirty
+    #[command(name = "restore-deleted-record")]
+    RestoreDeletedRecord {
+        /// Paths to restore, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
+    /// Discard one or more approved creates by removing them from working and dirty
+    #[command(name = "discard-created-record")]
+    DiscardCreatedRecord {
+        /// Paths to discard, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
     /// List record changes that exist only in the working tree and have not been accepted locally
     Unreviewed,
     /// List record changes between dirty and master branches (accepted but not yet published)
@@ -132,6 +146,7 @@ pub enum FilesCommands {
 
 #[derive(Clone)]
 struct ConnectionContext {
+    connection_id: String,
     conn_dir_name: String,
     dirty_dir: PathBuf,
     scratch_dir: PathBuf,
@@ -209,6 +224,12 @@ struct FieldCommandResult {
     dirty_changed: bool,
 }
 
+#[derive(Default)]
+struct RemoteDiscardResult {
+    changed_paths: Vec<String>,
+    remote_discarded_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct UnreviewedEntry {
     #[serde(rename = "connectionName")]
@@ -238,6 +259,12 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Reject { paths } => run_reject(&cwd, &paths, json),
         FilesCommands::RejectField { folder, field } => {
             run_reject_field(&cwd, &folder, &field, json)
+        }
+        FilesCommands::RestoreDeletedRecord { paths } => {
+            run_restore_deleted_record(&cwd, server_url, &paths, json)
+        }
+        FilesCommands::DiscardCreatedRecord { paths } => {
+            run_discard_created_record(&cwd, server_url, &paths, json).await
         }
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
@@ -1195,6 +1222,146 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     Ok(())
 }
 
+// Restore approved deletions by:
+// - grouping requested paths by connection
+// - copying the main-branch version back into the local working tree and dirty branch
+// - updating the hidden reviewed-dirty checkout for the affected connection
+fn run_restore_deleted_record(
+    cwd: &Path,
+    _server_url: &str,
+    input_paths: &[String],
+    json: bool,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let by_conn = group_input_paths_by_connection(&contexts, input_paths)?;
+    let mut all_restored: Vec<String> = Vec::new();
+
+    for (ctx_idx, path_pairs) in &by_conn {
+        let ctx = &contexts[*ctx_idx];
+        let rel_paths: Vec<String> = path_pairs
+            .iter()
+            .map(|(_, rel_path)| rel_path.clone())
+            .collect();
+        restore_deleted_records_locally(ctx, &rel_paths)?;
+        all_restored.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
+    }
+
+    let total = all_restored.len();
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "restored",
+                "filesRestored": total,
+                "paths": all_restored,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Restored {} approved deletion{}. ({})",
+        total,
+        if total == 1 { "" } else { "s" },
+        format_elapsed(elapsed_ms)
+    );
+    print_file_list(&all_restored);
+    Ok(())
+}
+
+// Discard approved creates by:
+// - grouping requested paths by connection
+// - removing the record from the local working tree and dirty branch
+// - updating the hidden reviewed-dirty checkout for the affected connection
+// - also discarding the matching path from the remote dirty branch
+async fn run_discard_created_record(
+    cwd: &Path,
+    server_url: &str,
+    input_paths: &[String],
+    json: bool,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (workspace_marker, _workspace_dir, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let client = crate::api::ApiClient::from_credentials(&workspace_server_url)
+        .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;
+    let by_conn = group_input_paths_by_connection(&contexts, input_paths)?;
+    let mut result = RemoteDiscardResult::default();
+
+    for (ctx_idx, path_pairs) in &by_conn {
+        let ctx = &contexts[*ctx_idx];
+        let rel_paths: Vec<String> = path_pairs
+            .iter()
+            .map(|(_, rel_path)| rel_path.clone())
+            .collect();
+
+        discard_created_records_locally(ctx, &rel_paths)?;
+        result
+            .changed_paths
+            .extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
+
+        for rel_path in &rel_paths {
+            discard_created_record_remotely(&client, &workspace_marker.workbook.id, ctx, rel_path)
+                .await?;
+            result
+                .remote_discarded_paths
+                .push(format!("{}/{}", ctx.conn_dir_name, rel_path));
+        }
+    }
+
+    let total = result.changed_paths.len();
+    let remote_total = result.remote_discarded_paths.len();
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "discarded",
+                "filesDiscarded": total,
+                "paths": result.changed_paths,
+                "remoteDirtyPathsDiscarded": result.remote_discarded_paths,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Discarded {} approved create{}. ({})",
+        total,
+        if total == 1 { "" } else { "s" },
+        format_elapsed(elapsed_ms)
+    );
+    if remote_total > 0 {
+        println!(
+            "Also discarded {} matching path{} from the remote dirty branch.",
+            remote_total,
+            if remote_total == 1 { "" } else { "s" }
+        );
+    }
+    print_file_list(&result.changed_paths);
+    Ok(())
+}
+
 fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
 
@@ -1456,6 +1623,7 @@ fn build_connection_contexts(
         })
         .filter(|connection| !connection.repo_path.is_empty() && !connection.dir_name.is_empty())
         .map(|connection| ConnectionContext {
+            connection_id: connection.id.clone(),
             conn_dir_name: connection.dir_name.clone(),
             dirty_dir: layout.dirty_checkout_path(&connection.dir_name),
             scratch_dir: layout.connection_scratch_path(&connection.dir_name),
@@ -1467,6 +1635,153 @@ fn build_connection_contexts(
         .collect();
 
     Ok(contexts)
+}
+
+fn group_input_paths_by_connection(
+    contexts: &[ConnectionContext],
+    input_paths: &[String],
+) -> anyhow::Result<HashMap<usize, Vec<(String, String)>>> {
+    let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
+    for input_path in input_paths {
+        let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
+            let prefix = format!("{}/", ctx.conn_dir_name);
+            input_path
+                .strip_prefix(&prefix)
+                .map(|rest| (i, rest.to_string()))
+        });
+        match found {
+            Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
+            None => anyhow::bail!(
+                "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
+                input_path
+            ),
+        }
+    }
+    Ok(by_conn)
+}
+
+fn restore_deleted_records_locally(
+    ctx: &ConnectionContext,
+    rel_paths: &[String],
+) -> anyhow::Result<()> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    let master_map = match master_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+
+    let mut next_dirty_map = base_map.clone();
+    for rel_path in rel_paths {
+        let display_path = format!("{}/{}", ctx.conn_dir_name, rel_path);
+        if base_map.contains_key(rel_path.as_str()) {
+            anyhow::bail!("'{}' is not an approved deleted record.", display_path);
+        }
+        let Some(master_content) = master_map.get(rel_path.as_str()) else {
+            anyhow::bail!(
+                "'{}' does not exist on main and cannot be restored.",
+                display_path
+            );
+        };
+        write_file(&ctx.dirty_dir.join(rel_path), master_content)?;
+        next_dirty_map.insert(rel_path.clone(), master_content.clone());
+    }
+
+    let message = if rel_paths.len() == 1 {
+        format!("Restore approved delete: {}", rel_paths[0])
+    } else {
+        format!("Restore {} approved deletes", rel_paths.len())
+    };
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        base_hash.as_deref(),
+        &next_dirty_map,
+        &message,
+    )?;
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
+    Ok(())
+}
+
+fn discard_created_records_locally(
+    ctx: &ConnectionContext,
+    rel_paths: &[String],
+) -> anyhow::Result<()> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    let master_map = match master_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+
+    let mut next_dirty_map = base_map.clone();
+    for rel_path in rel_paths {
+        let display_path = format!("{}/{}", ctx.conn_dir_name, rel_path);
+        if master_map.contains_key(rel_path.as_str()) {
+            anyhow::bail!(
+                "'{}' exists on main and cannot be discarded as an approved create.",
+                display_path
+            );
+        }
+        if !base_map.contains_key(rel_path.as_str()) {
+            anyhow::bail!("'{}' is not an approved created record.", display_path);
+        }
+        if ctx.dirty_dir.join(rel_path).exists() {
+            std::fs::remove_file(ctx.dirty_dir.join(rel_path))?;
+        }
+        next_dirty_map.remove(rel_path.as_str());
+    }
+
+    let message = if rel_paths.len() == 1 {
+        format!("Discard approved create: {}", rel_paths[0])
+    } else {
+        format!("Discard {} approved creates", rel_paths.len())
+    };
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        base_hash.as_deref(),
+        &next_dirty_map,
+        &message,
+    )?;
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
+    Ok(())
+}
+
+async fn discard_created_record_remotely(
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+    ctx: &ConnectionContext,
+    rel_path: &str,
+) -> anyhow::Result<()> {
+    // Short-term workaround agreed in a breakout with Ryder, Ivan, and Chris:
+    // discarding an approved create should remove the file from the local dirty
+    // branch and also attempt to remove it from the remote dirty branch if it
+    // was already pushed there as part of a publish. The point of the remote
+    // delete is to stop the file from resurfacing on the next pull.
+    //
+    // Once our upload/download 3-way merge and working-tree rebase logic
+    // prioritizes deletes over modifications, we should be able to remove this
+    // hack and rely on normal sync behavior instead.
+    client
+        .discard_remote_dirty_changes(workbook_id, &ctx.connection_id, rel_path)
+        .await
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "Discarded '{}/{}' locally, but failed to discard it from the remote dirty branch: {}",
+                ctx.conn_dir_name,
+                rel_path,
+                err
+            )
+        })
 }
 
 fn resolve_folder_context(

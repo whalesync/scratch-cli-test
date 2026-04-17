@@ -1252,7 +1252,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           : diffKind === 'unpublished'
             ? { bgCell: DIFF_UNPUBLISHED_BG() }
             : {};
-      const readOnlyTheme = isReadOnly ? { textDark: 'var(--fg-muted)' } : {};
+      const readOnlyTheme = isReadOnly ? { textDark: getCssVar('--fg-muted') } : {};
       const themeOverride = { ...rowTheme, ...diffTheme, ...readOnlyTheme };
       const allowOverlay =
         !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';

@@ -35,6 +35,7 @@ struct BareFixture {
 
 fn make_connection_context(root: &Path, bare_repo: &Path) -> ConnectionContext {
     ConnectionContext {
+        connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
         dirty_dir: root.join("Conn"),
         reviewed_dirty_dir: root.join(".scratch/connections/reviewed-dirty/Conn"),
@@ -125,6 +126,7 @@ fn detect_selected_connection_from_connection_subdir() {
 fn read_and_materialize_repo_maps_split_scratch_content() {
     let tmp = TempDir::new().unwrap();
     let ctx = ConnectionContext {
+        connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
         dirty_dir: tmp.path().join("Conn"),
         reviewed_dirty_dir: tmp.path().join(".scratch/connections/reviewed-dirty/Conn"),
@@ -222,6 +224,7 @@ fn prepare_upload_merge_prefers_remote_for_same_path_creates_without_base() {
 fn sync_schema_files_from_master_restores_missing_schema() {
     let tmp = TempDir::new().unwrap();
     let ctx = ConnectionContext {
+        connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
         dirty_dir: tmp.path().join("Conn"),
         reviewed_dirty_dir: tmp.path().join(".scratch/connections/reviewed-dirty/Conn"),
@@ -271,6 +274,96 @@ fn commit_file_map_to_dirty_ref_does_not_commit_temp_index_files() {
     assert!(paths.lines().any(|line| line == "posts/rec.json"));
     assert!(!paths.lines().any(|line| line == ".git-index"));
     assert!(!paths.lines().any(|line| line == ".git-index.lock"));
+}
+
+#[test]
+fn restore_deleted_records_locally_restores_main_version_into_working_and_dirty() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let bare_repo = tmp.path().join("repo.git");
+    run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
+
+    let main_files = HashMap::from([(
+        "posts/restore.json".to_string(),
+        b"{\"id\":\"restore\",\"name\":\"from-main\"}".to_vec(),
+    )]);
+    crate::git_ops::commit_file_map_to_ref(
+        &bare_repo,
+        "refs/heads/main",
+        None,
+        &main_files,
+        "main seed",
+    )
+    .unwrap();
+
+    let ctx = make_connection_context(tmp.path(), &bare_repo);
+    restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/restore.json")).unwrap(),
+        "{\"id\":\"restore\",\"name\":\"from-main\"}"
+    );
+
+    let dirty_hash = git_rev_parse(&bare_repo, "refs/heads/dirty").unwrap();
+    let dirty_map = read_git_tree(&bare_repo, &dirty_hash).unwrap();
+    assert_eq!(
+        String::from_utf8(dirty_map["posts/restore.json"].clone()).unwrap(),
+        "{\"id\":\"restore\",\"name\":\"from-main\"}"
+    );
+}
+
+#[test]
+fn discard_created_records_locally_removes_from_working_and_dirty() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let bare_repo = tmp.path().join("repo.git");
+    run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
+
+    crate::git_ops::commit_file_map_to_ref(
+        &bare_repo,
+        "refs/heads/main",
+        None,
+        &HashMap::new(),
+        "main seed",
+    )
+    .unwrap();
+
+    let dirty_files = HashMap::from([(
+        "posts/created.json".to_string(),
+        b"{\"id\":\"created\"}".to_vec(),
+    )]);
+    crate::git_ops::commit_file_map_to_ref(
+        &bare_repo,
+        "refs/heads/dirty",
+        git_rev_parse_optional(&bare_repo, "refs/heads/main")
+            .unwrap()
+            .as_deref(),
+        &dirty_files,
+        "dirty seed",
+    )
+    .unwrap();
+
+    let ctx = make_connection_context(tmp.path(), &bare_repo);
+    write_file(
+        &ctx.dirty_dir.join("posts/created.json"),
+        "{\"id\":\"created\"}",
+    );
+
+    discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap();
+
+    assert!(!ctx.dirty_dir.join("posts/created.json").exists());
+
+    let dirty_hash = git_rev_parse(&bare_repo, "refs/heads/dirty").unwrap();
+    let dirty_map = read_git_tree(&bare_repo, &dirty_hash).unwrap();
+    assert!(!dirty_map.contains_key("posts/created.json"));
 }
 
 #[test]
@@ -612,6 +705,7 @@ fn json_bytes(value: &str) -> Vec<u8> {
 
 fn empty_conn_ctx() -> ConnectionContext {
     ConnectionContext {
+        connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
         dirty_dir: PathBuf::new(),
         scratch_dir: PathBuf::new(),

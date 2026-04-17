@@ -442,6 +442,14 @@ export async function rejectFieldChanges(
   );
 }
 
+export async function restoreDeletedRecord(workspacePath: string, recordPath: string): Promise<void> {
+  await runScratchmd(['files', 'restore-deleted-record', recordPath], workspacePath);
+}
+
+export async function discardCreatedRecord(workspacePath: string, recordPath: string): Promise<void> {
+  await runScratchmd(['files', 'discard-created-record', recordPath], workspacePath);
+}
+
 export async function triggerPublishFromGit(
   workspacePath: string,
 ): Promise<{ stdout: string; stderr: string; jobIds: string[] }> {

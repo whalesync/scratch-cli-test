@@ -5,6 +5,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   NotFoundException,
   Param,
   Post,
@@ -216,6 +217,27 @@ export class CliWorkbookController {
     });
 
     await this.proxyToGitBackend(targetUrl, workbookId, req, res);
+  }
+
+  @Post(':id/connectors/:connectorAccountId/discard-remote-dirty-changes')
+  @HttpCode(204)
+  async discardRemoteDirtyChanges(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('connectorAccountId') connectorAccountId: string,
+    @Body() body: { path: string },
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    const workbookId = id as WorkbookId;
+    checkWorkspacePermissions(actor, workbookId);
+
+    const workbook = await this.workbookService.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+    await this.scratchGitService.discardChanges(repoId, body.path);
   }
 
   /**

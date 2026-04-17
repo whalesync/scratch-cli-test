@@ -12,6 +12,8 @@ Each call spawns a new `scratchmd` subprocess.
 | `scratch:init-workspace`           | `workspaces init <id>` (`opts.force` → `--force`)               | One-shot; `--force` deletes and reclones the local workspace dir    |
 | `scratch:remove-workspace`         | `workspaces unsync <id> --yes`                                  | One-shot                                                            |
 | `scratch:accept-all-changes`       | `files accept-all`                                              | One-shot                                                            |
+| `files:restore-deleted-record`     | `files restore-deleted-record <path>`                           | Legacy `files:*` IPC name, but now CLI-backed                       |
+| `files:discard-created-record`     | `files discard-created-record <path>`                           | Legacy `files:*` IPC name, CLI-backed; also discards remote dirty   |
 | `scratch:list-unreviewed-changes`  | `files unreviewed --json`                                       | Called per-render of status filter                                  |
 | `scratch:list-unpushed-changes`    | `files unpushed --json`                                         | Same                                                                |
 | `scratch:push-workspace-changes`   | `files upload`                                                  | One-shot                                                            |

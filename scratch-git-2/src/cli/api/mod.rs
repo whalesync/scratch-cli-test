@@ -135,6 +135,15 @@ impl ApiClient {
         self.do_request(Method::POST, path, Some(body)).await
     }
 
+    pub async fn post_void<B: Serialize>(&self, path: &str, body: &B) -> ApiResult<()> {
+        let resp = self
+            .build_request(Method::POST, path, Some(body))
+            .send()
+            .await?;
+        Self::check_response(resp).await?;
+        Ok(())
+    }
+
     pub async fn post_no_body<R: DeserializeOwned>(&self, path: &str) -> ApiResult<R> {
         self.do_request::<(), R>(Method::POST, path, None).await
     }
@@ -660,6 +669,22 @@ impl ApiClient {
                 "connectorAccountId": connector_account_id,
                 "planPath": plan_path,
             }),
+        )
+        .await
+    }
+
+    pub async fn discard_remote_dirty_changes(
+        &self,
+        workbook_id: &str,
+        connector_account_id: &str,
+        path: &str,
+    ) -> ApiResult<()> {
+        self.post_void(
+            &format!(
+                "workbooks/{}/connectors/{}/discard-remote-dirty-changes",
+                workbook_id, connector_account_id
+            ),
+            &serde_json::json!({ "path": path }),
         )
         .await
     }

@@ -2,7 +2,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
-import { dirname, join, resolve } from 'path';
+import { dirname, join, relative, resolve, sep } from 'path';
 import { performance } from 'perf_hooks';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
@@ -11,7 +11,6 @@ import {
   acceptCellChange,
   acceptCellInputText,
   countWorkspaceFiles,
-  discardCreatedRecord,
   getFolderMetadata,
   listFiles,
   listFolders,
@@ -24,17 +23,18 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
-  restoreDeletedRecord,
   undoApprovedCellChange,
   writeFileTextRaw,
 } from './local-files';
 import {
   acceptFieldChanges,
   deleteLocalPublishPlans,
+  discardCreatedRecord as discardCreatedRecordViaCli,
   listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
   rejectFieldChanges,
+  restoreDeletedRecord as restoreDeletedRecordViaCli,
   runScratchmd,
   runScratchmdCapture,
   runScratchmdJson,
@@ -138,6 +138,14 @@ interface LocalWorkspaceEntry {
 
 function registryPath(): string {
   return join(app.getPath('home'), '.scratchmd', 'workspaces.yaml');
+}
+
+function toWorkspaceRecordPath(workspacePath: string, folderPath: string, filename: string): string {
+  const recordPath = relative(workspacePath, join(folderPath, filename));
+  if (!recordPath || recordPath.startsWith('..')) {
+    throw new Error(`Record path is outside the workspace: ${join(folderPath, filename)}`);
+  }
+  return recordPath.split(sep).join('/');
 }
 
 /** Decode a YAML scalar from the registry (plain or double/single-quoted). */
@@ -650,10 +658,10 @@ ipcMain.handle(
     undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
 );
 ipcMain.handle('files:restore-deleted-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  restoreDeletedRecord(folderPath, workspacePath, filename),
+  restoreDeletedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
 );
 ipcMain.handle('files:discard-created-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  discardCreatedRecord(folderPath, workspacePath, filename),
+  discardCreatedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
 );
 ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
   acceptFieldChanges(workspacePath, folderPath, fieldName),
