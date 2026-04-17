@@ -2446,10 +2446,13 @@ fn compute_merge_actions(base: &FileMap, local: &FileMap, remote: &FileMap) -> V
                             remote: remote_content.clone(),
                         });
                     } else {
-                        actions.push(MergeAction::KeepLocal {
+                        // Both sides added the same path with no merge base. This happens
+                        // after publish creates a remote record from a local new file:
+                        // the remote copy is the authoritative enriched version (for
+                        // example with server-assigned IDs/timestamps), so prefer it.
+                        actions.push(MergeAction::WriteRemote {
                             path: path.to_string(),
-                            content: Some(local_content.clone()),
-                            warning: None,
+                            content: Some(remote_content.clone()),
                         });
                     }
                 }

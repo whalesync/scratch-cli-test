@@ -34,6 +34,13 @@ describe('PublishFromGitService', () => {
 
     const connector = {
       getBatchSize: jest.fn().mockReturnValue(2),
+      pullRecordFilesByIds: jest
+        .fn()
+        .mockImplementation(
+          async (_tableSpec: unknown, _ids: unknown, callback: (params: { files: unknown[] }) => Promise<void>) => {
+            await callback({ files: [] });
+          },
+        ),
       updateRecords: jest.fn(),
       createRecords: jest.fn(),
       deleteRecords: jest.fn(),
@@ -208,6 +215,74 @@ describe('PublishFromGitService', () => {
       processedCount: 0,
       successCount: 0,
       failedCount: 2,
+    });
+  });
+
+  it('commits refreshed connector rows to main and dirty after edit publish', async () => {
+    const { service, scratchGitService, connector, fileReferenceService } = makeService();
+
+    scratchGitService.resolveConnectionRepoPath.mockResolvedValue('repo_1');
+    scratchGitService.getRepoFile.mockResolvedValue({
+      content: JSON.stringify({
+        planId: 'plan_1',
+        createdAt: '2026-04-17T00:00:00.000Z',
+        connectionName: 'Postgres',
+        connectionId: 'coa_1',
+        summary: { edit: 1, create: 0, delete: 0, backfill: 0, rename: 0 },
+        tablePaths: ['public/posts'],
+      }),
+    });
+    scratchGitService.listRepoFiles.mockResolvedValue([{ type: 'directory', name: 'publish-plan-20260417' }]);
+    scratchGitService.listRepoFilesPaginated.mockResolvedValue({ files: [] });
+    scratchGitService.getRepoFilesPaginated.mockImplementation(
+      (_repoId: unknown, _branch: unknown, phaseDir: unknown) => {
+        if (String(phaseDir).endsWith('/edit')) {
+          return {
+            files: [
+              {
+                name: 'record-1.json',
+                content: JSON.stringify({
+                  content: { id: 1, title: 'Updated', lastUpdated: '2026-04-17T16:00:00.000Z' },
+                  changedFields: { title: 'Updated' },
+                }),
+              },
+            ],
+          };
+        }
+        return { files: [] };
+      },
+    );
+    connector.updateRecords.mockResolvedValue(undefined);
+    connector.pullRecordFilesByIds.mockImplementation(async (_tableSpec, ids, callback) => {
+      expect(ids).toEqual(['1']);
+      await callback({
+        files: [{ id: 1, title: 'Updated', lastUpdated: '2026-04-17T16:30:00.000Z' }],
+      });
+    });
+
+    await service.runFromGit('wkb_1', 'coa_1', '.scratch/publish-plans/plan_1');
+
+    expect(fileReferenceService.updateRefsForFiles).toHaveBeenCalledWith('wkb_1', 'main', [
+      {
+        path: 'public/posts/record-1.json',
+        content: { id: 1, title: 'Updated', lastUpdated: '2026-04-17T16:30:00.000Z' },
+      },
+    ]);
+
+    const mainCommit = scratchGitService.commitFilesToBranch.mock.calls.find(([, branch]) => branch === 'main');
+    expect(mainCommit).toBeDefined();
+    expect(JSON.parse(mainCommit![2][0].content)).toMatchObject({
+      id: 1,
+      title: 'Updated',
+      lastUpdated: '2026-04-17T16:30:00.000Z',
+    });
+
+    const dirtyCommit = scratchGitService.commitFilesToBranch.mock.calls.find(([, branch]) => branch === 'dirty');
+    expect(dirtyCommit).toBeDefined();
+    expect(JSON.parse(dirtyCommit![2][0].content)).toMatchObject({
+      id: 1,
+      title: 'Updated',
+      lastUpdated: '2026-04-17T16:30:00.000Z',
     });
   });
 });

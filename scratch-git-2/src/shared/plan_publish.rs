@@ -647,8 +647,13 @@ fn build_deleted_remote_ids(
     for rel in deleted {
         if let Some(content_str) = master_files.get(rel) {
             if let Ok(val) = serde_json::from_str::<Value>(content_str) {
-                if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
-                    result.insert(rel.clone(), id.to_string());
+                let id_str = val.get("id").and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                });
+                if let Some(id) = id_str {
+                    result.insert(rel.clone(), id);
                     continue;
                 }
             }

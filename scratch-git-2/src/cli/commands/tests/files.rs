@@ -197,6 +197,28 @@ fn prepare_upload_merge_keeps_schema_and_publish_plan_files() {
 }
 
 #[test]
+fn prepare_upload_merge_prefers_remote_for_same_path_creates_without_base() {
+    let base = HashMap::new();
+    let local = HashMap::from([(
+        "posts/new.json".to_string(),
+        b"{\n  \"name\": \"local create\"\n}\n".to_vec(),
+    )]);
+    let remote = HashMap::from([(
+        "posts/new.json".to_string(),
+        b"{\n  \"id\": 2,\n  \"name\": \"local create\",\n  \"lastUpdated\": \"2026-04-17T13:50:04.777Z\"\n}\n".to_vec(),
+    )]);
+
+    let (merged, result, messages) = prepare_upload_merge(&base, &local, &remote, 0);
+
+    assert!(messages.is_empty());
+    assert_eq!(result.files_uploaded, 0);
+    assert_eq!(
+        String::from_utf8(merged["posts/new.json"].clone()).unwrap(),
+        "{\n  \"id\": 2,\n  \"name\": \"local create\",\n  \"lastUpdated\": \"2026-04-17T13:50:04.777Z\"\n}\n"
+    );
+}
+
+#[test]
 fn sync_schema_files_from_master_restores_missing_schema() {
     let tmp = TempDir::new().unwrap();
     let ctx = ConnectionContext {

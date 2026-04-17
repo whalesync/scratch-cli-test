@@ -556,9 +556,18 @@ export class PublishFromGitService {
     const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
     await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
 
-    const refUpdates = entriesWithOps.map(({ entry, resolvedContent }) => ({
+    const committedEntries = await this.refreshUpdatedEntries(
+      connector,
+      tableSpec,
+      idField,
+      entriesWithOps,
+      workbookId,
+      phase,
+    );
+
+    const refUpdates = committedEntries.map(({ entry, content }) => ({
       path: entry.relPath,
-      content: resolvedContent,
+      content,
     }));
     await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
 
@@ -571,15 +580,86 @@ export class PublishFromGitService {
     );
 
     // Sync to dirty for files that have no later phase
-    const finalItems = entriesWithOps
+    const finalItems = committedEntries
       .filter(({ entry }) => !hasLaterPhase.has(entry.relPath))
-      .map(({ entry, resolvedContent }) => ({
+      .map(({ entry, content }) => ({
         path: entry.relPath,
-        content: JSON.stringify(resolvedContent, null, 2),
+        content: JSON.stringify(content, null, 2),
       }));
     if (finalItems.length > 0) {
       await this.scratchGitService.commitFilesToBranch(repoId, 'dirty', finalItems, `Sync dirty after ${phase}`);
     }
+  }
+
+  private async refreshUpdatedEntries(
+    connector: Connector<string, JsonSafeObject>,
+    tableSpec: BaseJsonTableSpec,
+    idField: string,
+    entriesWithOps: { entry: PhaseOperation; resolvedContent: ParsedContent }[],
+    workbookId: string,
+    phase: string,
+  ): Promise<Array<{ entry: PhaseOperation; content: ParsedContent }>> {
+    const fallback = entriesWithOps.map(({ entry, resolvedContent }) => ({
+      entry,
+      content: resolvedContent,
+    }));
+    const ids = entriesWithOps
+      .map(({ resolvedContent }) => resolvedContent[idField])
+      .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+      .map(String);
+
+    if (ids.length === 0) {
+      return fallback;
+    }
+
+    const refreshedById = new Map<string, ParsedContent>();
+
+    try {
+      await connector.pullRecordFilesByIds(tableSpec, [...new Set(ids)], ({ files }) => {
+        for (const file of files) {
+          const fileId = file[idField];
+          if (typeof fileId === 'string' || typeof fileId === 'number') {
+            refreshedById.set(String(fileId), file as ParsedContent);
+          }
+        }
+        return Promise.resolve();
+      });
+    } catch (error) {
+      WSLogger.warn({
+        source: 'PublishFromGitService.refreshUpdatedEntries',
+        message: `Failed to refresh updated rows after ${phase}; falling back to resolved content`,
+        workbookId,
+        error,
+      });
+      return fallback;
+    }
+
+    const missingIds: string[] = [];
+    const refreshedEntries = entriesWithOps.map(({ entry, resolvedContent }) => {
+      const fileId = resolvedContent[idField];
+      if (typeof fileId !== 'string' && typeof fileId !== 'number') {
+        return { entry, content: resolvedContent };
+      }
+
+      const refreshed = refreshedById.get(String(fileId));
+      if (!refreshed) {
+        missingIds.push(String(fileId));
+        return { entry, content: resolvedContent };
+      }
+
+      return { entry, content: refreshed };
+    });
+
+    if (missingIds.length > 0) {
+      WSLogger.warn({
+        source: 'PublishFromGitService.refreshUpdatedEntries',
+        message: `Refresh after ${phase} missed ${missingIds.length} updated row(s); keeping local resolved content`,
+        workbookId,
+        data: { missingIds },
+      });
+    }
+
+    return refreshedEntries;
   }
 
   // ---------------------------------------------------------------------------

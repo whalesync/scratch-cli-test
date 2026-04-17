@@ -121,6 +121,19 @@ Conceptually, this is the point where:
 - `remote master` may advance
 - published records may be rewritten into their canonical post-publish state
 
+For example, a connector may:
+
+- assign a real remote ID to a newly-created file
+- populate server-managed timestamps such as `lastUpdated`
+- normalize or enrich the stored record shape before it is written back to git
+
+For `publish-from-git`, the server-side rule is:
+
+- refreshed canonical content is always written to `main`
+- refreshed canonical content is written to `dirty` only if this is the last publish phase for that path
+
+That "last phase only" behavior matters because a later `backfill` or `delete` phase must still run against the same record without prematurely clearing approved state from `dirty`.
+
 The local CLI does not guess this result.
 It waits and then reconciles by downloading the new server state.
 
@@ -148,6 +161,31 @@ For each connection, download now works like this:
 That means download does not simply overwrite `local dirty` with `origin/dirty`.
 It first preserves and rebases any approved local changes that still exist only locally.
 
+### Special Case: Same-Path Create With No Merge Base
+
+There is one especially important publish roundtrip case:
+
+- a user creates a brand new local file
+- publish creates the remote record from that file
+- the server writes back the same path with canonical fields added
+
+In this case, the 3-way merge for `local dirty` vs `origin/dirty` sees:
+
+- `base = missing`
+- `local = locally-created file`
+- `remote = remotely-created canonical file`
+
+The CLI now intentionally prefers `remote` for that path.
+
+Why:
+
+- the remote version is the authoritative post-publish record
+- it may contain fields that did not exist locally before publish, such as server-assigned IDs or server-managed timestamps
+- keeping the local version in this no-base case would incorrectly preserve the pre-publish create payload and make the canonical fields look like a revert
+
+This rule is intentionally specific to the "same path added on both sides with no base" case.
+Normal 3-way merge behavior still applies when a merge base exists.
+
 Once the new `local dirty` is computed, the CLI reconciles the full materialized local state:
 
 - `base = old local dirty`
@@ -169,6 +207,21 @@ After that, the CLI updates:
 - the materialized working tree
 
 The surrounding `files download` flow then updates `local master` from `remote master` and refreshes schema files from `master`.
+
+This means the practical publish flow used by the desktop app is:
+
+1. upload approved changes
+2. trigger and wait for publish
+3. run `files download`
+
+The critical correctness property is that this post-publish download must make the canonical server version visible in all three local views:
+
+- `local master`
+- `local dirty`
+- `working tree`
+
+For updated existing records, this comes from ordinary 3-way merge behavior.
+For newly-created records at the same path, this now depends on the "prefer remote when base is missing" rule above.
 
 ### 5. End Result
 
