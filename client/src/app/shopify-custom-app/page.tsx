@@ -215,7 +215,7 @@ function TokenExchange({
       <Box>
         <TextTitle2>Connect Your Shopify Store</TextTitle2>
         <Text16Regular c="var(--fg-muted)" mt="xs">
-          Almost there! Shopify has authorized the app. Now enter your Client Secret to generate your access token.
+          Almost there! Shopify has authorized the app. Enter the <strong>Secret</strong> from <strong>Settings</strong>, below the Client ID from the last step.
         </Text16Regular>
       </Box>
 
@@ -251,8 +251,8 @@ function TokenExchange({
               <CopyableValue value={accessToken} />
             </Box>
             <Text13Book>
-              Copy this token and paste it into the app where it asks for your Shopify API token. Keep it safe — treat
-              it like a password.
+              Copy this token and save it somewhere safe — treat it like a password. You will need to enter it in Scratch
+              as your Shopify API key.
             </Text13Book>
           </Stack>
         </Box>
