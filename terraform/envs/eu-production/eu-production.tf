@@ -29,6 +29,7 @@ module "eu_production" {
 
   # Scratch Git
   enable_scratch_git                  = true
+  scratch_git_machine_type            = "e2-custom-4-32768" # 4 vCPUs, 2 cores, 32 GB memory
   scratch_git_boot_disk_size_gb       = 30
   scratch_git_snapshot_hours_in_cycle = 1
   scratch_git_disk_size_gb            = 50

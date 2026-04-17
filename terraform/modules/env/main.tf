@@ -308,6 +308,7 @@ module "scratch_git_gce" {
   }
 
   instance_name           = "scratch-git"
+  machine_type            = var.scratch_git_machine_type
   zone                    = var.gcp_zone
   region                  = var.gcp_region
   network                 = module.vpc.network

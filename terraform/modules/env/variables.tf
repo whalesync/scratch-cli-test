@@ -299,6 +299,12 @@ variable "enable_scratch_git" {
   description = "Whether to enable the scratch-git GCE instance."
 }
 
+variable "scratch_git_machine_type" {
+  type        = string
+  default     = "e2-medium"
+  description = "Machine type for the scratch-git GCE instance."
+}
+
 variable "scratch_git_disk_size_gb" {
   type        = number
   default     = 50
