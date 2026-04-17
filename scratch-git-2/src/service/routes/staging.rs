@@ -153,37 +153,6 @@ fn collect_paths_recursive(dir: &PathBuf, base_dir: &PathBuf) -> Result<Vec<Stri
     Ok(results)
 }
 
-/// Recursively collect all files under `base_dir`, returning (relative_path, content) pairs.
-fn collect_files_recursive(
-    dir: &PathBuf,
-    base_dir: &PathBuf,
-) -> Result<Vec<(String, String)>, AppError> {
-    let mut results = Vec::new();
-    let read_dir = std::fs::read_dir(dir)
-        .map_err(|e| AppError::internal(format!("Failed to read staging dir: {}", e)))?;
-
-    for entry in read_dir {
-        let entry =
-            entry.map_err(|e| AppError::internal(format!("Failed to read dir entry: {}", e)))?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            results.extend(collect_files_recursive(&path, base_dir)?);
-        } else {
-            let rel_path = path
-                .strip_prefix(base_dir)
-                .map_err(|e| AppError::internal(format!("Failed to strip prefix: {}", e)))?
-                .to_string_lossy()
-                .to_string();
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| AppError::internal(format!("Failed to read staged file: {}", e)))?;
-            results.push((rel_path, content));
-        }
-    }
-
-    Ok(results)
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/staging/{jobId}/commit — commit staged folder to git
 // ---------------------------------------------------------------------------
@@ -231,26 +200,14 @@ pub async fn commit_staged(
                         // nothing to stage (e.g. an empty list from a read-only connector),
                         // and lets the caller still finalize stale-file deletion + GC
                         // without a spurious 404.
-                        let entries = if folder_dir.exists() {
-                            let base_dir = folder_dir.clone();
-                            collect_files_recursive(&folder_dir, &base_dir)?
+                        let mut paths = if folder_dir.exists() {
+                            collect_paths_recursive(&folder_dir, &folder_dir)?
                         } else {
                             Vec::new()
                         };
+                        paths.sort();
 
-                        // Prepend the folder name to each path so git commits
-                        // files at the correct location (e.g., "Products/file.json")
-                        let changes: Vec<FileChange> = entries
-                            .into_iter()
-                            .map(|(rel_path, content)| FileChange {
-                                path: format!("{}/{}", folder_name, rel_path),
-                                content: Some(content),
-                                oid: None,
-                                change_type: ChangeType::Modify,
-                            })
-                            .collect();
-
-                        if changes.is_empty() {
+                        if paths.is_empty() {
                             return Ok(json!({
                                 "success": true,
                                 "created": [],
@@ -259,14 +216,45 @@ pub async fn commit_staged(
                             }));
                         }
 
-                        let (_, stats) =
-                            git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+                        // Commit in batches to avoid loading all file contents into memory
+                        const BATCH_SIZE: usize = 500;
+                        let mut all_created: Vec<String> = Vec::new();
+                        let mut all_updated: Vec<String> = Vec::new();
+                        let mut all_unchanged: Vec<String> = Vec::new();
+
+                        for chunk in paths.chunks(BATCH_SIZE) {
+                            let changes: Vec<FileChange> = chunk
+                                .iter()
+                                .map(|rel_path| {
+                                    let full_path = folder_dir.join(rel_path);
+                                    let content = std::fs::read_to_string(&full_path)
+                                        .map_err(|e| {
+                                            AppError::internal(format!(
+                                                "Failed to read staged file: {}",
+                                                e
+                                            ))
+                                        })?;
+                                    Ok(FileChange {
+                                        path: format!("{}/{}", folder_name, rel_path),
+                                        content: Some(content),
+                                        oid: None,
+                                        change_type: ChangeType::Modify,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, AppError>>()?;
+
+                            let (_, stats) =
+                                git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+                            all_created.extend(stats.created);
+                            all_updated.extend(stats.updated);
+                            all_unchanged.extend(stats.unchanged);
+                        }
 
                         Ok::<_, AppError>(json!({
                             "success": true,
-                            "created": stats.created,
-                            "updated": stats.updated,
-                            "unchanged": stats.unchanged,
+                            "created": all_created,
+                            "updated": all_updated,
+                            "unchanged": all_unchanged,
                         }))
                     })
                     .await
@@ -354,25 +342,6 @@ mod tests {
         let paths = collect_paths_recursive(&base, &base).unwrap();
 
         assert_eq!(paths, Vec::<String>::new());
-    }
-
-    #[test]
-    fn collect_files_recursive_reads_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().to_path_buf();
-
-        std::fs::create_dir_all(base.join("nested")).unwrap();
-        std::fs::write(base.join("hello.txt"), "hello world").unwrap();
-        std::fs::write(base.join("nested/data.json"), r#"{"key":"val"}"#).unwrap();
-
-        let mut files = collect_files_recursive(&base, &base).unwrap();
-        files.sort_by(|a, b| a.0.cmp(&b.0));
-
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0].0, "hello.txt");
-        assert_eq!(files[0].1, "hello world");
-        assert_eq!(files[1].0, "nested/data.json");
-        assert_eq!(files[1].1, r#"{"key":"val"}"#);
     }
 
     #[test]
@@ -550,5 +519,58 @@ mod tests {
         let mut paths: Vec<&str> = created.iter().map(|v| v.as_str().unwrap()).collect();
         paths.sort();
         assert_eq!(paths, vec!["Products/a.json", "Products/b.json"]);
+    }
+
+    #[tokio::test]
+    async fn commit_staged_batches_large_file_sets() {
+        // Verify that committing more files than BATCH_SIZE works correctly
+        // across multiple batches and that all files end up in git.
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_large";
+        let folder = "Items";
+        let folder_dir = state.staging_job_path(job_id).join(folder);
+        std::fs::create_dir_all(&folder_dir).unwrap();
+
+        let file_count = 1200; // Spans 3 batches at BATCH_SIZE=500
+        for i in 0..file_count {
+            std::fs::write(
+                folder_dir.join(format!("item-{:04}.json", i)),
+                format!(r#"{{"id":{}}}"#, i),
+            )
+            .unwrap();
+        }
+
+        let response = commit_staged(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            Json(CommitStagedBody {
+                repo_id: repo_id.clone(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: folder.to_string(),
+                message: Some("Add items".to_string()),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["success"], true);
+
+        let created = json["data"]["created"].as_array().unwrap();
+        assert_eq!(created.len(), file_count);
+
+        // Verify files are actually readable from git
+        let git_repo = GitRepo::open(&state.repos_dir, &repo_id).unwrap();
+        let first = git_repo
+            .get_file_content(MAIN_BRANCH, "Items/item-0000.json")
+            .unwrap();
+        assert_eq!(first.as_deref(), Some(r#"{"id":0}"#));
+        let last = git_repo
+            .get_file_content(MAIN_BRANCH, &format!("Items/item-{:04}.json", file_count - 1))
+            .unwrap();
+        let expected_last = format!(r#"{{"id":{}}}"#, file_count - 1);
+        assert_eq!(last.as_deref(), Some(expected_last.as_str()));
     }
 }
