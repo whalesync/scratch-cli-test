@@ -12,6 +12,7 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::write(docs_dir.join("structure.md"), STRUCTURE_DOC)?;
     std::fs::write(docs_dir.join("schema.md"), SCHEMA_DOC)?;
     std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
+    std::fs::write(docs_dir.join("editing-data.md"), EDITING_DATA_DOC)?;
 
     Ok(())
 }
@@ -31,12 +32,13 @@ fn claude_md(workbook_name: &str) -> String {
     format!(
         r#"# {workbook_name}
 
-Scratch pulls records from external services (Airtable, Webflow, Notion, …) and stores them as JSON files in this workspace — one file per record, one folder per table. The top-level folders are your working copy: edit them directly.
+Scratch pulls records from external services (Airtable, Webflow, Hubspot, Shopify, etc.) and stores them as JSON files in this workspace — one file per record, one folder per table. The top-level folders are your working copy: edit them directly.
 
 Once your local agent has made changes, open the Scratch desktop app to review the diff. A person reviews and approves the changes, then publishes them back to the original service (e.g. creates or updates Webflow items).
 
 - [How files are organised](.scratch/docs/structure.md)
 - [Schema files (field definitions)](.scratch/docs/schema.md)
+- [Editing data (creating, updating, deleting records)](.scratch/docs/editing-data.md)
 - [CLI command reference](.scratch/docs/commands.md)
 "#,
         workbook_name = workbook_name,
@@ -239,4 +241,105 @@ Run `scratchmd <command> --help` for full flag details.
 | Command | Description |
 |---|---|
 | `generate-docs [--workspace <dir>]` | Regenerate CLAUDE.md and `.scratch/docs/` in the workspace |
+"#;
+
+// ---------------------------------------------------------------------------
+// .scratch/docs/editing-data.md
+// ---------------------------------------------------------------------------
+
+const EDITING_DATA_DOC: &str = r#"# Editing Data
+
+Records in Scratch are JSON files — one file per record, one folder per table.
+You edit them directly in the working copy folders. This guide covers how to
+create, update, and delete records correctly.
+
+## Record format
+
+Each record is a single `.json` file. The filename is the record's remote ID
+(e.g. `recAbc123.json` for Airtable, `66a1b2c3d4e5f6.json` for Webflow).
+**Do not rename record files** — the filename links the record to its remote
+counterpart.
+
+The JSON structure varies by service. Always check the table's `schema.json`
+(see [schema docs](schema.md)) or copy an existing record to understand the
+expected format.
+
+### Airtable example
+
+```json
+{
+  "Name": "My Post Title",
+  "Status": "Draft",
+  "Body": "The post content..."
+}
+```
+
+### Webflow example
+
+```json
+{
+  "fieldData": {
+    "name": "My Post Title",
+    "slug": "my-post-title",
+    "post-body": "<p>The post content...</p>"
+  }
+}
+```
+
+## Creating records
+
+To create a new record, add a new `.json` file in the appropriate table folder.
+
+- **Use a descriptive temporary filename** like `new-blog-post.json`. The file
+  will receive a real remote ID when it is published.
+- **Follow the schema** — look at `schema.json` for the table or copy an
+  existing record and modify it.
+- **Only include fields that have actual values.** Do not pad the JSON with
+  empty strings, nulls, or placeholder values for every field in the schema.
+- **Omit read-only fields.** Fields marked `"x-scratch-readonly": true` in the
+  schema (e.g. `id`, `createdAt`, `updatedAt`, `archived`) are managed by the
+  remote service and will be ignored on publish. Leaving them out keeps your
+  files clean.
+
+## Updating records
+
+Edit the JSON file in place. Only change the fields you intend to update.
+
+- **Preserve the existing structure.** Do not reorganise or reformat the JSON
+  unless you are intentionally changing values.
+- **Respect field types.** Check the schema for the expected type — string,
+  number, boolean, array, etc. For HTML/rich-text fields
+  (`"contentMediaType": "text/html"`), preserve valid HTML structure.
+- **Do not modify read-only fields.** Changes to read-only fields will be
+  silently ignored on publish.
+
+## Deleting records
+
+Delete the record's `.json` file from the working copy folder. When the change
+is published, the corresponding record will be removed from the remote service.
+
+## Reviewing and publishing changes
+
+Edits are **not live** until they are published:
+
+1. Make your changes in the working copy folders.
+2. Open the Scratch desktop app or run `scratchmd plan-publish` to review the
+   diff between your working copy and the last published state.
+3. A person reviews and approves the changes, then publishes them back to the
+   remote service.
+
+You can compare your edits against the published snapshot in
+`.scratch/connections/master/` to see what has changed (see
+[structure docs](structure.md)).
+
+## Tips
+
+- **Batch related changes together.** If you are updating multiple records in
+  the same table, make all edits before publishing so they can be reviewed as a
+  group.
+- **Use `scratchmd files download`** to pull the latest remote data before
+  making edits. This avoids conflicts with changes made directly in the remote
+  service.
+- **Check `linked show <folder-id>`** to see pending changes for a specific
+  table before publishing.
 "#;

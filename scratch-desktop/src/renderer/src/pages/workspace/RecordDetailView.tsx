@@ -690,6 +690,19 @@ export const RecordDetailView = memo(function RecordDetailView({
                   component="button"
                   ref={i === selectedIndex ? selectedItemRef : undefined}
                   onClick={() => onSelectIndex(i)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    const fn = typeof row.__filename === 'string' ? row.__filename : null;
+                    if (!fn) return;
+                    const filePath = `${folderPath.replace(/\/$/, '')}/${fn.replace(/^\//, '')}`;
+                    const isMac = window.electron?.process?.platform === 'darwin';
+                    window.scratchDesktop.showNativeContextMenu(
+                      [{ id: 'reveal', label: isMac ? 'Reveal in Finder' : 'Reveal in File Explorer' }],
+                      (id) => {
+                        if (id === 'reveal') void window.scratchDesktop.showItemInFolder(filePath);
+                      },
+                    );
+                  }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
