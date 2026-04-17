@@ -681,14 +681,31 @@ resource "google_monitoring_alert_policy" "scratch_git_memory_too_high" {
     condition_threshold {
       aggregations {
         alignment_period   = "300s"
-        per_series_aligner = "ALIGN_MEAN"
+        per_series_aligner = "ALIGN_MAX"
       }
       comparison      = "COMPARISON_GT"
-      duration        = "0s"
-      filter          = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/memory/percent_used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
+      duration        = "60s"
+      filter          = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/memory/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
       threshold_value = 85
       trigger {
-        count = 3
+        count = 1
+      }
+    }
+  }
+  conditions {
+    display_name = "VM Instance - Memory metric missing"
+    condition_threshold {
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MAX"
+      }
+      comparison              = "COMPARISON_GT"
+      duration                = "300s"
+      filter                  = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/memory/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
+      threshold_value         = 101
+      evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"
+      trigger {
+        count = 1
       }
     }
   }
@@ -697,7 +714,7 @@ resource "google_monitoring_alert_policy" "scratch_git_memory_too_high" {
       renotify_interval = local.renotify_interval
     }
   }
-  notification_channels = local.warning_notification_channels
+  notification_channels = local.notification_channels
   severity              = "WARNING"
 }
 
@@ -714,12 +731,29 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
     condition_threshold {
       aggregations {
         alignment_period   = "300s"
-        per_series_aligner = "ALIGN_MEAN"
+        per_series_aligner = "ALIGN_MAX"
       }
       comparison      = "COMPARISON_GT"
-      duration        = "0s"
-      filter          = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\" AND metric.labels.device = starts_with(\"/dev/disk\")"
+      duration        = "60s"
+      filter          = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\" AND metric.labels.device = starts_with(\"/dev/disk\")"
       threshold_value = 80
+      trigger {
+        count = 1
+      }
+    }
+  }
+  conditions {
+    display_name = "VM Instance - Disk metric missing"
+    condition_threshold {
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MAX"
+      }
+      comparison              = "COMPARISON_GT"
+      duration                = "300s"
+      filter                  = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\" AND metric.labels.device = starts_with(\"/dev/disk\")"
+      threshold_value         = 101
+      evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"
       trigger {
         count = 1
       }
@@ -730,7 +764,7 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
       renotify_interval = local.extended_renotify_interval
     }
   }
-  notification_channels = local.warning_notification_channels
+  notification_channels = local.notification_channels
   severity              = "WARNING"
 }
 

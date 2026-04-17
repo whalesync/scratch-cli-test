@@ -29,16 +29,16 @@ module "eu_production" {
 
   # Scratch Git
   enable_scratch_git                  = true
-  scratch_git_machine_type            = "e2-custom-4-32768" # 4 vCPUs, 2 cores, 32 GB memory
+  scratch_git_machine_type            = "e2-highmem-4" # 4 vCPUs, 2 cores, 32 GB memory
   scratch_git_boot_disk_size_gb       = 30
   scratch_git_snapshot_hours_in_cycle = 1
   scratch_git_disk_size_gb            = 50
 
   # Services
-  force_reload_services          = var.force_reload_services
-  maintenance_mode_enabled       = var.maintenance_mode_enabled
-  api_service_min_instance_count = 2
-  api_service_max_instance_count = 2
+  force_reload_services             = var.force_reload_services
+  maintenance_mode_enabled          = var.maintenance_mode_enabled
+  api_service_min_instance_count    = 2
+  api_service_max_instance_count    = 2
   worker_service_min_instance_count = 2
   worker_service_max_instance_count = 2
   worker_concurrency                = 10
