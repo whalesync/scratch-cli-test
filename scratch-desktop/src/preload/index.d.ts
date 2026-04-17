@@ -68,6 +68,10 @@ interface ScratchDesktopAPI {
     workspacePath: string,
     recordPath: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  discardRecord: (
+    workspacePath: string,
+    recordPath: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   listUnreviewedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;

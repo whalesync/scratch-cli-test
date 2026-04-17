@@ -88,6 +88,11 @@ const scratchDesktop = {
     recordPath: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
     invoke('scratch:reject-record', workspacePath, recordPath),
+  discardRecord: (
+    workspacePath: string,
+    recordPath: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:discard-record', workspacePath, recordPath),
   listUnreviewedChanges: (
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>

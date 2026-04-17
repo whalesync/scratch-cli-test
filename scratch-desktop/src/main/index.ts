@@ -457,6 +457,9 @@ ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordP
 ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
   runScratchmdCapture(['files', 'reject', recordPath], workspacePath),
 );
+ipcMain.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
+  runScratchmdCapture(['files', 'discard', recordPath], workspacePath),
+);
 ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
 );

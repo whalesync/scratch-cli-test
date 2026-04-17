@@ -361,6 +361,18 @@ export const RecordDetailView = memo(function RecordDetailView({
       });
   }, [workspacePath, currentRecordCliPath, onRecordChanged]);
 
+  const handleDiscard = useCallback(() => {
+    if (!currentRecordCliPath) return;
+    void window.scratchDesktop
+      .discardRecord(workspacePath, currentRecordCliPath)
+      .then((result) => {
+        if (result.exitCode === 0) onRecordChanged?.();
+      })
+      .catch((err: unknown) => {
+        console.debug('discardRecord failed', err);
+      });
+  }, [workspacePath, currentRecordCliPath, onRecordChanged]);
+
   const handleRestore = useCallback(() => {
     const filename = filenameRef.current;
     if (!filename) return;
@@ -824,6 +836,17 @@ export const RecordDetailView = memo(function RecordDetailView({
                     disabled={!currentRecordCliPath || !hasUnreviewedChanges}
                   >
                     Reject changes
+                  </ButtonSecondaryGhost>
+                )}
+                {(hasUnreviewedChanges || hasPublishableChanges) && !isDeleted && !isCreated && (
+                  <ButtonSecondaryGhost
+                    size="compact-xs"
+                    c="red.8"
+                    leftSection={<Trash2 size={12} />}
+                    onClick={handleDiscard}
+                    disabled={!currentRecordCliPath || !(hasUnreviewedChanges || hasPublishableChanges)}
+                  >
+                    Discard changes
                   </ButtonSecondaryGhost>
                 )}
                 {onPublishFile && hasPublishableChanges && (

@@ -1263,6 +1263,214 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
     );
 }
 
+#[test]
+fn discard_paths_single_repo_reverts_only_listed_paths() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    // Pending working-tree edits in both folders on top of the approved
+    // dirty-vs-main diffs already baked into the fixture.
+    write_file(
+        &ctx.dirty_dir.join("posts/rec1.json"),
+        "{\"v\":\"pending-p1\"}",
+    );
+    write_file(
+        &ctx.dirty_dir.join("articles/rec1.json"),
+        "{\"v\":\"pending-a1\"}",
+    );
+
+    let rel = vec!["posts/rec1.json".to_string()];
+    let input_map: HashMap<&str, &str> =
+        HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
+
+    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+
+    assert!(!result.skipped_missing_main);
+    assert_eq!(result.files_discarded, 1);
+    assert_eq!(result.discarded_paths, vec!["posts/rec1.json".to_string()]);
+
+    // The dirty branch: posts reverted to main, articles keeps its approved-but-unpublished state.
+    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    assert_eq!(
+        tree.get("posts/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"main-p1\"}".as_slice()),
+        "listed path should be reverted to main content"
+    );
+    assert_eq!(
+        tree.get("articles/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"dirty-a1\"}".as_slice()),
+        "unlisted path should retain approved-but-unpublished state"
+    );
+
+    // Worktree: listed path matches main; unlisted path keeps its pending edit.
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\"v\":\"main-p1\"}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        "{\"v\":\"pending-a1\"}"
+    );
+}
+
+#[test]
+fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    // Align dirty's posts back to main (no approved change for posts), leaving
+    // articles diverged. The pending edit on posts is the only remaining diff
+    // for that path.
+    let dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let mut realigned = read_git_tree(&ctx.bare_repo, &dirty_hash).unwrap();
+    realigned.insert(
+        "posts/rec1.json".to_string(),
+        b"{\"v\":\"main-p1\"}".to_vec(),
+    );
+    let new_dirty = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        Some(dirty_hash.as_str()),
+        &realigned,
+        "realign posts to main",
+    )
+    .unwrap();
+    // Refresh the worktree so the pending edit below is the only diff on posts.
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, &new_dirty).unwrap();
+
+    write_file(
+        &ctx.dirty_dir.join("posts/rec1.json"),
+        "{\"v\":\"pending-p1\"}",
+    );
+
+    let rel = vec!["posts/rec1.json".to_string()];
+    let input_map: HashMap<&str, &str> =
+        HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
+
+    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+
+    assert_eq!(result.files_discarded, 1);
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\"v\":\"main-p1\"}"
+    );
+}
+
+#[test]
+fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    // Fixture's posts/rec1.json has an approved-but-unpublished edit
+    // (main=main-p1, dirty=dirty-p1). No pending working-tree edit on posts.
+    let (_tmp, ctx) = create_multi_folder_fixture();
+
+    let rel = vec!["posts/rec1.json".to_string()];
+    let input_map: HashMap<&str, &str> =
+        HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
+
+    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+
+    assert_eq!(result.files_discarded, 1);
+    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    assert_eq!(
+        tree.get("posts/rec1.json").map(|b| b.as_slice()),
+        Some(b"{\"v\":\"main-p1\"}".as_slice()),
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\"v\":\"main-p1\"}"
+    );
+}
+
+#[test]
+fn discard_paths_single_repo_errors_when_path_has_no_changes() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    // Align posts on both main and dirty so the path has no approved or pending change.
+    let (_tmp, ctx) = create_multi_folder_fixture();
+    let dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    let mut new_main = read_git_tree(&ctx.bare_repo, &dirty_hash).unwrap();
+    // Keep articles as main-a1 so only articles has an approved diff.
+    new_main.insert(
+        "articles/rec1.json".to_string(),
+        b"{\"v\":\"main-a1\"}".to_vec(),
+    );
+    let commit_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        Some(dirty_hash.as_str()),
+        &new_main,
+        "align posts on main",
+    )
+    .unwrap();
+    git_update_ref(&ctx.bare_repo, "refs/heads/main", &commit_hash).unwrap();
+    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &dirty_hash).unwrap();
+
+    let rel = vec!["posts/rec1.json".to_string()];
+    let input_map: HashMap<&str, &str> =
+        HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
+
+    let err = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap_err();
+    assert!(
+        err.to_string().contains("No local changes to discard"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
+fn discard_paths_single_repo_skips_when_main_missing() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    // Build a fixture that has only a dirty branch (no main ref).
+    let tmp = TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let bare_repo = tmp.path().join("repo.git");
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source_dir, &["checkout", "-b", "dirty"]);
+    write_file(&source_dir.join("posts/rec1.json"), "{\"v\":\"dirty\"}");
+    commit_all(&source_dir, "dirty only");
+    run_git(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            source_dir.to_str().unwrap(),
+            bare_repo.to_str().unwrap(),
+        ],
+    );
+    // The clone's HEAD will point at dirty. Ensure no refs/heads/main exists.
+    assert!(git_rev_parse_optional(&bare_repo, "refs/heads/main")
+        .unwrap()
+        .is_none());
+
+    let ctx = make_connection_context(tmp.path(), &bare_repo);
+
+    let rel = vec!["posts/rec1.json".to_string()];
+    let input_map: HashMap<&str, &str> =
+        HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
+
+    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+    assert!(result.skipped_missing_main);
+    assert_eq!(result.files_discarded, 0);
+}
+
 fn run_git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(dir)

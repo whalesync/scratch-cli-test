@@ -75,6 +75,12 @@ pub enum FilesCommands {
         #[arg(long)]
         folder: Option<PathBuf>,
     },
+    /// Discard pending and approved-but-unpublished changes for one or more specific paths, reverting them to their last published state
+    Discard {
+        /// Paths to discard, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
     /// Commit one or more working-tree changes into the local dirty branch in a single commit
     Accept {
         /// Paths to accept, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
@@ -190,7 +196,7 @@ struct AcceptAllResult {
     accepted_paths: Vec<String>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct DiscardAllResult {
     files_discarded: i32,
     discarded_paths: Vec<String>,
@@ -224,6 +230,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::DiscardAll { folder } => {
             run_discard_all(&cwd, server_url, folder.as_deref(), json)
         }
+        FilesCommands::Discard { paths } => run_discard(&cwd, &paths, json),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::AcceptField { folder, field } => {
             run_accept_field(&cwd, &folder, &field, json)
@@ -915,6 +922,99 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         format_elapsed(elapsed_ms)
     );
     print_file_list(&all_rejected);
+    Ok(())
+}
+
+fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let workspace_dir = markers::find_nearest_workspace(cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
+    })?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    // Group input paths by connection (same pattern as run_accept / run_reject).
+    let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
+    for input_path in input_paths {
+        let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
+            let prefix = format!("{}/", ctx.conn_dir_name);
+            input_path
+                .strip_prefix(&prefix)
+                .map(|rest| (i, rest.to_string()))
+        });
+        match found {
+            Some((i, rel_path)) => by_conn
+                .entry(i)
+                .or_default()
+                .push((input_path.clone(), rel_path)),
+            None => anyhow::bail!(
+                "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
+                input_path
+            ),
+        }
+    }
+
+    let mut all_discarded: Vec<String> = Vec::new();
+    let mut skipped_any = false;
+
+    for (ctx_idx, path_pairs) in &by_conn {
+        let ctx = &contexts[*ctx_idx];
+        let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
+        let input_by_rel: HashMap<&str, &str> = path_pairs
+            .iter()
+            .map(|(input, rel)| (rel.as_str(), input.as_str()))
+            .collect();
+
+        let result = discard_paths_single_repo(ctx, &rel_paths, &input_by_rel)?;
+        if result.skipped_missing_main {
+            skipped_any = true;
+            continue;
+        }
+        for rel in &result.discarded_paths {
+            if let Some(input) = input_by_rel.get(rel.as_str()) {
+                all_discarded.push((*input).to_string());
+            }
+        }
+    }
+
+    let total = all_discarded.len();
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if total == 0 { "no_changes" } else { "discarded" },
+                "filesDiscarded": total,
+                "paths": all_discarded,
+                "skippedMissingMain": skipped_any,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if total == 0 {
+        println!(
+            "No local changes to discard. ({})",
+            format_elapsed(elapsed_ms)
+        );
+    } else {
+        println!(
+            "Discarded {} local record change{}. ({})",
+            total,
+            if total == 1 { "" } else { "s" },
+            format_elapsed(elapsed_ms)
+        );
+        print_file_list(&all_discarded);
+    }
+    if skipped_any {
+        println!("Note: one or more connections have no published state yet and were skipped.");
+    }
     Ok(())
 }
 
@@ -1845,6 +1945,107 @@ fn discard_all_single_repo(
     Ok(DiscardAllResult {
         files_discarded: affected_paths.len() as i32,
         discarded_paths: affected_paths.into_iter().collect(),
+        skipped_missing_main: false,
+    })
+}
+
+/// Discard a specific set of repo-relative paths. For each path, revert both
+/// unapproved working-tree edits and approved-but-unpublished edits by replacing
+/// the entry with its content on `refs/heads/main`. Paths not present in either
+/// the pending or approved sets cause an error (the caller already knows which
+/// input path they came from via `input_by_rel`).
+fn discard_paths_single_repo(
+    ctx: &ConnectionContext,
+    rel_paths: &[String],
+    input_by_rel: &HashMap<&str, &str>,
+) -> anyhow::Result<DiscardAllResult> {
+    let main_hash = match git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")? {
+        Some(hash) => hash,
+        None => {
+            return Ok(DiscardAllResult {
+                skipped_missing_main: true,
+                ..Default::default()
+            });
+        }
+    };
+    let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
+
+    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let dirty_map = match dirty_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    sync_schema_files_from_master(ctx)?;
+    let local_map = read_materialized_repo(ctx)?;
+
+    let all_pending = compute_unreviewed_entries(&ctx.conn_dir_name, &dirty_map, &local_map);
+    let all_approved = compute_unreviewed_entries(&ctx.conn_dir_name, &main_map, &dirty_map);
+
+    let mut changed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in &all_pending {
+        changed.insert(entry.path.clone());
+    }
+    for entry in &all_approved {
+        changed.insert(entry.path.clone());
+    }
+
+    let mut targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for rel in rel_paths {
+        if !changed.contains(rel) {
+            let input = input_by_rel
+                .get(rel.as_str())
+                .copied()
+                .unwrap_or(rel.as_str());
+            anyhow::bail!("No local changes to discard for '{}'.", input);
+        }
+        targets.insert(rel.clone());
+    }
+
+    // Build the new dirty tree: start from current dirty, then for each target
+    // path replace it with main's version (or remove it if main doesn't have it).
+    let mut discarded_map = dirty_map.clone();
+    for rel in &targets {
+        match main_map.get(rel.as_str()) {
+            Some(content) => {
+                discarded_map.insert(rel.clone(), content.clone());
+            }
+            None => {
+                discarded_map.remove(rel.as_str());
+            }
+        }
+    }
+
+    let commit_msg = if targets.len() == 1 {
+        let only = targets.iter().next().unwrap();
+        format!("Discard local changes in {}", only)
+    } else {
+        format!("Discard local changes in {} files", targets.len())
+    };
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        dirty_hash.as_deref(),
+        &discarded_map,
+        &commit_msg,
+    )?;
+    // Update only the targeted files on disk so unrelated pending edits in
+    // other files are preserved.
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    for rel in &targets {
+        let disk_path = ctx.dirty_dir.join(rel);
+        match discarded_map.get(rel.as_str()) {
+            Some(content) => write_file(&disk_path, content)?,
+            None => {
+                if disk_path.exists() {
+                    std::fs::remove_file(&disk_path)?;
+                }
+            }
+        }
+    }
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
+
+    Ok(DiscardAllResult {
+        files_discarded: targets.len() as i32,
+        discarded_paths: targets.into_iter().collect(),
         skipped_missing_main: false,
     })
 }
