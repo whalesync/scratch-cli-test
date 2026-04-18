@@ -35,7 +35,7 @@ services:
   scratch-git-2:
     build:
       context: ..
-      dockerfile: scratch-git-2/Dockerfile
+      dockerfile: smoke-tests/Dockerfile.scratch-git
     ports:
       - "3110:3100"
       - "3111:3101"

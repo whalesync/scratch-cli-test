@@ -1,0 +1,29 @@
+# Smoke-test scratch-git-2 image: builds the Rust binary from source inside
+# Docker so it works on any host OS (macOS, Linux, etc.).
+# The production Dockerfile (scratch-git-2/Dockerfile) expects a prebuilt
+# Linux binary — this one does not.
+
+FROM rust:1-bookworm AS builder
+WORKDIR /build
+COPY scratch-git-2/ ./
+RUN cargo build --release --bin scratch-git-2
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y dumb-init git git-daemon-sysvinit && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+COPY --from=builder /build/target/release/scratch-git-2 ./scratch-git-api
+
+RUN mkdir -p /data/repos /data/repos-v2
+
+ENV BUILD_VERSION=0.0.0-local
+ENV PORT=3100
+ENV GIT_BACKEND_PORT=3101
+ENV GIT_REPOS_DIR=/data/repos
+ENV GIT_REPOS_V2_DIR=/data/repos-v2
+ENV NODE_ENV=production
+ENV RUST_LOG=info
+
+EXPOSE 3100 3101
+
+CMD ["dumb-init", "./scratch-git-api"]
