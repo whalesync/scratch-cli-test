@@ -1,0 +1,77 @@
+#!/bin/bash
+set -e
+# Ensure we are in the scratch-desktop directory regardless of where the script is called from
+cd "$(dirname "$0")/.."
+
+# Usage: ./scripts/package.sh <mac|linux>
+#
+# Thin wrapper around electron-builder. Reads SEMVER and VITE_* env vars from
+# the environment (passed in via the bootstrap dotenv for SEMVER, and job
+# variables for VITE_*). Produces release-ready files in ./dist-release/.
+#
+# The macOS invocation is expected to run on a shell runner that can sign the
+# app; the Linux invocation runs on a shared Linux runner.
+
+PLATFORM=${1:-}
+if [[ "$PLATFORM" != "mac" && "$PLATFORM" != "linux" ]]; then
+  echo "Usage: $0 <mac|linux>"
+  exit 1
+fi
+
+if [ -z "$SEMVER" ]; then
+  echo "ERROR: SEMVER is required (usually propagated via the bootstrap release.env dotenv)."
+  exit 1
+fi
+if [ -z "$VITE_SCRATCH_API_URL" ] || [ -z "$VITE_SCRATCH_WEB_URL" ]; then
+  echo "ERROR: VITE_SCRATCH_API_URL and VITE_SCRATCH_WEB_URL must be set."
+  exit 1
+fi
+
+# Bootstrap ran on a different job/runner, so this workspace's package.json
+# still has whatever version was committed. Sync it to the release version so
+# electron-builder stamps artifacts with the correct filename.
+node -e "
+  const fs = require('fs');
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  pkg.version = '$SEMVER';
+  fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+"
+echo "package.json version set to $SEMVER"
+
+echo "Installing dependencies..."
+yarn install --frozen-lockfile --ignore-engines
+
+echo "Building renderer + main + preload bundles..."
+rm -rf ./dist
+yarn build
+
+if [ "$PLATFORM" = "mac" ]; then
+  # Defaults match the existing local-macos job (dmg + zip).
+  MAC_TARGETS="${MAC_TARGETS:-dmg zip}"
+  echo "Packaging macOS targets ($MAC_TARGETS)..."
+  # shellcheck disable=SC2086  # intentional word splitting for multiple targets
+  yarn electron-builder --mac $MAC_TARGETS --publish never
+else
+  echo "Packaging Linux x64 targets..."
+  yarn electron-builder --linux --x64 --publish never
+fi
+
+# Collect release-ready files into dist-release/ so the downstream upload job
+# has a single, predictable directory to pull into its workspace.
+DIST_DIR="./dist-release"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
+echo "Collecting artifacts into $DIST_DIR..."
+for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
+  [ -f "$FILE" ] || continue
+  FNAME=$(basename "$FILE")
+  cp "$FILE" "$DIST_DIR/$FNAME"
+  echo "  $FNAME"
+done
+
+ARTIFACT_COUNT=$(find "$DIST_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')
+if [ "$ARTIFACT_COUNT" -eq 0 ]; then
+  echo "ERROR: No build artifacts found in $DIST_DIR. Aborting."
+  exit 1
+fi
+echo "Collected $ARTIFACT_COUNT artifact(s)"
