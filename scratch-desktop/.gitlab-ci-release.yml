@@ -188,6 +188,10 @@ Build CLI for test desktop release:
   variables:
     PLATFORM: 'mac'
     MAC_TARGETS: 'dmg zip'
+  before_script:
+    - source ~/.nvm/nvm.sh && nvm use
+    - cd scratch-desktop
+    - chmod +x scripts/package.sh
 
 Package prod macOS:
   extends: .package_desktop_mac
