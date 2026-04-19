@@ -190,6 +190,10 @@ Build CLI for test desktop release:
     MAC_TARGETS: 'dmg zip'
   before_script:
     - source ~/.nvm/nvm.sh && nvm use
+    - |
+      for p in /opt/homebrew/bin /usr/local/bin "$HOME/.yarn/bin"; do
+        [ -x "$p/yarn" ] && export PATH="$p:$PATH" && break
+      done
     - cd scratch-desktop
     - chmod +x scripts/package.sh
 
