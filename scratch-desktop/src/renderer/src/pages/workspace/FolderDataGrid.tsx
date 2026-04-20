@@ -117,6 +117,18 @@ interface FolderDataGridProps {
   onPublishFile?: (relativePath: string) => void;
 }
 
+type GridLoadMode = 'idle' | 'blocking' | 'refreshing';
+
+interface GridQueryState {
+  key: string;
+  selectedFolderPath: string | null;
+  workspacePath: string | null;
+  page: number;
+  sortColumn: string | null;
+  sortDirection: 'asc' | 'desc' | null;
+  activeFilters: GridFilter[];
+}
+
 // ── Constants ──
 
 const PAGE_SIZE = 100;
@@ -538,8 +550,10 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
   const { selectedFolderPath, workspacePath, dataRefreshKey } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingMode, setLoadingMode] = useState<GridLoadMode>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [errorQueryKey, setErrorQueryKey] = useState<string | null>(null);
+  const [resolvedQueryKey, setResolvedQueryKey] = useState<string | null>(null);
   const [sort, setSort] = useState<{ column: string | null; direction: 'asc' | 'desc' | null }>({
     column: null,
     direction: null,
@@ -567,6 +581,40 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
   const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | 'discard' | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const loadGenerationRef = useRef(0);
+  const didMountDataRefreshRef = useRef(false);
+  const hasCurrentQueryDataRef = useRef(false);
+  const currentQueryRef = useRef<GridQueryState | null>(null);
+
+  const queryKey = useMemo(
+    () =>
+      JSON.stringify({
+        selectedFolderPath,
+        workspacePath,
+        page,
+        sortColumn: sort.column,
+        sortDirection: sort.direction,
+        activeFilters,
+      }),
+    [activeFilters, page, selectedFolderPath, sort.column, sort.direction, workspacePath],
+  );
+
+  const hasCurrentQueryData = diffData !== null && resolvedQueryKey === queryKey;
+  const hasCurrentQueryError = error !== null && errorQueryKey === queryKey;
+  const isBlockingLoad = loadingMode === 'blocking';
+  const isRefreshing = loadingMode === 'refreshing';
+  const currentQuery = useMemo<GridQueryState>(
+    () => ({
+      key: queryKey,
+      selectedFolderPath,
+      workspacePath,
+      page,
+      sortColumn: sort.column,
+      sortDirection: sort.direction,
+      activeFilters,
+    }),
+    [activeFilters, page, queryKey, selectedFolderPath, sort.column, sort.direction, workspacePath],
+  );
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
     wrapperElRef.current = el;
@@ -585,42 +633,99 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     observerRef.current = observer;
   }, []);
 
-  // Load data
   useEffect(() => {
-    if (!selectedFolderPath || !workspacePath) {
+    hasCurrentQueryDataRef.current = hasCurrentQueryData;
+  }, [hasCurrentQueryData]);
+
+  useEffect(() => {
+    currentQueryRef.current = currentQuery;
+  });
+
+  const loadDiffData = useCallback(async (mode: 'blocking' | 'refreshing', currentQueryState: GridQueryState) => {
+    const {
+      key,
+      selectedFolderPath: nextSelectedFolderPath,
+      workspacePath: nextWorkspacePath,
+      page: nextPage,
+      sortColumn,
+      sortDirection,
+      activeFilters: nextActiveFilters,
+    } = currentQueryState;
+
+    if (!nextSelectedFolderPath || !nextWorkspacePath) {
+      loadGenerationRef.current += 1;
       setDiffData(null);
+      setError(null);
+      setErrorQueryKey(null);
+      setResolvedQueryKey(null);
+      setLoadingMode('idle');
       return;
     }
 
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+    const shouldKeepShowingCurrentData = mode === 'refreshing' && hasCurrentQueryDataRef.current;
+    const generation = ++loadGenerationRef.current;
+    setLoadingMode(shouldKeepShowingCurrentData ? 'refreshing' : 'blocking');
+    if (!shouldKeepShowingCurrentData) {
+      setError(null);
+      setErrorQueryKey(null);
+    }
 
-    window.scratchFiles
-      .readDiffGridData(selectedFolderPath, workspacePath, {
-        offset: (page - 1) * PAGE_SIZE,
+    try {
+      const result = await window.scratchFiles.readDiffGridData(nextSelectedFolderPath, nextWorkspacePath, {
+        offset: (nextPage - 1) * PAGE_SIZE,
         limit: PAGE_SIZE,
-        sortBy: sort.column ?? undefined,
-        sortOrder: sort.direction ?? undefined,
-        filters: activeFilters,
-      })
-      .then((result) => {
-        if (!cancelled) setDiffData(result as DiffGridResult);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load grid data');
-          setDiffData(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        sortBy: sortColumn ?? undefined,
+        sortOrder: sortDirection ?? undefined,
+        filters: nextActiveFilters,
       });
+      if (generation !== loadGenerationRef.current) {
+        return;
+      }
+      setDiffData(result as DiffGridResult);
+      setResolvedQueryKey(key);
+      setError(null);
+      setErrorQueryKey(null);
+    } catch (err: unknown) {
+      if (generation !== loadGenerationRef.current) {
+        return;
+      }
+      if (shouldKeepShowingCurrentData) {
+        console.debug('[FolderDataGrid] background refresh failed:', err);
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Failed to load grid data');
+      setErrorQueryKey(key);
+      setDiffData(null);
+      setResolvedQueryKey(null);
+    } finally {
+      if (generation === loadGenerationRef.current) {
+        setLoadingMode('idle');
+      }
+    }
+  }, []);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeFilters, dataRefreshKey, page, reloadKey, selectedFolderPath, sort.column, sort.direction, workspacePath]);
+  // Load data for query changes and explicit user-triggered reloads.
+  useEffect(() => {
+    void loadDiffData('blocking', currentQuery);
+  }, [currentQuery, loadDiffData, reloadKey]);
+
+  // Keep the current rows painted during passive background refreshes (e.g. app focus).
+  // currentQuery is intentionally NOT in the dep array — we read it via ref so this effect
+  // only fires when dataRefreshKey changes, never on user-initiated query changes. Without
+  // this separation, both effects would fire on every filter/sort/page change and the
+  // second (refreshing) call would race and cancel the first (blocking) one.
+  useEffect(() => {
+    if (!didMountDataRefreshRef.current) {
+      didMountDataRefreshRef.current = true;
+      return;
+    }
+    if (!selectedFolderPath || !workspacePath) {
+      return;
+    }
+    if (currentQueryRef.current) {
+      void loadDiffData('refreshing', currentQueryRef.current);
+    }
+  }, [dataRefreshKey, loadDiffData, selectedFolderPath, workspacePath]);
 
   // Reset state when folder changes
   useEffect(() => {
@@ -1692,7 +1797,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       summary.unpublished > 0 ||
       summary.deleted > 0 ||
       summary.invalidJson > 0);
-  const showFilterBar = workspacePath && selectedFolderPath && !error;
+  const showFilterBar = workspacePath && selectedFolderPath && !hasCurrentQueryError;
+  const showBlockingLoader = Boolean(
+    selectedFolderPath && (isBlockingLoad || (!hasCurrentQueryData && !hasCurrentQueryError && workspacePath)),
+  );
 
   return (
     <Stack
@@ -1809,19 +1917,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         </Box>
       )}
 
-      {selectedFolderPath && loading && (
+      {selectedFolderPath && showBlockingLoader && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Loader size="sm" />
         </Box>
       )}
 
-      {selectedFolderPath && error && (
+      {selectedFolderPath && hasCurrentQueryError && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text13Regular c="var(--mantine-color-red-6)">{error}</Text13Regular>
         </Box>
       )}
 
-      {selectedFolderPath && !loading && !error && pagedRows.length === 0 && (
+      {selectedFolderPath && !showBlockingLoader && !hasCurrentQueryError && pagedRows.length === 0 && (
         <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text13Regular c="dimmed">
             {activeFilters.length > 0 ? 'No rows match the current filter' : 'No data in this folder'}
@@ -1829,7 +1937,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         </Box>
       )}
 
-      {selectedFolderPath && !loading && !error && pagedRows.length > 0 && (
+      {selectedFolderPath && !showBlockingLoader && !hasCurrentQueryError && pagedRows.length > 0 && (
         <>
           <Box ref={wrapperRef} onMouseLeave={onGridMouseLeave} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
             {gridSize && (
@@ -1963,6 +2071,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             </Text12Regular>
 
             <Group gap={10} align="center">
+              {isRefreshing && (
+                <Group gap={6} align="center">
+                  <Loader size="xs" />
+                  <Text12Regular c="var(--fg-muted)">Refreshing…</Text12Regular>
+                </Group>
+              )}
               {(filterCounts?.unreviewed ?? 0) > 0 && (
                 <Group gap={3}>
                   <Box
