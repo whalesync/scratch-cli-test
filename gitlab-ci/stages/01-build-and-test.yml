@@ -3,59 +3,6 @@ include:
   - "/gitlab-ci/common.yml"
 
 # =============================================================================
-# Shared change-sets — referenced by both normal and local-runner jobs
-# =============================================================================
-
-.changes:
-  client:
-    - client/**/*
-    - packages/**/*
-  client-docker:
-    - client/Dockerfile.monorepo
-  server:
-    - server/**/*
-    - packages/**/*
-    - test-api-fakes/**/*
-  server-docker:
-    - server/Dockerfile.monorepo
-  scratch-git:
-    - scratch-git-2/**/*
-  scratch-git-docker:
-    - scratch-git-2/Dockerfile
-  build-and-test:
-    - gitlab-ci/stages/01-build-and-test.yml
-  push-images:
-    - gitlab-ci/stages/03-push-images.yml
-  scratch-desktop:
-    - scratch-desktop/**/*
-  dummy:
-    - terraform/**/*
-    - .cursor/**/*
-    - .claude/**/*
-    - gitlab-ci/**/*
-    - docs/**/*
-    - .vscode/**/*
-    - experimental/**/*
-    - scratch-git-2/**/*
-    - scratch-git-tests/**/*
-    - "*"
-    - docs/**/*
-
-# =============================================================================
-# Local runner user list
-#
-# This skips the shared-runner MR jobs for local-runner users so they don't
-# get duplicate runs. See gitlab-ci/local-runners.yml for the local variants.
-# =============================================================================
-
-# ✏️  ADD YOUR USERNAME HERE (2 of 2 — you must also update
-#    .rules.local_runner_users_mr in gitlab-ci/local-runners.yml)
-.rules:
-  skip_for_local_runner_users:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
-      when: never
-
-# =============================================================================
 # CLIENT SUBPROJECT
 # =============================================================================
 

@@ -18,6 +18,7 @@ const ARCH_NAMES = { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal
 const TARGET_MAP = {
   'darwin-arm64': 'aarch64-apple-darwin',
   'linux-x64': 'x86_64-unknown-linux-gnu',
+  'win32-x64': 'x86_64-pc-windows-gnu',
 };
 
 exports.default = async function afterPack(context) {
@@ -30,7 +31,8 @@ exports.default = async function afterPack(context) {
     throw new Error(`afterPack: no CLI binary mapping for platform/arch "${key}"`);
   }
 
-  const srcBinary = path.resolve(__dirname, '..', '..', 'scratch-git-2', 'cli-binaries', rustTarget, 'scratchmd');
+  const binaryName = platform === 'win32' ? 'scratchmd.exe' : 'scratchmd';
+  const srcBinary = path.resolve(__dirname, '..', '..', 'scratch-git-2', 'cli-binaries', rustTarget, binaryName);
 
   if (!fs.existsSync(srcBinary)) {
     throw new Error(
@@ -60,7 +62,7 @@ exports.default = async function afterPack(context) {
   }
 
   const destDir = path.join(resourcesDir, 'bin');
-  const destBinary = path.join(destDir, 'scratchmd');
+  const destBinary = path.join(destDir, binaryName);
 
   fs.mkdirSync(destDir, { recursive: true });
   fs.copyFileSync(srcBinary, destBinary);

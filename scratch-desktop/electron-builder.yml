@@ -6,10 +6,14 @@ directories:
 
 files:
   - '!**/.vscode/*'
-  - '!src/*'
+  - '!src/**'
   - '!electron.vite.config.*'
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!dist-release/**'
+  - '!dist-release-*/**'
+  - '!docs/**'
+  - '!scripts/**'
 
 asarUnpack:
   - resources/**
@@ -40,6 +44,7 @@ mac:
 
 win:
   icon: build/icons/win/icon.ico
+  artifactName: '${productName}-${version}-${arch}.${ext}'
 
 linux:
   icon: build/icons/png

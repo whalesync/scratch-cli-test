@@ -13,8 +13,8 @@ cd "$(dirname "$0")/.."
 # app; the Linux invocation runs on a shared Linux runner.
 
 PLATFORM=${1:-}
-if [[ "$PLATFORM" != "mac" && "$PLATFORM" != "linux" ]]; then
-  echo "Usage: $0 <mac|linux>"
+if [[ "$PLATFORM" != "mac" && "$PLATFORM" != "linux" && "$PLATFORM" != "windows" ]]; then
+  echo "Usage: $0 <mac|linux|windows>"
   exit 1
 fi
 
@@ -51,6 +51,12 @@ if [ "$PLATFORM" = "mac" ]; then
   echo "Packaging macOS targets ($MAC_TARGETS)..."
   # shellcheck disable=SC2086  # intentional word splitting for multiple targets
   yarn electron-builder --mac $MAC_TARGETS --publish never
+elif [ "$PLATFORM" = "windows" ]; then
+  # Unsigned NSIS installer (Setup.exe) for x64. Requires wine in the build
+  # environment because electron-builder invokes the NSIS compiler under wine
+  # when cross-building from Linux. Signing is not configured yet.
+  echo "Packaging Windows x64 targets..."
+  yarn electron-builder --win --x64 --publish never
 else
   echo "Packaging Linux x64 targets..."
   yarn electron-builder --linux --x64 --publish never
@@ -62,7 +68,7 @@ DIST_DIR="./dist-release"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 echo "Collecting artifacts into $DIST_DIR..."
-for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb; do
+for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.exe; do
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   cp "$FILE" "$DIST_DIR/$FNAME"

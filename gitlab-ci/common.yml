@@ -54,6 +54,93 @@ include:
   on_merge_to_prod:
     - if: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
 
+  # Local-runner opt-ins — defined here (not in local-runners.yml) so the
+  # release pipeline can reference them even when local-runners.yml is excluded
+  # via RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY.
+  # ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
+  #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
+  #    NOTE: update the list of users in ALL three rules below.
+  local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_master: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_prod: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+
+  # Local runner user list
+  #
+  # This skips the shared-runner MR jobs for local-runner users so they don't
+  # get duplicate runs. See gitlab-ci/local-runners.yml for the local variants.
+
+  # ✏️  ADD YOUR USERNAME HERE (2 of 2 — you must also update
+  #    .rules.local_runner_users_mr in gitlab-ci/local-runners.yml)
+  skip_for_local_runner_users:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+      when: never
+
+# =============================================================================
+# Shared change-sets — referenced by both normal and local-runner jobs
+# =============================================================================
+
+.changes:
+  client:
+    - client/**/*
+    - packages/**/*
+  client-docker:
+    - client/Dockerfile.monorepo
+  server:
+    - server/**/*
+    - packages/**/*
+    - test-api-fakes/**/*
+  server-docker:
+    - server/Dockerfile.monorepo
+  scratch-git:
+    - scratch-git-2/**/*
+  scratch-git-docker:
+    - scratch-git-2/Dockerfile
+  build-and-test:
+    - gitlab-ci/stages/01-build-and-test.yml
+  push-images:
+    - gitlab-ci/stages/03-push-images.yml
+  scratch-desktop:
+    - scratch-desktop/**/*
+  dummy:
+    - terraform/**/*
+    - .cursor/**/*
+    - .claude/**/*
+    - gitlab-ci/**/*
+    - docs/**/*
+    - .vscode/**/*
+    - experimental/**/*
+    - scratch-git-2/**/*
+    - scratch-git-tests/**/*
+    - "*"
+    - docs/**/*
+
+# Shell executor for macOS-native builds (e.g. .dmg packaging).
+# Runs directly on the host — no Docker container. Requires Node 22, Yarn,
+# and Git installed on the machine. See docs/local-gitlab-runner.md.
+# Defined here (not in local-runners.yml) so the release pipeline's mac jobs
+# can extend from it even when local-runners.yml is excluded via
+# RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY.
+.local-macos-runner-defaults:
+  tags:
+    - "local-macos-$GITLAB_USER_LOGIN"
+  variables:
+    GIT_STRATEGY: fetch
+    GIT_DEPTH: 0
+    GIT_CLEAN_FLAGS: "-ffdx -e node_modules -e .yarn -e .next"
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        echo ""
+        echo "============================================================"
+        echo "  MACOS RUNNER: If this failure looks like missing tools,"
+        echo "  ensure Node 22, Yarn, and Git are installed:"
+        echo ""
+        echo "    brew install node@22 yarn git"
+        echo ""
+        echo "  See docs/local-gitlab-runner.md for details."
+        echo "============================================================"
+      fi
+
 # Extend this rule to include OIDC auth and all required settings for the EU test project
 .gcp_eu_test_env:
   extends: .google-oidc:auth
@@ -172,4 +259,6 @@ include:
       - scratch-git-2/target/aarch64-apple-darwin
       - scratch-git-2/target/x86_64-unknown-linux-gnu
       - scratch-git-2/target/x86_64-pc-windows-gnu
+      - scratch-git-2/target/.rustc_info.json
+      - scratch-git-2/target/CACHEDIR.TAG
     policy: pull-push

@@ -92,7 +92,7 @@ upload_with_retry() {
 
 echo "Uploading artifacts to release $NEW_VERSION (id=$RELEASE_ID)..."
 UPLOADED=0
-for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DIR"/*.deb; do
+for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DIR"/*.deb "$DIST_DIR"/*.exe; do
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   echo "Uploading $FNAME..."

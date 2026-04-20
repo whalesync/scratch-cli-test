@@ -28,7 +28,12 @@ include:
   # Shared infra — needed regardless of which jobs run.
   - local: "/gitlab-ci/common.yml"
   - local: "/gitlab-ci/stages.yml"
+  # Local-runner job definitions extend templates from 01-build-and-test.yml /
+  # 01-smoke-tests.yml, so skip this file whenever those stage files are
+  # skipped (i.e. under RELEASE_*_ONLY).
   - local: "/gitlab-ci/local-runners.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
 
   # Everything else is skipped when either *_ONLY flag is set.
   - template: Security/Secret-Detection.gitlab-ci.yml

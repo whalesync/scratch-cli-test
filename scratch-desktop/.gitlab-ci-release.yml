@@ -1,13 +1,14 @@
 # =============================================================================
 # DESKTOP APP RELEASE PIPELINE
 #
-# Shape: bootstrap → CLI builds → package (mac, linux) → upload → finalize.
+# Shape: bootstrap → CLI builds → package (mac, linux, windows) → upload → finalize.
 #
 #   1. Bootstrap decides the version once, creates a DRAFT GitHub release,
 #      and emits release.env via artifacts.reports.dotenv so every downstream
 #      job sees the same RELEASE_ID / NEW_VERSION / SEMVER.
-#   2. CLI builds (darwin-arm64, linux-x64) run in parallel with bootstrap —
-#      the version isn't baked into the binary, only SCRATCH_DEFAULT_URL is.
+#   2. CLI builds (darwin-arm64, linux-x64, windows-x64) run in parallel with
+#      bootstrap — the version isn't baked into the binary, only
+#      SCRATCH_DEFAULT_URL is.
 #   3. Package jobs consume the matching CLI artifact + the bootstrap dotenv
 #      and run electron-builder to produce signed artifacts in dist-release/.
 #      The mac job runs on a shell-executor runner (required for signing) and
@@ -21,6 +22,10 @@
 #
 # One GitHub release per version, with all platform artifacts attached.
 # =============================================================================
+
+include:
+  - '/gitlab-ci/stages.yml'
+  - '/gitlab-ci/common.yml'
 
 # File paths that trigger the test-variant jobs to run on MRs, so the pipeline
 # itself can be validated before merging changes to master. Prod-variant jobs
@@ -106,10 +111,10 @@ Bootstrap test desktop release:
   rules: !reference [.test_release_triggers, rules]
 
 # -----------------------------------------------------------------------------
-# BUILD CLI — cross-compile scratchmd for darwin-arm64 and linux-x64.
+# BUILD CLI — cross-compile scratchmd for darwin-arm64, linux-x64, windows-x64.
 #
-# Single job per variant (both targets in one cargo run) to keep the cross-
-# compile cache happy — two parallel jobs would race on `pull-push`. The job
+# Single job per variant (all three targets in one cargo run) to keep the cross-
+# compile cache happy — parallel jobs would race on `pull-push`. The job
 # `needs:` bootstrap so it fires only when a release is actually being cut.
 # -----------------------------------------------------------------------------
 .build_cli_for_desktop:
@@ -126,11 +131,13 @@ Bootstrap test desktop release:
     expire_in: 1 day
   script:
     - cd scratch-git-2
-    - mkdir -p cli-binaries/aarch64-apple-darwin cli-binaries/x86_64-unknown-linux-gnu
+    - mkdir -p cli-binaries/aarch64-apple-darwin cli-binaries/x86_64-unknown-linux-gnu cli-binaries/x86_64-pc-windows-gnu
     - SCRATCH_DEFAULT_URL="$SCRATCH_DEFAULT_URL" cargo zigbuild --release --bin scratchmd --target aarch64-apple-darwin
     - SCRATCH_DEFAULT_URL="$SCRATCH_DEFAULT_URL" cargo zigbuild --release --bin scratchmd --target x86_64-unknown-linux-gnu
+    - SCRATCH_DEFAULT_URL="$SCRATCH_DEFAULT_URL" cargo zigbuild --release --bin scratchmd --target x86_64-pc-windows-gnu
     - cp target/aarch64-apple-darwin/release/scratchmd cli-binaries/aarch64-apple-darwin/scratchmd
     - cp target/x86_64-unknown-linux-gnu/release/scratchmd cli-binaries/x86_64-unknown-linux-gnu/scratchmd
+    - cp target/x86_64-pc-windows-gnu/release/scratchmd.exe cli-binaries/x86_64-pc-windows-gnu/scratchmd.exe
 
 Build CLI for prod desktop release:
   extends: .build_cli_for_desktop
@@ -180,6 +187,19 @@ Build CLI for test desktop release:
     - cd scratch-desktop
     - chmod +x scripts/package.sh
 
+# Unsigned Windows NSIS installer (Setup.exe) built on Linux. The
+# electronuserland/builder:wine image ships Node + wine (with i386 multiarch)
+# preinstalled, which is what electron-builder needs to run the NSIS compiler
+# when cross-building Windows installers from Linux.
+.package_desktop_windows:
+  extends: .package_desktop
+  image: electronuserland/builder:wine
+  variables:
+    PLATFORM: 'windows'
+  before_script:
+    - cd scratch-desktop
+    - chmod +x scripts/package.sh
+
 .package_desktop_mac:
   extends:
     - .package_desktop
@@ -223,6 +243,19 @@ Package prod Linux:
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
 
+Package prod Windows:
+  extends: .package_desktop_windows
+  variables:
+    VITE_SCRATCH_API_URL: 'https://api.scratch.md'
+    VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+  needs:
+    - job: Bootstrap prod desktop release
+      artifacts: true
+    - job: Build CLI for prod desktop release
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+
 Package test macOS:
   extends: .package_desktop_mac
   variables:
@@ -242,6 +275,18 @@ Package test macOS:
 
 Package test Linux:
   extends: .package_desktop_linux
+  variables:
+    VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
+    VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+  needs:
+    - job: Bootstrap test desktop release
+      artifacts: true
+    - job: Build CLI for test desktop release
+      artifacts: true
+  rules: !reference [.test_release_triggers, rules]
+
+Package test Windows:
+  extends: .package_desktop_windows
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
@@ -286,6 +331,16 @@ Upload prod Linux assets:
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
 
+Upload prod Windows assets:
+  extends: .upload_assets
+  needs:
+    - job: Bootstrap prod desktop release
+      artifacts: true
+    - job: Package prod Windows
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+
 Upload test macOS assets:
   extends: .upload_assets
   needs:
@@ -306,6 +361,15 @@ Upload test Linux assets:
     - job: Bootstrap test desktop release
       artifacts: true
     - job: Package test Linux
+      artifacts: true
+  rules: !reference [.test_release_triggers, rules]
+
+Upload test Windows assets:
+  extends: .upload_assets
+  needs:
+    - job: Bootstrap test desktop release
+      artifacts: true
+    - job: Package test Windows
       artifacts: true
   rules: !reference [.test_release_triggers, rules]
 
@@ -336,6 +400,8 @@ Finalize prod release:
       optional: true
     - job: Upload prod Linux assets
       artifacts: false
+    - job: Upload prod Windows assets
+      artifacts: false
   script:
     - ./scripts/finalize_release.sh
     - chmod +x scripts/update_homebrew_cask.sh
@@ -352,6 +418,8 @@ Finalize test release:
       artifacts: false
       optional: true
     - job: Upload test Linux assets
+      artifacts: false
+    - job: Upload test Windows assets
       artifacts: false
   script:
     - ./scripts/finalize_release.sh
