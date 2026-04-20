@@ -142,6 +142,7 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
       writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
       stageFiles: jest.fn().mockResolvedValue(undefined),
       readStagedFiles: jest.fn(),
+      markStagedFilesProcessed: jest.fn().mockResolvedValue(undefined),
       commitStagedFiles: jest.fn(),
       cleanupStaging: jest.fn().mockResolvedValue(undefined),
       listRepoFiles: jest.fn().mockResolvedValue([]),
@@ -340,8 +341,10 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         });
 
         // Phase 2: readStagedFiles returns empty so we skip processing
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
           created: [],
           updated: [],
           unchanged: [],
@@ -382,15 +385,25 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
                 content: JSON.stringify({ id: 'rec1', slug: 'test-product', title: 'Test Product' }),
               },
             ],
-            total: 1,
+            remaining: 0,
           })
-          .mockResolvedValueOnce({ files: [], total: 0 });
+          .mockResolvedValueOnce({ files: [], remaining: 0 });
 
-        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
-          created: ['Products/test-product.json'],
-          updated: [],
-          unchanged: [],
-        });
+        (mockScratchGitService.commitStagedFiles as jest.Mock)
+          .mockResolvedValueOnce({
+            committed: 1,
+            remaining: 0,
+            created: ['Products/test-product.json'],
+            updated: [],
+            unchanged: [],
+          })
+          .mockResolvedValue({
+            committed: 0,
+            remaining: 0,
+            created: [],
+            updated: [],
+            unchanged: [],
+          });
 
         await handler.run(params);
 
@@ -413,8 +426,10 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
 
         mockConnector.pullRecordFiles.mockResolvedValue(undefined);
 
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
           created: [],
           updated: [],
           unchanged: [],
@@ -431,7 +446,7 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         mockConnector.pullRecordFiles.mockResolvedValue(undefined);
 
         // Make readStagedFiles return data, but commitStagedFiles throw
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockRejectedValue(new Error('commit failed'));
 
         // Phase 2 no longer re-throws — the error is caught per-folder and run() completes
@@ -448,8 +463,10 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         mockConnector.pullRecordFiles.mockRejectedValue(new Error('API rate limit'));
 
         // Phase 2 won't process the failed folder, but readStagedFiles still won't be called
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
           created: [],
           updated: [],
           unchanged: [],
@@ -491,8 +508,10 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
 
         mockConnector.pullRecordFiles.mockResolvedValue(undefined);
 
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
           created: [],
           updated: [],
           unchanged: [],
@@ -515,8 +534,10 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         mockConnector.pullRecordFiles.mockRejectedValue(new Error('API rate limit'));
 
         // Phase 2 won't process the failed folder
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
           created: [],
           updated: [],
           unchanged: [],
@@ -603,15 +624,25 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
                 content: JSON.stringify({ id: 'rec1', slug: 'order-1', title: 'Order 1' }),
               },
             ],
-            total: 1,
+            remaining: 0,
           })
-          .mockResolvedValueOnce({ files: [], total: 0 });
+          .mockResolvedValueOnce({ files: [], remaining: 0 });
 
-        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
-          created: ['Orders/order-1.json'],
-          updated: [],
-          unchanged: [],
-        });
+        (mockScratchGitService.commitStagedFiles as jest.Mock)
+          .mockResolvedValueOnce({
+            committed: 1,
+            remaining: 0,
+            created: ['Orders/order-1.json'],
+            updated: [],
+            unchanged: [],
+          })
+          .mockResolvedValue({
+            committed: 0,
+            remaining: 0,
+            created: [],
+            updated: [],
+            unchanged: [],
+          });
 
         await handler.run(params);
 
@@ -633,6 +664,7 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
           'main',
           'Orders',
           expect.stringContaining('Orders'),
+          1000,
         );
 
         // Succeeding folder should have job-completed event
@@ -694,8 +726,10 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
           return Promise.resolve();
         });
 
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
           created: [],
           updated: [],
           unchanged: [],
@@ -736,15 +770,35 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
         jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
 
         mockConnector.pullRecordFiles.mockResolvedValue(undefined);
-        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], total: 0 });
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
         (mockScratchGitService.commitStagedFiles as jest.Mock)
+          // Folder 1 (Products): first call returns data, second call terminates loop
           .mockResolvedValueOnce({
+            committed: 2,
+            remaining: 0,
             created: ['Products/a.json'],
             updated: ['Products/b.json'],
             unchanged: [],
           })
           .mockResolvedValueOnce({
+            committed: 0,
+            remaining: 0,
+            created: [],
+            updated: [],
+            unchanged: [],
+          })
+          // Folder 2 (Orders): first call returns data, second call terminates loop
+          .mockResolvedValueOnce({
+            committed: 1,
+            remaining: 0,
             created: ['Orders/c.json'],
+            updated: [],
+            unchanged: [],
+          })
+          .mockResolvedValue({
+            committed: 0,
+            remaining: 0,
+            created: [],
             updated: [],
             unchanged: [],
           });

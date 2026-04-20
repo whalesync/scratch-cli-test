@@ -417,10 +417,13 @@ export class ScratchGitService {
   async readStagedFiles(
     jobId: string,
     folder: string,
-    offset: number,
     limit: number,
-  ): Promise<{ files: Array<{ path: string; content: string }>; total: number }> {
-    return this.scratchGitClient.readStagedFiles(jobId, folder, offset, limit);
+  ): Promise<{ files: Array<{ path: string; content: string }>; remaining: number }> {
+    return this.scratchGitClient.readStagedFiles(jobId, folder, limit);
+  }
+
+  async markStagedFilesProcessed(jobId: string, folder: string, paths: string[]): Promise<void> {
+    await this.scratchGitClient.markStagedFilesProcessed(jobId, folder, paths);
   }
 
   async commitStagedFiles(
@@ -429,8 +432,9 @@ export class ScratchGitService {
     branch: string,
     folder: string,
     message: string,
-  ): Promise<{ created: string[]; updated: string[]; unchanged: string[] }> {
-    return this.scratchGitClient.commitStagedFiles(jobId, repoId, branch, folder, message);
+    batchSize?: number,
+  ): Promise<{ committed: number; remaining: number; created: string[]; updated: string[]; unchanged: string[] }> {
+    return this.scratchGitClient.commitStagedFiles(jobId, repoId, branch, folder, message, batchSize);
   }
 
   async cleanupStaging(jobId: string): Promise<void> {

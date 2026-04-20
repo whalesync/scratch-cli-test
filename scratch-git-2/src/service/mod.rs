@@ -177,6 +177,10 @@ pub async fn run() {
             post(routes::staging::stage_files).get(routes::staging::read_staged_files),
         )
         .route(
+            "/api/staging/{jobId}/processed",
+            post(routes::staging::mark_staged_files_processed),
+        )
+        .route(
             "/api/staging/{jobId}/commit",
             post(routes::staging::commit_staged),
         )

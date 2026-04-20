@@ -315,6 +315,9 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       });
     }
 
+    // TODO(https://linear.app/whalesync/issue/DEV-9980): When a stalled job is retried by BullMQ,
+    // the previous run's GC may still be in progress, causing a 409 conflict here.
+    // We should either wait for the existing GC to finish or skip gracefully.
     try {
       await this.scratchGitService.runGitGc(repoId);
     } catch (err) {
@@ -575,7 +578,15 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         publicProgress.folderId = folderCtx.dataFolder.id;
         publicProgress.folderName = folderCtx.dataFolder.name;
 
-        const result = await this.processFolder({ folderCtx, fetchResult, jobId });
+        const result = await this.processFolder({
+          folderCtx,
+          fetchResult,
+          jobId,
+          abortSignal,
+          checkpoint,
+          publicProgress,
+          jobProgress,
+        });
 
         // Merge results into shared progress state
         pullStats.created += result.created;
@@ -727,12 +738,31 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
 
   // ---------------------------------------------------------------------------
   // Phase 2: Process staged files — index, commit, delete stale, finalize
+  //
+  // Two symmetric loops, both backed by SQLite state on scratch-git:
+  //
+  // 1. INDEX LOOP: Read unprocessed files → update Postgres indexes (file index,
+  //    file references, asset index) → mark processed in SQLite. Repeats until
+  //    all files are processed.
+  //
+  // 2. COMMIT LOOP: Commit unprocessed files to git in batches → mark committed
+  //    in SQLite. Repeats until all files are committed.
+  //
+  // Both loops are:
+  //   - Bounded: each HTTP call handles at most `batchSize` files
+  //   - Resumable: SQLite state persists across crashes
+  //   - Cancellable: abortSignal checked each iteration via event loop yield
+  //   - Progress-tracked: BullMQ checkpoint after each batch
   // ---------------------------------------------------------------------------
 
   private async processFolder(params: {
     folderCtx: FolderContext;
     fetchResult: FolderFetchResult;
     jobId: string;
+    abortSignal: AbortSignal;
+    checkpoint: CheckpointFn;
+    publicProgress: PullLinkedFolderFilesPublicProgress;
+    jobProgress: PullLinkedFolderFilesV2JobProgress;
   }): Promise<{
     created: number;
     updated: number;
@@ -741,31 +771,49 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
     updatedPaths: string[];
     deletedPaths: string[];
   }> {
-    const { folderCtx, fetchResult, jobId } = params;
+    const { folderCtx, fetchResult, jobId, abortSignal, checkpoint, publicProgress, jobProgress } = params;
     const { dataFolder, tableSpec, repoId } = folderCtx;
     const stagingFolder = (dataFolder.path ?? dataFolder.name).replace(/^\//, '');
 
-    // --- Read staged files and update DB indexes ---
-    let offset = 0;
+    // --- Index loop: read unprocessed staged files and update Postgres indexes ---
+    // Each iteration reads up to `batchSize` files that haven't been processed yet,
+    // updates three Postgres tables in parallel, then marks those files as processed
+    // in SQLite so they won't be returned again (including on crash-restart).
     const batchSize = 100;
+    let processedCount = 0;
     while (true) {
-      const batch = await this.scratchGitService.readStagedFiles(jobId, stagingFolder, offset, batchSize);
+      if (abortSignal.aborted) throw new JobCanceledError(jobId);
+
+      const batch = await this.scratchGitService.readStagedFiles(jobId, stagingFolder, batchSize);
       if (batch.files.length === 0) break;
 
       // Re-hydrate BuiltFile-like objects from staged content.
       // Staged file paths are relative to the folder (e.g., "file.json"),
       // but index methods expect full paths (e.g., "Products/file.json").
-      const builtFiles: BuiltFile[] = batch.files.map((f) => {
-        const parsedRecord = JSON.parse(f.content) as Record<string, unknown>;
+      // Skip files with invalid JSON — this can happen if Phase 1 was
+      // interrupted mid-write (e.g. ECONNRESET) leaving truncated content.
+      const builtFiles: BuiltFile[] = [];
+      for (const f of batch.files) {
+        let parsedRecord: Record<string, unknown>;
+        try {
+          parsedRecord = JSON.parse(f.content) as Record<string, unknown>;
+        } catch {
+          WSLogger.warn({
+            source: LOG_SOURCE,
+            message: `Skipping staged file with invalid JSON: ${stagingFolder}/${f.path}`,
+            workbookId: dataFolder.workbookId,
+          });
+          continue;
+        }
         // eslint-disable-next-line @typescript-eslint/no-base-to-string
         const recordId = String(parsedRecord[tableSpec.idColumnRemoteId] || '');
-        return {
+        builtFiles.push({
           path: `${stagingFolder}/${f.path}`,
           content: f.content,
           recordId,
           parsedRecord: parsedRecord as JsonSafeObject,
-        };
-      });
+        });
+      }
 
       // Run index updates in parallel — they write to different tables with no data dependency
       await Promise.all([
@@ -774,20 +822,43 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
         this.updateAssetIndex(folderCtx, builtFiles),
       ]);
 
-      offset += batch.files.length;
+      await this.scratchGitService.markStagedFilesProcessed(
+        jobId,
+        stagingFolder,
+        batch.files.map((f) => f.path),
+      );
+
+      processedCount += batch.files.length;
+      await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
     }
 
-    // --- Commit staged files to git (scratch-git reads from its own disk) ---
-    const commitResult = await this.scratchGitService.commitStagedFiles(
-      jobId,
-      repoId,
-      MAIN_BRANCH,
-      stagingFolder,
-      `Sync ${stagingFolder} (${offset} files)`,
-    );
+    // --- Commit loop: write staged files to git in batches of 1000 ---
+    // Each iteration makes one HTTP call that creates one git commit for up to
+    // 1000 files. scratch-git marks each file as committed in SQLite so the
+    // next iteration picks up the next batch. Loop exits when committed === 0.
+    const allCreated: string[] = [];
+    const allUpdated: string[] = [];
+    const commitMessage = `Sync ${stagingFolder} (${processedCount} files)`;
+    while (true) {
+      if (abortSignal.aborted) throw new JobCanceledError(jobId);
 
-    const created = commitResult.created.length;
-    const updated = commitResult.updated.length;
+      const result = await this.scratchGitService.commitStagedFiles(
+        jobId,
+        repoId,
+        MAIN_BRANCH,
+        stagingFolder,
+        commitMessage,
+        1000,
+      );
+      if (result.committed === 0) break;
+
+      allCreated.push(...result.created);
+      allUpdated.push(...result.updated);
+      await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
+    }
+
+    const created = allCreated.length;
+    const updated = allUpdated.length;
 
     // --- Delete stale files ---
     const deleteResult = await this.deleteStaleFiles({
@@ -813,8 +884,8 @@ export class PullLinkedFolderFilesV2JobHandler implements JobHandlerBuilder<Pull
       created,
       updated,
       deleted: deleteResult.deleted,
-      createdPaths: commitResult.created,
-      updatedPaths: commitResult.updated,
+      createdPaths: allCreated,
+      updatedPaths: allUpdated,
       deletedPaths: deleteResult.deletedPaths,
     };
   }

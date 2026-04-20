@@ -1,9 +1,10 @@
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::Json;
+use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::Path as StdPath;
 
 use crate::service::envelope::{envelope, envelope_error};
 use crate::service::error::AppError;
@@ -12,7 +13,56 @@ use crate::service::state::AppState;
 use crate::service::types::*;
 
 // ---------------------------------------------------------------------------
+// SQLite staging index
+//
+// Each pull-all job gets a SQLite database at `{staging_dir}/{jobId}/index.db`
+// that tracks every staged file's lifecycle:
+//
+//   staged → processed (indexed in Postgres) → committed (written to git)
+//
+// This replaces the previous approach of walking the staging directory tree
+// on every paginated read, which was O(n² log n) total for n files and
+// caused a production outage on 2026-04-17 by saturating disk I/O.
+//
+// With SQLite, reads are O(batch) per call and O(n) total. The index also
+// enables crash resumability: if the server dies mid-job, unprocessed and
+// uncommitted files are picked up on restart.
+//
+// The database is created lazily on the first `stage_files` call and deleted
+// along with the rest of the staging directory by `cleanup_staging`.
+// ---------------------------------------------------------------------------
+
+/// Open (or create) the SQLite staging index for a job.
+///
+/// Uses WAL mode for concurrent read/write during Phase 1, where multiple
+/// folders may call `stage_files` in parallel.
+fn open_staging_db(staging_job_dir: &StdPath) -> Result<Connection, AppError> {
+    let db_path = staging_job_dir.join("index.db");
+    let conn = Connection::open(&db_path)
+        .map_err(|e| AppError::internal(format!("Failed to open staging index: {}", e)))?;
+
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         CREATE TABLE IF NOT EXISTS staged_files (
+             path      TEXT PRIMARY KEY,  -- relative to the folder dir (e.g. 'file.json')
+             folder    TEXT NOT NULL,      -- staging folder name (e.g. 'Products')
+             processed INTEGER NOT NULL DEFAULT 0,  -- 1 = indexed in Postgres
+             committed INTEGER NOT NULL DEFAULT 0   -- 1 = committed to git
+         );
+         CREATE INDEX IF NOT EXISTS idx_unprocessed ON staged_files(folder, processed);
+         CREATE INDEX IF NOT EXISTS idx_uncommitted ON staged_files(folder, committed);",
+    )
+    .map_err(|e| AppError::internal(format!("Failed to initialize staging index: {}", e)))?;
+
+    Ok(conn)
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/staging/{jobId}/files — write a batch of files to staging
+//
+// Called during Phase 1 (fetch). Writes file content to disk AND records
+// each path in the SQLite index so Phase 2 can read them back efficiently.
+// The index.db is created lazily on the first call for a given jobId.
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -54,6 +104,23 @@ pub async fn stage_files(
                 .map_err(|e| AppError::internal(format!("Failed to write staged file: {}", e)))?;
         }
 
+        // Record paths in the SQLite index. INSERT OR IGNORE handles duplicate
+        // paths from retried batches (e.g. after a crash mid-Phase-1).
+        let conn = open_staging_db(&staging_dir)?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::internal(format!("Failed to begin transaction: {}", e)))?;
+        for file in &files {
+            tx.execute(
+                "INSERT OR IGNORE INTO staged_files (path, folder) VALUES (?1, ?2)",
+                params![file.path, folder],
+            )
+            .map_err(|e| AppError::internal(format!("Failed to index staged file: {}", e)))?;
+        }
+        tx.commit().map_err(|e| {
+            AppError::internal(format!("Failed to commit index transaction: {}", e))
+        })?;
+
         Ok(json!({ "count": count }))
     })
     .await
@@ -67,14 +134,23 @@ pub async fn stage_files(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/staging/{jobId}/files?folder=X&offset=0&limit=100
+// GET /api/staging/{jobId}/files?folder=X&limit=100
+//
+// Called during Phase 2 (process). Returns the next batch of unprocessed
+// files from the SQLite index. The caller marks them processed via
+// POST /processed after updating Postgres indexes.
+//
+// Returns `{ files, remaining }` where `remaining` is the count of
+// unprocessed files AFTER this batch (so the caller knows when to stop).
+//
+// Previously this endpoint walked the entire staging directory tree and
+// sorted all paths on every call, making it O(n log n) per call and
+// O(n² log n) total. With SQLite, each call is O(batch).
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 pub struct ReadStagedFilesQuery {
     pub folder: String,
-    #[serde(default)]
-    pub offset: usize,
     #[serde(default = "default_limit")]
     pub limit: usize,
 }
@@ -88,34 +164,52 @@ pub async fn read_staged_files(
     Path(job_id): Path<String>,
     Query(query): Query<ReadStagedFilesQuery>,
 ) -> Response {
-    let folder_dir = state.staging_job_path(&job_id).join(&query.folder);
-    let offset = query.offset;
+    let staging_dir = state.staging_job_path(&job_id);
+    let folder_dir = staging_dir.join(&query.folder);
+    let folder = query.folder;
     let limit = query.limit;
 
     let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
-        if !folder_dir.exists() {
-            return Ok(json!({ "files": [], "total": 0 }));
+        let db_path = staging_dir.join("index.db");
+        if !db_path.exists() {
+            return Ok(json!({ "files": [], "remaining": 0 }));
         }
 
-        // Step 1: Collect only file paths (no content) — cheap
-        let mut paths = collect_paths_recursive(&folder_dir, &folder_dir)?;
-        paths.sort();
+        let conn = open_staging_db(&staging_dir)?;
 
-        let total = paths.len();
+        // Query unprocessed files from SQLite index
+        let mut stmt = conn
+            .prepare("SELECT path FROM staged_files WHERE folder = ?1 AND processed = 0 LIMIT ?2")
+            .map_err(|e| AppError::internal(format!("Failed to query staged files: {}", e)))?;
 
-        // Step 2: Read content only for the requested page
-        let page: Vec<serde_json::Value> = paths
-            .into_iter()
-            .skip(offset)
-            .take(limit)
+        let paths: Vec<String> = stmt
+            .query_map(params![folder, limit as i64], |row| row.get(0))
+            .map_err(|e| AppError::internal(format!("Failed to read staged files: {}", e)))?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| AppError::internal(format!("Failed to collect staged paths: {}", e)))?;
+
+        // Read content from disk by direct path (O(1) per file)
+        let files: Vec<serde_json::Value> = paths
+            .iter()
             .map(|rel_path| {
-                let full_path = folder_dir.join(&rel_path);
+                let full_path = folder_dir.join(rel_path);
                 let content = std::fs::read_to_string(&full_path).unwrap_or_default();
                 json!({ "path": rel_path, "content": content })
             })
             .collect();
 
-        Ok(json!({ "files": page, "total": total }))
+        // Count total remaining unprocessed (including this batch)
+        let total_unprocessed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM staged_files WHERE folder = ?1 AND processed = 0",
+                params![folder],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::internal(format!("Failed to count remaining: {}", e)))?;
+
+        let remaining = (total_unprocessed as usize).saturating_sub(files.len());
+
+        Ok(json!({ "files": files, "remaining": remaining }))
     })
     .await
     .map_err(|e| AppError::internal(e.to_string()))
@@ -127,34 +221,78 @@ pub async fn read_staged_files(
     }
 }
 
-/// Recursively collect file paths under `base_dir` without reading content.
-fn collect_paths_recursive(dir: &PathBuf, base_dir: &PathBuf) -> Result<Vec<String>, AppError> {
-    let mut results = Vec::new();
-    let read_dir = std::fs::read_dir(dir)
-        .map_err(|e| AppError::internal(format!("Failed to read staging dir: {}", e)))?;
+// ---------------------------------------------------------------------------
+// POST /api/staging/{jobId}/processed — mark staged files as processed
+//
+// Called during Phase 2 after the NestJS server has indexed a batch of files
+// in Postgres (file index, file references, asset index). Marking files as
+// processed excludes them from future read_staged_files queries.
+//
+// This is what makes the job resumable: if the server crashes, only
+// unprocessed files will be returned on the next read_staged_files call.
+// ---------------------------------------------------------------------------
 
-    for entry in read_dir {
-        let entry =
-            entry.map_err(|e| AppError::internal(format!("Failed to read dir entry: {}", e)))?;
-        let path = entry.path();
+#[derive(Deserialize)]
+pub struct MarkProcessedBody {
+    pub folder: String,
+    pub paths: Vec<String>,
+}
 
-        if path.is_dir() {
-            results.extend(collect_paths_recursive(&path, base_dir)?);
-        } else {
-            let rel_path = path
-                .strip_prefix(base_dir)
-                .map_err(|e| AppError::internal(format!("Failed to strip prefix: {}", e)))?
-                .to_string_lossy()
-                .to_string();
-            results.push(rel_path);
+pub async fn mark_staged_files_processed(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+    Json(body): Json<MarkProcessedBody>,
+) -> Response {
+    let staging_dir = state.staging_job_path(&job_id);
+    let folder = body.folder;
+    let paths = body.paths;
+
+    let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
+        let conn = open_staging_db(&staging_dir)?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::internal(format!("Failed to begin transaction: {}", e)))?;
+
+        let mut count = 0usize;
+        for path in &paths {
+            let updated = tx
+                .execute(
+                    "UPDATE staged_files SET processed = 1 WHERE folder = ?1 AND path = ?2",
+                    params![folder, path],
+                )
+                .map_err(|e| AppError::internal(format!("Failed to mark file processed: {}", e)))?;
+            count += updated;
         }
-    }
 
-    Ok(results)
+        tx.commit()
+            .map_err(|e| AppError::internal(format!("Failed to commit transaction: {}", e)))?;
+
+        Ok(json!({ "count": count }))
+    })
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))
+    .and_then(|r| r);
+
+    match result {
+        Ok(data) => envelope(&state, None, data),
+        Err(err) => envelope_error(&state, None, err),
+    }
 }
 
 // ---------------------------------------------------------------------------
 // POST /api/staging/{jobId}/commit — commit staged folder to git
+//
+// Called during Phase 2 after all files have been processed (indexed in
+// Postgres). Commits up to `batchSize` uncommitted files to git per call.
+// The NestJS server calls this in a loop until `committed == 0`.
+//
+// Each call: query SQLite for uncommitted paths → read content from disk →
+// commit to git → mark committed in SQLite → return stats.
+//
+// Previously committed ALL files in a single call with an internal batch
+// loop, but that meant one HTTP request could block for minutes on large
+// folders. Now the caller controls the batch size and can checkpoint
+// progress between calls.
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -164,6 +302,7 @@ pub struct CommitStagedBody {
     pub branch: Option<String>,
     pub folder: String,
     pub message: Option<String>,
+    pub batch_size: Option<usize>,
 }
 
 pub async fn commit_staged(
@@ -172,11 +311,13 @@ pub async fn commit_staged(
     Json(body): Json<CommitStagedBody>,
 ) -> Response {
     let branch = body.branch.unwrap_or_else(|| MAIN_BRANCH.to_string());
-    let folder_dir = state.staging_job_path(&job_id).join(&body.folder);
+    let staging_dir = state.staging_job_path(&job_id);
+    let folder_dir = staging_dir.join(&body.folder);
     let repo_id = body.repo_id.clone();
     let message = body
         .message
         .unwrap_or_else(|| format!("Commit staged files for {}", body.folder));
+    let batch_size = body.batch_size.unwrap_or(1000);
 
     let folder_name = body.folder.clone();
     let result = {
@@ -195,66 +336,113 @@ pub async fn commit_staged(
                     tokio::task::spawn_blocking(move || {
                         let git_repo = GitRepo::open(&repos_dir, &repo_id)?;
 
-                        // A missing staging folder is treated as an empty commit, matching
-                        // `read_staged_files`. This happens when phase 1 of a pull job had
-                        // nothing to stage (e.g. an empty list from a read-only connector),
-                        // and lets the caller still finalize stale-file deletion + GC
-                        // without a spurious 404.
-                        let mut paths = if folder_dir.exists() {
-                            collect_paths_recursive(&folder_dir, &folder_dir)?
-                        } else {
-                            Vec::new()
-                        };
-                        paths.sort();
-
-                        if paths.is_empty() {
+                        // No index.db means phase 1 had nothing to stage (e.g. an
+                        // empty connector). Return empty success so the caller can
+                        // still finalize stale-file deletion and GC without a 404.
+                        let db_path = staging_dir.join("index.db");
+                        if !db_path.exists() {
                             return Ok(json!({
                                 "success": true,
+                                "committed": 0,
+                                "remaining": 0,
                                 "created": [],
                                 "updated": [],
                                 "unchanged": [],
                             }));
                         }
 
-                        // Commit in batches to avoid loading all file contents into memory
-                        const BATCH_SIZE: usize = 500;
-                        let mut all_created: Vec<String> = Vec::new();
-                        let mut all_updated: Vec<String> = Vec::new();
-                        let mut all_unchanged: Vec<String> = Vec::new();
+                        let conn = open_staging_db(&staging_dir)?;
 
-                        for chunk in paths.chunks(BATCH_SIZE) {
-                            let changes: Vec<FileChange> = chunk
-                                .iter()
-                                .map(|rel_path| {
-                                    let full_path = folder_dir.join(rel_path);
-                                    let content = std::fs::read_to_string(&full_path)
-                                        .map_err(|e| {
-                                            AppError::internal(format!(
-                                                "Failed to read staged file: {}",
-                                                e
-                                            ))
-                                        })?;
-                                    Ok(FileChange {
-                                        path: format!("{}/{}", folder_name, rel_path),
-                                        content: Some(content),
-                                        oid: None,
-                                        change_type: ChangeType::Modify,
-                                    })
-                                })
-                                .collect::<Result<Vec<_>, AppError>>()?;
+                        // Query uncommitted files from SQLite index
+                        let mut stmt = conn
+                            .prepare(
+                                "SELECT path FROM staged_files WHERE folder = ?1 AND committed = 0 LIMIT ?2",
+                            )
+                            .map_err(|e| {
+                                AppError::internal(format!("Failed to query uncommitted files: {}", e))
+                            })?;
 
-                            let (_, stats) =
-                                git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
-                            all_created.extend(stats.created);
-                            all_updated.extend(stats.updated);
-                            all_unchanged.extend(stats.unchanged);
+                        let paths: Vec<String> = stmt
+                            .query_map(params![folder_name, batch_size as i64], |row| row.get(0))
+                            .map_err(|e| {
+                                AppError::internal(format!("Failed to read uncommitted files: {}", e))
+                            })?
+                            .collect::<Result<Vec<String>, _>>()
+                            .map_err(|e| {
+                                AppError::internal(format!("Failed to collect uncommitted paths: {}", e))
+                            })?;
+
+                        if paths.is_empty() {
+                            return Ok(json!({
+                                "success": true,
+                                "committed": 0,
+                                "remaining": 0,
+                                "created": [],
+                                "updated": [],
+                                "unchanged": [],
+                            }));
                         }
+
+                        // Read content from disk and build FileChange objects.
+                        // Paths in SQLite are relative to the folder (e.g. "file.json"),
+                        // but git paths need the folder prefix (e.g. "Products/file.json").
+                        let changes: Vec<FileChange> = paths
+                            .iter()
+                            .map(|rel_path| {
+                                let full_path = folder_dir.join(rel_path);
+                                let content = std::fs::read_to_string(&full_path).map_err(|e| {
+                                    AppError::internal(format!(
+                                        "Failed to read staged file: {}",
+                                        e
+                                    ))
+                                })?;
+                                Ok(FileChange {
+                                    path: format!("{}/{}", folder_name, rel_path),
+                                    content: Some(content),
+                                    oid: None,
+                                    change_type: ChangeType::Modify,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, AppError>>()?;
+
+                        let (_, stats) =
+                            git_repo.commit_changes_to_ref(&branch, &changes, &message)?;
+
+                        // Mark committed in SQLite
+                        let tx = conn.unchecked_transaction().map_err(|e| {
+                            AppError::internal(format!("Failed to begin transaction: {}", e))
+                        })?;
+                        for path in &paths {
+                            tx.execute(
+                                "UPDATE staged_files SET committed = 1 WHERE folder = ?1 AND path = ?2",
+                                params![folder_name, path],
+                            )
+                            .map_err(|e| {
+                                AppError::internal(format!("Failed to mark file committed: {}", e))
+                            })?;
+                        }
+                        tx.commit().map_err(|e| {
+                            AppError::internal(format!("Failed to commit transaction: {}", e))
+                        })?;
+
+                        // Count remaining uncommitted
+                        let remaining: i64 = conn
+                            .query_row(
+                                "SELECT COUNT(*) FROM staged_files WHERE folder = ?1 AND committed = 0",
+                                params![folder_name],
+                                |row| row.get(0),
+                            )
+                            .map_err(|e| {
+                                AppError::internal(format!("Failed to count remaining: {}", e))
+                            })?;
 
                         Ok::<_, AppError>(json!({
                             "success": true,
-                            "created": all_created,
-                            "updated": all_updated,
-                            "unchanged": all_unchanged,
+                            "committed": paths.len(),
+                            "remaining": remaining,
+                            "created": stats.created,
+                            "updated": stats.updated,
+                            "unchanged": stats.unchanged,
                         }))
                     })
                     .await
@@ -272,6 +460,10 @@ pub async fn commit_staged(
 
 // ---------------------------------------------------------------------------
 // DELETE /api/staging/{jobId} — remove staging directory for a job
+//
+// On macOS, `remove_dir_all` can transiently fail with "Directory not empty"
+// (os error 66) if a file was recently closed (e.g. SQLite WAL). Retry once
+// after a short pause to handle this.
 // ---------------------------------------------------------------------------
 
 pub async fn cleanup_staging(
@@ -282,8 +474,13 @@ pub async fn cleanup_staging(
 
     let result: Result<serde_json::Value, AppError> = tokio::task::spawn_blocking(move || {
         if staging_dir.exists() {
-            std::fs::remove_dir_all(&staging_dir)
-                .map_err(|e| AppError::internal(format!("Failed to remove staging dir: {}", e)))?;
+            if let Err(_first_err) = std::fs::remove_dir_all(&staging_dir) {
+                // Retry once after a brief pause — handles transient macOS "Directory not empty"
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::fs::remove_dir_all(&staging_dir).map_err(|e| {
+                    AppError::internal(format!("Failed to remove staging dir: {}", e))
+                })?;
+            }
         }
         Ok(json!({ "success": true }))
     })
@@ -300,63 +497,6 @@ pub async fn cleanup_staging(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn collect_paths_recursive_flat_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().to_path_buf();
-
-        std::fs::write(base.join("a.json"), "{}").unwrap();
-        std::fs::write(base.join("b.json"), "{}").unwrap();
-
-        let mut paths = collect_paths_recursive(&base, &base).unwrap();
-        paths.sort();
-
-        assert_eq!(paths, vec!["a.json", "b.json"]);
-    }
-
-    #[test]
-    fn collect_paths_recursive_nested_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().to_path_buf();
-
-        std::fs::create_dir_all(base.join("sub/deep")).unwrap();
-        std::fs::write(base.join("top.json"), "{}").unwrap();
-        std::fs::write(base.join("sub/mid.json"), "{}").unwrap();
-        std::fs::write(base.join("sub/deep/bottom.json"), "{}").unwrap();
-
-        let mut paths = collect_paths_recursive(&base, &base).unwrap();
-        paths.sort();
-
-        assert_eq!(
-            paths,
-            vec!["sub/deep/bottom.json", "sub/mid.json", "top.json"]
-        );
-    }
-
-    #[test]
-    fn collect_paths_recursive_empty_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().to_path_buf();
-
-        let paths = collect_paths_recursive(&base, &base).unwrap();
-
-        assert_eq!(paths, Vec::<String>::new());
-    }
-
-    #[test]
-    fn collect_paths_recursive_returns_relative_paths() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().to_path_buf();
-
-        std::fs::write(base.join("file.txt"), "content").unwrap();
-
-        let paths = collect_paths_recursive(&base, &base).unwrap();
-
-        assert_eq!(paths.len(), 1);
-        assert!(!paths[0].starts_with('/'));
-        assert_eq!(paths[0], "file.txt");
-    }
 
     #[test]
     fn commit_path_prepends_folder_name() {
@@ -379,16 +519,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Handler-level tests for `commit_staged`. These exercise the full route
-    // function (AppState + axum extractors + a real git repo) so the
-    // missing-folder fallback and the happy path are pinned end-to-end.
+    // Handler-level tests. These exercise the full route functions
+    // (AppState + axum extractors + a real git repo) end-to-end.
     // -----------------------------------------------------------------------
 
     use crate::service::git::lock::WriteLockManager;
     use crate::service::git::repo::GitRepo;
     use crate::service::state::AppState;
     use axum::body::to_bytes;
-    use axum::extract::{Path as AxumPath, State};
+    use axum::extract::{Path as AxumPath, Query as AxumQuery, State};
     use axum::http::StatusCode;
     use axum::Json;
     use dashmap::DashMap;
@@ -425,11 +564,33 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    /// Helper: call `stage_files` to write files to disk AND populate the SQLite index.
+    async fn do_stage_files(
+        state: &AppState,
+        job_id: &str,
+        folder: &str,
+        files: Vec<(&str, &str)>,
+    ) {
+        let response = stage_files(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            Json(StageFilesBody {
+                folder: folder.to_string(),
+                files: files
+                    .into_iter()
+                    .map(|(path, content)| StageFileInput {
+                        path: path.to_string(),
+                        content: content.to_string(),
+                    })
+                    .collect(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
     #[tokio::test]
     async fn commit_staged_missing_folder_returns_empty_success() {
-        // Regression test for the V2 pull job 404: when phase 1 had nothing to
-        // stage, the staging dir for the job is never created on disk, and
-        // commit_staged should return an empty success rather than 404.
         let repo_id = "test-org/test-wkb/test-conn".to_string();
         let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
 
@@ -441,6 +602,7 @@ mod tests {
                 branch: Some(MAIN_BRANCH.to_string()),
                 folder: "Empty Folder".to_string(),
                 message: Some("test".to_string()),
+                batch_size: None,
             }),
         )
         .await;
@@ -448,6 +610,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let json = response_json(response).await;
         assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["committed"], 0);
+        assert_eq!(json["data"]["remaining"], 0);
         assert_eq!(json["data"]["created"], serde_json::json!([]));
         assert_eq!(json["data"]["updated"], serde_json::json!([]));
         assert_eq!(json["data"]["unchanged"], serde_json::json!([]));
@@ -455,17 +619,16 @@ mod tests {
 
     #[tokio::test]
     async fn commit_staged_empty_existing_folder_returns_empty_success() {
-        // Adjacent case: the staging folder *exists* on disk but contains no
-        // files (e.g. a previous run cleaned up content but not the dir).
-        // This already worked pre-fix via `changes.is_empty()`, but pinning it
-        // here means future refactors can't quietly regress it.
         let repo_id = "test-org/test-wkb/test-conn".to_string();
         let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
 
         let job_id = "job_empty_dir";
         let folder = "Empty Folder";
-        let folder_dir = state.staging_job_path(job_id).join(folder);
-        std::fs::create_dir_all(&folder_dir).unwrap();
+
+        // Create job staging dir with index.db but no files staged
+        let staging_dir = state.staging_job_path(job_id);
+        std::fs::create_dir_all(&staging_dir).unwrap();
+        open_staging_db(&staging_dir).unwrap();
 
         let response = commit_staged(
             State(state),
@@ -475,6 +638,7 @@ mod tests {
                 branch: Some(MAIN_BRANCH.to_string()),
                 folder: folder.to_string(),
                 message: Some("test".to_string()),
+                batch_size: None,
             }),
         )
         .await;
@@ -482,22 +646,25 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let json = response_json(response).await;
         assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["committed"], 0);
         assert_eq!(json["data"]["created"], serde_json::json!([]));
     }
 
     #[tokio::test]
     async fn commit_staged_with_files_commits_under_folder_prefix() {
-        // Happy-path regression: make sure the missing-folder fallback didn't
-        // accidentally break the normal case where files actually exist.
         let repo_id = "test-org/test-wkb/test-conn".to_string();
         let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
 
         let job_id = "job_with_files";
         let folder = "Products";
-        let folder_dir = state.staging_job_path(job_id).join(folder);
-        std::fs::create_dir_all(&folder_dir).unwrap();
-        std::fs::write(folder_dir.join("a.json"), r#"{"id":1}"#).unwrap();
-        std::fs::write(folder_dir.join("b.json"), r#"{"id":2}"#).unwrap();
+
+        do_stage_files(
+            &state,
+            job_id,
+            folder,
+            vec![("a.json", r#"{"id":1}"#), ("b.json", r#"{"id":2}"#)],
+        )
+        .await;
 
         let response = commit_staged(
             State(state),
@@ -507,6 +674,7 @@ mod tests {
                 branch: Some(MAIN_BRANCH.to_string()),
                 folder: folder.to_string(),
                 message: Some("Add products".to_string()),
+                batch_size: None,
             }),
         )
         .await;
@@ -514,6 +682,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let json = response_json(response).await;
         assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["committed"], 2);
+        assert_eq!(json["data"]["remaining"], 0);
 
         let created = json["data"]["created"].as_array().unwrap();
         let mut paths: Vec<&str> = created.iter().map(|v| v.as_str().unwrap()).collect();
@@ -522,26 +692,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn commit_staged_batches_large_file_sets() {
-        // Verify that committing more files than BATCH_SIZE works correctly
-        // across multiple batches and that all files end up in git.
+    async fn commit_staged_respects_batch_size() {
         let repo_id = "test-org/test-wkb/test-conn".to_string();
         let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
 
-        let job_id = "job_large";
+        let job_id = "job_batch";
         let folder = "Items";
-        let folder_dir = state.staging_job_path(job_id).join(folder);
-        std::fs::create_dir_all(&folder_dir).unwrap();
 
-        let file_count = 1200; // Spans 3 batches at BATCH_SIZE=500
-        for i in 0..file_count {
-            std::fs::write(
-                folder_dir.join(format!("item-{:04}.json", i)),
-                format!(r#"{{"id":{}}}"#, i),
-            )
-            .unwrap();
-        }
+        let files: Vec<(&str, String)> = (0..5)
+            .map(|i| {
+                let name: &'static str = Box::leak(format!("item-{}.json", i).into_boxed_str());
+                let content = format!(r#"{{"id":{}}}"#, i);
+                (name, content)
+            })
+            .collect();
+        let file_refs: Vec<(&str, &str)> = files.iter().map(|(n, c)| (*n, c.as_str())).collect();
+        do_stage_files(&state, job_id, folder, file_refs).await;
 
+        // Commit with batchSize=2 — should commit 2 files, leave 3 remaining
         let response = commit_staged(
             State(state.clone()),
             AxumPath(job_id.to_string()),
@@ -549,28 +717,182 @@ mod tests {
                 repo_id: repo_id.clone(),
                 branch: Some(MAIN_BRANCH.to_string()),
                 folder: folder.to_string(),
-                message: Some("Add items".to_string()),
+                message: Some("Batch 1".to_string()),
+                batch_size: Some(2),
             }),
         )
         .await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let json = response_json(response).await;
-        assert_eq!(json["data"]["success"], true);
+        assert_eq!(json["data"]["committed"], 2);
+        assert_eq!(json["data"]["remaining"], 3);
 
-        let created = json["data"]["created"].as_array().unwrap();
-        assert_eq!(created.len(), file_count);
+        // Commit another batch
+        let response = commit_staged(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            Json(CommitStagedBody {
+                repo_id: repo_id.clone(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: folder.to_string(),
+                message: Some("Batch 2".to_string()),
+                batch_size: Some(2),
+            }),
+        )
+        .await;
 
-        // Verify files are actually readable from git
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["committed"], 2);
+        assert_eq!(json["data"]["remaining"], 1);
+
+        // Final batch
+        let response = commit_staged(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            Json(CommitStagedBody {
+                repo_id: repo_id.clone(),
+                branch: Some(MAIN_BRANCH.to_string()),
+                folder: folder.to_string(),
+                message: Some("Batch 3".to_string()),
+                batch_size: Some(2),
+            }),
+        )
+        .await;
+
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["committed"], 1);
+        assert_eq!(json["data"]["remaining"], 0);
+
+        // Verify all files are in git
         let git_repo = GitRepo::open(&state.repos_dir, &repo_id).unwrap();
-        let first = git_repo
-            .get_file_content(MAIN_BRANCH, "Items/item-0000.json")
-            .unwrap();
-        assert_eq!(first.as_deref(), Some(r#"{"id":0}"#));
-        let last = git_repo
-            .get_file_content(MAIN_BRANCH, &format!("Items/item-{:04}.json", file_count - 1))
-            .unwrap();
-        let expected_last = format!(r#"{{"id":{}}}"#, file_count - 1);
-        assert_eq!(last.as_deref(), Some(expected_last.as_str()));
+        for i in 0..5 {
+            let content = git_repo
+                .get_file_content(MAIN_BRANCH, &format!("Items/item-{}.json", i))
+                .unwrap();
+            assert!(content.is_some(), "item-{}.json should exist in git", i);
+        }
+    }
+
+    #[tokio::test]
+    async fn read_staged_files_returns_unprocessed_only() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_read";
+        let folder = "Products";
+
+        do_stage_files(
+            &state,
+            job_id,
+            folder,
+            vec![
+                ("a.json", r#"{"id":1}"#),
+                ("b.json", r#"{"id":2}"#),
+                ("c.json", r#"{"id":3}"#),
+            ],
+        )
+        .await;
+
+        // Read all unprocessed
+        let response = read_staged_files(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            AxumQuery(ReadStagedFilesQuery {
+                folder: folder.to_string(),
+                limit: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["files"].as_array().unwrap().len(), 3);
+        assert_eq!(json["data"]["remaining"], 0);
+
+        // Read with limit=2
+        let response = read_staged_files(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            AxumQuery(ReadStagedFilesQuery {
+                folder: folder.to_string(),
+                limit: 2,
+            }),
+        )
+        .await;
+
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["files"].as_array().unwrap().len(), 2);
+        assert_eq!(json["data"]["remaining"], 1);
+    }
+
+    #[tokio::test]
+    async fn mark_processed_excludes_from_reads() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let job_id = "job_mark";
+        let folder = "Products";
+
+        do_stage_files(
+            &state,
+            job_id,
+            folder,
+            vec![("a.json", r#"{"id":1}"#), ("b.json", r#"{"id":2}"#)],
+        )
+        .await;
+
+        // Mark a.json as processed
+        let response = mark_staged_files_processed(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            Json(MarkProcessedBody {
+                folder: folder.to_string(),
+                paths: vec!["a.json".to_string()],
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["count"], 1);
+
+        // Read should only return b.json
+        let response = read_staged_files(
+            State(state.clone()),
+            AxumPath(job_id.to_string()),
+            AxumQuery(ReadStagedFilesQuery {
+                folder: folder.to_string(),
+                limit: 100,
+            }),
+        )
+        .await;
+
+        let json = response_json(response).await;
+        let files = json["data"]["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["path"], "b.json");
+        assert_eq!(json["data"]["remaining"], 0);
+    }
+
+    #[tokio::test]
+    async fn read_staged_files_no_index_returns_empty() {
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+
+        let response = read_staged_files(
+            State(state),
+            AxumPath("nonexistent_job".to_string()),
+            AxumQuery(ReadStagedFilesQuery {
+                folder: "Products".to_string(),
+                limit: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["data"]["files"].as_array().unwrap().len(), 0);
+        assert_eq!(json["data"]["remaining"], 0);
     }
 }

@@ -33,6 +33,14 @@ export interface CommitFilesResult {
   unchanged: string[];
 }
 
+/** Response from a batched staging commit. `committed` is the number of files
+ *  written to git in this call; `remaining` is how many uncommitted files are
+ *  left. The caller loops until `committed === 0`. */
+export interface CommitStagedResult extends CommitFilesResult {
+  committed: number;
+  remaining: number;
+}
+
 // Maximum number of response body characters to log when an error occurs
 const MAX_LOG_RESPONSE = 1000;
 
@@ -419,8 +427,15 @@ export class ScratchGitClient {
 
   // ---------------------------------------------------------------------------
   // Staging API — used by V2 pull job for two-phase fetch/process
+  //
+  // Lifecycle: stage_files (Phase 1) → readStagedFiles + markProcessed (Phase 2)
+  //            → commitStagedFiles (Phase 2) → cleanupStaging (finally)
+  //
+  // A SQLite index on scratch-git tracks per-file state (staged/processed/committed)
+  // so reads are O(batch) instead of O(n), and jobs are resumable after crashes.
   // ---------------------------------------------------------------------------
 
+  /** Write files to the staging directory and record them in the SQLite index. */
   async stageFiles(
     jobId: string,
     folder: string,
@@ -432,38 +447,52 @@ export class ScratchGitClient {
     }) as Promise<{ count: number }>;
   }
 
+  /** Read the next batch of unprocessed staged files. Returns `remaining` count
+   *  (excluding this batch) so the caller knows when to stop looping. */
   async readStagedFiles(
     jobId: string,
     folder: string,
-    offset: number,
     limit: number,
-  ): Promise<{ files: Array<{ path: string; content: string }>; total: number }> {
+  ): Promise<{ files: Array<{ path: string; content: string }>; remaining: number }> {
     const params = new URLSearchParams({
       folder,
-      offset: String(offset),
       limit: String(limit),
     });
     return this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/files?${params}`, 'GET') as Promise<{
       files: Array<{ path: string; content: string }>;
-      total: number;
+      remaining: number;
     }>;
   }
 
+  /** Mark files as processed (indexed in Postgres). Excludes them from future readStagedFiles calls. */
+  async markStagedFilesProcessed(jobId: string, folder: string, paths: string[]): Promise<{ count: number }> {
+    return this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/processed`, 'POST', {
+      folder,
+      paths,
+    }) as Promise<{ count: number }>;
+  }
+
+  /** Commit up to `batchSize` uncommitted staged files to git. Call in a loop
+   *  until `result.committed === 0`. Each call creates one git commit. */
   async commitStagedFiles(
     jobId: string,
     repoId: string,
     branch: string,
     folder: string,
     message: string,
-  ): Promise<CommitFilesResult> {
+    batchSize?: number,
+  ): Promise<CommitStagedResult> {
     const result = await this.callGitApi(`/api/staging/${encodeURIComponent(jobId)}/commit`, 'POST', {
       repoId,
       branch,
       folder,
       message,
+      batchSize,
     });
     const data = result as Record<string, unknown>;
     return {
+      committed: (data.committed as number) ?? 0,
+      remaining: (data.remaining as number) ?? 0,
       created: (data.created as string[]) ?? [],
       updated: (data.updated as string[]) ?? [],
       unchanged: (data.unchanged as string[]) ?? [],
