@@ -57,7 +57,7 @@ The compute instance is not large enough to handle bigger pull jobs.
 - [x] Add an uptime/ping alert for the scratch-git service so unresponsiveness is detected automatically rather than by user report
 - [x] Add an alert for absence of Ops Agent metrics on the scratch-git instance (the Ops Agent stops reporting when the instance runs out of memory, so gaps in data are themselves a signal)
 - [ ] Investigate disk-cache memory usage during file-heavy scratch-git operations and optimize to reduce memory pressure
-- [ ] Write a runbook for resolving a hung scratch-git server (console stop/restart, SSH verification, redeploy, service-check, app.scratch.md verification)
+- [x] Write a runbook for resolving a hung scratch-git server (console stop/restart, SSH verification, redeploy, service-check, app.scratch.md verification) — [Runbook: Unresponsive scratch-git (production)](../runbook-scratch-git-unresponsive-production.md)
 - [ ] Evaluate guardrails for large pull jobs (e.g. size thresholds, chunking, backpressure) to prevent a single customer's data volume from taking down the service
 
 ## Lessons Learned
