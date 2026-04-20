@@ -27,6 +27,7 @@ dotenv.config({ path: path.resolve(__dirname, "../driver.env"), quiet: true });
 const JOB_POLL_INTERVAL_MS = 1_000;
 const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1_000;
 const JOB_POLL_NETWORK_RETRY_LIMIT = 10;
+const POSTS_TABLE_NAME = "posts";
 
 const VALID_BREAKPOINTS = new Set([
   "nowhere",
@@ -153,7 +154,10 @@ function canExecuteBinary(candidate) {
 }
 
 function resolveBinary(binaryArg) {
-  const repoBinary = path.resolve(__dirname, "../../../target/debug/scratchmd");
+  const repoBinary = path.resolve(
+    __dirname,
+    "../../scratch-git-2/target/debug/scratchmd",
+  );
   const repoBinaryReady =
     fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
 
@@ -236,6 +240,15 @@ async function pauseIfNeeded(pause, step, label, details = []) {
 }
 
 function listRecordFiles(workspaceDir) {
+  const postsDir = path.join(
+    workspaceDir,
+    "POSTGRES - Smoke Postgres",
+    "public",
+    POSTS_TABLE_NAME,
+  );
+  if (!fs.existsSync(postsDir)) {
+    throw new Error(`Posts directory not found: ${postsDir}`);
+  }
   const files = [];
   function walk(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -245,7 +258,7 @@ function listRecordFiles(workspaceDir) {
       else if (entry.name.endsWith(".json")) files.push(fullPath);
     }
   }
-  walk(workspaceDir);
+  walk(postsDir);
   return files;
 }
 
@@ -255,7 +268,7 @@ function editLocalRecords(workspaceDir, runName) {
   for (const file of files) {
     const record = JSON.parse(fs.readFileSync(file, "utf8"));
     if (record && typeof record === "object" && record.id != null) {
-      record.name = `Edited Record ${record.id} (${runName})`;
+      record.name = `Edited Post ${record.id} (${runName})`;
       fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
       touched.push(file);
     }

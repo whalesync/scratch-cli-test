@@ -30,7 +30,8 @@
       "Bash(scratchmd2 --version)",
       "Bash(./target/release/scratchmd2 syncs:*)",
       "Bash(./target/debug/scratchmd --version)",
-      "Bash(./target/debug/scratchmd auth:*)"
+      "Bash(./target/debug/scratchmd auth:*)",
+      "Bash(curl -s http://localhost:3010/health)"
     ]
   }
 }

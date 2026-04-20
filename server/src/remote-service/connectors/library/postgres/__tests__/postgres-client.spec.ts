@@ -9,6 +9,7 @@ jest.mock('pg', () => ({
     query: mockPoolQuery,
     connect: mockConnect,
     end: mockEnd,
+    on: jest.fn(),
   })),
 }));
 

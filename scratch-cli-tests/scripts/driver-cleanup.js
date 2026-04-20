@@ -144,7 +144,10 @@ function canExecuteBinary(candidate) {
 }
 
 function resolveBinary(binaryArg) {
-  const repoBinary = path.resolve(__dirname, "../../../target/debug/scratchmd");
+  const repoBinary = path.resolve(
+    __dirname,
+    "../../scratch-git-2/target/debug/scratchmd",
+  );
   const repoBinaryReady =
     fs.existsSync(repoBinary) && canExecuteBinary(repoBinary);
 

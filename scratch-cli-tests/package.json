@@ -1,12 +1,17 @@
 {
   "name": "scratch-cli-tests",
   "version": "1.0.0",
-  "description": "Integration tests for the scratchmd CLI binary",
+  "description": "Integration tests and end-to-end driver for the scratchmd CLI binary",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
     "test:integration": "jest --runInBand --forceExit",
-    "test:watch": "jest --runInBand --watch --forceExit"
+    "test:integration:driver": "jest --runInBand --forceExit tests/driver-publish.spec.ts",
+    "test:watch": "jest --runInBand --watch --forceExit",
+    "driver:run": "node scripts/driver-run.js",
+    "driver:setup": "node scripts/driver-run.js",
+    "driver:push": "node scripts/driver-push.js",
+    "driver:cleanup": "node scripts/driver-cleanup.js"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

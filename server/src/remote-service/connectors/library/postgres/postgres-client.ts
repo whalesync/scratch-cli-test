@@ -32,6 +32,11 @@ export class PostgresClient {
       statement_timeout: 30_000,
     };
     this.pool = new Pool(config);
+    // Prevent idle connection errors (e.g. 57P01 from pg_terminate_backend) from
+    // propagating as unhandled 'error' events and crashing the process.
+    this.pool.on('error', (err) => {
+      console.warn('[postgres-client] idle pool connection error', (err as NodeJS.ErrnoException).code, err.message);
+    });
   }
 
   /**
