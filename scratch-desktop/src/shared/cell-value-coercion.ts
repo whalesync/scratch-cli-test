@@ -46,6 +46,15 @@ function coerceByKinds(fieldPath: string, kinds: CellInputSchemaKind[], input: s
     return input;
   }
 
+  if (trimmed === '') {
+    if (normalizedKinds.includes('string')) {
+      return input;
+    }
+    if (normalizedKinds.includes('null')) {
+      return null;
+    }
+  }
+
   if (trimmed === 'null' && normalizedKinds.includes('null')) {
     return null;
   }

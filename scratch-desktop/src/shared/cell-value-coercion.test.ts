@@ -40,6 +40,9 @@ const folderSchema = {
       maybeTitle: {
         type: ['string', 'null'],
       },
+      maybeCount: {
+        anyOf: [{ type: 'number' }, { type: 'null' }],
+      },
       maybeEnabled: {
         anyOf: [{ type: 'boolean' }, { type: 'null' }],
       },
@@ -78,9 +81,13 @@ describe('coerceCellInputTextWithSchema', () => {
     expect(coerceCellInputTextWithSchema(folderSchema, 'enabled', 'true')).toBe(true);
     expect(coerceCellInputTextWithSchema(folderSchema, 'enabled', 'false')).toBe(false);
     expect(coerceCellInputTextWithSchema(folderSchema, 'emptyValue', 'null')).toBeNull();
+    expect(coerceCellInputTextWithSchema(folderSchema, 'emptyValue', '')).toBeNull();
     expect(coerceCellInputTextWithSchema(folderSchema, 'maybeTitle', 'null')).toBeNull();
+    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeTitle', '')).toBe('');
+    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeCount', '')).toBeNull();
     expect(coerceCellInputTextWithSchema(folderSchema, 'maybeTitle', 'hello')).toBe('hello');
     expect(coerceCellInputTextWithSchema(folderSchema, 'maybeEnabled', 'null')).toBeNull();
+    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeEnabled', '')).toBeNull();
     expect(coerceCellInputTextWithSchema(folderSchema, 'maybeEnabled', 'true')).toBe(true);
   });
 
@@ -102,8 +109,8 @@ describe('coerceCellInputTextWithSchema', () => {
     expect(() => coerceCellInputTextWithSchema(folderSchema, 'enabled', 'yes')).toThrow(
       new CellInputCoercionError('Field "enabled" expects "true" or "false".'),
     );
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'emptyValue', '')).toThrow(
-      new CellInputCoercionError('Field "emptyValue" expects null.'),
+    expect(() => coerceCellInputTextWithSchema(folderSchema, 'count', '')).toThrow(
+      new CellInputCoercionError('Field "count" expects a number.'),
     );
   });
 
