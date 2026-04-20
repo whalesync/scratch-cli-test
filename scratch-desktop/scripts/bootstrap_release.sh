@@ -28,7 +28,6 @@ if ! command -v jq &>/dev/null; then
 fi
 
 GITHUB_REPO="whalesync/scratch-cli"
-GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}.git"
 
 if [ "$VARIANT" = "prod" ]; then
   TAG_SUFFIX="-desktop"
@@ -50,16 +49,22 @@ echo "Bootstrapping desktop ${VARIANT} release (${RELEASE_TYPE})..."
 git config --global user.email "ci@whalesync.com"
 git config --global user.name "GitLab CI"
 
-# 1. Find the latest matching tag on the GitHub release repo
-LATEST_TAG=$(git ls-remote --tags "$GITHUB_REPO_URL" "*${TAG_SUFFIX}" \
-  | sed 's|.*/||' \
-  | grep -v '\^{}' \
+# 1. Find the latest matching tag on GitHub, considering both published
+#    releases AND drafts. `GET /releases` returns every release visible to
+#    the token — drafts don't have git refs yet, but their reserved tag_name
+#    still has to be avoided, or concurrent pipelines will both pick the
+#    same version.
+LATEST_TAG=$(curl -sS --fail-with-body \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.v3+json" \
+  "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100" \
+  | jq -r --arg suf "$TAG_SUFFIX" '.[] | select(.tag_name | endswith($suf)) | .tag_name' \
   | sort -V -r \
   | head -n1)
 if [ -z "$LATEST_TAG" ]; then
   LATEST_TAG="$FALLBACK_TAG"
 fi
-echo "Latest tag: $LATEST_TAG"
+echo "Latest tag (including drafts): $LATEST_TAG"
 
 VERSION=$(echo "$LATEST_TAG" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+')
 IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
@@ -75,24 +80,36 @@ SEMVER="$MAJOR.$MINOR.$PATCH"
 NEW_VERSION="v${SEMVER}${TAG_SUFFIX}"
 echo "Target version: $NEW_VERSION"
 
-# 3. Fail if a published (non-draft) release with this tag already exists.
-#    Stale drafts from prior failed pipelines are OK — we'll delete them below.
-#    A 404 here means "tag doesn't exist yet," which is the happy path — so we
-#    don't use --fail-with-body; instead we distinguish via the HTTP status.
+# 3. Fail if ANY release (draft or published) with this tag already exists.
+#    GET /releases/tags only returns published releases, so we additionally
+#    scan /releases for drafts with matching tag_name. Duplicate drafts cause
+#    tag-collision 422s at finalize time — better to fail fast here.
+#    A 404 from the tags endpoint means "no published release yet," which is
+#    the happy path — so we don't use --fail-with-body.
 TAG_LOOKUP_HTTP=$(curl -sS -o /tmp/tag_lookup_body -w "%{http_code}" \
   -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${NEW_VERSION}")
 if [ "$TAG_LOOKUP_HTTP" = "200" ]; then
-  PUBLISHED_EXISTS=$(jq -r 'select(.draft == false) | .id // empty' < /tmp/tag_lookup_body)
-  if [ -n "$PUBLISHED_EXISTS" ]; then
-    echo "ERROR: Published release $NEW_VERSION already exists on GitHub."
-    echo "       Bump the version or delete the release manually."
-    exit 1
-  fi
+  echo "ERROR: Published release $NEW_VERSION already exists on GitHub."
+  echo "       Bump the version or delete the release manually."
+  exit 1
 elif [ "$TAG_LOOKUP_HTTP" != "404" ]; then
   echo "ERROR: Unexpected HTTP $TAG_LOOKUP_HTTP from GET /releases/tags/${NEW_VERSION}. Response:"
   cat /tmp/tag_lookup_body
+  exit 1
+fi
+
+DRAFT_DUP_ID=$(curl -sS --fail-with-body \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.v3+json" \
+  "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100" \
+  | jq -r --arg tag "$NEW_VERSION" '.[] | select(.draft == true and .tag_name == $tag) | .id' \
+  | head -n1)
+if [ -n "$DRAFT_DUP_ID" ]; then
+  echo "ERROR: Draft release with tag $NEW_VERSION already exists (id=$DRAFT_DUP_ID)."
+  echo "       A prior pipeline likely failed mid-flight. Delete the draft on GitHub"
+  echo "       (or wait for the cleanup job of the prior pipeline to run) and retry."
   exit 1
 fi
 

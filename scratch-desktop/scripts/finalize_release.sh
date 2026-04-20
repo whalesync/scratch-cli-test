@@ -76,11 +76,17 @@ curl -sS --fail-with-body -X POST \
 
 # Flip draft:false. This is the only moment the release becomes visible.
 echo "Publishing release (draft -> false)..."
-curl -sS --fail-with-body -X PATCH \
+PUBLISH_HTTP=$(curl -sS -o /tmp/publish_body -w "%{http_code}" -X PATCH \
   -H "Authorization: token $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}" \
-  -d '{"draft": false}' > /dev/null
+  -d '{"draft": false}')
+if [ "$PUBLISH_HTTP" -lt 200 ] || [ "$PUBLISH_HTTP" -ge 300 ]; then
+  echo "ERROR: Failed to publish release (HTTP $PUBLISH_HTTP). Response body:"
+  cat /tmp/publish_body
+  echo
+  exit 1
+fi
 
 RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/tag/${NEW_VERSION}"
 echo ""

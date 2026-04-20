@@ -45,11 +45,14 @@ include:
 # runs automatically and must succeed. On MRs it's manual + allow_failure so
 # the MR pipeline passes whether or not the test release is exercised.
 .test_release_triggers:
-  rules:
+  start_of_pipeline:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes: !reference [.changes, release_pipeline]
       when: manual
-      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+  rest_of_pipeline:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: !reference [.changes, release_pipeline]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
 
 # -----------------------------------------------------------------------------
@@ -72,6 +75,7 @@ include:
     reports:
       dotenv: scratch-desktop/release.env
     expire_in: 1 day
+  resource_group: github-releases
 
 # Anyone on prod/master can cut a desktop release. The mac Package + Upload
 # jobs are only created in the pipeline for users with a registered local-macos
@@ -108,7 +112,7 @@ Bootstrap test desktop release:
         - 'patch'
         - 'minor'
         - 'major'
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, start_of_pipeline]
 
 # -----------------------------------------------------------------------------
 # BUILD CLI — cross-compile scratchmd for darwin-arm64, linux-x64, windows-x64.
@@ -156,7 +160,7 @@ Build CLI for test desktop release:
   needs:
     - job: Bootstrap test desktop release
       artifacts: false
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 # -----------------------------------------------------------------------------
 # PACKAGE — run electron-builder. Each job produces scratch-desktop/dist-release/
@@ -283,7 +287,7 @@ Package test Linux:
       artifacts: true
     - job: Build CLI for test desktop release
       artifacts: true
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 Package test Windows:
   extends: .package_desktop_windows
@@ -295,7 +299,7 @@ Package test Windows:
       artifacts: true
     - job: Build CLI for test desktop release
       artifacts: true
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 # -----------------------------------------------------------------------------
 # UPLOAD — POST dist-release/ contents to the draft GitHub release.
@@ -362,7 +366,7 @@ Upload test Linux assets:
       artifacts: true
     - job: Package test Linux
       artifacts: true
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 Upload test Windows assets:
   extends: .upload_assets
@@ -371,7 +375,7 @@ Upload test Windows assets:
       artifacts: true
     - job: Package test Windows
       artifacts: true
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 # -----------------------------------------------------------------------------
 # FINALIZE — aggregate checksums.txt, flip draft:false, update Homebrew (prod).
@@ -423,4 +427,37 @@ Finalize test release:
       artifacts: false
   script:
     - ./scripts/finalize_release.sh
-  rules: !reference [.test_release_triggers, rules]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
+
+# -----------------------------------------------------------------------------
+# CLEANUP — if the release wasn't published (still a draft), delete it so the
+# tag is freed for the next attempt. Runs regardless of upstream job status so
+# it also triggers when packaging/upload/finalize failed. Never fails the
+# pipeline — it's a best-effort janitor.
+# -----------------------------------------------------------------------------
+.cleanup_failed_release:
+  stage: cleanup
+  script:
+    - cd scratch-desktop
+    - ./scripts/cleanup_failed_release.sh
+  allow_failure: true
+
+Cleanup prod desktop release:
+  extends: .cleanup_failed_release
+  dependencies:
+    - Bootstrap prod desktop release
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+      when: always
+
+Cleanup test desktop release:
+  extends: .cleanup_failed_release
+  dependencies:
+    - Bootstrap test desktop release
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: !reference [.changes, release_pipeline]
+      when: always
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: always
