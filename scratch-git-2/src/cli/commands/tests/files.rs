@@ -301,6 +301,16 @@ fn restore_deleted_records_locally_restores_main_version_into_working_and_dirty(
     .unwrap();
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
+    // Set up dirty_dir as a sparse worktree (no dirty ref yet; start from empty)
+    crate::git_ops::commit_file_map_to_ref(
+        &bare_repo,
+        "refs/heads/dirty",
+        None,
+        &HashMap::new(),
+        "init dirty",
+    )
+    .unwrap();
+    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
     restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap();
 
     assert_eq!(
@@ -352,10 +362,8 @@ fn discard_created_records_locally_removes_from_working_and_dirty() {
     .unwrap();
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
-    write_file(
-        &ctx.dirty_dir.join("posts/created.json"),
-        "{\"id\":\"created\"}",
-    );
+    // Set up dirty_dir as a sparse worktree; sparse checkout populates posts/created.json
+    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
 
     discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap();
 
@@ -489,7 +497,8 @@ fn upload_single_repo_uses_real_merge_base_for_local_dirty() {
     )
     .unwrap();
 
-    materialize_treeish_to_worktree(&ctx.bare_repo, "dirty", &ctx.dirty_dir).unwrap();
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
+        .unwrap();
 
     let result = upload_single_repo(&ctx, "test-token", false).unwrap();
     assert_eq!(result.status, "uploaded");
@@ -554,7 +563,8 @@ fn download_single_repo_uses_real_merge_base_and_rebases_working_tree() {
     )
     .unwrap();
 
-    materialize_treeish_to_worktree(&ctx.bare_repo, "dirty", &ctx.dirty_dir).unwrap();
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
+        .unwrap();
     write_file(
         &ctx.dirty_dir.join("posts/rec1.json"),
         "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"draft\",\n  \"note\": \"local note\"\n}\n",

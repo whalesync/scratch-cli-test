@@ -6,7 +6,6 @@
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
-use crate::commands::files::{has_unreviewed_record_changes, materialize_treeish_to_worktree};
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
 use crate::shared::plan_publish::{self, PlanResult};
@@ -65,28 +64,7 @@ pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
         }
 
         let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&conn_name);
-
-        // If reviewed_dirty_dir exists (sparse worktree system), use it directly —
-        // it is always kept in sync with refs/heads/dirty.
-        let _legacy_snapshot: Option<TempDirGuard>;
-        let dirty_source = if reviewed_dirty_dir.is_dir() {
-            _legacy_snapshot = None;
-            reviewed_dirty_dir.as_path()
-        } else if bare_repo.exists()
-            && (!dirty_dir.exists() || has_unreviewed_record_changes(&bare_repo, &dirty_dir)?)
-        {
-            // Legacy path: materialize to a temp location (TempDirGuard cleans up after).
-            let tmp_path = std::env::temp_dir().join(format!(
-                "scratchmd-plan-{}-{}",
-                std::process::id(),
-                &conn_name
-            ));
-            _legacy_snapshot = Some(materialize_branch_from_bare(&bare_repo, &tmp_path)?);
-            _legacy_snapshot.as_ref().unwrap().path.as_path()
-        } else {
-            _legacy_snapshot = None;
-            dirty_dir.as_path()
-        };
+        let dirty_source = reviewed_dirty_dir.as_path();
 
         match plan_publish::build_publish_plan_with_scratch_dir(
             &conn_name,
@@ -119,25 +97,6 @@ pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-struct TempDirGuard {
-    path: PathBuf,
-}
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn materialize_branch_from_bare(
-    bare_repo: &Path,
-    snapshot_path: &Path,
-) -> anyhow::Result<TempDirGuard> {
-    let path = snapshot_path.to_path_buf();
-    materialize_treeish_to_worktree(bare_repo, "dirty", &path)?;
-    Ok(TempDirGuard { path })
 }
 
 // ---------------------------------------------------------------------------

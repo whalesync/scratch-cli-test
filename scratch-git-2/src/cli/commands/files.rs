@@ -1884,16 +1884,7 @@ fn detect_selected_connection(
         .map(|connection| connection.dir_name.clone())
 }
 
-fn is_sparse_worktree(path: &Path) -> bool {
-    path.join(".git").is_file()
-}
-
-/// Update dirty_dir's git index to match the new dirty commit (leaves working tree unchanged).
-/// No-op if dirty_dir is not a sparse worktree (backward compat).
 fn update_dirty_worktree_index(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<()> {
-    if !is_sparse_worktree(&ctx.dirty_dir) {
-        return Ok(());
-    }
     crate::git_ops::worktree_reset_mixed(&ctx.dirty_dir, hash)
 }
 
@@ -2021,7 +2012,7 @@ fn upload_single_repo(
     let local_dirty_map =
         cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &local_dirty_hash)?.clone();
     sync_schema_files_from_master(ctx)?;
-    let local_unreviewed = unreviewed_entries_cached(&mut tree_cache, ctx)?;
+    let local_unreviewed = unreviewed_entries(ctx)?;
     let local_plan_map = read_local_publish_plan_map(ctx)?;
     if verbose {
         eprintln!(" done");
@@ -2445,21 +2436,7 @@ fn accept_all_single_repo(
 }
 
 fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    if is_sparse_worktree(&ctx.dirty_dir) {
-        return unreviewed_entries_from_status(ctx);
-    }
-    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-    let base_map = match base_hash.as_deref() {
-        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
-        None => HashMap::new(),
-    };
-    sync_schema_files_from_master(ctx)?;
-    let local_map = read_materialized_repo(ctx)?;
-    Ok(compute_unreviewed_entries(
-        &ctx.conn_dir_name,
-        &base_map,
-        &local_map,
-    ))
+    unreviewed_entries_from_status(ctx)
 }
 
 fn unreviewed_entries_from_status(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
@@ -2487,27 +2464,6 @@ fn unreviewed_entries_from_status(ctx: &ConnectionContext) -> anyhow::Result<Vec
     Ok(entries)
 }
 
-/// Like `unreviewed_entries` but reuses a tree cache to avoid redundant blob reads.
-fn unreviewed_entries_cached(
-    cache: &mut TreeCache,
-    ctx: &ConnectionContext,
-) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    if is_sparse_worktree(&ctx.dirty_dir) {
-        return unreviewed_entries_from_status(ctx);
-    }
-    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-    let base_map: FileMap = match base_hash.as_deref() {
-        Some(hash) => cached_read_git_tree(cache, &ctx.bare_repo, hash)?.clone(),
-        None => HashMap::new(),
-    };
-    sync_schema_files_from_master(ctx)?;
-    let local_map = read_materialized_repo(ctx)?;
-    Ok(compute_unreviewed_entries(
-        &ctx.conn_dir_name,
-        &base_map,
-        &local_map,
-    ))
-}
 
 fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
     let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
@@ -2528,29 +2484,6 @@ fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<Unreviewed
     ))
 }
 
-pub(crate) fn has_unreviewed_record_changes(
-    bare_repo: &Path,
-    dirty_dir: &Path,
-) -> anyhow::Result<bool> {
-    if dirty_dir.join(".git").is_file() {
-        let entries = crate::git_ops::worktree_status_entries(dirty_dir)?;
-        return Ok(entries.iter().any(|e| {
-            !e.path.starts_with(".scratch/")
-                && ((e.x == b'?' && e.y == b'?') || e.y == b'M' || e.y == b'D')
-        }));
-    }
-    let base_hash = git_rev_parse_optional(bare_repo, "refs/heads/dirty")?;
-    let base_map = match base_hash.as_deref() {
-        Some(hash) => read_git_tree(bare_repo, hash)?,
-        None => HashMap::new(),
-    };
-    let mut working_tree_map = FileMap::new();
-    read_dirty_disk(dirty_dir, dirty_dir, &mut working_tree_map)?;
-    Ok(!maps_equal(
-        &data_only_map(&base_map),
-        &data_only_map(&working_tree_map),
-    ))
-}
 
 fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;

@@ -17,8 +17,17 @@ fn make_workspace(conn: &str) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
     )
     .unwrap();
 
+    // dirty_checkout_path (conn_dir) must exist for the existence check in plan_publish::run
     let conn_dir = root.join(conn);
     std::fs::create_dir_all(&conn_dir).unwrap();
+
+    // reviewed_dirty_checkout_path is the actual dirty source used by plan_publish::run
+    let reviewed_dirty_dir = root
+        .join(".scratch")
+        .join("connections")
+        .join("dirty")
+        .join(conn);
+    std::fs::create_dir_all(&reviewed_dirty_dir).unwrap();
 
     let master_dir = root
         .join(".scratch")
@@ -34,7 +43,7 @@ fn make_workspace(conn: &str) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
         .join(conn);
     let db_path = root.join(".repos").join("conn_test_id.db");
 
-    (tmp, conn_dir, master_dir, scratch_dir, db_path)
+    (tmp, reviewed_dirty_dir, master_dir, scratch_dir, db_path)
 }
 
 fn write_json(dir: &Path, rel: &str, v: &Value) {
@@ -239,53 +248,24 @@ fn test_asset_pseudo_refs_stripped_in_create() {
 }
 
 #[test]
-fn uses_local_dirty_branch_not_working_tree_when_bare_repo_exists() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
+fn uses_reviewed_dirty_dir_not_working_tree() {
+    let (tmp, reviewed_dirty_dir, master_dir, scratch_dir, _) = make_workspace("my-conn");
+    let root = tmp.path();
 
-    let (_tmp, conn_dir, master_dir, scratch_dir, _db_path) = make_workspace("my-conn");
-    let root = conn_dir.parent().unwrap();
-    let repo_path = root.join(".repos/conn_test_id.git");
-    let source_repo = root.join("source-repo");
-
-    std::fs::create_dir_all(&source_repo).unwrap();
-    run_git(root, &["init", "source-repo"]);
-    run_git(&source_repo, &["checkout", "-b", "dirty"]);
-    std::fs::create_dir_all(source_repo.join("posts")).unwrap();
-    std::fs::write(
-        source_repo.join("posts/rec1.json"),
-        serde_json::to_string_pretty(&json!({"id":"rec1","fields":{"title":"Committed"}})).unwrap(),
-    )
-    .unwrap();
-    run_git(&source_repo, &["add", "."]);
-    run_git(
-        &source_repo,
-        &[
-            "-c",
-            "user.name=Scratch",
-            "-c",
-            "user.email=scratch@example.com",
-            "commit",
-            "-m",
-            "committed",
-        ],
-    );
-    run_git(root, &["init", "--bare", repo_path.to_str().unwrap()]);
-    run_git(
-        &source_repo,
-        &["remote", "add", "origin", repo_path.to_str().unwrap()],
-    );
-    run_git(&source_repo, &["push", "origin", "dirty:dirty"]);
-
+    // reviewed_dirty_dir matches master — no changes to publish
     write_json(
         &master_dir,
         "posts/rec1.json",
         &json!({"id": "rec1", "fields": {"title": "Committed"}}),
     );
     write_json(
-        &conn_dir,
+        &reviewed_dirty_dir,
+        "posts/rec1.json",
+        &json!({"id": "rec1", "fields": {"title": "Committed"}}),
+    );
+    // conn_dir (dirty working tree) has an unreviewed change — should be ignored
+    write_json(
+        &root.join("my-conn"),
         "posts/rec1.json",
         &json!({"id": "rec1", "fields": {"title": "Unreviewed"}}),
     );
@@ -294,68 +274,7 @@ fn uses_local_dirty_branch_not_working_tree_when_bare_repo_exists() {
 
     assert!(
         find_plan_root(&scratch_dir).is_none(),
-        "plan should ignore unreviewed working-tree changes when the local dirty branch exists"
-    );
-}
-
-#[test]
-fn reviewed_dirty_snapshot_is_cleaned_up_after_planning() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let (_tmp, conn_dir, master_dir, _scratch_dir, _db_path) = make_workspace("my-conn");
-    let root = conn_dir.parent().unwrap();
-    let repo_path = root.join(".repos/conn_test_id.git");
-    let source_repo = root.join("source-repo");
-    let reviewed_dirty_dir = root.join(".scratch/connections/dirty/my-conn");
-
-    std::fs::create_dir_all(&source_repo).unwrap();
-    run_git(root, &["init", "source-repo"]);
-    run_git(&source_repo, &["checkout", "-b", "dirty"]);
-    std::fs::create_dir_all(source_repo.join("posts")).unwrap();
-    std::fs::write(
-        source_repo.join("posts/rec1.json"),
-        serde_json::to_string_pretty(&json!({"id":"rec1","fields":{"title":"Committed"}})).unwrap(),
-    )
-    .unwrap();
-    run_git(&source_repo, &["add", "."]);
-    run_git(
-        &source_repo,
-        &[
-            "-c",
-            "user.name=Scratch",
-            "-c",
-            "user.email=scratch@example.com",
-            "commit",
-            "-m",
-            "committed",
-        ],
-    );
-    run_git(root, &["init", "--bare", repo_path.to_str().unwrap()]);
-    run_git(
-        &source_repo,
-        &["remote", "add", "origin", repo_path.to_str().unwrap()],
-    );
-    run_git(&source_repo, &["push", "origin", "dirty:dirty"]);
-
-    write_json(
-        &master_dir,
-        "posts/rec1.json",
-        &json!({"id": "rec1", "fields": {"title": "Committed"}}),
-    );
-    write_json(
-        &conn_dir,
-        "posts/rec1.json",
-        &json!({"id": "rec1", "fields": {"title": "Unreviewed"}}),
-    );
-
-    run(root, None).unwrap();
-
-    assert!(
-        !reviewed_dirty_dir.exists(),
-        "reviewed dirty snapshot should be removed after planning"
+        "plan should use reviewed_dirty_dir, ignoring unreviewed working-tree changes"
     );
 }
 
@@ -373,11 +292,13 @@ fn test_compute_changed_fields() {
     .unwrap();
     let conn_dir = root.join("c");
     std::fs::create_dir_all(&conn_dir).unwrap();
+    let reviewed_dirty_dir = root.join(".scratch/connections/dirty/c");
+    std::fs::create_dir_all(&reviewed_dirty_dir).unwrap();
     let master_dir = root.join(".scratch/connections/master/c");
     let scratch_dir = root.join(".scratch/connections/scratch/c");
     std::fs::create_dir_all(&master_dir).unwrap();
     write_json(&master_dir, "t/r.json", &master);
-    write_json(&conn_dir, "t/r.json", &dirty);
+    write_json(&reviewed_dirty_dir, "t/r.json", &dirty);
 
     run(root, None).unwrap();
 
