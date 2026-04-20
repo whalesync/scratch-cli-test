@@ -32,6 +32,7 @@ include:
     - terraform/**/*
     - .cursor/**/*
     - gitlab-ci/**/*
+    - docs/**/*
     - .vscode/**/*
     - experimental/**/*
     - scratch-git-2/**/*
@@ -387,6 +388,9 @@ build and test scratch-desktop:
 # MISC
 # =============================================================================
 
+# ⚠️  DO NOT set the dummy job to `when: manual`. Vanta requires a pipeline to
+# run and pass before every MR is merged. A manual job is too easy to skip,
+# which would violate that compliance requirement.
 .dummy-job:
   stage: build and test
   interruptible: true
@@ -401,4 +405,3 @@ dummy job:
     - !reference [.rules, skip_for_local_runner_users]
     - if: '$CI_COMMIT_BRANCH != "master" && $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
       changes: !reference [.changes, dummy]
-      when: manual

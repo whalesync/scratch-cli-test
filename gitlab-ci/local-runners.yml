@@ -254,5 +254,4 @@ local dummy job:
     - .local-runner-defaults
   rules:
     - if: !reference [.rules, local_runner_users_mr]
-      when: manual
-      allow_failure: true
+      changes: !reference [.changes, dummy]
