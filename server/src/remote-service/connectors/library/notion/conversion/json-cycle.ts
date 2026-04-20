@@ -21,6 +21,8 @@
     retrocycle, set, stringify, test
 */
 
+// TODO: Move this out of the Notion connector and someplace general.
+
 export class JsonCycle {
   static safeStringify(object: unknown): string {
     return JSON.stringify(JsonCycle.decycle(object));

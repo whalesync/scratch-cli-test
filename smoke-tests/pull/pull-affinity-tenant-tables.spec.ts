@@ -356,7 +356,7 @@ describe("Affinity tenant tables (pull)", () => {
   // top level (no parentPath) plus any seeded user lists nested under
   // parentPath: "Lists".
   // -------------------------------------------------------------------------
-  it("lists 3 top-level tenant tables when no user lists exist", async () => {
+  it("lists top-level and interaction tenant tables when no user lists exist", async () => {
     const admin = affinityFixture.createAdminClient();
     // Reset and seed ONLY tenant data — no user-created lists.
     await admin.reset();
@@ -382,8 +382,8 @@ describe("Affinity tenant tables (pull)", () => {
     }>;
 
     const topLevel = tables.filter((t) => !t.parentPath);
-    const tenantNames = topLevel.map((t) => t.displayName).sort();
-    expect(tenantNames).toEqual(["Companies", "Opportunities", "People"]);
+    const topLevelNames = topLevel.map((t) => t.displayName).sort();
+    expect(topLevelNames).toEqual(["Companies", "Entity Files", "Notes", "Opportunities", "People"]);
 
     // Each tenant table uses its sentinel string as the remote id.
     const peopleTable = tables.find((t) => t.displayName === "People");
@@ -394,6 +394,8 @@ describe("Affinity tenant tables (pull)", () => {
       (t) => t.displayName === "Opportunities",
     );
     expect(opportunitiesTable?.id.remoteId).toEqual(["opportunities"]);
+    const notesTable = tables.find((t) => t.displayName === "Notes");
+    expect(notesTable?.id.remoteId).toEqual(["notes"]);
   });
 
   it("nests user-created lists under parentPath: 'Lists' alongside the tenant tables", async () => {
@@ -436,7 +438,7 @@ describe("Affinity tenant tables (pull)", () => {
       .filter((t) => !t.parentPath)
       .map((t) => t.displayName)
       .sort();
-    expect(topLevel).toEqual(["Companies", "Opportunities", "People"]);
+    expect(topLevel).toEqual(["Companies", "Entity Files", "Notes", "Opportunities", "People"]);
 
     // The user list is grouped under "Lists/" (single-level, not per-entity-type).
     const userList = tables.find((t) => t.displayName === "User Created List");

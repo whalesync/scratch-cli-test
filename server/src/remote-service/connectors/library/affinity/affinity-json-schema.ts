@@ -4,6 +4,18 @@ import { BaseJsonTableSpec, EntityId } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
 
+// ---------------------------------------------------------------------------
+// Reusable sub-schemas for interaction types
+// ---------------------------------------------------------------------------
+
+const personDataSchema = Type.Object({
+  id: Type.Number(),
+  firstName: Type.Union([Type.String(), Type.Null()]),
+  lastName: Type.Union([Type.String(), Type.Null()]),
+  primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
+  type: Type.Union([Type.String(), Type.Null()]),
+});
+
 /**
  * Build a TypeBox schema fragment for an Affinity field's `value` object,
  * matching the `FieldValue` discriminated union from the v2 OpenAPI spec.
@@ -321,6 +333,107 @@ export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTable
     id,
     slug: id.wsId,
     name: 'Opportunities',
+    schema,
+    idColumnRemoteId: 'id',
+    titleColumnRemoteId: ['name'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Notes — fixed-schema table, no custom field metadata endpoint.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the table spec for the tenant-wide Notes table (`GET /v2/notes`).
+ * Notes are fetched with `includes=companiesPreview,personsPreview,
+ * opportunitiesPreview,repliesCount` so they carry rich relationship data.
+ */
+export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
+  const mentionSchema = Type.Object({
+    id: Type.Number(),
+    type: Type.String(),
+    person: personDataSchema,
+  });
+
+  const companyPreviewSchema = Type.Object({
+    id: Type.Number(),
+    name: Type.String(),
+    domain: Type.Union([Type.String(), Type.Null()]),
+  });
+
+  const opportunityPreviewSchema = Type.Object({
+    id: Type.Number(),
+    name: Type.String(),
+    listId: Type.Number(),
+  });
+
+  const schema = Type.Object(
+    {
+      id: Type.Number({ description: 'Note id', [READONLY_FLAG]: true }),
+      type: Type.String({ description: 'Note type discriminator', [READONLY_FLAG]: true }),
+      content: Type.Object({ html: Type.Union([Type.String(), Type.Null()]) }),
+      creator: Type.Union([personDataSchema, Type.Null()], { [READONLY_FLAG]: true }),
+      mentions: Type.Array(mentionSchema, { [READONLY_FLAG]: true }),
+      createdAt: Type.String({ format: 'date-time', [READONLY_FLAG]: true }),
+      updatedAt: Type.Union([Type.String({ format: 'date-time' }), Type.Null()], { [READONLY_FLAG]: true }),
+      // Included via `includes` query parameter:
+      companiesPreview: Type.Optional(
+        Type.Object({ data: Type.Array(companyPreviewSchema), totalCount: Type.Number() }),
+      ),
+      personsPreview: Type.Optional(Type.Object({ data: Type.Array(personDataSchema), totalCount: Type.Number() })),
+      opportunitiesPreview: Type.Optional(
+        Type.Object({ data: Type.Array(opportunityPreviewSchema), totalCount: Type.Number() }),
+      ),
+      repliesCount: Type.Optional(Type.Number()),
+      // Discriminated fields — present on interaction / ai-notetaker types:
+      interaction: Type.Optional(Type.Object({ id: Type.Number(), type: Type.String() })),
+      transcriptId: Type.Optional(Type.Number()),
+      parent: Type.Optional(Type.Object({ id: Type.Number() })),
+    },
+    { $id: 'affinity/notes', title: 'Notes' },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Notes',
+    schema,
+    idColumnRemoteId: 'id',
+    titleColumnRemoteId: ['type'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Entity Files (v1 API)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the table spec for the Entity Files table (`GET /entity-files`, v1 API).
+ * Entity files are attachments uploaded to persons, organizations, or opportunities.
+ */
+export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSpec {
+  const schema = Type.Object(
+    {
+      id: Type.Number({ description: 'Entity file id', [READONLY_FLAG]: true }),
+      name: Type.String({ description: 'File name' }),
+      size: Type.Number({ description: 'File size in bytes', [READONLY_FLAG]: true }),
+      person_id: Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true }),
+      organization_id: Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true }),
+      opportunity_id: Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true }),
+      uploader_id: Type.Number({ [READONLY_FLAG]: true }),
+      created_at: Type.String({ format: 'date-time', [READONLY_FLAG]: true }),
+    },
+    { $id: 'affinity/entity-files', title: 'Entity Files' },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Entity Files',
     schema,
     idColumnRemoteId: 'id',
     titleColumnRemoteId: ['name'],

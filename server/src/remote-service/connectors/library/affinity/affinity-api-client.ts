@@ -3,13 +3,16 @@ import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'sr
 import { createApiClient } from '../../create-api-client';
 import {
   AffinityCompany,
+  AffinityEntityFile,
   AffinityFieldMetadata,
   AffinityList,
   AffinityListEntry,
+  AffinityNote,
   AffinityOpportunity,
   AffinityPagedResponse,
   AffinityPerson,
   AffinityQuota,
+  AffinityV1PagedResponse,
   FIELD_TYPES,
   TENANT_FIELD_TYPES,
 } from './affinity-types';
@@ -317,6 +320,86 @@ export class AffinityApiClient {
     try {
       const response = await this.withRetry(async () =>
         this.http.get<AffinityOpportunity>(`/v2/opportunities/${opportunityId}`),
+      );
+      return response.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notes
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Stream every note in the workspace with company, person, and opportunity
+   * previews included inline. Pass `resumeCursor` to resume from a checkpoint.
+   */
+  listAllNotes(resumeCursor?: string): AsyncGenerator<{ data: AffinityNote[]; nextCursor?: string }, void> {
+    return this.paginate<AffinityNote>(
+      '/v2/notes',
+      { includes: ['companiesPreview', 'personsPreview', 'opportunitiesPreview', 'repliesCount'] },
+      resumeCursor,
+    );
+  }
+
+  /** Fetch a single note by id with all includes. Returns `null` on 404. */
+  async getNote(noteId: number): Promise<AffinityNote | null> {
+    try {
+      const response = await this.withRetry(async () =>
+        this.http.get<AffinityNote>(`/v2/notes/${noteId}`, {
+          params: { includes: ['companiesPreview', 'personsPreview', 'opportunitiesPreview', 'repliesCount'] },
+        }),
+      );
+      return response.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Entity Files (v1 API)
+  //
+  // The v1 API uses token-based pagination (`page_token` / `next_page_token`)
+  // instead of v2's cursor-based pagination. The Bearer token auth works the
+  // same — Affinity has unified auth despite what their docs still claim.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Stream every entity file in the workspace via the v1 `GET /entity-files`
+   * endpoint. Pass `resumePageToken` to resume from a checkpoint.
+   */
+  async *listAllEntityFiles(
+    resumePageToken?: string,
+  ): AsyncGenerator<{ data: AffinityEntityFile[]; nextCursor?: string }, void> {
+    const V1_PAGE_SIZE = 500; // v1 max
+    let pageToken: string | undefined = resumePageToken;
+    do {
+      const params: Record<string, unknown> = { page_size: V1_PAGE_SIZE };
+      if (pageToken) params.page_token = pageToken;
+
+      const response = await this.withRetry(async () =>
+        this.http.get<AffinityV1PagedResponse<AffinityEntityFile>>('/entity-files', { params }),
+      );
+      const body = response.data;
+      const data = body?.entity_files ?? [];
+      pageToken = body?.next_page_token ?? undefined;
+
+      yield { data, nextCursor: pageToken };
+    } while (pageToken);
+  }
+
+  /** Fetch a single entity file by id (v1). Returns `null` on 404. */
+  async getEntityFile(entityFileId: number): Promise<AffinityEntityFile | null> {
+    try {
+      const response = await this.withRetry(async () =>
+        this.http.get<AffinityEntityFile>(`/entity-files/${entityFileId}`),
       );
       return response.data;
     } catch (error) {

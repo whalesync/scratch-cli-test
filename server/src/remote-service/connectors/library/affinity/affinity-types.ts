@@ -97,9 +97,9 @@ export interface AffinityListEntry {
 }
 
 /**
- * Discriminated union over the four kinds of "tables" the connector exposes:
- * the three tenant-wide endpoints (`GET /v2/persons`, `/v2/companies`,
- * `/v2/opportunities`) plus user-created lists. Produced by `parseAffinityTableId`
+ * Discriminated union over the kinds of "tables" the connector exposes:
+ * tenant-wide endpoints (persons, companies, opportunities, notes), entity
+ * files (v1), plus user-created lists. Produced by `parseAffinityTableId`
  * and used to dispatch in `fetchJsonTableSpec`, `pullRecordFiles`, and
  * `pullRecordFilesByIds`.
  */
@@ -107,7 +107,9 @@ export type AffinityTableKind =
   | { kind: 'list'; listId: number }
   | { kind: 'tenant-persons' }
   | { kind: 'tenant-companies' }
-  | { kind: 'tenant-opportunities' };
+  | { kind: 'tenant-opportunities' }
+  | { kind: 'tenant-notes' }
+  | { kind: 'tenant-entity-files' };
 
 /**
  * A single record from `GET /v2/persons` — flat shape, no `entity` wrapper
@@ -148,6 +150,61 @@ export interface AffinityOpportunity {
   id: number;
   name: string | null;
   listId: number;
+}
+
+// ---------------------------------------------------------------------------
+// Interaction types — Calls, Chat Messages, Meetings, Notes
+// ---------------------------------------------------------------------------
+
+/** Person data embedded in interaction attendees/participants/creators. */
+export interface AffinityPersonData {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  primaryEmailAddress: string | null;
+  type: string | null;
+}
+
+/** A single record from `GET /v2/notes`. */
+export interface AffinityNote {
+  id: number;
+  type: string;
+  content: { html: string | null };
+  creator: AffinityPersonData | null;
+  mentions: Array<{ id: number; type: string; person: AffinityPersonData }>;
+  createdAt: string;
+  updatedAt: string | null;
+  // Optional fields populated via `includes` query parameter:
+  companiesPreview?: { data: Array<{ id: number; name: string; domain: string | null }>; totalCount: number };
+  personsPreview?: { data: AffinityPersonData[]; totalCount: number };
+  opportunitiesPreview?: { data: Array<{ id: number; name: string; listId: number }>; totalCount: number };
+  repliesCount?: number;
+  // Discriminated fields — present on interaction / ai-notetaker types:
+  interaction?: { id: number; type: string };
+  transcriptId?: number;
+  parent?: { id: number };
+}
+
+// ---------------------------------------------------------------------------
+// Entity Files (v1 API)
+// ---------------------------------------------------------------------------
+
+/** A single record from `GET /entity-files` (v1 API). */
+export interface AffinityEntityFile {
+  id: number;
+  name: string;
+  size: number;
+  person_id: number | null;
+  organization_id: number | null;
+  opportunity_id: number | null;
+  uploader_id: number;
+  created_at: string;
+}
+
+/** Pagination wrapper for v1 entity-files responses. */
+export interface AffinityV1PagedResponse<T> {
+  entity_files: T[];
+  next_page_token: string | null;
 }
 
 /** Resumable pull progress: just the cursor of the next page. */

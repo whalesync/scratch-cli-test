@@ -3,9 +3,11 @@ import { BaseJsonTableSpec, ConnectorFile, EntityId } from '../../../types';
 import { AffinityConnector, parseAffinityTableId } from '../affinity-connector';
 import {
   AffinityCompany,
+  AffinityEntityFile,
   AffinityFieldMetadata,
   AffinityList,
   AffinityListEntry,
+  AffinityNote,
   AffinityOpportunity,
   AffinityPerson,
 } from '../affinity-types';
@@ -30,6 +32,10 @@ const mockListCompanyFields = jest.fn();
 const mockGetPerson = jest.fn();
 const mockGetCompany = jest.fn();
 const mockGetOpportunity = jest.fn();
+const mockListAllNotes = jest.fn();
+const mockGetNote = jest.fn();
+const mockListAllEntityFiles = jest.fn();
+const mockGetEntityFile = jest.fn();
 
 jest.mock('../affinity-api-client', () => {
   return {
@@ -48,6 +54,10 @@ jest.mock('../affinity-api-client', () => {
       getPerson: mockGetPerson,
       getCompany: mockGetCompany,
       getOpportunity: mockGetOpportunity,
+      listAllNotes: mockListAllNotes,
+      getNote: mockGetNote,
+      listAllEntityFiles: mockListAllEntityFiles,
+      getEntityFile: mockGetEntityFile,
     })),
     AffinityError: class AffinityError extends Error {
       statusCode?: number;
@@ -113,6 +123,31 @@ function makeOpportunity(id: number, listId: number): AffinityOpportunity {
   return { id, name: `Opportunity${id}`, listId };
 }
 
+function makeNote(id: number): AffinityNote {
+  return {
+    id,
+    type: 'entities',
+    content: { html: '<p>Note content</p>' },
+    creator: null,
+    mentions: [],
+    createdAt: '2025-06-01T10:00:00Z',
+    updatedAt: null,
+  };
+}
+
+function makeEntityFile(id: number): AffinityEntityFile {
+  return {
+    id,
+    name: `file${id}.pdf`,
+    size: 1024,
+    person_id: null,
+    organization_id: null,
+    opportunity_id: null,
+    uploader_id: 1,
+    created_at: '2025-06-01T10:00:00Z',
+  };
+}
+
 function buildTableSpec(remoteId: string): BaseJsonTableSpec {
   return {
     id: { wsId: remoteId, remoteId: [remoteId] },
@@ -152,6 +187,14 @@ describe('parseAffinityTableId', () => {
     expect(parseAffinityTableId(idFor('opportunities'))).toEqual({ kind: 'tenant-opportunities' });
   });
 
+  it('routes the notes sentinel to the tenant-notes kind', () => {
+    expect(parseAffinityTableId(idFor('notes'))).toEqual({ kind: 'tenant-notes' });
+  });
+
+  it('routes the entity-files sentinel to the tenant-entity-files kind', () => {
+    expect(parseAffinityTableId(idFor('entity-files'))).toEqual({ kind: 'tenant-entity-files' });
+  });
+
   it('routes a numeric remoteId to the list kind', () => {
     expect(parseAffinityTableId(idFor('220173'))).toEqual({ kind: 'list', listId: 220173 });
   });
@@ -173,17 +216,19 @@ describe('AffinityConnector.listTables', () => {
     const connector = new AffinityConnector('fake-key');
     const tables = await connector.listTables();
 
-    // Tenant tables come first, top-level (no parentPath).
-    const tenant = tables.slice(0, 3);
-    expect(tenant.map((t) => t.displayName)).toEqual(['Companies', 'People', 'Opportunities']);
-    expect(tenant.every((t) => t.parentPath === undefined)).toBe(true);
-    expect(tenant.map((t) => t.id.remoteId[0])).toEqual(['companies', 'persons', 'opportunities']);
-    expect(tenant.map((t) => t.id.wsId)).toEqual(['companies', 'persons', 'opportunities']);
+    // Tenant tables come first, all top-level (no parentPath).
+    const topLevel = tables.filter((t) => t.parentPath === undefined);
+    expect(topLevel.map((t) => t.displayName)).toEqual([
+      'Companies',
+      'People',
+      'Opportunities',
+      'Notes',
+      'Entity Files',
+    ]);
 
-    // List tables come after, all flat under "Lists/" regardless of entity type.
-    const lists = tables.slice(3);
+    // List tables come after tenant tables, all flat under "Lists/" regardless of entity type.
+    const lists = tables.filter((t) => t.parentPath === 'Lists');
     expect(lists).toHaveLength(2);
-    expect(lists.every((t) => t.parentPath === 'Lists')).toBe(true);
     expect(lists.map((t) => t.displayName)).toEqual(['My People List', 'My Company List']);
     expect(lists.map((t) => t.id.remoteId[0])).toEqual(['101', '102']);
   });
@@ -194,8 +239,8 @@ describe('AffinityConnector.listTables', () => {
     const connector = new AffinityConnector('fake-key');
     const tables = await connector.listTables();
 
-    expect(tables).toHaveLength(3);
-    expect(tables.map((t) => t.displayName)).toEqual(['Companies', 'People', 'Opportunities']);
+    expect(tables).toHaveLength(5);
+    expect(tables.map((t) => t.displayName)).toEqual(['Companies', 'People', 'Opportunities', 'Notes', 'Entity Files']);
   });
 });
 
@@ -340,6 +385,28 @@ describe('AffinityConnector.pullRecordFiles', () => {
     expect(mockListAllOpportunities).toHaveBeenCalledWith(undefined);
     expect(batches[0][0]).toEqual(opp);
   });
+
+  it('tenant-notes dispatch: pulls /v2/notes', async () => {
+    const note = makeNote(8301);
+    mockListAllNotes.mockReturnValue(singleBatch([note]));
+
+    const connector = new AffinityConnector('fake-key');
+    const batches = await collectBatches(connector, buildTableSpec('notes'));
+
+    expect(mockListAllNotes).toHaveBeenCalledWith(undefined);
+    expect(batches[0][0]).toEqual(note);
+  });
+
+  it('tenant-entity-files dispatch: pulls /entity-files (v1)', async () => {
+    const file = makeEntityFile(8401);
+    mockListAllEntityFiles.mockReturnValue(singleBatch([file]));
+
+    const connector = new AffinityConnector('fake-key');
+    const batches = await collectBatches(connector, buildTableSpec('entity-files'));
+
+    expect(mockListAllEntityFiles).toHaveBeenCalledWith(undefined);
+    expect(batches[0][0]).toEqual(file);
+  });
 });
 
 // pullRecordFilesByIds --------------------------------------------------------
@@ -403,6 +470,26 @@ describe('AffinityConnector.pullRecordFilesByIds', () => {
     expect(files).toHaveLength(1);
   });
 
+  it('routes a tenant-notes table to getNote per id', async () => {
+    mockGetNote.mockResolvedValue(makeNote(8301));
+    const connector = new AffinityConnector('fake-key');
+
+    const files = await collectFiles(connector, buildTableSpec('notes'), ['8301']);
+
+    expect(mockGetNote).toHaveBeenCalledWith(8301);
+    expect(files).toHaveLength(1);
+  });
+
+  it('routes a tenant-entity-files table to getEntityFile per id', async () => {
+    mockGetEntityFile.mockResolvedValue(makeEntityFile(8401));
+    const connector = new AffinityConnector('fake-key');
+
+    const files = await collectFiles(connector, buildTableSpec('entity-files'), ['8401']);
+
+    expect(mockGetEntityFile).toHaveBeenCalledWith(8401);
+    expect(files).toHaveLength(1);
+  });
+
   it('skips non-numeric ids with a warning rather than throwing', async () => {
     mockGetPerson.mockResolvedValue(makePerson(7101));
     const connector = new AffinityConnector('fake-key');
@@ -456,5 +543,14 @@ describe('AffinityConnector.getSuggestedRecordFileNames', () => {
     const suggestions = connector.getSuggestedRecordFileNames(records, buildTableSpec('opportunities'));
 
     expect(suggestions).toEqual(['Acme Upsell $50k']);
+  });
+
+  it('reads .name from entity-files records', () => {
+    const connector = new AffinityConnector('fake-key');
+    const records = [{ name: 'contract.pdf' }] as unknown as ConnectorFile[];
+
+    const suggestions = connector.getSuggestedRecordFileNames(records, buildTableSpec('entity-files'));
+
+    expect(suggestions).toEqual(['contract.pdf']);
   });
 });

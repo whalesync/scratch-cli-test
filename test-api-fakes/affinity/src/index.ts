@@ -3,7 +3,9 @@ import { authMiddleware } from "./middleware/auth";
 import { store } from "./store";
 import testAdminRouter from "./routes/test-admin";
 import v2ListsRouter from "./routes/v2-lists";
+import v2InteractionsRouter from "./routes/v2-interactions";
 import v1RateLimitRouter from "./routes/v1-rate-limit";
+import v1EntityFilesRouter from "./routes/v1-entity-files";
 
 export function createApp(): express.Express {
   const app = express();
@@ -49,7 +51,9 @@ export function createApp(): express.Express {
   // their docs claim). Mounting at the app root keeps the route definitions
   // matching the real API paths verbatim.
   app.use(v2ListsRouter);
+  app.use(v2InteractionsRouter);
   app.use(v1RateLimitRouter);
+  app.use(v1EntityFilesRouter);
 
   return app;
 }

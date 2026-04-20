@@ -17,7 +17,9 @@ import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, Tabl
 import { AffinityApiClient, AffinityError } from './affinity-api-client';
 import {
   buildAffinityCompaniesTableSpec,
+  buildAffinityEntityFilesTableSpec,
   buildAffinityJsonTableSpec,
+  buildAffinityNotesTableSpec,
   buildAffinityOpportunitiesTableSpec,
   buildAffinityPersonsTableSpec,
 } from './affinity-json-schema';
@@ -31,14 +33,15 @@ import {
   AffinityTableKind,
 } from './affinity-types';
 
-// Reserved `remoteId[0]` strings that identify the three tenant-wide tables
-// (vs. user-created lists, which use the numeric Affinity list id). These are
-// safe to use as bare strings because Affinity list ids are always numeric, so
-// `parseInt` would never accept any of these. See CONNECTOR_GUIDE.md →
-// "Fixed vs. user-defined tables" for the broader pattern.
+// Each tenant-wide table uses a fixed string in `remoteId[0]` to distinguish
+// it from user-created lists, which use the numeric Affinity list id. These
+// strings can never collide with list ids because `parseInt('persons', 10)`
+// returns NaN — see `parseAffinityTableId` below.
 const TENANT_PERSONS_ID = 'persons';
 const TENANT_COMPANIES_ID = 'companies';
 const TENANT_OPPORTUNITIES_ID = 'opportunities';
+const TENANT_NOTES_ID = 'notes';
+const TENANT_ENTITY_FILES_ID = 'entity-files';
 
 const LOG_SOURCE = 'AffinityConnector';
 const READ_ONLY_MESSAGE = 'The Affinity connector is read-only.';
@@ -46,53 +49,30 @@ const READ_ONLY_MESSAGE = 'The Affinity connector is read-only.';
 /**
  * Read-only connector for the Affinity v2 API.
  *
- * Exposes four kinds of tables:
+ * Exposes the following kinds of tables:
  *   - **Tenant-wide People** (`GET /v2/persons`) — every person in the workspace,
  *     regardless of list membership. Flat record shape (no `entity` wrapper).
  *   - **Tenant-wide Companies** (`GET /v2/companies`) — same idea, for companies.
  *   - **Tenant-wide Opportunities** (`GET /v2/opportunities`) — fixed three-column
  *     schema (`id` / `name` / `listId`), no field data (Affinity v2 doesn't expose
  *     it for this endpoint and there's no `/v2/opportunities/fields` either).
+ *   - **Tenant-wide Notes** (`GET /v2/notes` with `includes`) — every note in
+ *     the workspace, with company/person/opportunity previews included inline.
+ *   - **Entity Files** (`GET /entity-files`, v1 API) — file attachments uploaded
+ *     to persons, organizations, or opportunities. Uses the v1 token-based
+ *     pagination via the same Bearer token as v2 endpoints.
  *   - **User-created lists** (`GET /v2/lists/{id}/list-entries`) — each list
  *     becomes its own table, grouped under "Lists/" in the picker, with the
  *     full list-specific + enriched + global + relationship-intelligence field
  *     data fetched inline (~95x fewer calls than the v1 N+1 fan-out).
  *
- * Tables are dispatched via `parseAffinityTableId`, which checks the three
+ * Tables are dispatched via `parseAffinityTableId`, which checks the
  * sentinel strings before falling through to numeric list-id parsing. See
  * CONNECTOR_GUIDE.md → "Fixed vs. user-defined tables" for the broader pattern.
  *
  * Writes (`createRecords`, `updateRecords`, `deleteRecords`) intentionally throw —
  * publishing back to Affinity is out of scope for the first pass.
  *
- * TODO(attachments): Affinity v2 has no file/attachment endpoints — the entire
- * v2 surface area was checked (see git history of this file for the audit) and
- * there are zero `attach`/`file`/`asset`/`upload`/`media` paths, and no `file`
- * variant in the `FieldMetadata.valueType` enum. Attachments only exist in v1 via
- * the Entity Files resource (`GET /entity-files?{person|organization|opportunity|list_entry}_id={id}`,
- * `GET /entity-files/{id}`, `GET /entity-files/{id}/download`).
- *
- * **v1 endpoints accept the same Bearer token as v2** (verified empirically against
- * `/auth/whoami`, `/lists`, `/entity-files`, and `/rate-limit`). Affinity's own
- * docs still claim v1 uses HTTP Basic auth, but that's outdated — auth has been
- * unified. So a v1 fallback can reuse the existing axios instance from
- * `AffinityApiClient` directly; no second client / second auth scheme needed.
- *
- * Adding attachment support would mean:
- *   - New methods on `AffinityApiClient` hitting v1 paths via the same axios
- *     instance: `listEntityFiles({ person_id|organization_id|opportunity_id|list_entry_id })`
- *     and `getEntityFileDownloadUrl(fileId)`.
- *   - An `includeAttachments` advanced setting (default off) — the fetch is
- *     unavoidably N+1 in v1 since there's no bulk endpoint, and v1 shares the
- *     same 900 req/min user cap, so a 10k-record list takes ~11 minutes of
- *     wall-clock just for the attachment fan-out.
- *   - Embedding fetched files under `entity._attachments` (preserving raw shape).
- *   - `x-scratch-asset-field` annotation on `entity._attachments` plus an
- *     `extractAssets()` override so Scratch's asset-indexing system can download
- *     the binaries via `GET /entity-files/{id}/download`.
- *
- * Worth re-checking https://developer.affinity.co/changelog before building this,
- * since v2 may add native attachment endpoints and obviate the v1 fallback.
  */
 export class AffinityConnector extends Connector<string, AffinityDownloadProgress> {
   readonly service = Service.AFFINITY;
@@ -174,6 +154,16 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
         displayName: 'Opportunities',
         metadata: { tableKind: 'tenant-opportunities' },
       },
+      {
+        id: { wsId: TENANT_NOTES_ID, remoteId: [TENANT_NOTES_ID] },
+        displayName: 'Notes',
+        metadata: { tableKind: 'tenant-notes' },
+      },
+      {
+        id: { wsId: TENANT_ENTITY_FILES_ID, remoteId: [TENANT_ENTITY_FILES_ID] },
+        displayName: 'Entity Files',
+        metadata: { tableKind: 'tenant-entity-files' },
+      },
     ];
 
     const lists = await this.client.listAllLists();
@@ -207,6 +197,10 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
         return buildAffinityCompaniesTableSpec(id, this.client);
       case 'tenant-opportunities':
         return buildAffinityOpportunitiesTableSpec(id);
+      case 'tenant-notes':
+        return buildAffinityNotesTableSpec(id);
+      case 'tenant-entity-files':
+        return buildAffinityEntityFilesTableSpec(id);
       default:
         return assertUnreachable(parsed);
     }
@@ -257,6 +251,26 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
         for await (const batch of this.client.listAllOpportunities(resumeCursor)) {
           // Opportunities have no field data — pass through verbatim, no
           // array→keyed-object transform needed.
+          const files = batch.data as unknown as ConnectorFile[];
+          await callback({
+            files,
+            connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
+          });
+        }
+        return;
+      }
+      case 'tenant-notes': {
+        for await (const batch of this.client.listAllNotes(resumeCursor)) {
+          const files = batch.data as unknown as ConnectorFile[];
+          await callback({
+            files,
+            connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
+          });
+        }
+        return;
+      }
+      case 'tenant-entity-files': {
+        for await (const batch of this.client.listAllEntityFiles(resumeCursor)) {
           const files = batch.data as unknown as ConnectorFile[];
           await callback({
             files,
@@ -316,6 +330,16 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
           if (opp) buffer.push(opp as unknown as ConnectorFile);
           break;
         }
+        case 'tenant-notes': {
+          const note = await this.client.getNote(recordId);
+          if (note) buffer.push(note as unknown as ConnectorFile);
+          break;
+        }
+        case 'tenant-entity-files': {
+          const file = await this.client.getEntityFile(recordId);
+          if (file) buffer.push(file as unknown as ConnectorFile);
+          break;
+        }
         default:
           return assertUnreachable(parsed);
       }
@@ -358,6 +382,8 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
       case 'tenant-persons':
       case 'tenant-companies':
       case 'tenant-opportunities':
+      case 'tenant-notes':
+      case 'tenant-entity-files':
         // Tenant records are flat — name fields live at the top level.
         return records.map((record) => suggestNameForTenantRecord(record));
       default:
@@ -405,13 +431,9 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
 }
 
 /**
- * Parse an EntityId into one of the four kinds of tables this connector
- * exposes. The three sentinels (`persons`, `companies`, `opportunities`) are
- * checked first; anything else falls through to numeric list-id parsing.
- *
- * Safe because Affinity list ids are always integers — `parseInt('persons', 10)`
- * is `NaN`, so a sentinel can never accidentally route to the list path. See
- * CONNECTOR_GUIDE.md → "Fixed vs. user-defined tables" for the broader pattern.
+ * Parse an EntityId into one of the six kinds of tables this connector exposes.
+ * The five tenant-table sentinels are checked first; anything else falls through
+ * to numeric list-id parsing.
  */
 export function parseAffinityTableId(id: EntityId): AffinityTableKind {
   const raw = id.remoteId[0];
@@ -422,6 +444,10 @@ export function parseAffinityTableId(id: EntityId): AffinityTableKind {
       return { kind: 'tenant-companies' };
     case TENANT_OPPORTUNITIES_ID:
       return { kind: 'tenant-opportunities' };
+    case TENANT_NOTES_ID:
+      return { kind: 'tenant-notes' };
+    case TENANT_ENTITY_FILES_ID:
+      return { kind: 'tenant-entity-files' };
   }
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) {

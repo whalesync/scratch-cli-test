@@ -1,9 +1,11 @@
 import { Router } from "express";
 import {
   AffinityCompany,
+  AffinityEntityFile,
   AffinityFieldMetadata,
   AffinityList,
   AffinityListEntry,
+  AffinityNote,
   AffinityOpportunity,
   AffinityPerson,
   store,
@@ -29,6 +31,8 @@ router.get("/dump", (_req, res) => {
       persons: store.listTenantPersons(),
       companies: store.listTenantCompanies(),
       opportunities: store.listTenantOpportunities(),
+      notes: store.listTenantNotes(),
+      entityFiles: store.listTenantEntityFiles(),
     },
     quota: {
       userMinuteUsed: store.userMinuteUsed,
@@ -56,7 +60,9 @@ router.post("/reset", (_req, res) => {
  *   "tenantCompanyFields":  [{ id, name, type, valueType, enrichmentSource? }, ...],
  *   "tenantPersons":        [{ id, firstName, lastName, primaryEmailAddress, emailAddresses, type, fields }, ...],
  *   "tenantCompanies":      [{ id, name, domain, domains, isGlobal, fields }, ...],
- *   "tenantOpportunities":  [{ id, name, listId }, ...]
+ *   "tenantOpportunities":  [{ id, name, listId }, ...],
+ *   "tenantNotes":           [{ id, type, content, creator, ... }, ...],
+ *   "tenantEntityFiles":     [{ id, name, size, person_id, organization_id, ... }, ...]
  * }
  * ```
  *
@@ -79,6 +85,8 @@ router.post("/setup", (req, res) => {
     tenantPersons?: AffinityPerson[];
     tenantCompanies?: AffinityCompany[];
     tenantOpportunities?: AffinityOpportunity[];
+    tenantNotes?: AffinityNote[];
+    tenantEntityFiles?: AffinityEntityFile[];
   };
 
   if (body.lists) {
@@ -127,6 +135,12 @@ router.post("/setup", (req, res) => {
   }
   if (body.tenantOpportunities) {
     store.setTenantOpportunities(body.tenantOpportunities);
+  }
+  if (body.tenantNotes) {
+    store.setTenantNotes(body.tenantNotes);
+  }
+  if (body.tenantEntityFiles) {
+    store.setTenantEntityFiles(body.tenantEntityFiles);
   }
 
   res.status(200).json({ ok: true });

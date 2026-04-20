@@ -130,20 +130,8 @@ export function extractErrorMessageFromAxiosError(
     if (isString(responseMessage)) {
       return responseMessage;
     }
-    if (Array.isArray(responseMessage)) {
-      return responseMessage.join(' • ');
-    }
     if (typeof responseMessage === 'object') {
-      const objectKeys = Object.keys(responseMessage);
-      return objectKeys
-        .map((k) => {
-          let value = (responseMessage as Record<string, unknown>)[k];
-          if (Array.isArray(value)) {
-            value = value.join(' • ');
-          }
-          return `${k}: ${String(value)}`;
-        })
-        .join(' ; ');
+      return JSON.stringify(responseMessage);
     }
   }
 

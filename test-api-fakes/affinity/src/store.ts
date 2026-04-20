@@ -99,6 +99,50 @@ export type AffinityEntity =
   | AffinityPerson
   | AffinityOpportunity;
 
+// ---------------------------------------------------------------------------
+// Interaction types — Calls, Chat Messages, Meetings, Notes
+// ---------------------------------------------------------------------------
+
+export interface AffinityPersonData {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  primaryEmailAddress: string | null;
+  type: string | null;
+}
+
+export interface AffinityNote {
+  id: number;
+  type: string;
+  content: { html: string | null };
+  creator: AffinityPersonData | null;
+  mentions: Array<{ id: number; type: string; person: AffinityPersonData }>;
+  createdAt: string;
+  updatedAt: string | null;
+  companiesPreview?: { data: Array<{ id: number; name: string; domain: string | null }>; totalCount: number };
+  personsPreview?: { data: AffinityPersonData[]; totalCount: number };
+  opportunitiesPreview?: { data: Array<{ id: number; name: string; listId: number }>; totalCount: number };
+  repliesCount?: number;
+  interaction?: { id: number; type: string };
+  transcriptId?: number;
+  parent?: { id: number };
+}
+
+// ---------------------------------------------------------------------------
+// Entity Files (v1 API)
+// ---------------------------------------------------------------------------
+
+export interface AffinityEntityFile {
+  id: number;
+  name: string;
+  size: number;
+  person_id: number | null;
+  organization_id: number | null;
+  opportunity_id: number | null;
+  uploader_id: number;
+  created_at: string;
+}
+
 export interface AffinityListEntry {
   id: number;
   type: AffinityEntityType;
@@ -138,6 +182,12 @@ class Store {
   tenantPersonFields: AffinityFieldMetadata[] = [];
   tenantCompanyFields: AffinityFieldMetadata[] = [];
 
+  // Notes
+  tenantNotes: Map<number, AffinityNote> = new Map();
+
+  // Entity Files (v1 API)
+  tenantEntityFiles: Map<number, AffinityEntityFile> = new Map();
+
   // Error simulation
   errorQueue: QueuedError[] = [];
   rateLimitCount: number = 0;
@@ -160,6 +210,8 @@ class Store {
     this.tenantOpportunities.clear();
     this.tenantPersonFields = [];
     this.tenantCompanyFields = [];
+    this.tenantNotes.clear();
+    this.tenantEntityFiles.clear();
     this.errorQueue = [];
     this.rateLimitCount = 0;
     this.rateLimitRetryAfterSeconds = 30;
@@ -268,6 +320,36 @@ class Store {
 
   getTenantCompanyFields(): AffinityFieldMetadata[] {
     return this.tenantCompanyFields;
+  }
+
+  // ---- Notes ----
+
+  setTenantNotes(notes: AffinityNote[]): void {
+    this.tenantNotes.clear();
+    for (const n of notes) this.tenantNotes.set(n.id, n);
+  }
+
+  listTenantNotes(): AffinityNote[] {
+    return Array.from(this.tenantNotes.values());
+  }
+
+  getTenantNote(id: number): AffinityNote | undefined {
+    return this.tenantNotes.get(id);
+  }
+
+  // ---- Entity Files (v1) ----
+
+  setTenantEntityFiles(files: AffinityEntityFile[]): void {
+    this.tenantEntityFiles.clear();
+    for (const f of files) this.tenantEntityFiles.set(f.id, f);
+  }
+
+  listTenantEntityFiles(): AffinityEntityFile[] {
+    return Array.from(this.tenantEntityFiles.values());
+  }
+
+  getTenantEntityFile(id: number): AffinityEntityFile | undefined {
+    return this.tenantEntityFiles.get(id);
   }
 
   // ---- Error simulation ----

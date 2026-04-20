@@ -2,7 +2,9 @@
 import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../../json-schema';
 import {
   buildAffinityCompaniesTableSpec,
+  buildAffinityEntityFilesTableSpec,
   buildAffinityJsonTableSpec,
+  buildAffinityNotesTableSpec,
   buildAffinityOpportunitiesTableSpec,
   buildAffinityPersonsTableSpec,
 } from '../affinity-json-schema';
@@ -378,6 +380,88 @@ describe('buildAffinityOpportunitiesTableSpec', () => {
 
     expect((spec.schema as any).$id).toBe('affinity/opportunities');
     expect((spec.schema as any).title).toBe('Opportunities');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildAffinityNotesTableSpec — fixed schema, no API call
+// ---------------------------------------------------------------------------
+
+describe('buildAffinityNotesTableSpec', () => {
+  const entityId = { wsId: 'notes', remoteId: ['notes'] };
+
+  it('builds a fixed spec with the right metadata', () => {
+    const spec = buildAffinityNotesTableSpec(entityId);
+
+    expect(spec.name).toBe('Notes');
+    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.basePath).toEqual([]);
+    expect((spec.schema as any).$id).toBe('affinity/notes');
+  });
+
+  it('includes content, mentions, and the includes-populated preview fields', () => {
+    const spec = buildAffinityNotesTableSpec(entityId);
+    const props = (spec.schema as any).properties;
+
+    expect(props).toHaveProperty('content');
+    expect(props).toHaveProperty('mentions');
+    expect(props).toHaveProperty('type');
+    expect(props).toHaveProperty('companiesPreview');
+    expect(props).toHaveProperty('personsPreview');
+    expect(props).toHaveProperty('opportunitiesPreview');
+    expect(props).toHaveProperty('repliesCount');
+  });
+
+  it('includes discriminated fields for interaction/ai-notetaker types', () => {
+    const spec = buildAffinityNotesTableSpec(entityId);
+    const props = (spec.schema as any).properties;
+
+    expect(props).toHaveProperty('interaction');
+    expect(props).toHaveProperty('transcriptId');
+    expect(props).toHaveProperty('parent');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildAffinityEntityFilesTableSpec — fixed schema, no API call (v1)
+// ---------------------------------------------------------------------------
+
+describe('buildAffinityEntityFilesTableSpec', () => {
+  const entityId = { wsId: 'entity-files', remoteId: ['entity-files'] };
+
+  it('builds a fixed spec with the right metadata', () => {
+    const spec = buildAffinityEntityFilesTableSpec(entityId);
+
+    expect(spec.name).toBe('Entity Files');
+    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    // Entity Files are top-level (not under Interactions)
+    expect(spec.basePath).toEqual([]);
+    expect((spec.schema as any).$id).toBe('affinity/entity-files');
+  });
+
+  it('includes v1 snake_case fields for entity associations', () => {
+    const spec = buildAffinityEntityFilesTableSpec(entityId);
+    const props = (spec.schema as any).properties;
+
+    expect(props).toHaveProperty('id');
+    expect(props).toHaveProperty('name');
+    expect(props).toHaveProperty('size');
+    expect(props).toHaveProperty('person_id');
+    expect(props).toHaveProperty('organization_id');
+    expect(props).toHaveProperty('opportunity_id');
+    expect(props).toHaveProperty('uploader_id');
+    expect(props).toHaveProperty('created_at');
+  });
+
+  it('marks id and association fields as readonly', () => {
+    const spec = buildAffinityEntityFilesTableSpec(entityId);
+    const props = (spec.schema as any).properties;
+
+    expect(props.id[READONLY_FLAG]).toBe(true);
+    expect(props.size[READONLY_FLAG]).toBe(true);
+    expect(props.uploader_id[READONLY_FLAG]).toBe(true);
+    expect(props.created_at[READONLY_FLAG]).toBe(true);
   });
 });
 

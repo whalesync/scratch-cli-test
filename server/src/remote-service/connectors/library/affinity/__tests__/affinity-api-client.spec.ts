@@ -433,6 +433,132 @@ describe('AffinityApiClient', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Notes
+  // ---------------------------------------------------------------------------
+
+  describe('listAllNotes', () => {
+    it('hits /v2/notes with includes for companies, persons, opportunities, and repliesCount', async () => {
+      mockGet.mockResolvedValue(pagedResponse([]));
+
+      const generator = client.listAllNotes();
+      await generator.next();
+
+      const [path, config] = mockGet.mock.calls[0];
+      expect(path).toBe('/v2/notes');
+      expect(config.params.includes).toEqual([
+        'companiesPreview',
+        'personsPreview',
+        'opportunitiesPreview',
+        'repliesCount',
+      ]);
+    });
+
+    it('threads the resumeCursor into the first paginate call', async () => {
+      mockGet.mockResolvedValue(pagedResponse([]));
+
+      const generator = client.listAllNotes('notes-cursor');
+      await generator.next();
+
+      expect(mockGet.mock.calls[0][1].params).toMatchObject({ cursor: 'notes-cursor' });
+    });
+  });
+
+  describe('getNote', () => {
+    it('passes includes for companies, persons, opportunities, and repliesCount', async () => {
+      mockGet.mockResolvedValue({ data: { id: 42 } });
+
+      await client.getNote(42);
+
+      const [path, config] = mockGet.mock.calls[0];
+      expect(path).toBe('/v2/notes/42');
+      expect(config.params.includes).toEqual([
+        'companiesPreview',
+        'personsPreview',
+        'opportunitiesPreview',
+        'repliesCount',
+      ]);
+    });
+
+    it('returns null on 404', async () => {
+      const err = new axios.AxiosError('Not Found', '404', undefined, undefined, {
+        status: 404,
+        statusText: 'Not Found',
+        headers: {},
+        config: {} as never,
+        data: {},
+      });
+      mockGet.mockRejectedValue(err);
+
+      expect(await client.getNote(42)).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Entity Files (v1 API) — token-based pagination
+  // ---------------------------------------------------------------------------
+
+  describe('listAllEntityFiles', () => {
+    it('hits /entity-files (v1, no /v2 prefix) with page_size=500', async () => {
+      mockGet.mockResolvedValue({ data: { entity_files: [], next_page_token: null } });
+
+      const generator = client.listAllEntityFiles();
+      await generator.next();
+
+      const [path, config] = mockGet.mock.calls[0];
+      expect(path).toBe('/entity-files');
+      expect(config.params).toEqual({ page_size: 500 });
+    });
+
+    it('follows next_page_token across pages', async () => {
+      mockGet
+        .mockResolvedValueOnce({ data: { entity_files: [{ id: 1 }], next_page_token: 'token-2' } })
+        .mockResolvedValueOnce({ data: { entity_files: [{ id: 2 }], next_page_token: null } });
+
+      const batches: unknown[][] = [];
+      for await (const batch of client.listAllEntityFiles()) {
+        batches.push(batch.data);
+      }
+
+      expect(batches).toHaveLength(2);
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockGet.mock.calls[1][1].params).toMatchObject({ page_token: 'token-2' });
+    });
+
+    it('threads resumePageToken into the first request', async () => {
+      mockGet.mockResolvedValue({ data: { entity_files: [], next_page_token: null } });
+
+      const generator = client.listAllEntityFiles('resume-token');
+      await generator.next();
+
+      expect(mockGet.mock.calls[0][1].params).toMatchObject({ page_token: 'resume-token' });
+    });
+  });
+
+  describe('getEntityFile', () => {
+    it('hits /entity-files/{id} (v1, no /v2 prefix)', async () => {
+      mockGet.mockResolvedValue({ data: { id: 99, name: 'doc.pdf' } });
+
+      const result = await client.getEntityFile(99);
+
+      expect(mockGet.mock.calls[0][0]).toBe('/entity-files/99');
+      expect(result).toEqual({ id: 99, name: 'doc.pdf' });
+    });
+
+    it('returns null on 404', async () => {
+      const err = new axios.AxiosError('Not Found', '404', undefined, undefined, {
+        status: 404,
+        statusText: 'Not Found',
+        headers: {},
+        config: {} as never,
+        data: {},
+      });
+      mockGet.mockRejectedValue(err);
+
+      expect(await client.getEntityFile(99)).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // getQuota — v1-era endpoint, no /v2 prefix
   // ---------------------------------------------------------------------------
 
