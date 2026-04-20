@@ -302,7 +302,6 @@ fill fallback cache for scratch-git-2:
     # Native build warms the `cargo` fallback (target/{debug,release}).
     - cargo build --release
   rules:
-    - !reference [.rules, on_merge_to_master]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
       allow_failure: true
@@ -326,7 +325,6 @@ fill fallback cross-compile cache for scratch-git-2:
     - cargo zigbuild --release --target x86_64-unknown-linux-gnu
     - cargo zigbuild --release --target x86_64-pc-windows-gnu
   rules:
-    - !reference [.rules, on_merge_to_master]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
       allow_failure: true
