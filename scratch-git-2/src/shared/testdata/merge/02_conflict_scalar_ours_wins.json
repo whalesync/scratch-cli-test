@@ -1,0 +1,19 @@
+{
+  "description": "Both sides independently change the same scalar field to different values. No common ancestor value to resolve toward, so ours wins.",
+  "mb": {
+    "id": 1,
+    "name": "Alice"
+  },
+  "ours": {
+    "id": 1,
+    "name": "Bob"
+  },
+  "theirs": {
+    "id": 1,
+    "name": "Charlie"
+  },
+  "expected": {
+    "id": 1,
+    "name": "Bob"
+  }
+}

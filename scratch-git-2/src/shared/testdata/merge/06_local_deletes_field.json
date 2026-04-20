@@ -1,0 +1,21 @@
+{
+  "description": "Local removes a field that remote left unchanged. Because remote did not touch the field (theirs == base for that key), the local deletion is the only change and should win.",
+  "mb": {
+    "id": 1,
+    "name": "Alice",
+    "tag": "old"
+  },
+  "ours": {
+    "id": 1,
+    "name": "Alice"
+  },
+  "theirs": {
+    "id": 1,
+    "name": "Alice",
+    "tag": "old"
+  },
+  "expected": {
+    "id": 1,
+    "name": "Alice"
+  }
+}

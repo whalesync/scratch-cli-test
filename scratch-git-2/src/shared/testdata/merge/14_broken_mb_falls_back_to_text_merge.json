@@ -1,0 +1,7 @@
+{
+  "description": "mb is invalid JSON. try_merge_json_objects returns None so the merge falls back to text merge. ours and theirs each change a different line, so the text merge succeeds non-conflictingly.",
+  "mb":     "line1 BROKEN JSON\nline2\nline3\n",
+  "ours":   "line1 BROKEN JSON\nline2 changed by ours\nline3\n",
+  "theirs": "line1 BROKEN JSON\nline2\nline3 changed by theirs\n",
+  "expected": "line1 BROKEN JSON\nline2 changed by ours\nline3 changed by theirs\n"
+}

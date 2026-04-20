@@ -1,0 +1,19 @@
+{
+  "description": "Both sides set the same field to null (from a non-null base). They agree, so the result should be null — not the base value and not a conflict.",
+  "mb": {
+    "id": 1,
+    "category": "tech"
+  },
+  "ours": {
+    "id": 1,
+    "category": null
+  },
+  "theirs": {
+    "id": 1,
+    "category": null
+  },
+  "expected": {
+    "id": 1,
+    "category": null
+  }
+}

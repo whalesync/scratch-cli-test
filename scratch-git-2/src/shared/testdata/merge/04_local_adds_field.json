@@ -1,0 +1,21 @@
+{
+  "description": "Local adds a new field that did not exist in base and remote did not touch. The new field should be preserved in the merge result.",
+  "mb": {
+    "id": 1,
+    "title": "Hello"
+  },
+  "ours": {
+    "id": 1,
+    "title": "Hello",
+    "draft": true
+  },
+  "theirs": {
+    "id": 1,
+    "title": "Hello"
+  },
+  "expected": {
+    "id": 1,
+    "title": "Hello",
+    "draft": true
+  }
+}

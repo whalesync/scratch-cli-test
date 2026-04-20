@@ -1,0 +1,35 @@
+{
+  "description": "Both sides change different fields inside a nested object. The merge should recurse into the nested object and keep all independent changes from each side.",
+  "mb": {
+    "id": 1,
+    "author": {
+      "id": 10,
+      "name": "Alice",
+      "status": "draft"
+    }
+  },
+  "ours": {
+    "id": 1,
+    "author": {
+      "id": 11,
+      "name": "Alice",
+      "status": "draft"
+    }
+  },
+  "theirs": {
+    "id": 1,
+    "author": {
+      "id": 10,
+      "name": "Alicia",
+      "status": "published"
+    }
+  },
+  "expected": {
+    "id": 1,
+    "author": {
+      "id": 11,
+      "name": "Alicia",
+      "status": "published"
+    }
+  }
+}

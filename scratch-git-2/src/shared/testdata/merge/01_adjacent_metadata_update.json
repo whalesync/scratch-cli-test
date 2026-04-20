@@ -1,0 +1,28 @@
+{
+  "description": "Local nulls a foreign key; remote independently updates a timestamp on the adjacent line. Text merge loses the timestamp update because the two diffs land in the same hunk, but JSON merge correctly keeps both changes.",
+  "mb": {
+    "id": 1,
+    "authorId": 1,
+    "lastUpdated": "v1"
+  },
+  "ours": {
+    "id": 1,
+    "authorId": null,
+    "lastUpdated": "v1"
+  },
+  "theirs": {
+    "id": 1,
+    "authorId": null,
+    "lastUpdated": "v2"
+  },
+  "expected": {
+    "id": 1,
+    "authorId": null,
+    "lastUpdated": "v2"
+  },
+  "expected_text_merge": {
+    "id": 1,
+    "authorId": null,
+    "lastUpdated": "v1"
+  }
+}

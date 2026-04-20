@@ -1,0 +1,19 @@
+{
+  "description": "Both sides independently add brand-new fields that were not in base. Both additions should survive in the merged output — neither should clobber the other.",
+  "mb": {
+    "id": 1
+  },
+  "ours": {
+    "id": 1,
+    "localField": "x"
+  },
+  "theirs": {
+    "id": 1,
+    "remoteField": "y"
+  },
+  "expected": {
+    "id": 1,
+    "remoteField": "y",
+    "localField": "x"
+  }
+}

@@ -221,6 +221,31 @@ fn prepare_upload_merge_prefers_remote_for_same_path_creates_without_base() {
 }
 
 #[test]
+fn prepare_upload_merge_keeps_remote_last_updated_after_adjacent_local_change() {
+    let base = HashMap::from([(
+        "posts/post-1.json".to_string(),
+        b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": 1,\n  \"lastUpdated\": \"2026-04-20T12:13:07.502Z\"\n}".to_vec(),
+    )]);
+    let local = HashMap::from([(
+        "posts/post-1.json".to_string(),
+        b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:13:07.502Z\"\n}".to_vec(),
+    )]);
+    let remote = HashMap::from([(
+        "posts/post-1.json".to_string(),
+        b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:23:14.551Z\"\n}".to_vec(),
+    )]);
+
+    let (merged, result, messages) = prepare_upload_merge(&base, &local, &remote, 0);
+
+    assert!(messages.is_empty());
+    assert_eq!(result.files_uploaded, 0);
+    assert_eq!(
+        String::from_utf8(merged["posts/post-1.json"].clone()).unwrap(),
+        "{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:23:14.551Z\"\n}\n"
+    );
+}
+
+#[test]
 fn sync_schema_files_from_master_restores_missing_schema() {
     let tmp = TempDir::new().unwrap();
     let ctx = ConnectionContext {
@@ -919,7 +944,7 @@ fn field_commands_handle_nested_paths_and_prune_empty_parents() {
 
     assert_eq!(
         String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"author\": {\n    \"name\": \"After\",\n    \"role\": \"editor\"\n  },\n  \"id\": 1\n}"
+        "{\n  \"id\": 1,\n  \"author\": {\n    \"name\": \"After\",\n    \"role\": \"editor\"\n  }\n}"
     );
     assert_eq!(
         String::from_utf8(accepted_map["public/smoke_records/record-2.json"].clone()).unwrap(),
@@ -939,7 +964,7 @@ fn field_commands_handle_nested_paths_and_prune_empty_parents() {
 
     assert_eq!(
         String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"author\": {\n    \"name\": \"Before\",\n    \"role\": \"editor\"\n  },\n  \"id\": 1\n}"
+        "{\n  \"id\": 1,\n  \"author\": {\n    \"name\": \"Before\",\n    \"role\": \"editor\"\n  }\n}"
     );
     assert_eq!(
         String::from_utf8(next_local_map["public/smoke_records/record-2.json"].clone()).unwrap(),

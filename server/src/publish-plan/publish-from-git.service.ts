@@ -11,6 +11,7 @@ import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/t
 import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
+import { formatJsonWithPrettier } from '../utils/json-formatter';
 import { pickByShape } from './diff-utils';
 import { FileReferenceService } from './file-reference.service';
 import { RefResolverService } from './ref-resolver.service';
@@ -571,7 +572,10 @@ export class PublishFromGitService {
     }));
     await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
 
-    const gitFiles = refUpdates.map((u) => ({ path: u.path, content: JSON.stringify(u.content, null, 2) }));
+    const gitFiles = refUpdates.map((u) => ({
+      path: u.path,
+      content: formatJsonWithPrettier(u.content as Record<string, unknown>),
+    }));
     await this.scratchGitService.commitFilesToBranch(
       repoId,
       'main',
@@ -584,7 +588,7 @@ export class PublishFromGitService {
       .filter(({ entry }) => !hasLaterPhase.has(entry.relPath))
       .map(({ entry, content }) => ({
         path: entry.relPath,
-        content: JSON.stringify(content, null, 2),
+        content: formatJsonWithPrettier(content as Record<string, unknown>),
       }));
     if (finalItems.length > 0) {
       await this.scratchGitService.commitFilesToBranch(repoId, 'dirty', finalItems, `Sync dirty after ${phase}`);
@@ -722,7 +726,7 @@ export class PublishFromGitService {
       }
 
       refUpdates.push({ path: entry.relPath, content: returned });
-      gitFiles.push({ path: entry.relPath, content: JSON.stringify(returned, null, 2) });
+      gitFiles.push({ path: entry.relPath, content: formatJsonWithPrettier(returned) });
     }
 
     if (fileIndexUpdates.length > 0) {
@@ -748,7 +752,9 @@ export class PublishFromGitService {
       .filter(({ entry }) => !hasLaterPhase.has(entry.relPath))
       .map(({ entry }, i) => ({
         path: entry.relPath,
-        content: JSON.stringify((returnedRecords[i] ?? entriesWithOps[i].resolvedOp) as unknown, null, 2),
+        content: formatJsonWithPrettier(
+          (returnedRecords[i] ?? entriesWithOps[i].resolvedOp) as Record<string, unknown>,
+        ),
       }));
     if (finalItems.length > 0) {
       await this.scratchGitService.commitFilesToBranch(repoId, 'dirty', finalItems, `Sync dirty after create`);

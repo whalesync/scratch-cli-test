@@ -1,0 +1,7 @@
+{
+  "description": "ours is invalid JSON. theirs is identical to mb so the early-exit (theirs == base) fires and returns ours unchanged — broken content is preserved as-is without attempting a merge.",
+  "mb":     { "id": 1, "name": "Alice" },
+  "ours":   "{\"id\": 1, \"name\": \"Alice\", \"tag\":",
+  "theirs": { "id": 1, "name": "Alice" },
+  "expected": "{\"id\": 1, \"name\": \"Alice\", \"tag\":"
+}

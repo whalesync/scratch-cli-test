@@ -1,0 +1,19 @@
+{
+  "description": "A field whose base value is null must not be treated the same as a missing field. Here remote leaves the null unchanged (theirs == base), so the local change from null to a real value wins.",
+  "mb": {
+    "id": 1,
+    "category": null
+  },
+  "ours": {
+    "id": 1,
+    "category": "tech"
+  },
+  "theirs": {
+    "id": 1,
+    "category": null
+  },
+  "expected": {
+    "id": 1,
+    "category": "tech"
+  }
+}

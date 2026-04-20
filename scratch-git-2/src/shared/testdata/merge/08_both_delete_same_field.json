@@ -1,0 +1,20 @@
+{
+  "description": "Both sides delete the same field. They agree on the deletion (ours == theirs for that key), so the field should be absent from the result.",
+  "mb": {
+    "id": 1,
+    "name": "Alice",
+    "deprecated": "yes"
+  },
+  "ours": {
+    "id": 1,
+    "name": "Alice"
+  },
+  "theirs": {
+    "id": 1,
+    "name": "Alice"
+  },
+  "expected": {
+    "id": 1,
+    "name": "Alice"
+  }
+}

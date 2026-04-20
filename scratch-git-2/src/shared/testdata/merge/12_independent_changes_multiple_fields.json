@@ -1,0 +1,27 @@
+{
+  "description": "Each side independently changes a different subset of fields. All changes should coexist in the merged output with no conflicts.",
+  "mb": {
+    "id": 1,
+    "title": "Old Title",
+    "body": "Old Body",
+    "status": "draft"
+  },
+  "ours": {
+    "id": 1,
+    "title": "New Title",
+    "body": "Old Body",
+    "status": "draft"
+  },
+  "theirs": {
+    "id": 1,
+    "title": "Old Title",
+    "body": "New Body",
+    "status": "published"
+  },
+  "expected": {
+    "id": 1,
+    "title": "New Title",
+    "body": "New Body",
+    "status": "published"
+  }
+}
