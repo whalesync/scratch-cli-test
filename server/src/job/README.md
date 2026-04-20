@@ -344,7 +344,6 @@ A special error type for intentional cancellation. The worker maps it to `status
 | `WORKER_CONCURRENCY`     | 2               | Concurrent jobs per worker instance                         |
 | `WORKER_LOCK_TIMEOUT_MS` | 120,000 (2 min) | BullMQ lock duration / checkpoint heartbeat                 |
 | `SERVICE_TYPE`           | —               | Microservice role: `WORKER`, `CRON`, `FRONTEND`, `MONOLITH` |
-| `PULL_JOB_V2`            | false           | Feature flag: two-phase pull architecture                   |
 
 ### BullMQ Queue Settings
 

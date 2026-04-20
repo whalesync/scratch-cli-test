@@ -101,6 +101,7 @@ import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/sc
 import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
+import { PostHogService } from 'src/posthog/posthog.service';
 import { VirtualGitFs } from './virtual-git-fs';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -368,6 +369,11 @@ describe('Fetch → Edit → Publish Integration', () => {
     // ── 7. VirtualGitFs + ScratchGitService mock ─────────────────────────────
     vfs = new VirtualGitFs();
 
+    // In-memory staging area for the two-phase pull handler
+    const stagingStore = new Map<string, Map<string, string>>(); // key: `${jobId}/${folder}`, value: Map<path, content>
+    const processedPaths = new Map<string, Set<string>>(); // key: `${jobId}/${folder}`, value: Set<path>
+    const committedPaths = new Map<string, Set<string>>(); // key: `${jobId}/${folder}`, value: Set<path>
+
     mockScratchGitService = {
       initRepo: jest.fn().mockResolvedValue(undefined),
       resolveRepoId: jest.fn().mockImplementation(async (wkbId: WorkbookId) => wkbId),
@@ -403,6 +409,64 @@ describe('Fetch → Edit → Publish Integration', () => {
       }),
       writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
       buildIndex: jest.fn().mockResolvedValue({ count: 0 }),
+      // Staging methods for two-phase pull handler
+      stageFiles: jest
+        .fn()
+        .mockImplementation(async (jobId: string, folder: string, files: { path: string; content: string }[]) => {
+          const key = `${jobId}/${folder}`;
+          if (!stagingStore.has(key)) stagingStore.set(key, new Map());
+          const store = stagingStore.get(key)!;
+          for (const f of files) store.set(f.path, f.content);
+        }),
+      readStagedFiles: jest.fn().mockImplementation(async (jobId: string, folder: string, batchSize: number) => {
+        const key = `${jobId}/${folder}`;
+        const store = stagingStore.get(key) ?? new Map<string, string>();
+        const processed = processedPaths.get(key) ?? new Set<string>();
+        const files: { path: string; content: string }[] = [];
+        for (const [path, content] of store) {
+          if (processed.has(path)) continue;
+          files.push({ path, content });
+          if (files.length >= batchSize) break;
+        }
+        return { files };
+      }),
+      markStagedFilesProcessed: jest.fn().mockImplementation(async (jobId: string, folder: string, paths: string[]) => {
+        const key = `${jobId}/${folder}`;
+        if (!processedPaths.has(key)) processedPaths.set(key, new Set());
+        const processed = processedPaths.get(key)!;
+        for (const p of paths) processed.add(p);
+      }),
+      commitStagedFiles: jest
+        .fn()
+        .mockImplementation(
+          async (jobId: string, repoId: string, branch: string, folder: string, _message: string, batchSize: number) => {
+            const key = `${jobId}/${folder}`;
+            const store = stagingStore.get(key) ?? new Map<string, string>();
+            const committed = committedPaths.get(key) ?? new Set<string>();
+            const filesToCommit: { path: string; content: string }[] = [];
+            for (const [path, content] of store) {
+              if (committed.has(path)) continue;
+              filesToCommit.push({ path: `${folder}/${path}`, content });
+              if (filesToCommit.length >= batchSize) break;
+            }
+            if (filesToCommit.length > 0) {
+              vfs.commitFiles(branch, filesToCommit);
+              if (!committedPaths.has(key)) committedPaths.set(key, new Set());
+              const committedSet = committedPaths.get(key)!;
+              for (const f of filesToCommit) committedSet.add(f.path.slice(folder.length + 1));
+            }
+            return { committed: filesToCommit.length, created: filesToCommit.map((f) => f.path), updated: [] };
+          },
+        ),
+      cleanupStaging: jest.fn().mockImplementation(async (jobId: string) => {
+        for (const key of [...stagingStore.keys()]) {
+          if (key.startsWith(`${jobId}/`)) {
+            stagingStore.delete(key);
+            processedPaths.delete(key);
+            committedPaths.delete(key);
+          }
+        }
+      }),
     } as unknown as ScratchGitService;
 
     // ── 8. Wire up all services ──────────────────────────────────────────────
@@ -445,6 +509,10 @@ describe('Fetch → Edit → Publish Integration', () => {
       upsertBatch: jest.fn().mockResolvedValue(undefined),
     } as unknown as AssetIndexService;
 
+    const mockPostHogService = {
+      trackPullCompleted: jest.fn(),
+    } as unknown as PostHogService;
+
     pullHandler = new PullLinkedFolderFilesJobHandler(
       prisma,
       realConnectorsService,
@@ -455,6 +523,7 @@ describe('Fetch → Edit → Publish Integration', () => {
       fileReferenceService,
       mockAssetExtractorService,
       mockAssetIndexService,
+      mockPostHogService,
     );
 
     publishPlanService = new PublishPlanBuildService(

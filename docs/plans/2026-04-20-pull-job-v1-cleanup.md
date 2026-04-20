@@ -1,7 +1,7 @@
 # Pull Job V1 Cleanup Plan
 
 **Date:** 2026-04-20
-**Status:** Proposed
+**Status:** Phase 1 complete — Phase 2 (Terraform) pending deploy
 **Goal:** Remove the V1 pull job handler and the `PULL_JOB_V2` feature flag, making V2 the only implementation.
 
 ## Background

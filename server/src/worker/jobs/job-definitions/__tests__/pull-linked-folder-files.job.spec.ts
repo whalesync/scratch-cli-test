@@ -17,14 +17,14 @@ import { WorkbookEventService } from '../../../../workbook/workbook-event.servic
 import { JobCanceledError } from '../../../../worker/job-errors';
 import {
   getMaxConcurrency,
-  PullLinkedFolderFilesV2JobHandler,
+  PullLinkedFolderFilesJobHandler,
   runWithConcurrency,
-} from '../pull-linked-folder-files-v2.job';
+} from '../pull-linked-folder-files.job';
 
 type PullCallback = (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>;
 
-describe('PullLinkedFolderFilesV2JobHandler', () => {
-  let handler: PullLinkedFolderFilesV2JobHandler;
+describe('PullLinkedFolderFilesJobHandler', () => {
+  let handler: PullLinkedFolderFilesJobHandler;
   let mockPrisma: jest.Mocked<PrismaClient>;
   let mockConnectorService: jest.Mocked<ConnectorsService>;
   let mockConnectorAccountService: jest.Mocked<ConnectorAccountService>;
@@ -173,7 +173,7 @@ describe('PullLinkedFolderFilesV2JobHandler', () => {
       trackPullCompleted: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
-    handler = new PullLinkedFolderFilesV2JobHandler(
+    handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
       mockConnectorService,
       mockConnectorAccountService,
