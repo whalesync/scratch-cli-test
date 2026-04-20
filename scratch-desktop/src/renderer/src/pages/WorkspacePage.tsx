@@ -6,6 +6,7 @@ import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
+import { jobApi } from '../lib/job-api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
 import { workspacesApi } from '../lib/workspaces-api';
@@ -179,11 +180,21 @@ export function WorkspacePage() {
           return;
         }
 
-        // Check if any data folders have an active pull lock
+        // If a pull lock exists, verify there are actual active jobs before showing the modal.
+        // Pull locks can be stale (job finished but lock wasn't cleared).
         if (snapshot.hasPullLock) {
-          // Show the pull-in-progress modal — it will handle polling and local download
-          setPullInProgressModalOpen(true);
-          return;
+          try {
+            const activeJobs = await jobApi.getActiveJobs(workspaceId);
+            const activePullJobs = activeJobs.filter(
+              (j) => j.type === 'RefreshRecords' || j.type === 'pull-linked-folder-files',
+            );
+            if (activePullJobs.length > 0) {
+              setPullInProgressModalOpen(true);
+              return;
+            }
+          } catch {
+            // If we can't check jobs, skip the modal rather than showing a false positive
+          }
         }
 
         // Only pull when the server's folder or connection shape has actually changed.
