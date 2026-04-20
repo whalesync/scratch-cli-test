@@ -31,6 +31,7 @@ include:
   dummy:
     - terraform/**/*
     - .cursor/**/*
+    - .claude/**/*
     - gitlab-ci/**/*
     - docs/**/*
     - .vscode/**/*
