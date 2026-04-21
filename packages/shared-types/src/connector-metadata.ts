@@ -22,6 +22,10 @@ export interface ConnectorMetadata {
   };
   credentialFields?: Partial<Record<AuthMethod, ConnectorSettingDefinition[]>>;
   userProvidedParamsLabel?: string;
+  setupGuide?: {
+    label: string;
+    url: string;
+  };
 }
 
 const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {

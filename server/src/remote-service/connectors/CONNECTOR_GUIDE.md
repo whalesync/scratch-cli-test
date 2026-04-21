@@ -725,6 +725,8 @@ The `connectorMetadata()` helper (from `@spinner/shared-types`) merges your over
 
 **`supportedAuthMethods`** and **`defaultAuthMethod`** on the metadata control which auth options the client shows. Note that `supportedAuthMethods` also appears in the `connectorRegistry.register()` call.
 
+**`setupGuide`** (optional) adds a prominent link above the credential fields in the connection modal. Use it when the auth flow requires the user to perform setup steps in an external system (e.g., creating a custom app, generating API keys). It takes `{ label: string; url: string }` — the URL can be an absolute path within Scratch (e.g., `/shopify-custom-app`) or an external link.
+
 ```typescript
 import { connectorMetadata } from '@spinner/shared-types';
 import { connectorRegistry } from '../../connector-registry';
@@ -740,6 +742,7 @@ export class MyConnector extends Connector {
     records: 'items',
     logo: 'https://static.scratch.md/connector-icons/my-service.svg',
     oauth: { label: 'OAuth' }, // omit if no OAuth support
+    setupGuide: { label: 'Setup Guide', url: '/my-service-setup' }, // optional — link shown above credential fields
     credentialFields: {
       user_provided_params: [
         { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },

@@ -14,6 +14,7 @@ import { ScratchpadApiError } from '@/lib/api/error';
 import { initiateOAuth } from '@/utils/oauth';
 import {
   Alert,
+  Anchor,
   Checkbox,
   Group,
   Text as MantineText,
@@ -356,6 +357,14 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
                 onChange={(e) => setCustomClientSecret(e.currentTarget.value)}
               />
             </>
+          )}
+          {/* Setup guide link from connector metadata */}
+          {newService && metadata?.[newService]?.setupGuide && (
+            <Alert color="blue" title="Setup Guide">
+              <Anchor href={metadata[newService].setupGuide!.url} target="_blank" rel="noreferrer">
+                {metadata[newService].setupGuide!.label}
+              </Anchor>
+            </Alert>
           )}
           {/* Data-driven credential fields for the current auth method */}
           {currentFields.length > 0 && <Stack>{currentFields.map((field) => renderField(field))}</Stack>}

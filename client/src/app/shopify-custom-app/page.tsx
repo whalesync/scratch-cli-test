@@ -214,9 +214,17 @@ function TokenExchange({
     <Stack gap="xl">
       <Box>
         <TextTitle2>Connect Your Shopify Store</TextTitle2>
-        <Text16Regular c="var(--fg-muted)" mt="xs">
-          Almost there! Shopify has authorized the app. Enter the <strong>Secret</strong> from <strong>Settings</strong>, below the Client ID from the last step.
-        </Text16Regular>
+        {!accessToken ? (
+          <Text16Regular c="var(--fg-muted)" mt="xs">
+            Almost there! Shopify has authorized the app. Enter the <strong>Secret</strong> from{' '}
+            <strong>Settings</strong>, below the Client ID from the last step.
+          </Text16Regular>
+        ) : (
+          <Text16Regular c="var(--fg-muted)" mt="xs">
+            You&apos;re ready! Copy your <strong>Shop Domain</strong> and the <strong>Admin API Access Token</strong>{' '}
+            into the Scratch connection dialog, then click &quot;Create&quot;.
+          </Text16Regular>
+        )}
       </Box>
 
       {!accessToken ? (
@@ -247,12 +255,16 @@ function TokenExchange({
           <TextTitle3>Step 4: Copy Your Token</TextTitle3>
           <Stack gap="sm" mt="sm">
             <Box>
-              <Text13Medium mb={4}>Access Token</Text13Medium>
+              <Text13Medium mb={4}>Shop Domain</Text13Medium>
+              <CopyableValue value={shop} />
+            </Box>
+            <Box>
+              <Text13Medium mb={4}>Admin API Access Token</Text13Medium>
               <CopyableValue value={accessToken} />
             </Box>
             <Text13Book>
-              Copy this token and save it somewhere safe — treat it like a password. You will need to enter it in Scratch
-              as your Shopify API key.
+              Copy this token and save it somewhere safe — treat it like a password. You will need to enter it in
+              Scratch as your Shopify API key.
             </Text13Book>
           </Stack>
         </Box>

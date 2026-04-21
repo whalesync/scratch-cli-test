@@ -43,7 +43,7 @@ import type {
 } from '@spinner/shared-types';
 import { TableDiscoveryMode } from '@spinner/shared-types';
 import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 type SchemaField = { path: string[]; label: string; type: string };
@@ -324,55 +324,58 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     return keys;
   }, [availableTables]);
 
-  // Initialize state when modal opens
+  // Initialize state when modal opens (only on false→true transition)
+  const prevOpenedRef = useRef(false);
   useEffect(() => {
-    if (opened) {
-      const linked = new Set<string>();
-      const initialFilters = new Map<string, string>();
-      linkedFolders.forEach((folder) => {
-        if (folder.tableId.length > 0) {
-          const key = folder.tableId.join('/');
-          if (!disabledTableKeys.has(key)) {
-            linked.add(key);
-          }
-          const folderFilter = (folder.options as ConnectorPullOptions)?.filter;
-          if (folderFilter) {
-            initialFilters.set(key, folderFilter);
-          }
-        }
-      });
-      setSelectedTableIds(linked);
-      const initialMap = new Map<string, TablePreview>();
-      linkedTablePreviews.forEach((t) => {
-        const key = t.id.remoteId.join('/');
-        if (linked.has(key)) initialMap.set(key, t);
-      });
-      setSelectedTableMap(initialMap);
-      setFilterValues(initialFilters);
-      setFieldSelections(new Map());
-      setLoadedTableSchemas(new Map());
-      setSchemasLoading(new Set());
-      setSearchTerm('');
-      setStep(1);
-      setShowConfirmation(false);
+    const justOpened = opened && !prevOpenedRef.current;
+    prevOpenedRef.current = opened;
+    if (!justOpened) return;
 
-      // Initialize connector options from existing folders
-      const initialOptions = new Map<string, Record<string, unknown>>();
-      linkedFolders.forEach((folder) => {
-        if (folder.tableId.length > 0 && advancedSettings.length > 0) {
-          const key = folder.tableId.join('/');
-          const opts = folder.options ?? {};
-          const values: Record<string, unknown> = {};
-          for (const setting of advancedSettings) {
-            const stored = opts[setting.key];
-            values[setting.key] = stored ?? (setting.type === 'boolean' ? false : '');
-          }
-          initialOptions.set(key, values);
+    const linked = new Set<string>();
+    const initialFilters = new Map<string, string>();
+    linkedFolders.forEach((folder) => {
+      if (folder.tableId.length > 0) {
+        const key = folder.tableId.join('/');
+        if (!disabledTableKeys.has(key)) {
+          linked.add(key);
         }
-      });
-      setConnectorOptions(initialOptions);
-      setTriggerPull(true);
-    }
+        const folderFilter = (folder.options as ConnectorPullOptions)?.filter;
+        if (folderFilter) {
+          initialFilters.set(key, folderFilter);
+        }
+      }
+    });
+    setSelectedTableIds(linked);
+    const initialMap = new Map<string, TablePreview>();
+    linkedTablePreviews.forEach((t) => {
+      const key = t.id.remoteId.join('/');
+      if (linked.has(key)) initialMap.set(key, t);
+    });
+    setSelectedTableMap(initialMap);
+    setFilterValues(initialFilters);
+    setFieldSelections(new Map());
+    setLoadedTableSchemas(new Map());
+    setSchemasLoading(new Set());
+    setSearchTerm('');
+    setStep(1);
+    setShowConfirmation(false);
+
+    // Initialize connector options from existing folders
+    const initialOptions = new Map<string, Record<string, unknown>>();
+    linkedFolders.forEach((folder) => {
+      if (folder.tableId.length > 0 && advancedSettings.length > 0) {
+        const key = folder.tableId.join('/');
+        const opts = folder.options ?? {};
+        const values: Record<string, unknown> = {};
+        for (const setting of advancedSettings) {
+          const stored = opts[setting.key];
+          values[setting.key] = stored ?? (setting.type === 'boolean' ? false : '');
+        }
+        initialOptions.set(key, values);
+      }
+    });
+    setConnectorOptions(initialOptions);
+    setTriggerPull(true);
   }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys, advancedSettings]);
 
   const handleToggleTable = (table: TablePreview) => {

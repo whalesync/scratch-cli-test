@@ -104,7 +104,10 @@ export class ShopifyConnector extends Connector {
     base: 'store',
     bases: 'stores',
     logo: 'https://static.scratch.md/connector-icons/shopify.svg',
-    oauth: { label: 'OAuth' },
+    setupGuide: {
+      label: 'Create a Shopify Custom App',
+      url: '/shopify-custom-app',
+    },
     credentialFields: {
       user_provided_params: [
         {
@@ -120,18 +123,8 @@ export class ShopifyConnector extends Connector {
           type: 'password',
           label: 'Admin API Access Token',
           placeholder: 'shpat_...',
-          description: 'Create a custom app in Settings > Apps > Develop apps to get an access token',
+          description: 'The Admin API access token from your custom app (starts with shpat_)',
           required: true,
-        },
-      ],
-      oauth: [
-        {
-          key: 'shopDomain',
-          type: 'string',
-          label: 'Shop Domain',
-          placeholder: 'your-store.myshopify.com',
-          description: 'Enter your Shopify store domain',
-          required: false,
         },
       ],
     },
@@ -503,7 +496,7 @@ connectorRegistry.register({
   service: Service.SHOPIFY,
   metadata: ShopifyConnector.metadata,
   advancedSettings: [],
-  supportedAuthMethods: ['oauth', 'user_provided_params'],
+  supportedAuthMethods: ['user_provided_params'],
   rateLimiterSpec: { points: 4, duration: 1 },
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
