@@ -2,6 +2,7 @@
 
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { ActionIconThreeDots } from '@/app/components/base/action-icons';
 import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import {
   Text12Medium,
@@ -26,11 +27,11 @@ import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { initiateOAuth } from '@/utils/oauth';
 import { RouteUrls } from '@/utils/route-urls';
 import { UserButton } from '@clerk/nextjs';
-import { Box } from '@mantine/core';
+import { ActionIcon, Box, Menu } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, DataFolder, DataFolderGroup, WorkbookId } from '@spinner/shared-types';
 import { AuthType } from '@spinner/shared-types';
-import { FolderIcon, LinkIcon, PlusIcon, SettingsIcon, UserIcon } from 'lucide-react';
+import { FolderIcon, LinkIcon, PlusIcon, SettingsIcon, Trash2Icon, UnlinkIcon, UserIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -440,9 +441,20 @@ function ServiceActions({
         <button className={styles.actionBtn} onClick={failedPrimaryAction}>
           {failedPrimaryLabel}
         </button>
-        <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={onRemove}>
-          Remove
-        </button>
+        <Menu>
+          <Menu.Target>
+            <ActionIconThreeDots size="sm" />
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              data-delete
+              leftSection={<Trash2Icon size={16} />}
+              onClick={onRemove}
+            >
+              Remove connection
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </div>
     );
   }
@@ -461,9 +473,20 @@ function ServiceActions({
           Edit settings
         </button>
       )}
-      <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={onRemove}>
-        Remove
-      </button>
+      <Menu>
+          <Menu.Target>
+            <ActionIconThreeDots size="sm" />
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              data-delete
+              leftSection={<Trash2Icon size={16} />}
+              onClick={onRemove}
+            >
+              Remove connection
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
     </div>
   );
 }
@@ -475,12 +498,23 @@ function ServiceActions({
 function TableActions({ onAdvancedSettings, onUnlink }: { onAdvancedSettings: () => void; onUnlink: () => void }) {
   return (
     <div className={styles.rowActions}>
-      <button className={styles.actionBtn} onClick={onAdvancedSettings}>
-        Advanced settings
-      </button>
-      <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={onUnlink}>
-        Unlink table
-      </button>
+      <ActionIcon variant="subtle" size="sm" c="var(--fg-muted)" onClick={onAdvancedSettings}>
+        <StyledLucideIcon Icon={SettingsIcon} size="sm" />
+      </ActionIcon>
+      <Menu>
+        <Menu.Target>
+          <ActionIconThreeDots size="sm" />
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            data-delete
+            leftSection={<UnlinkIcon size={16} />}
+            onClick={onUnlink}
+          >
+            Unlink table
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
     </div>
   );
 }
