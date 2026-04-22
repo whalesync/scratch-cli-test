@@ -13,7 +13,7 @@ import {
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
 import { HubspotApiClient, HubspotError } from './hubspot-api-client';
-import { buildHubspotJsonTableSpec } from './hubspot-json-schema';
+import { buildHubspotJsonTableSpec, isReadonlyHubspotProperty } from './hubspot-json-schema';
 import {
   ASSOCIATIONS_BY_OBJECT_TYPE,
   HubspotAssociation,
@@ -204,7 +204,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     const results: ConnectorFile[] = [];
 
     for (const file of files) {
-      const properties = this.extractWritableProperties(file);
+      const properties = this.extractWritableProperties(file, tableSpec);
       const created = await this.client.createRecord(objectType, properties);
 
       // Create associations from the file
@@ -249,12 +249,12 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
           const fileProps = (file as unknown as HubspotRecord).properties ?? {};
           properties = {};
           for (const propKey of Object.keys(changedProps)) {
-            if (propKey in fileProps && !this.isReadOnlyProperty(propKey)) {
+            if (propKey in fileProps && !isReadonlyHubspotProperty(propKey, tableSpec)) {
               properties[propKey] = fileProps[propKey];
             }
           }
         } else {
-          properties = this.extractWritableProperties(file);
+          properties = this.extractWritableProperties(file, tableSpec);
         }
         if (Object.keys(properties).length > 0) {
           await this.client.updateRecord(objectType, recordId, properties);
@@ -343,19 +343,15 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   }
 
   /**
-   * Extract writable properties from a file, skipping read-only system fields.
+   * Extract writable properties from a file, skipping any marked readonly in the schema.
    */
-  private isReadOnlyProperty(key: string): boolean {
-    return key.startsWith('hs_object_id') || key === 'createdate' || key === 'lastmodifieddate';
-  }
-
-  private extractWritableProperties(file: ConnectorFile): Record<string, unknown> {
+  private extractWritableProperties(file: ConnectorFile, tableSpec: BaseJsonTableSpec): Record<string, unknown> {
     const properties = (file as unknown as HubspotRecord).properties;
     if (!properties) return {};
 
     const writable: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(properties)) {
-      if (this.isReadOnlyProperty(key)) continue;
+      if (isReadonlyHubspotProperty(key, tableSpec)) continue;
       writable[key] = value;
     }
     return writable;

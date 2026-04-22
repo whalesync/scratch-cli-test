@@ -1,4 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
+import { ValuePointer } from '@sinclair/typebox/value';
 import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 import { HubspotApiClient } from './hubspot-api-client';
@@ -132,4 +133,27 @@ export async function buildHubspotJsonTableSpec(
   };
 
   return { spec, propertyNames };
+}
+
+/**
+ * HubSpot-calculated system properties that are always readonly, regardless of
+ * what the schema says. Kept as a belt-and-suspenders check so that a stale or
+ * malformed schema can't cause us to send these fields back to the API.
+ */
+const ALWAYS_READONLY_PROPERTY_NAMES = new Set(['createdate', 'lastmodifieddate']);
+
+function isAlwaysReadonlyPropertyName(propertyName: string): boolean {
+  return propertyName.startsWith('hs_object_id') || ALWAYS_READONLY_PROPERTY_NAMES.has(propertyName);
+}
+
+/**
+ * Check whether a HubSpot property name is marked readonly in the table schema,
+ * OR is a known system property that is always readonly. Properties live at
+ * `/properties/properties/{name}` in the record schema.
+ */
+export function isReadonlyHubspotProperty(propertyName: string, tableSpec: BaseJsonTableSpec): boolean {
+  if (isAlwaysReadonlyPropertyName(propertyName)) return true;
+  return (
+    ValuePointer.Get(tableSpec.schema, `/properties/properties/properties/${propertyName}/${READONLY_FLAG}`) === true
+  );
 }

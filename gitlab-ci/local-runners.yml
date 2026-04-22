@@ -158,6 +158,9 @@ local integration test server:
   extends:
     - .integration-test-server
     - .local-runner-defaults
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
   rules:
     - if: !reference [.rules, local_runner_users_mr]
       changes: !reference [.changes, server]
