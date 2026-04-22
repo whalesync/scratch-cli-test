@@ -583,9 +583,11 @@ export class PublishFromGitService {
       `Publish V2 ${phase} batch (${entries.length})`,
     );
 
-    // Sync to dirty for files that have no later phase
+    // Sync to dirty for files that have no later phase.
+    // Backfill is always the terminal phase for a record (nothing follows it), so always sync it
+    // regardless of hasLaterPhase (which contains backfill paths themselves and would skip them).
     const finalItems = committedEntries
-      .filter(({ entry }) => !hasLaterPhase.has(entry.relPath))
+      .filter(({ entry }) => phase === 'backfill' || !hasLaterPhase.has(entry.relPath))
       .map(({ entry, content }) => ({
         path: entry.relPath,
         content: formatJsonWithPrettier(content as Record<string, unknown>),

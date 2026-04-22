@@ -1,6 +1,40 @@
+/// Unit tests for `plan_publish::run`.
+///
+/// # What plan_publish does
+///
+/// Given a workspace with a connection, `run` diffs the reviewed-dirty checkout
+/// against the master checkout and produces a publish plan — a set of phase files
+/// (edit / create / delete / backfill / rename) written under
+/// `.scratch/connections/scratch/<conn>/<folder>/publish-plan-<ts>/`.
+///
+/// ## Pseudo-reference FK stripping
+///
+/// Record files may contain FK fields whose value starts with `@/` — a
+/// "pseudo-reference" pointing at another local file by path (e.g.
+/// `"@/public/authors/author-1.json"`).  These cannot be sent to the remote
+/// service directly because the target record may not have a remote ID yet.
+///
+/// `plan_publish` strips them in three passes before writing phase files:
+///
+/// 1. **Deleted-ref pass** – clear FKs pointing at locally-deleted files.
+/// 2. **Pseudo-ref pass** (`strip_pseudo_refs`) – clear `@/…` FKs declared in
+///    the folder's `schema.json` (`x-scratch-foreign-key`).  Without a schema
+///    entry the field is left untouched.
+/// 3. **Asset-pseudo-ref pass** (`strip_asset_pseudo_refs`) – clear `@asset/…`
+///    asset references everywhere in the record (no schema needed).
+///
+/// If stripping produced any change (pass3 ≠ pass1), a **Backfill** phase entry
+/// is added alongside the Edit/Create entry.  The backfill content is pass1
+/// (the original value with the `@/` reference intact) so the server can resolve
+/// it to a real remote ID after creates complete.
+///
+/// ## Source of dirty files
+///
+/// `run` reads dirty files from the *reviewed-dirty* checkout
+/// (`.scratch/connections/dirty/<conn>/`), not the working-tree checkout.
+/// Unreviewed working-tree edits are invisible to the plan.
 use super::*;
 use serde_json::{json, Value};
-use std::process::Command;
 use tempfile::TempDir;
 
 fn make_workspace(conn: &str) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
@@ -87,24 +121,6 @@ fn phase_file(
             .join(phase)
             .join(filename)
     }
-}
-
-fn git_available() -> bool {
-    Command::new("git").arg("--version").output().is_ok()
-}
-
-fn run_git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[test]
@@ -310,5 +326,187 @@ fn test_compute_changed_fields() {
     assert!(
         content["changedFields"]["fields"].get("count").is_none(),
         "unchanged field should not appear"
+    );
+}
+
+/// Write a schema.json with a single FK field declaration so that
+/// `strip_pseudo_refs` recognises the given `fk_field` as a pseudo-ref path.
+fn write_fk_schema(master_dir: &Path, folder: &str, fk_field: &str) {
+    let schema = json!({
+        "schema": {
+            "properties": {
+                fk_field: {
+                    "x-scratch-foreign-key": { "linkedTableId": "tbl_target" }
+                }
+            }
+        }
+    });
+    write_json(
+        master_dir,
+        &format!(".scratch/{folder}/schema.json"),
+        &schema,
+    );
+}
+
+#[test]
+fn test_pseudo_ref_fk_stripped_on_edit_produces_backfill() {
+    // Existing post with authorId changed to a pseudo-ref.
+    // Edit phase must strip it to null; a backfill entry must carry the original @/ value.
+    let (tmp, conn_dir, master_dir, scratch_dir, _) = make_workspace("my-conn");
+
+    write_fk_schema(&master_dir, "public/posts", "authorId");
+
+    // title also changes so there is a real edit entry (stripped dirty != master).
+    write_json(
+        &master_dir,
+        "public/posts/post-1.json",
+        &json!({"id": "rec1", "title": "Old", "authorId": null}),
+    );
+    write_json(
+        &conn_dir,
+        "public/posts/post-1.json",
+        &json!({"id": "rec1", "title": "New", "authorId": "@/public/authors/author-1.json"}),
+    );
+
+    run(tmp.path(), None).unwrap();
+
+    let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
+    let plan = read_plan_json(&plan_root);
+
+    assert_eq!(plan["summary"]["edit"], 1, "should have one edit");
+    assert_eq!(plan["summary"]["backfill"], 1, "should have one backfill");
+
+    // Edit file: { "content": ..., "changedFields": ... }.  authorId stripped to null.
+    let edit_file = phase_file(
+        &scratch_dir,
+        &plan_root,
+        "public/posts",
+        "edit",
+        "post-1.json",
+    );
+    let edit: Value = serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
+    assert!(
+        edit["content"]["authorId"].is_null(),
+        "edit content should strip pseudo-ref to null"
+    );
+    assert_eq!(edit["content"]["title"], "New");
+
+    // Backfill file: { "content": ..., "changedFields": ... }.  authorId has @/ value.
+    let backfill_file = phase_file(
+        &scratch_dir,
+        &plan_root,
+        "public/posts",
+        "backfill",
+        "post-1.json",
+    );
+    let backfill: Value =
+        serde_json::from_str(&std::fs::read_to_string(backfill_file).unwrap()).unwrap();
+    assert_eq!(
+        backfill["content"]["authorId"], "@/public/authors/author-1.json",
+        "backfill content should keep the pseudo-ref"
+    );
+    assert!(
+        !backfill["changedFields"].is_null(),
+        "backfill should have changedFields"
+    );
+}
+
+#[test]
+fn test_pseudo_ref_fk_stripped_on_create_produces_backfill() {
+    // New post (no master entry) with a pseudo-ref authorId.
+    // Create phase must strip it; backfill must carry the original value.
+    let (tmp, conn_dir, master_dir, scratch_dir, _) = make_workspace("my-conn");
+
+    write_fk_schema(&master_dir, "public/posts", "authorId");
+
+    write_json(
+        &conn_dir,
+        "public/posts/new-post.json",
+        &json!({"title": "New", "authorId": "@/public/authors/author-1.json"}),
+    );
+
+    run(tmp.path(), None).unwrap();
+
+    let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
+    let plan = read_plan_json(&plan_root);
+
+    assert_eq!(plan["summary"]["create"], 1);
+    assert_eq!(plan["summary"]["backfill"], 1);
+
+    let create_file = phase_file(
+        &scratch_dir,
+        &plan_root,
+        "public/posts",
+        "create",
+        "new-post.json",
+    );
+    let create: Value =
+        serde_json::from_str(&std::fs::read_to_string(create_file).unwrap()).unwrap();
+    assert!(
+        create["content"]["authorId"].is_null(),
+        "create content should strip pseudo-ref to null"
+    );
+
+    let backfill_file = phase_file(
+        &scratch_dir,
+        &plan_root,
+        "public/posts",
+        "backfill",
+        "new-post.json",
+    );
+    // Create backfill has no changedFields, so file_value = entry.content directly (no wrapper).
+    let backfill: Value =
+        serde_json::from_str(&std::fs::read_to_string(backfill_file).unwrap()).unwrap();
+    assert_eq!(
+        backfill["authorId"], "@/public/authors/author-1.json",
+        "create backfill is written as raw content (no wrapper)"
+    );
+    assert!(
+        backfill.get("changedFields").is_none(),
+        "create backfill should not have a changedFields key"
+    );
+}
+
+#[test]
+fn test_pseudo_ref_fk_not_stripped_without_schema() {
+    // Without a schema declaring the FK field, @/ values are left in the edit content
+    // and no backfill is generated.
+    let (tmp, conn_dir, master_dir, scratch_dir, _) = make_workspace("my-conn");
+
+    // No schema written — fk_paths will be empty.
+
+    write_json(
+        &master_dir,
+        "public/posts/post-1.json",
+        &json!({"id": "rec1", "authorId": null}),
+    );
+    write_json(
+        &conn_dir,
+        "public/posts/post-1.json",
+        &json!({"id": "rec1", "authorId": "@/public/authors/author-1.json"}),
+    );
+
+    run(tmp.path(), None).unwrap();
+
+    let plan_root = find_plan_root(&scratch_dir).expect("plan dir not created");
+    let plan = read_plan_json(&plan_root);
+
+    assert_eq!(plan["summary"]["edit"], 1);
+    assert_eq!(
+        plan["summary"]["backfill"], 0,
+        "no backfill without schema FK declaration"
+    );
+
+    let edit_file = phase_file(
+        &scratch_dir,
+        &plan_root,
+        "public/posts",
+        "edit",
+        "post-1.json",
+    );
+    let edit: Value = serde_json::from_str(&std::fs::read_to_string(edit_file).unwrap()).unwrap();
+    assert_eq!(
+        edit["content"]["authorId"], "@/public/authors/author-1.json",
+        "pseudo-ref should be preserved when no schema FK is declared"
     );
 }

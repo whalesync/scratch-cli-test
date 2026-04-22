@@ -106,7 +106,11 @@ fn merge_json_object(
     let mut merged = serde_json::Map::new();
     let mut seen = std::collections::HashSet::new();
 
-    for key in their_obj.keys().chain(our_obj.keys()).chain(base_obj.keys()) {
+    for key in their_obj
+        .keys()
+        .chain(our_obj.keys())
+        .chain(base_obj.keys())
+    {
         if seen.insert(key.as_str()) {
             if let Some(value) =
                 merge_json_value(base_obj.get(key), our_obj.get(key), their_obj.get(key))

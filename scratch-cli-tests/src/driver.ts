@@ -25,6 +25,12 @@ export interface DriverOptions {
   createCount?: number;
   /** Number of records to delete (default: 0) */
   deleteCount?: number;
+  /**
+   * Set post N's authorId to a pseudo-reference pointing at an author file, testing the
+   * backfill path in the publish plan. Format: "<postIndex>-<authorTarget>" where authorTarget
+   * is 1 (existing seeded author) or 0 (create a new local author file).
+   */
+  addFk?: string;
 }
 
 /**
@@ -54,6 +60,9 @@ export function runDriver(options: DriverOptions = {}): void {
     }
     if (options.deleteCount !== undefined) {
       args.push("--delete-count", String(options.deleteCount));
+    }
+    if (options.addFk !== undefined) {
+      args.push("--add-fk", options.addFk);
     }
 
     args.push("--workspace-root", workspaceRoot);

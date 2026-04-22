@@ -4,9 +4,9 @@
 
 The CLI works with five versions of the same logical data:
 
-1. `remote master`
+1. `remote main`
 2. `remote dirty`
-3. `local master`
+3. `local main`
 4. `local dirty`
 5. `working tree`
 
@@ -35,8 +35,8 @@ One valid history before publishing can look like this:
 
 Where:
 
-- `m` = local `master`
-- `o/m` = `origin/master`
+- `m` = local `main`
+- `o/m` = `origin/main`
 - `o/d` = `origin/dirty`
 - `d` = local `dirty`
 - `w` = working tree based on local `dirty`
@@ -56,7 +56,7 @@ The merge logic becomes a straightforward function over `base`, `local`, and `re
 This should be completely fine for thousands of records in the current usage model, because this is a single-user workflow running on a local machine that will usually have many gigabytes of memory.
 
 Once the full correctness of the approach is validated, it should be fairly straightforward to optimize this by keeping only paths and object IDs in memory first, and then reading file contents on demand in a later step only for the paths that actually need content comparison or merging.
-See [CLI_NO_MEMORY.md](/Users/ijd/repos/spinner/scratch-git-2/docs/CLI_NO_MEMORY.md) for the follow-up refactor sketch.
+See [CLI_NO_MEMORY.md](CLI_NO_MEMORY.md) for the follow-up refactor sketch.
 
 ## Publish Flow
 
@@ -67,7 +67,7 @@ Before publish starts:
 - `local dirty` contains approved local edits
 - `working tree` contains `local dirty` plus any unapproved edits
 - `remote dirty` contains the latest approved state already on the server
-- `local master` and `remote master` represent the published baseline
+- `local main` and `remote main` represent the published baseline
 
 Only approved changes belong in publish.
 Unapproved working-tree edits MUST survive the flow, but must not be uploaded.
@@ -118,7 +118,7 @@ After upload, the server-side publish job runs against the uploaded approved sta
 Conceptually, this is the point where:
 
 - `remote dirty` may advance again
-- `remote master` may advance
+- `remote main` may advance
 - published records may be rewritten into their canonical post-publish state
 
 For example, a connector may:
@@ -206,7 +206,7 @@ After that, the CLI updates:
 - the local reviewed-dirty checkout
 - the materialized working tree
 
-The surrounding `files download` flow then updates `local master` from `remote master` and refreshes schema files from `master`.
+The surrounding `files download` flow then updates `local main` from `remote main` and refreshes schema files from `master`.
 
 This means the practical publish flow used by the desktop app is:
 
@@ -216,7 +216,7 @@ This means the practical publish flow used by the desktop app is:
 
 The critical correctness property is that this post-publish download must make the canonical server version visible in all three local views:
 
-- `local master`
+- `local main`
 - `local dirty`
 - `working tree`
 
@@ -232,7 +232,7 @@ After a successful publish flow:
 - server-side publish changes have been pulled back down
 - `local dirty` has been rebased onto the latest `remote dirty`
 - the working tree has been rebased onto the new `local dirty`
-- `local master` has been refreshed from `remote master`
+- `local main` has been refreshed from `remote main`
 
 So the local state stays internally consistent:
 

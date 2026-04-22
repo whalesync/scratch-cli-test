@@ -240,73 +240,6 @@ pub(crate) fn commit_file_map_to_ref(
     Ok(commit_id.detach().to_string())
 }
 
-pub(crate) fn materialize_treeish_to_directory(
-    bare_repo: &Path,
-    treeish: &str,
-    work_tree: &Path,
-) -> anyhow::Result<()> {
-    let repo = open_bare_repo(bare_repo)?;
-    let tree = resolve_tree(&repo, treeish)?;
-    std::fs::create_dir_all(work_tree)?;
-    materialize_tree_entries(&repo, tree.id().detach(), work_tree).with_context(|| {
-        format!(
-            "failed to materialize {treeish} into {}",
-            work_tree.display()
-        )
-    })
-}
-
-fn resolve_tree<'repo>(
-    repo: &'repo gix::Repository,
-    treeish: &str,
-) -> anyhow::Result<gix::Tree<'repo>> {
-    let tree_spec = format!("{treeish}^{{tree}}");
-    let tree_id = repo
-        .rev_parse_single(tree_spec.as_str())
-        .with_context(|| format!("failed to resolve tree {treeish}"))?;
-    repo.find_tree(tree_id.detach())
-        .with_context(|| format!("failed to open tree for {treeish}"))
-}
-
-fn materialize_tree_entries(
-    repo: &gix::Repository,
-    tree_id: gix::ObjectId,
-    root: &Path,
-) -> anyhow::Result<()> {
-    let tree = repo
-        .find_tree(tree_id)
-        .with_context(|| format!("failed to open tree object {tree_id}"))?;
-
-    for entry in tree.iter() {
-        let entry = entry.context("failed to decode tree entry")?;
-        let name = String::from_utf8_lossy(entry.filename().as_ref()).into_owned();
-        let path = root.join(&name);
-
-        if entry.mode().is_tree() {
-            std::fs::create_dir_all(&path)?;
-            materialize_tree_entries(repo, entry.object_id(), &path)?;
-            continue;
-        }
-
-        if entry.mode().is_commit() {
-            continue;
-        }
-
-        let mut blob = repo
-            .find_blob(entry.object_id())
-            .with_context(|| format!("failed to read blob {}", entry.object_id()))?;
-        let data = blob.take_data();
-
-        if entry.mode().is_link() {
-            write_symlink_or_fallback(&path, &data)?;
-        } else {
-            write_blob_file(&path, &data, entry.mode().is_executable())?;
-        }
-    }
-
-    Ok(())
-}
-
 #[derive(Debug, Clone)]
 enum TreeNode {
     Blob(gix::ObjectId),
@@ -413,49 +346,6 @@ fn write_tree_entries(
     repo.write_object(&tree)
         .map(|id| id.detach())
         .with_context(|| "failed to write tree object")
-}
-
-fn write_blob_file(path: &Path, data: &[u8], executable: bool) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, data)?;
-    set_executable_bit(path, executable)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_executable_bit(path: &Path, executable: bool) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let mode = if executable { 0o755 } else { 0o644 };
-    let permissions = std::fs::Permissions::from_mode(mode);
-    std::fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_executable_bit(_path: &Path, _executable: bool) -> anyhow::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn write_symlink_or_fallback(path: &Path, data: &[u8]) -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let target = std::str::from_utf8(data)
-        .with_context(|| format!("symlink target at {} is not valid UTF-8", path.display()))?;
-    let _ = std::fs::remove_file(path);
-    symlink(target, path)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_symlink_or_fallback(path: &Path, data: &[u8]) -> anyhow::Result<()> {
-    write_blob_file(path, data, false)
 }
 
 /// Returns `(status, path)` pairs for files that differ between `from_treeish` and `to_treeish`.

@@ -23,6 +23,7 @@ function parseArgs(argv) {
     pause: "nowhere",
     stop: "nowhere",
     noCleanup: false,
+    addFk: undefined,
     recordCount: undefined,
     editCount: undefined,
     acceptCount: undefined,
@@ -129,6 +130,14 @@ function parseArgs(argv) {
       args.failingEditRecord = arg.slice("--failing-edit-record=".length);
       continue;
     }
+    if (arg === "--add-fk") {
+      args.addFk = argv[++i];
+      continue;
+    }
+    if (arg.startsWith("--add-fk=")) {
+      args.addFk = arg.slice("--add-fk=".length);
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -171,6 +180,11 @@ Options:
   --set-author-record <n>  Set post N to reference the seeded author (authorId=1) during local edits.
   --change-remote-dirty <n> Commit a remote dirty change to record N (simulates a concurrent external edit).
   --failing-edit-record <n> Make record N invalid locally by writing a bad timestamp (expected publish failure).
+  --add-fk <postN>-<authorM>
+                           Set post N's authorId to a pseudo-reference (@/path) pointing at an author file,
+                           testing the backfill path in the publish plan. authorM values:
+                             1  Point at the seeded existing author (id 1 in the DB).
+                             0  Create a new local author file and point at it (tests create + backfill).
   --server-url <url>       Override SCRATCH_API_URL
   --binary <path-or-name>  Override SCRATCH_CLI_BINARY
   --database-url <url>     Override DATABASE_URL / DATABASE_URL_PREFIX
@@ -857,6 +871,9 @@ function verifyLocalLastUpdated(
   expectedAuthorIdsById,
   remoteRowsById,
   successfulIds,
+  // IDs whose authorId check is skipped in local files (dirty/working) because the
+  // server doesn't write resolved pseudo-ref values back to the dirty branch.
+  skipLocalAuthorIdIds = new Set(),
 ) {
   const verified = [];
   const mismatches = [];
@@ -933,7 +950,7 @@ function verifyLocalLastUpdated(
       const localRecord = readJsonFile(targetFile);
       const actualAuthorId = normalizeNullableId(localRecord?.authorId);
       const actualLastUpdated = normalizeTimestamp(localRecord?.lastUpdated);
-      if (actualAuthorId !== expectedAuthorId) {
+      if (!skipLocalAuthorIdIds.has(recordId) && actualAuthorId !== expectedAuthorId) {
         mismatches.push({
           id: recordId,
           file,
@@ -1471,6 +1488,22 @@ async function main() {
     cliArgs.failingEditRecord != null
       ? Number(cliArgs.failingEditRecord)
       : null;
+  let addFk = null;
+  if (cliArgs.addFk !== undefined) {
+    const parts = String(cliArgs.addFk).split("-");
+    if (parts.length !== 2) {
+      throw new Error(`--add-fk must be in format <postIndex>-<authorTarget>, e.g. "1-1" or "2-0"`);
+    }
+    const postIndex = parseInt(parts[0], 10);
+    const authorTarget = parseInt(parts[1], 10);
+    if (!Number.isFinite(postIndex) || postIndex < 1) {
+      throw new Error(`--add-fk: post index "${parts[0]}" must be a positive integer`);
+    }
+    if (authorTarget !== 0 && authorTarget !== 1) {
+      throw new Error(`--add-fk: author target must be 0 (new) or 1 (existing), got "${parts[1]}"`);
+    }
+    addFk = { postIndex, authorTarget };
+  }
   const binary = resolveBinary(
     cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
   );
@@ -1522,6 +1555,14 @@ async function main() {
   if (acceptCount > editCount) {
     throw new Error(
       `--accept-count (${acceptCount}) cannot exceed --edit-count (${editCount})`,
+    );
+  }
+  if (
+    addFk !== null &&
+    addFk.postIndex > recordCount
+  ) {
+    throw new Error(
+      `--add-fk: post index ${addFk.postIndex} exceeds --count (${recordCount})`,
     );
   }
   if (
@@ -1579,6 +1620,8 @@ async function main() {
     console.log(`Remote dirty:   record ${remoteDirtyRecord}`);
   if (failingEditRecord !== null)
     console.log(`Failing edit:   record ${failingEditRecord}`);
+  if (addFk !== null)
+    console.log(`Add FK:         post ${addFk.postIndex} -> ${addFk.authorTarget === 0 ? "new author (pseudo-ref create)" : "existing author 1 (pseudo-ref backfill)"}`);
   console.log(`Workspace root: ${workspaceRoot}`);
   console.log(`Cleanup:        ${cliArgs.noCleanup ? "disabled" : "enabled"}`);
 
@@ -1821,6 +1864,50 @@ async function main() {
       console.log(`Created ${createdFiles.length} new local post files.`);
     }
 
+    let addFkPostFile = null;
+    let addFkAuthorFile = null;
+    let addFkIsNewAuthor = false;
+    if (addFk !== null) {
+      printSection("Add FK pseudo-reference");
+      const allPostFiles = sortRecordFiles(listRecordFiles(state.workspaceDir));
+      const targetPostFile = allPostFiles[addFk.postIndex - 1];
+      if (!targetPostFile) {
+        throw new Error(
+          `--add-fk: post ${addFk.postIndex} not found (${allPostFiles.length} post file(s) remain after deletions)`,
+        );
+      }
+
+      if (addFk.authorTarget === 0) {
+        const authorsDir = getTableDir(state.workspaceDir, AUTHORS_TABLE_NAME);
+        addFkAuthorFile = path.join(authorsDir, "author-create-1.json");
+        fs.writeFileSync(
+          addFkAuthorFile,
+          `${JSON.stringify({ name: `New Author (${runName})` }, null, 2)}\n`,
+        );
+        addFkIsNewAuthor = true;
+        console.log(`Created new author file: ${path.relative(state.workspaceDir, addFkAuthorFile)}`);
+      } else {
+        const authorFiles = listAuthorFiles(state.workspaceDir);
+        if (authorFiles.length === 0) throw new Error("--add-fk: no author files found in workspace");
+        addFkAuthorFile = [...authorFiles].sort()[0];
+        addFkIsNewAuthor = false;
+      }
+
+      const authorRelPath = path.relative(getConnectionDir(state.workspaceDir), addFkAuthorFile)
+        .split(path.sep)
+        .join("/");
+      const pseudoRef = `@/${authorRelPath}`;
+
+      const postRecord = readJsonFile(targetPostFile);
+      postRecord.authorId = pseudoRef;
+      fs.writeFileSync(targetPostFile, `${JSON.stringify(postRecord, null, 2)}\n`);
+      addFkPostFile = targetPostFile;
+
+      console.log(
+        `Set post ${addFk.postIndex} authorId = "${pseudoRef}" (${addFkIsNewAuthor ? "new author" : "existing author"})`,
+      );
+    }
+
     printSection("Accept local changes");
     await checkpointIfNeeded(
       cliArgs.stop,
@@ -1855,6 +1942,8 @@ async function main() {
         ...acceptedEditedFiles,
         ...acceptedCreatedFiles,
         ...acceptedDeletedEntries.map((entry) => entry.file),
+        ...(addFkPostFile && !acceptedEditedFiles.includes(addFkPostFile) ? [addFkPostFile] : []),
+        ...(addFkIsNewAuthor && addFkAuthorFile ? [addFkAuthorFile] : []),
       ];
       acceptedFiles = [...acceptedEditedFiles, ...acceptedCreatedFiles];
       if (filesToAccept.length > 0) {
@@ -1869,6 +1958,14 @@ async function main() {
       console.log(
         `Accepted ${acceptedEditedFiles.length} of ${editedFiles.length} edited files, ${acceptedDeletedEntries.length} deleted files, plus ${acceptedCreatedFiles.length} created files (${editedFiles.length - acceptedEditedFiles.length - acceptedDeletedEntries.filter((entry) => editedFiles.includes(entry.file)).length} edited files left unreviewed).`,
       );
+    }
+
+    if (addFkPostFile && !acceptedEditedFiles.includes(addFkPostFile)) {
+      acceptedEditedFiles.push(addFkPostFile);
+      acceptedFiles.push(addFkPostFile);
+    }
+    if (addFkIsNewAuthor && addFkAuthorFile && !acceptedFiles.includes(addFkAuthorFile)) {
+      acceptedFiles.push(addFkAuthorFile);
     }
 
     if (remoteDirtyRecord !== null) {
@@ -1909,6 +2006,12 @@ async function main() {
       captureExpectedLastUpdatedById(acceptedEditedFiles);
     const expectedAcceptedAuthorIdsById =
       captureExpectedAuthorIdsById(acceptedEditedFiles);
+    if (addFk !== null && addFkPostFile !== null) {
+      const postId = Number(readJsonFile(addFkPostFile).id);
+      // For M=1 (existing author) the resolved ID is always 1 (seeded).
+      // For M=0 (new author) we set null as a placeholder and resolve after download.
+      expectedAcceptedAuthorIdsById.set(postId, addFk.authorTarget === 1 ? 1 : null);
+    }
     const expectedCreatedNames = captureExpectedNames(createdFiles);
     runCli(binary, serverUrl, ["files", "upload"], {
       cwd: state.workspaceDir,
@@ -2002,6 +2105,21 @@ async function main() {
       noJson: true,
     });
 
+    if (addFk !== null && addFkIsNewAuthor && addFkAuthorFile) {
+      const resolvedAuthorRecord = fs.existsSync(addFkAuthorFile)
+        ? readJsonFile(addFkAuthorFile)
+        : null;
+      const resolvedAuthorId = normalizeNullableId(resolvedAuthorRecord?.id);
+      if (resolvedAuthorId === null) {
+        throw new Error(
+          `--add-fk: new author file "${path.relative(state.workspaceDir, addFkAuthorFile)}" has no id after publish + download`,
+        );
+      }
+      const postId = Number(readJsonFile(addFkPostFile).id);
+      expectedAcceptedAuthorIdsById.set(postId, resolvedAuthorId);
+      console.log(`Resolved new author id: ${resolvedAuthorId} → will verify post ${addFk.postIndex} authorId = ${resolvedAuthorId}`);
+    }
+
     printSection("Verify remote database state");
     await checkpointIfNeeded(
       cliArgs.stop,
@@ -2012,11 +2130,15 @@ async function main() {
     );
     const finalRows = await readPostRows(databaseUrl);
     const finalAuthorRows = await readAuthorRows(databaseUrl);
-    if (finalAuthorRows.length !== 1 || finalAuthorRows[0]?.name !== "Author 1") {
+    const expectedAuthorRowCount = addFk !== null && addFk.authorTarget === 0 ? 2 : 1;
+    if (finalAuthorRows.length !== expectedAuthorRowCount) {
       throw new Error(
-        `Expected exactly 1 unchanged author row named "Author 1", got ${finalAuthorRows
-          .map((row) => `${row.id}:${row.name}`)
-          .join(", ") || "(none)"}.`,
+        `Expected ${expectedAuthorRowCount} author row(s), got ${finalAuthorRows.length}: ${finalAuthorRows.map((r) => `${r.id}:${r.name}`).join(", ") || "(none)"}.`,
+      );
+    }
+    if (expectedAuthorRowCount === 1 && finalAuthorRows[0]?.name !== "Author 1") {
+      throw new Error(
+        `Expected author row named "Author 1", got "${finalAuthorRows[0]?.name}".`,
       );
     }
     const baselineRowIds = new Set(seededRows.map((row) => Number(row.id)));
@@ -2224,6 +2346,9 @@ async function main() {
       );
     }
 
+    const pseudoRefPostIds = addFk !== null && addFkPostFile !== null
+      ? new Set([Number(readJsonFile(addFkPostFile).id)])
+      : new Set();
     const localLastUpdatedCheck = verifyLocalLastUpdated(
       state.workspaceDir,
       acceptedFilesForPublish,
@@ -2231,6 +2356,7 @@ async function main() {
       expectedAcceptedAuthorIdsById,
       finalRowsById,
       successfulIds,
+      pseudoRefPostIds,
     );
     if (localLastUpdatedCheck.mismatches.length > 0) {
       const details = localLastUpdatedCheck.mismatches
@@ -2286,9 +2412,10 @@ async function main() {
     }
 
     const finalAuthorFiles = listAuthorFiles(state.workspaceDir);
-    if (finalAuthorFiles.length !== 1) {
+    const expectedAuthorFileCount = addFk !== null && addFk.authorTarget === 0 ? 2 : 1;
+    if (finalAuthorFiles.length !== expectedAuthorFileCount) {
       throw new Error(
-        `Expected 1 author file after final download, got ${finalAuthorFiles.length}.`,
+        `Expected ${expectedAuthorFileCount} author file(s) after final download, got ${finalAuthorFiles.length}.`,
       );
     }
 

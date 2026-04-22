@@ -646,25 +646,6 @@ fn apply_remote_changes_to_working_copy_rebases_unapproved_edits() {
     );
 }
 
-#[test]
-fn materialize_treeish_to_worktree_creates_plain_directory_without_git_metadata() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let fixture = create_bare_fixture();
-    let work_tree = fixture._tmp.path().join("materialized");
-    std::fs::create_dir_all(&work_tree).unwrap();
-    std::fs::write(work_tree.join("stale.txt"), "stale").unwrap();
-
-    materialize_treeish_to_worktree(&fixture.local_bare, "dirty", &work_tree).unwrap();
-
-    assert!(work_tree.join("posts/rec1.json").exists());
-    assert!(!work_tree.join("stale.txt").exists());
-    assert!(!work_tree.join(".git").exists());
-}
-
 /// Verify that batched `read_tree_files` returns correct paths and blob contents
 /// for a repo with nested directories, multiple files, and a non-blob entry.
 #[test]

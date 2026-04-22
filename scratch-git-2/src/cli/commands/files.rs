@@ -2464,7 +2464,6 @@ fn unreviewed_entries_from_status(ctx: &ConnectionContext) -> anyhow::Result<Vec
     Ok(entries)
 }
 
-
 fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
     let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let dirty_map = match dirty_hash.as_deref() {
@@ -2483,7 +2482,6 @@ fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<Unreviewed
         &dirty_map,
     ))
 }
-
 
 fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
@@ -2518,16 +2516,6 @@ fn git_rev_parse_optional(bare_repo: &Path, rev: &str) -> anyhow::Result<Option<
 
 fn git_update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
     crate::git_ops::update_ref(bare_repo, refname, object)
-}
-
-pub(crate) fn materialize_treeish_to_worktree(
-    bare_repo: &Path,
-    treeish: &str,
-    work_tree: &Path,
-) -> anyhow::Result<()> {
-    clear_dir_contents(work_tree, true)?;
-    std::fs::create_dir_all(work_tree)?;
-    crate::git_ops::materialize_treeish_to_directory(bare_repo, treeish, work_tree)
 }
 
 fn commit_file_map_to_dirty_ref(
