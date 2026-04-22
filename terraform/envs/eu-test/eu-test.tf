@@ -41,9 +41,7 @@ module "eu_test" {
   worker_service_min_instance_count = 2
   worker_service_max_instance_count = 2
   worker_concurrency                = 10
-  
-  # Pull Job V2
-  pull_job_v2 = true
+
 
   # Static Assets
   enable_static_assets_lb = true

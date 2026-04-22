@@ -376,12 +376,6 @@ variable "opentelemetry_collector_memory_limit" {
   description = "Memory limit for the OpenTelemetry Collector sidecar container."
 }
 
-variable "pull_job_v2" {
-  type        = bool
-  default     = false
-  description = "Enable the two-phase pull job architecture (PULL_JOB_V2)."
-}
-
 variable "vanta_contains_user_data" {
   type        = bool
   default     = false
