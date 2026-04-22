@@ -694,16 +694,13 @@ resource "google_monitoring_alert_policy" "scratch_git_memory_too_high" {
   }
   conditions {
     display_name = "VM Instance - Memory metric missing"
-    condition_threshold {
+    condition_absent {
       aggregations {
         alignment_period   = "300s"
         per_series_aligner = "ALIGN_MAX"
       }
-      comparison              = "COMPARISON_GT"
-      duration                = "300s"
-      filter                  = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/memory/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
-      threshold_value         = 101
-      evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"
+      duration = "300s"
+      filter   = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/memory/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
       trigger {
         count = 1
       }
@@ -735,7 +732,7 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
       }
       comparison      = "COMPARISON_GT"
       duration        = "60s"
-      filter          = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\" AND metric.labels.device = starts_with(\"/dev/disk\")"
+      filter          = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
       threshold_value = 80
       trigger {
         count = 1
@@ -744,16 +741,13 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
   }
   conditions {
     display_name = "VM Instance - Disk metric missing"
-    condition_threshold {
+    condition_absent {
       aggregations {
         alignment_period   = "300s"
         per_series_aligner = "ALIGN_MAX"
       }
-      comparison              = "COMPARISON_GT"
-      duration                = "300s"
-      filter                  = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\" AND metric.labels.device = starts_with(\"/dev/disk\")"
-      threshold_value         = 101
-      evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"
+      duration = "300s"
+      filter   = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/disk/percent_used\" AND metric.labels.state = \"used\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
       trigger {
         count = 1
       }
