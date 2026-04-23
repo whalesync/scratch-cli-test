@@ -2,6 +2,9 @@
  * Verify that `turbo dev --dry-run=json` runs exactly the expected set of services.
  * If you intentionally added or removed a dev service, update EXPECTED below.
  *
+ * One-off tools under `scripts/` that are not Yarn workspaces (e.g. `scripts/posthog-backfill/`)
+ * are not part of the Turbo graph and do not need to be listed here.
+ *
  * Usage: npx turbo dev --dry-run=json | node scripts/verify-turbo-dev.mjs
  */
 import { readFileSync } from "fs";
