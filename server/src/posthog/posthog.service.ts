@@ -86,9 +86,14 @@ export class PostHogService implements OnModuleDestroy {
       return;
     }
 
+    const signedUpAt = user.createdAt.toISOString().slice(0, 10);
+
     const eventProperties = {
       email: user.email,
       name: user.name,
+      $set_once: {
+        signed_up_at: signedUpAt,
+      },
     };
 
     try {
@@ -100,6 +105,9 @@ export class PostHogService implements OnModuleDestroy {
         name: user.name,
         email: user.email,
         role: user.role,
+        $set_once: {
+          signed_up_at: signedUpAt,
+        },
       });
     } catch (err) {
       WSLogger.warn({
