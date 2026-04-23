@@ -10,6 +10,7 @@ Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/
 | **Connections**    | Add, list, show, and remove Postgres connections (requires `DATABASE_URL`)               |
 | **Linked Folders** | Discover available tables, link/unlink folders, pull data from Postgres                  |
 | **Files**          | Download files to disk, upload local edits, and verify a full round-trip cycle           |
+| **Driver Publish** | Driver-based end-to-end publish flows over related `authors`/`posts` tables: edit, create, delete, publish, and post-publish reconciliation |
 | **Workspace Sync** | Detect added/removed connections on download, test `--on-delete=remove` and `keep` modes |
 
 Each suite tests the full CLI stack: argument parsing, flag handling, credential loading, `--json` serialization, and exit codes.
@@ -76,6 +77,8 @@ The connection/linked/files suites use two Postgres tables as test data:
 
 Tables are automatically created and populated in `beforeAll` and dropped in `afterAll`. The database must be accessible from the Scratch server (which runs the Postgres connector).
 
+The driver-based suite ([`tests/driver-publish.spec.ts`](tests/driver-publish.spec.ts)) uses its own per-run database with `authors(id, name, lastUpdated)` and `posts(id, name, ts, authorId, lastUpdated)`. It shells out to `scripts/driver-run.js` to run pull → local edit/create/delete → accept → upload → `publish-from-git` → re-download, can inject a concurrent dirty-branch edit, and verifies that the server-managed `lastUpdated` refresh is accepted back into remote and local state. See [`scripts/README.md`](scripts/README.md) for the driver schema and scenario details.
+
 ## Running Tests
 
 ```bash
@@ -89,6 +92,7 @@ npx jest --runInBand --forceExit workspaces
 npx jest --runInBand --forceExit connections
 npx jest --runInBand --forceExit linked-folders
 npx jest --runInBand --forceExit files
+npx jest --runInBand --forceExit driver-publish
 npx jest --runInBand --forceExit workspace-sync
 ```
 

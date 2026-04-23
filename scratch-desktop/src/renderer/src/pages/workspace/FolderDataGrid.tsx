@@ -78,6 +78,7 @@ interface DiffGridResult {
     invalidJson: number;
   };
   filterCounts: { unreviewed: number; unpublished: number };
+  focusColumnIds: { unreviewed: string[]; unpublished: string[] };
   invalidJsonFiles: InvalidJsonFileListEntry[];
 }
 
@@ -462,18 +463,21 @@ function FilterPill({
   count,
   active,
   bulletColor,
+  disabled = false,
   onClick,
 }: {
   label: string;
   count: number;
   active: boolean;
   bulletColor: string;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <Box
       component="button"
       onClick={onClick}
+      disabled={disabled}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -482,8 +486,9 @@ function FilterPill({
         borderRadius: 10,
         border: active ? '1.5px solid var(--highlight-border)' : '0.5px solid var(--fg-divider)',
         backgroundColor: active ? 'var(--highlight-fill)' : 'transparent',
-        cursor: 'pointer',
+        cursor: disabled ? 'default' : 'pointer',
         lineHeight: 1,
+        opacity: disabled ? 0.55 : 1,
       }}
     >
       <Box
@@ -944,38 +949,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return [statusColumn, ...dataCols];
   }, [allColumnIds, columnDefsMap, columnWidths, effectiveVisibleColumns, statusColumn]);
 
-  /** Column IDs that have unreviewed changes in at least one row (from current page). */
+  /** Column IDs that should be focused for Needs review, across the current non-global query. */
   const unreviewedColumnIds: string[] = useMemo(() => {
     if (!diffData) return [];
-    const set = new Set<string>();
+    const set = new Set<string>(diffData.focusColumnIds.unreviewed);
     for (const row of diffData.rows) {
       for (const field of row.__changedFields) set.add(field);
     }
     return allColumnIds.filter((c) => set.has(c));
   }, [allColumnIds, diffData]);
 
-  /** Column IDs that have approved (unpublished) changes in at least one row (from current page). */
+  /** Column IDs that should be focused for Approved, across the current non-global query. */
   const approvedColumnIds: string[] = useMemo(() => {
     if (!diffData) return [];
-    const set = new Set<string>();
+    const set = new Set<string>(diffData.focusColumnIds.unpublished);
     for (const row of diffData.rows) {
       for (const field of row.__unpublishedFields) set.add(field);
     }
     return allColumnIds.filter((c) => set.has(c));
   }, [allColumnIds, diffData]);
-
-  // Snapshot column lists from unfiltered data so filter toggles can reference them
-  // even when the current rows are already filtered to a different kind.
-  const unfilteredColsRef = useRef<{ unreviewed: string[]; approved: string[] }>({
-    unreviewed: [],
-    approved: [],
-  });
-  const hasGlobalFilterActive = activeFilters.some((f) => f.scope === 'global');
-  useEffect(() => {
-    if (!hasGlobalFilterActive && diffData) {
-      unfilteredColsRef.current = { unreviewed: unreviewedColumnIds, approved: approvedColumnIds };
-    }
-  }, [hasGlobalFilterActive, diffData, unreviewedColumnIds, approvedColumnIds]);
 
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
@@ -1719,16 +1711,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         setActiveFilters(withoutGlobal);
         setVisibleColumnIds(null);
       } else {
-        // Applying a filter — use the unfiltered snapshot so switching between
-        // filters works even when the current rows are already filtered.
+        // Applying a filter narrows the visible columns to the focus set for
+        // that filter, computed from the current query with only the global
+        // review filter removed.
         setActiveFilters([...withoutGlobal, { scope: 'global', kind }]);
-        const { unreviewed, approved } = unfilteredColsRef.current;
-        const matchingCols = kind === 'unreviewed' ? unreviewed : approved;
+        const matchingCols = kind === 'unreviewed' ? unreviewedColumnIds : approvedColumnIds;
         const locked = titleColumnId ? [titleColumnId] : [];
         setVisibleColumnIds([...locked, ...matchingCols.filter((c) => c !== titleColumnId)]);
       }
     },
-    [activeFilters, titleColumnId],
+    [activeFilters, approvedColumnIds, titleColumnId, unreviewedColumnIds],
   );
 
   const handleAddColumnFilter = useCallback(
@@ -1801,6 +1793,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const showBlockingLoader = Boolean(
     selectedFolderPath && (isBlockingLoad || (!hasCurrentQueryData && !hasCurrentQueryError && workspacePath)),
   );
+  const disableGlobalFilterPills = isBlockingLoad;
 
   return (
     <Stack
@@ -1833,6 +1826,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               count={filterCounts?.unreviewed ?? 0}
               active={hasGlobalFilter('unreviewed')}
               bulletColor="var(--modified-needs-review-stroke)"
+              disabled={disableGlobalFilterPills}
               onClick={() => handleGlobalFilterToggle('unreviewed')}
             />
             <FilterPill
@@ -1840,6 +1834,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               count={filterCounts?.unpublished ?? 0}
               active={hasGlobalFilter('unpublished')}
               bulletColor="var(--modified-approved-stroke)"
+              disabled={disableGlobalFilterPills}
               onClick={() => handleGlobalFilterToggle('unpublished')}
             />
             {activeColumnFilters.map((filter) => (

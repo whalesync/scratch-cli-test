@@ -350,6 +350,10 @@ export interface DiffGridResult {
     unreviewed: number;
     unpublished: number;
   };
+  focusColumnIds: {
+    unreviewed: string[];
+    unpublished: string[];
+  };
   invalidJsonFiles: InvalidJsonFileEntry[];
 }
 
@@ -1186,12 +1190,17 @@ export async function readDiffGridDataPage(
     }));
   }
 
+  const focusFilters = (opts.filters ?? []).filter((filter) => filter.scope !== 'global');
+  const focusRows = applyDiffGridFilters(rows, focusFilters);
+  const focusColumnIds = collectFocusColumnIds(focusRows, columns);
+
   return {
     rows: pagedRows,
     columns,
     total: filteredRows.length,
     summary,
     filterCounts,
+    focusColumnIds,
     invalidJsonFiles,
   };
 }
@@ -1248,6 +1257,27 @@ function applyDiffGridFilters(rows: DiffRow[], filters: DiffGridFilter[]): DiffR
   }
 
   return rows.filter((row) => filters.every((filter) => filterMatchesDiffRow(row, filter)));
+}
+
+function collectFocusColumnIds(rows: DiffRow[], columns: ColumnDefinition[]): DiffGridResult['focusColumnIds'] {
+  const unreviewed = new Set<string>();
+  const unpublished = new Set<string>();
+
+  for (const row of rows) {
+    for (const field of row.__changedFields) {
+      unreviewed.add(field);
+    }
+    for (const field of row.__unpublishedFields) {
+      unpublished.add(field);
+    }
+  }
+
+  const orderedIds = columns.map((column) => column.id);
+
+  return {
+    unreviewed: orderedIds.filter((id) => unreviewed.has(id)),
+    unpublished: orderedIds.filter((id) => unpublished.has(id)),
+  };
 }
 
 function compareSortableValues(aVal: unknown, bVal: unknown, sortOrder: 'asc' | 'desc'): number {

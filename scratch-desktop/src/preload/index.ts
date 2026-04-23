@@ -305,6 +305,7 @@ const scratchFiles = {
       invalidJson: number;
     };
     filterCounts: { unreviewed: number; unpublished: number };
+    focusColumnIds: { unreviewed: string[]; unpublished: string[] };
     invalidJsonFiles: Array<{
       filename: string;
       error: string;
