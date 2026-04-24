@@ -1,22 +1,39 @@
+/**
+ * Generic PostgreSQL connector.
+ *
+ * Uses KnexPGClient from pg-common for all data access — same client layer the
+ * Supabase connector uses, with the Supabase-specific bits (OAuth, Management
+ * API, project routing) stripped out.
+ */
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions, PostgresColumnType } from '@spinner/shared-types';
+import { connectorMetadata, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
+import { sanitizeForTableWsId } from '../../ids';
 import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
-import { PostgresClient, PostgresClientError } from './postgres-client';
 import {
-  PG_BOOLEAN_TYPES,
-  PG_DATE_TYPES,
-  PG_JSON_TYPES,
-  PG_NUMERIC_TYPES,
+  type BaseJsonTableSpec,
+  type ConnectorErrorDetails,
+  type ConnectorFile,
+  type EntityId,
+  type TablePreview,
+} from '../../types';
+import {
+  isGeneratedColumn,
+  KnexPGClient,
+  KnexPGClientError,
+  mapPgType,
   PG_TEXT_TYPES,
-  PG_TIMESTAMP_TYPES,
-  PostgresCredentials,
-} from './postgres-types';
+  POSTGRES_SYSTEM_SCHEMA_PATTERNS,
+  POSTGRES_SYSTEM_SCHEMAS,
+  TableName,
+  validateWhereFilter,
+  type InformationSchemaColumn,
+} from '../pg-common';
+import { PostgresCredentials } from './postgres-types';
 
 const READ_BATCH_SIZE = 500;
 const DEFAULT_POSTGRES_PUBLISH_BATCH_SIZE = 100;
@@ -30,82 +47,12 @@ function getPostgresPublishBatchSize(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_POSTGRES_PUBLISH_BATCH_SIZE;
 }
 
-/**
- * Map a PostgreSQL data type to a TypeBox schema and internal PostgresColumnType.
- */
-function mapPgType(
-  dataType: string,
-  udtName: string,
-  isNullable: boolean,
-): { schema: TSchema; pgType: PostgresColumnType } {
-  let schema: TSchema;
-  let pgType: PostgresColumnType;
+/** JSON Schema extension keys (from CONNECTOR_GUIDE.md). */
+const READONLY_FLAG = 'x-scratch-readonly';
+const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 
-  // Check for array types first (data_type is 'ARRAY', udt_name starts with '_')
-  if (dataType === 'ARRAY' || udtName.startsWith('_')) {
-    const elementUdtName = udtName.startsWith('_') ? udtName.slice(1) : udtName;
-    const elementMapping = mapScalarPgType(elementUdtName);
+const TITLE_COLUMN_CANDIDATES = ['name', 'title', 'display_name', 'label'];
 
-    if (elementMapping.pgType === PostgresColumnType.NUMERIC) {
-      schema = Type.Array(Type.Number());
-      pgType = PostgresColumnType.NUMERIC_ARRAY;
-    } else if (elementMapping.pgType === PostgresColumnType.BOOLEAN) {
-      schema = Type.Array(Type.Boolean());
-      pgType = PostgresColumnType.BOOLEAN_ARRAY;
-    } else {
-      schema = Type.Array(Type.String());
-      pgType = PostgresColumnType.TEXT_ARRAY;
-    }
-  } else {
-    const mapping = mapScalarPgType(udtName.length > 0 ? udtName : dataType);
-    schema = mapping.schema;
-    pgType = mapping.pgType;
-  }
-
-  if (isNullable) {
-    schema = Type.Union([schema, Type.Null()]);
-  }
-
-  return { schema, pgType };
-}
-
-/**
- * Map a scalar PostgreSQL type name to TypeBox schema and PostgresColumnType.
- */
-function mapScalarPgType(typeName: string): { schema: TSchema; pgType: PostgresColumnType } {
-  const lowerType = typeName.toLowerCase();
-
-  if (PG_NUMERIC_TYPES.has(lowerType)) {
-    return { schema: Type.Number(), pgType: PostgresColumnType.NUMERIC };
-  }
-  if (PG_BOOLEAN_TYPES.has(lowerType)) {
-    return { schema: Type.Boolean(), pgType: PostgresColumnType.BOOLEAN };
-  }
-  if (PG_TEXT_TYPES.has(lowerType)) {
-    return { schema: Type.String(), pgType: PostgresColumnType.TEXT };
-  }
-  if (PG_TIMESTAMP_TYPES.has(lowerType) || lowerType === 'timestamptz') {
-    return { schema: Type.String({ format: 'date-time' }), pgType: PostgresColumnType.TIMESTAMP };
-  }
-  if (PG_DATE_TYPES.has(lowerType)) {
-    return { schema: Type.String({ format: 'date' }), pgType: PostgresColumnType.TIMESTAMP };
-  }
-  if (PG_JSON_TYPES.has(lowerType)) {
-    return { schema: Type.Unknown(), pgType: PostgresColumnType.JSONB };
-  }
-
-  // Fallback for unknown types
-  return { schema: Type.Unknown(), pgType: PostgresColumnType.TEXT };
-}
-
-/**
- * Connector for PostgreSQL databases.
- *
- * Dynamically discovers tables from information_schema and builds TypeBox schemas.
- * This is a JSON-only connector that implements:
- * - fetchJsonTableSpec() for schema discovery
- * - pullRecordFiles() for fetching records
- */
 export class PostgresConnector extends Connector {
   readonly service = Service.POSTGRES;
   static readonly displayName = 'PostgreSQL';
@@ -131,208 +78,297 @@ export class PostgresConnector extends Connector {
     },
   });
 
-  private readonly client: PostgresClient;
+  private readonly connectionString: string;
 
   constructor(credentials: PostgresCredentials) {
     super();
-    this.client = new PostgresClient(credentials.connectionString);
+    this.connectionString = credentials.connectionString;
   }
 
   /**
-   * Test the connection by running a simple query.
+   * Run an operation with a short-lived KnexPGClient that is automatically
+   * disposed when the operation completes (or throws).
    */
+  private async withPgClient<T>(fn: (client: KnexPGClient) => Promise<T>): Promise<T> {
+    const client = new KnexPGClient(this.connectionString);
+    try {
+      return await fn(client);
+    } finally {
+      try {
+        await client.dispose();
+      } catch {
+        // Swallow dispose errors so they don't mask the original error
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Connection
+  // -------------------------------------------------------------------------
+
   async testConnection(): Promise<void> {
-    await this.client.testConnection();
+    await this.withPgClient((client) => client.testQuery());
   }
 
-  /**
-   * List all tables in the public schema.
-   */
+  // -------------------------------------------------------------------------
+  // Table discovery
+  // -------------------------------------------------------------------------
+
   async listTables(): Promise<TablePreview[]> {
-    const tables = await this.client.listTables();
+    return this.withPgClient(async (client) => {
+      const [tables, tablesWithUnique, tablesWithAutoGenPK] = await Promise.all([
+        client.findAllTablesExcludingSchemas(POSTGRES_SYSTEM_SCHEMAS, POSTGRES_SYSTEM_SCHEMA_PATTERNS),
+        client.findTablesWithUniqueColumns(POSTGRES_SYSTEM_SCHEMAS),
+        client.findTablesWithAutoGeneratedPK(POSTGRES_SYSTEM_SCHEMAS),
+      ]);
 
-    return tables.map((tableName) => ({
-      id: {
-        wsId: tableName,
-        remoteId: ['public', tableName],
-      },
-      displayName: tableName,
-      metadata: {
-        description: `Table "${tableName}" in the public schema`,
-      },
-    }));
+      return tables.map((t) => this.parseTable(t, tablesWithUnique, tablesWithAutoGenPK));
+    });
   }
 
-  /**
-   * Fetch the JSON Table Spec for a PostgreSQL table.
-   * Dynamically builds a TypeBox schema from the table's column metadata.
-   */
-  async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
-    const tableName = id.remoteId[1] ?? id.wsId;
+  private parseTable(t: TableName, tablesWithUnique: Set<string>, tablesWithAutoGenPK: Set<string>): TablePreview {
+    const tableKey = `${t.table_schema}.${t.table_name}`;
+    const hasUnique = tablesWithUnique.has(tableKey);
+    const hasAutoGenPK = tablesWithAutoGenPK.has(tableKey);
 
-    const [columns, primaryKey, foreignKeys] = await Promise.all([
-      this.client.getTableColumns(tableName),
-      this.client.getPrimaryKeyColumn(tableName),
-      this.client.getForeignKeys(tableName),
-    ]);
-
-    // Build a map from column name → linked table ID
-    const fkMap = new Map<string, string>();
-    for (const fk of foreignKeys) {
-      if (fk.foreign_table_name) {
-        const linkedTableId =
-          fk.foreign_table_schema === 'public'
-            ? fk.foreign_table_name
-            : `${fk.foreign_table_schema}.${fk.foreign_table_name}`;
-        fkMap.set(fk.column_name, linkedTableId);
-      }
-    }
-
-    const schemaProperties: Record<string, TSchema> = {};
-    let titleColumnRemoteId: string[] | undefined;
-    let slugFieldPath: string | undefined;
-
-    const titleCandidates = ['name', 'title', 'display_name', 'label'];
-
-    for (const col of columns) {
-      const isNullable = col.is_nullable === 'YES';
-      const hasDefault = col.column_default !== null;
-      const { schema } = mapPgType(col.data_type, col.udt_name, isNullable);
-
-      // Annotate foreign key columns
-      const linkedTableId = fkMap.get(col.column_name);
-      if (linkedTableId) {
-        (schema as Record<string, unknown>)[FOREIGN_KEY_OPTIONS] = { linkedTableId };
-      }
-
-      // Columns that are nullable or have a default value (including serial/identity)
-      // are not required for inserts, so mark them optional
-      schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(schema) : schema;
-
-      // Title heuristic: first text-type column matching a known name
-      if (!titleColumnRemoteId && titleCandidates.includes(col.column_name) && PG_TEXT_TYPES.has(col.udt_name)) {
-        titleColumnRemoteId = [col.column_name];
-      }
-
-      // Slug heuristic: column named "slug"
-      if (col.column_name === 'slug') {
-        slugFieldPath = 'slug';
-      }
-    }
-
-    const tableSchema = Type.Object(schemaProperties, {
-      $id: `postgres/${tableName}`,
-      title: tableName,
-    });
+    // Preserve historical wsId for public-schema tables (un-sanitized table name)
+    // so existing workbook entries continue to map to the same files. Other
+    // schemas are new territory and use the sanitized schema-qualified form.
+    const wsId =
+      t.table_schema === 'public' ? t.table_name : sanitizeForTableWsId(`${t.table_schema}__${t.table_name}`);
 
     return {
-      id,
-      slug: tableName,
-      name: tableName,
-      schema: tableSchema,
-      idColumnRemoteId: primaryKey,
-      titleColumnRemoteId,
-      slugFieldPath,
-      basePath: id.remoteId[0] ? [id.remoteId[0]] : ['public'],
-      generatedAt: new Date().toISOString(),
+      id: {
+        wsId,
+        remoteId: [t.table_schema, t.table_name],
+      },
+      displayName: t.table_name,
+      parentPath: t.table_schema,
+      ...(!hasUnique && {
+        disabled: true as const,
+        disabledReason: "This table doesn't have a unique value column (primary key).",
+      }),
+      ...(hasUnique &&
+        !hasAutoGenPK && {
+          disabledCreates: true as const,
+          disabledReason: "This table doesn't have an auto generated primary key, creates are not supported",
+        }),
+      metadata: {
+        schema: t.table_schema,
+        description: `Table "${t.table_name}" in schema "${t.table_schema}"`,
+      },
     };
   }
 
+  // -------------------------------------------------------------------------
+  // Schema
+  // -------------------------------------------------------------------------
+
+  async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
+    const [schema, tableName] = id.remoteId;
+
+    return this.withPgClient(async (client) => {
+      const [columns, pkCandidates, foreignKeys] = await Promise.all([
+        client.findAllColumnsInTable(schema, tableName),
+        client.findPrimaryColumnCandidates(schema, tableName),
+        client.findAllForeignKeysInTable(schema, tableName),
+      ]);
+
+      const primaryKey = this.pickPrimaryKey(pkCandidates, columns);
+
+      const fkMap = new Map<string, string>();
+      for (const fk of foreignKeys) {
+        if (fk.foreign_table_name) {
+          const linkedTableId =
+            fk.foreign_table_schema === 'public'
+              ? fk.foreign_table_name
+              : `${fk.foreign_table_schema}.${fk.foreign_table_name}`;
+          fkMap.set(fk.column_name, linkedTableId);
+        }
+      }
+
+      const schemaProperties: Record<string, TSchema> = {};
+      let titleColumnRemoteId: string[] | undefined;
+      let slugFieldPath: string | undefined;
+
+      for (const col of columns) {
+        const isNullable = col.is_nullable === 'YES';
+        const hasDefault = col.column_default !== null;
+        const { schema: colSchema, pgType } = mapPgType(col.data_type, col.udt_name, isNullable);
+
+        const annotated = { ...colSchema, [CONNECTOR_DATA_TYPE]: pgType } as TSchema;
+
+        if (isGeneratedColumn(col) || col.is_updatable === 'NO') {
+          (annotated as Record<string, unknown>)[READONLY_FLAG] = true;
+        }
+
+        const linkedTableId = fkMap.get(col.column_name);
+        if (linkedTableId) {
+          (annotated as Record<string, unknown>)[FOREIGN_KEY_OPTIONS] = { linkedTableId };
+        }
+
+        schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(annotated) : annotated;
+
+        if (
+          !titleColumnRemoteId &&
+          TITLE_COLUMN_CANDIDATES.includes(col.column_name) &&
+          PG_TEXT_TYPES.has(col.udt_name)
+        ) {
+          titleColumnRemoteId = [col.column_name];
+        }
+
+        if (col.column_name === 'slug') {
+          slugFieldPath = 'slug';
+        }
+      }
+
+      const tableSchema = Type.Object(schemaProperties, {
+        $id: `postgres/${schema}.${tableName}`,
+        title: tableName,
+      });
+
+      return {
+        id,
+        slug: tableName,
+        name: tableName,
+        schema: tableSchema,
+        idColumnRemoteId: primaryKey,
+        titleColumnRemoteId,
+        slugFieldPath,
+        basePath: [schema],
+        generatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
   /**
-   * Download all rows from a table as JSON files, paginated.
+   * Pick the best primary key column. Prefers a single auto-generated PK.
+   * Falls back to first PK candidate, then 'id'.
    */
+  private pickPrimaryKey(candidates: string[], columns: InformationSchemaColumn[]): string {
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+
+    if (candidates.length > 1) {
+      const colMap = new Map(columns.map((c) => [c.column_name, c]));
+      const generated = candidates.find((name) => {
+        const col = colMap.get(name);
+        return col && isGeneratedColumn(col);
+      });
+      return generated ?? candidates[0];
+    }
+
+    return 'id';
+  }
+
+  // -------------------------------------------------------------------------
+  // Pull
+  // -------------------------------------------------------------------------
+
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    options: ConnectorPullOptions,
   ): Promise<void> {
-    const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
-
-    while (true) {
-      const rows = await this.client.selectRows(tableName, READ_BATCH_SIZE, offset);
-      if (rows.length === 0) {
-        break;
-      }
-
-      offset += rows.length;
-      await callback({ files: rows as ConnectorFile[], connectorProgress: { nextOffset: offset } });
-
-      if (rows.length < READ_BATCH_SIZE) {
-        break;
-      }
+    const rawFilter = options.filter?.trim() || undefined;
+    if (rawFilter) {
+      validateWhereFilter(rawFilter);
     }
+
+    const [schema, tableName] = tableSpec.id.remoteId;
+    return this.withPgClient(async (client) => {
+      const pk = tableSpec.idColumnRemoteId;
+      let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
+
+      while (true) {
+        const rows = await client.selectAll(schema, tableName, undefined, pk, READ_BATCH_SIZE, offset, rawFilter);
+        if (rows.length === 0) break;
+
+        offset += rows.length;
+        await callback({ files: rows as ConnectorFile[], connectorProgress: { nextOffset: offset } });
+
+        if (rows.length < READ_BATCH_SIZE) break;
+      }
+    });
   }
 
-  /**
-   * Fetch specific rows by primary key values.
-   */
   async pullRecordFilesByIds(
     tableSpec: BaseJsonTableSpec,
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
-    const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    const pkColumn = tableSpec.idColumnRemoteId || 'id';
+    const [schema, tableName] = tableSpec.id.remoteId;
+    return this.withPgClient(async (client) => {
+      const pk = tableSpec.idColumnRemoteId;
 
-    for (let i = 0; i < ids.length; i += READ_BATCH_SIZE) {
-      const batch = ids.slice(i, i + READ_BATCH_SIZE);
-      const rows = await this.client.selectByIds(tableName, pkColumn, batch);
-      if (rows.length > 0) {
-        await callback({ files: rows as ConnectorFile[] });
+      for (let i = 0; i < ids.length; i += READ_BATCH_SIZE) {
+        const batch = ids.slice(i, i + READ_BATCH_SIZE);
+        const rows = await client.selectByIds(schema, tableName, ['*'], pk, batch);
+        if (rows.length > 0) {
+          await callback({ files: rows as ConnectorFile[] });
+        }
       }
-    }
+    });
   }
 
-  /**
-   * Get the batch size for CRUD operations.
-   */
+  // -------------------------------------------------------------------------
+  // Capabilities
+  // -------------------------------------------------------------------------
+
+  supportsFilters(): boolean {
+    return true;
+  }
+
+  supportsFieldSelection(): boolean {
+    return true;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getBatchSize(_operation: 'create' | 'update' | 'delete'): number {
     return getPostgresPublishBatchSize();
   }
 
-  /**
-   * Create records by inserting rows.
-   */
+  // -------------------------------------------------------------------------
+  // Create / Update / Delete
+  // -------------------------------------------------------------------------
+
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
-    const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    const results = await this.client.insertRows(tableName, files as Record<string, unknown>[]);
-    return results as ConnectorFile[];
+    const [schema, tableName] = tableSpec.id.remoteId;
+    return this.withPgClient(async (client) => {
+      const pk = tableSpec.idColumnRemoteId;
+      return client.insertMany(schema, tableName, pk, files);
+    });
   }
 
-  /**
-   * Update records by ID.
-   */
   async updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<void> {
-    const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    const pkColumn = tableSpec.idColumnRemoteId || 'id';
-    const updates = files.map((file, index) => {
-      const data = { ...(changedFields?.[index] ?? file) };
-      delete data[pkColumn];
-      return { id: file[pkColumn], data };
-    });
+    const [schema, tableName] = tableSpec.id.remoteId;
+    return this.withPgClient(async (client) => {
+      const pk = tableSpec.idColumnRemoteId;
+      const records = files.map((file, index) => {
+        const data = { ...(changedFields?.[index] ?? file) };
+        delete data[pk];
+        return { id: file[pk] as string | number, data };
+      });
 
-    await this.client.updateRows(tableName, pkColumn, updates);
+      await client.updateMany(schema, tableName, pk, records);
+    });
   }
 
-  /**
-   * Delete records by primary key.
-   */
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    const tableName = tableSpec.id.remoteId[1] ?? tableSpec.id.wsId;
-    const pkColumn = tableSpec.idColumnRemoteId || 'id';
-    await this.client.deleteRows(
-      tableName,
-      pkColumn,
-      files.map((file) => file[pkColumn]),
-    );
+    const [schema, tableName] = tableSpec.id.remoteId;
+    return this.withPgClient(async (client) => {
+      const pk = tableSpec.idColumnRemoteId;
+      const ids = files.map((file) => file[pk] as string | number);
+      if (ids.length > 0) {
+        await client.deleteMany(schema, tableName, ids, pk);
+      }
+    });
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
@@ -340,40 +376,65 @@ export class PostgresConnector extends Connector {
     return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, titlePath);
   }
 
-  /**
-   * Extract error details from PostgreSQL-specific errors.
-   */
+  // -------------------------------------------------------------------------
+  // Error handling
+  // -------------------------------------------------------------------------
+
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    if (error instanceof PostgresClientError) {
+    if (error instanceof KnexPGClientError) {
       return {
         userFriendlyMessage: error.message,
         description: error.message,
-        additionalContext: {
-          code: error.code,
-        },
+        additionalContext: { code: error.code },
       };
     }
 
-    // Handle pg library errors with error codes
     if (error && typeof error === 'object' && 'code' in error) {
       const pgError = error as { code: string; message: string; detail?: string };
-      const userMessage = this.getPgErrorMessage(pgError.code, pgError.message);
-
       return {
-        userFriendlyMessage: userMessage,
+        userFriendlyMessage: this.getPgErrorMessage(pgError.code, pgError.message),
         description: pgError.detail ?? pgError.message,
-        additionalContext: {
-          code: pgError.code,
-        },
+        additionalContext: { code: pgError.code },
       };
+    }
+
+    if (error instanceof Error && error.name === 'KnexTimeoutError') {
+      return {
+        userFriendlyMessage: 'Connection to the database timed out. Please check your connection settings.',
+        description: error.message,
+      };
+    }
+
+    if (error instanceof Error) {
+      const msg = error.message;
+
+      if (msg.startsWith('Knex: Timeout acquiring a connection')) {
+        return {
+          userFriendlyMessage:
+            'Could not connect to the database. Please verify the host and port in your connection string.',
+          description: msg,
+        };
+      }
+
+      if (msg.includes('getaddrinfo ENOTFOUND')) {
+        return {
+          userFriendlyMessage:
+            'Could not resolve the database hostname. If your password contains special characters, they must be URL-encoded.',
+          description: msg,
+        };
+      }
+
+      if (msg.includes('SASL')) {
+        return {
+          userFriendlyMessage: 'Authentication failed. The password appears empty or malformed.',
+          description: msg,
+        };
+      }
     }
 
     return this.fallbackErrorDetails(error);
   }
 
-  /**
-   * Map common PostgreSQL error codes to user-friendly messages.
-   */
   private getPgErrorMessage(code: string, fallbackMessage: string): string {
     switch (code) {
       case '28P01':
@@ -399,11 +460,12 @@ export class PostgresConnector extends Connector {
     }
   }
 
-  /**
-   * Disconnect from the database. Should be called when the connector is no longer needed.
-   */
+  // -------------------------------------------------------------------------
+  // Cleanup
+  // -------------------------------------------------------------------------
+
   async disconnect(): Promise<void> {
-    await this.client.disconnect();
+    // No-op: connections are automatically disposed after each operation via withPgClient()
   }
 }
 

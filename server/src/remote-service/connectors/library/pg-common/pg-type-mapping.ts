@@ -1,0 +1,87 @@
+/**
+ * PostgreSQL data type → TypeBox schema mapping.
+ * Shared by all Knex-based PG connectors.
+ */
+import { Type, type TSchema } from '@sinclair/typebox';
+import { PostgresColumnType } from '@spinner/shared-types';
+
+export const PG_NUMERIC_TYPES = new Set([
+  'integer',
+  'bigint',
+  'smallint',
+  'serial',
+  'bigserial',
+  'numeric',
+  'decimal',
+  'real',
+  'double precision',
+  'float',
+  'float4',
+  'float8',
+  'int2',
+  'int4',
+  'int8',
+]);
+
+export const PG_BOOLEAN_TYPES = new Set(['boolean', 'bool']);
+
+export const PG_TEXT_TYPES = new Set(['text', 'varchar', 'char', 'character varying', 'character', 'uuid', 'citext']);
+
+export const PG_TIMESTAMP_TYPES = new Set([
+  'timestamp',
+  'timestamp without time zone',
+  'timestamp with time zone',
+  'timestamptz',
+]);
+
+export const PG_DATE_TYPES = new Set(['date']);
+
+export const PG_JSON_TYPES = new Set(['json', 'jsonb']);
+
+/** Map a scalar PostgreSQL type name to a TypeBox schema and PostgresColumnType. */
+export function mapScalarPgType(typeName: string): { schema: TSchema; pgType: PostgresColumnType } {
+  const t = typeName.toLowerCase();
+  if (PG_NUMERIC_TYPES.has(t)) return { schema: Type.Number(), pgType: PostgresColumnType.NUMERIC };
+  if (PG_BOOLEAN_TYPES.has(t)) return { schema: Type.Boolean(), pgType: PostgresColumnType.BOOLEAN };
+  if (PG_TEXT_TYPES.has(t)) return { schema: Type.String(), pgType: PostgresColumnType.TEXT };
+  if (PG_TIMESTAMP_TYPES.has(t))
+    return { schema: Type.String({ format: 'date-time' }), pgType: PostgresColumnType.TIMESTAMP };
+  if (PG_DATE_TYPES.has(t)) return { schema: Type.String({ format: 'date' }), pgType: PostgresColumnType.TIMESTAMP };
+  if (PG_JSON_TYPES.has(t)) return { schema: Type.Unknown(), pgType: PostgresColumnType.JSONB };
+  return { schema: Type.Unknown(), pgType: PostgresColumnType.TEXT };
+}
+
+/** Map a PostgreSQL data type (handling array types) to a TypeBox schema and PostgresColumnType. */
+export function mapPgType(
+  dataType: string,
+  udtName: string,
+  isNullable: boolean,
+): { schema: TSchema; pgType: PostgresColumnType } {
+  let schema: TSchema;
+  let pgType: PostgresColumnType;
+
+  if (dataType === 'ARRAY' || udtName.startsWith('_')) {
+    const elementUdtName = udtName.startsWith('_') ? udtName.slice(1) : udtName;
+    const elementMapping = mapScalarPgType(elementUdtName);
+    if (elementMapping.pgType === PostgresColumnType.NUMERIC) {
+      schema = Type.Array(Type.Number());
+      pgType = PostgresColumnType.NUMERIC_ARRAY;
+    } else if (elementMapping.pgType === PostgresColumnType.BOOLEAN) {
+      schema = Type.Array(Type.Boolean());
+      pgType = PostgresColumnType.BOOLEAN_ARRAY;
+    } else {
+      schema = Type.Array(Type.String());
+      pgType = PostgresColumnType.TEXT_ARRAY;
+    }
+  } else {
+    const mapping = mapScalarPgType(udtName.length > 0 ? udtName : dataType);
+    schema = mapping.schema;
+    pgType = mapping.pgType;
+  }
+
+  if (isNullable) {
+    schema = Type.Union([schema, Type.Null()]);
+  }
+
+  return { schema, pgType };
+}

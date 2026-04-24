@@ -9,7 +9,7 @@
  * Data access uses a dedicated PostgreSQL role created during setup.
  */
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, PostgresColumnType, type ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -28,9 +28,11 @@ import {
   isGeneratedColumn,
   KnexPGClient,
   KnexPGClientError,
+  mapPgType,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
   SUPABASE_SYSTEM_SCHEMAS,
   TableName,
+  validateWhereFilter,
   type InformationSchemaColumn,
 } from '../pg-common';
 import { SupabaseApiError } from './supabase-api-client';
@@ -40,213 +42,9 @@ import { SupabaseCredentials, SupabaseProjectConfig } from './supabase-types';
 
 const READ_BATCH_SIZE = 500;
 
-// ---------------------------------------------------------------------------
-// SQL filter sanitization
-// ---------------------------------------------------------------------------
-
-/**
- * SQL keywords that must NEVER appear in a user-provided WHERE filter.
- * Matched as whole words (case-insensitive) to prevent injection attacks.
- */
-const DANGEROUS_SQL_KEYWORDS = [
-  'SELECT',
-  'INSERT',
-  'UPDATE',
-  'DELETE',
-  'DROP',
-  'ALTER',
-  'CREATE',
-  'TRUNCATE',
-  'GRANT',
-  'REVOKE',
-  'EXECUTE',
-  'COPY',
-  'SET',
-  'EXPLAIN',
-  'VACUUM',
-  'REINDEX',
-  'COMMENT',
-  'LOCK',
-  'NOTIFY',
-  'LISTEN',
-  'UNLISTEN',
-  'LOAD',
-  'DO',
-  'CALL',
-  'IMPORT',
-  'EXPORT',
-  'RAISE',
-  'PERFORM',
-  'RETURNING',
-  'INTO',
-  'WITH',
-  'UNION',
-  'EXCEPT',
-  'INTERSECT',
-  'VALUES',
-  'TABLE',
-];
-
-/**
- * Dangerous PostgreSQL functions that could cause side-effects or data exfiltration.
- * Matched case-insensitively followed by an opening parenthesis.
- */
-const DANGEROUS_FUNCTIONS = [
-  'pg_sleep',
-  'pg_read_file',
-  'pg_read_binary_file',
-  'pg_ls_dir',
-  'pg_stat_file',
-  'pg_terminate_backend',
-  'pg_cancel_backend',
-  'pg_reload_conf',
-  'pg_rotate_logfile',
-  'lo_import',
-  'lo_export',
-  'lo_unlink',
-  'dblink',
-  'dblink_exec',
-  'dblink_connect',
-  'copy_to',
-  'copy_from',
-  'query_to_xml',
-  'query_to_xml_and_xmlschema',
-  'query_to_json',
-  'currval',
-  'nextval',
-  'setval',
-  'txid_current',
-  'set_config',
-  'current_setting',
-  'pg_advisory_lock',
-  'pg_advisory_unlock',
-  'pg_advisory_xact_lock',
-  'inet_server_addr',
-  'inet_server_port',
-];
-
-const DANGEROUS_KEYWORDS_PATTERN = new RegExp(`\\b(${DANGEROUS_SQL_KEYWORDS.join('|')})\\b`, 'i');
-const DANGEROUS_FUNCTIONS_PATTERN = new RegExp(`\\b(${DANGEROUS_FUNCTIONS.join('|')})\\s*\\(`, 'i');
-
-/**
- * Validate that a user-provided SQL filter expression is safe for use in a WHERE clause.
- *
- * Allows: column comparisons, AND/OR/NOT, IS NULL, IN (...), BETWEEN, LIKE/ILIKE,
- *         string/number literals, parenthesized grouping, boolean TRUE/FALSE.
- *
- * Rejects: DDL/DML statements, subqueries, dangerous functions, multi-statement injection,
- *          SQL comments, and escape sequences.
- *
- * @throws {KnexPGClientError} if the filter contains dangerous SQL constructs.
- */
-function validateWhereFilter(filter: string): void {
-  // Block semicolons (multi-statement injection)
-  if (filter.includes(';')) {
-    throw new KnexPGClientError('Filter contains invalid character: ";"', 'INVALID_FILTER');
-  }
-
-  // Block SQL comments
-  if (filter.includes('--') || filter.includes('/*')) {
-    throw new KnexPGClientError('Filter must not contain SQL comments', 'INVALID_FILTER');
-  }
-
-  // Block dollar-quoting (PostgreSQL alternative string syntax that can bypass keyword checks)
-  if (filter.includes('$$') || /\$[a-zA-Z_]\w*\$/.test(filter)) {
-    throw new KnexPGClientError('Filter must not contain dollar-quoting', 'INVALID_FILTER');
-  }
-
-  // Block dangerous SQL keywords
-  if (DANGEROUS_KEYWORDS_PATTERN.test(filter)) {
-    throw new KnexPGClientError('Filter contains disallowed SQL keyword', 'INVALID_FILTER');
-  }
-
-  // Block dangerous functions
-  if (DANGEROUS_FUNCTIONS_PATTERN.test(filter)) {
-    throw new KnexPGClientError('Filter contains disallowed SQL function', 'INVALID_FILTER');
-  }
-}
-
 /** JSON Schema extension keys (from CONNECTOR_GUIDE.md). */
 const READONLY_FLAG = 'x-scratch-readonly';
 const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
-
-// ---------------------------------------------------------------------------
-// PostgreSQL type mapping (same logic as the existing PostgresConnector)
-// ---------------------------------------------------------------------------
-
-const PG_NUMERIC_TYPES = new Set([
-  'integer',
-  'bigint',
-  'smallint',
-  'serial',
-  'bigserial',
-  'numeric',
-  'decimal',
-  'real',
-  'double precision',
-  'float',
-  'float4',
-  'float8',
-  'int2',
-  'int4',
-  'int8',
-]);
-const PG_BOOLEAN_TYPES = new Set(['boolean', 'bool']);
-const PG_TEXT_TYPES = new Set(['text', 'varchar', 'char', 'character varying', 'character', 'uuid', 'citext']);
-const PG_TIMESTAMP_TYPES = new Set([
-  'timestamp',
-  'timestamp without time zone',
-  'timestamp with time zone',
-  'timestamptz',
-]);
-const PG_DATE_TYPES = new Set(['date']);
-const PG_JSON_TYPES = new Set(['json', 'jsonb']);
-
-function mapScalarPgType(typeName: string): { schema: TSchema; pgType: PostgresColumnType } {
-  const t = typeName.toLowerCase();
-  if (PG_NUMERIC_TYPES.has(t)) return { schema: Type.Number(), pgType: PostgresColumnType.NUMERIC };
-  if (PG_BOOLEAN_TYPES.has(t)) return { schema: Type.Boolean(), pgType: PostgresColumnType.BOOLEAN };
-  if (PG_TEXT_TYPES.has(t)) return { schema: Type.String(), pgType: PostgresColumnType.TEXT };
-  if (PG_TIMESTAMP_TYPES.has(t))
-    return { schema: Type.String({ format: 'date-time' }), pgType: PostgresColumnType.TIMESTAMP };
-  if (PG_DATE_TYPES.has(t)) return { schema: Type.String({ format: 'date' }), pgType: PostgresColumnType.TIMESTAMP };
-  if (PG_JSON_TYPES.has(t)) return { schema: Type.Unknown(), pgType: PostgresColumnType.JSONB };
-  return { schema: Type.Unknown(), pgType: PostgresColumnType.TEXT };
-}
-
-function mapPgType(
-  dataType: string,
-  udtName: string,
-  isNullable: boolean,
-): { schema: TSchema; pgType: PostgresColumnType } {
-  let schema: TSchema;
-  let pgType: PostgresColumnType;
-
-  if (dataType === 'ARRAY' || udtName.startsWith('_')) {
-    const elementUdtName = udtName.startsWith('_') ? udtName.slice(1) : udtName;
-    const elementMapping = mapScalarPgType(elementUdtName);
-    if (elementMapping.pgType === PostgresColumnType.NUMERIC) {
-      schema = Type.Array(Type.Number());
-      pgType = PostgresColumnType.NUMERIC_ARRAY;
-    } else if (elementMapping.pgType === PostgresColumnType.BOOLEAN) {
-      schema = Type.Array(Type.Boolean());
-      pgType = PostgresColumnType.BOOLEAN_ARRAY;
-    } else {
-      schema = Type.Array(Type.String());
-      pgType = PostgresColumnType.TEXT_ARRAY;
-    }
-  } else {
-    const mapping = mapScalarPgType(udtName.length > 0 ? udtName : dataType);
-    schema = mapping.schema;
-    pgType = mapping.pgType;
-  }
-
-  if (isNullable) {
-    schema = Type.Union([schema, Type.Null()]);
-  }
-
-  return { schema, pgType };
-}
 
 // ---------------------------------------------------------------------------
 // Connector

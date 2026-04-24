@@ -62,6 +62,12 @@ export function isGeneratedColumn(column: InformationSchemaColumn): boolean {
   );
 }
 
+/** Standard PostgreSQL system schemas that should be excluded from table discovery. */
+export const POSTGRES_SYSTEM_SCHEMAS = ['information_schema', 'pg_catalog', 'pg_toast'];
+
+/** LIKE patterns for additional standard PostgreSQL system schema exclusion (e.g. pg_temp_*). */
+export const POSTGRES_SYSTEM_SCHEMA_PATTERNS = ['pg\\_%'];
+
 /** Supabase internal schemas that should be excluded from table discovery. */
 export const SUPABASE_SYSTEM_SCHEMAS = [
   'auth',
