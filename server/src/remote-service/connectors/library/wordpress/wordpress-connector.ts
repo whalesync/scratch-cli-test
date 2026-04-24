@@ -335,10 +335,45 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
       const commonError = extractCommonDetailsFromAxiosError(this, error);
       if (commonError) return commonError;
 
+      const responseData = error.response?.data as Record<string, unknown> | undefined;
+
+      // WordPress 500: surface the underlying PHP/plugin error from the response body
+      if (error.response?.status === 500) {
+        const phpError = (responseData?.data as Record<string, unknown> | undefined)?.error as
+          | Record<string, unknown>
+          | undefined;
+        const phpMessage = typeof phpError?.message === 'string' ? phpError.message : null;
+        const phpFile = typeof phpError?.file === 'string' ? phpError.file : '';
+        const phpLine = typeof phpError?.line === 'number' ? phpError.line : '';
+        const remoteDetail = phpMessage
+          ? `${phpMessage} (${phpFile}:${String(phpLine)})`
+          : extractErrorMessageFromAxiosError(this.service, error, ['message']);
+        return {
+          userFriendlyMessage:
+            'WordPress returned a server error — this is likely caused by a plugin conflict or PHP error on the site.',
+          description: remoteDetail,
+        };
+      }
+
+      // WordPress permission errors: status=any rejected or context=edit forbidden
+      const wpCode = typeof responseData?.code === 'string' ? responseData.code : null;
+      if (
+        wpCode === 'rest_forbidden_context' ||
+        wpCode === 'rest_forbidden_status' ||
+        wpCode === 'rest_invalid_param'
+      ) {
+        const remoteMessage = typeof responseData?.message === 'string' ? responseData.message : undefined;
+        return {
+          userFriendlyMessage:
+            'WordPress rejected the request due to insufficient permissions. Pages, Categories, and Tags require Editor or Administrator role.',
+          description: remoteMessage,
+        };
+      }
+
       const message = extractErrorMessageFromAxiosError(this.service, error, ['message']);
       return {
-        userFriendlyMessage: `Wordpress returned an error: ${message}`,
-        description: `Wordpress returned HTTP ${error.status}: ${message}`,
+        userFriendlyMessage: `WordPress returned an error: ${message}`,
+        description: `WordPress returned HTTP ${String(error.response?.status)}: ${message}`,
       };
     }
 
