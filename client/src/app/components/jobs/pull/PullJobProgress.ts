@@ -28,6 +28,9 @@ export type PullFilesProgress = {
   folders: FolderProgress[];
 };
 
+import type { FolderError } from '@spinner/shared-types';
+export type { FolderError } from '@spinner/shared-types';
+
 // Pull linked folder files progress (single folder from pull-linked-folder-files job)
 export type PullLinkedFolderFilesProgress = {
   totalFiles: number;
@@ -47,6 +50,8 @@ export type PullLinkedFolderFilesProgress = {
   updatedCount?: number;
   deletedCount?: number;
   hasDirtyDiscoveredDeletes?: boolean;
+  /** Per-folder errors populated when one or more folders fail. */
+  folderErrors?: Record<string, FolderError>;
 };
 
 // Combined type that can be any of these

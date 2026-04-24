@@ -4,6 +4,12 @@
  * Each value corresponds to the `type` field in job definitions
  * (server/src/worker/jobs/job-definitions/).
  */
+export type FolderError = {
+  folderName: string;
+  message: string;
+  details?: string;
+};
+
 export const JobType = {
   PullLinkedFolderFiles: 'pull-linked-folder-files',
   RefreshRecords: 'refresh-records',

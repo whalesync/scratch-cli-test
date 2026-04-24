@@ -1,5 +1,11 @@
 import type { PrismaClient } from '@prisma/client';
-import { type ConnectorPullOptions, DataFolderId, JobType, type WorkbookId } from '@spinner/shared-types';
+import {
+  type ConnectorPullOptions,
+  DataFolderId,
+  type FolderError,
+  JobType,
+  type WorkbookId,
+} from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
@@ -38,6 +44,8 @@ export type PullLinkedFolderFilesPublicProgress = {
   createdCount: number;
   updatedCount: number;
   deletedCount: number;
+  /** Per-folder errors keyed by folderId. Populated when a folder fails in Phase 1 or Phase 2. */
+  folderErrors?: Record<string, FolderError>;
 };
 
 export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
@@ -544,13 +552,22 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         jobProgress.folderFetchStatus[folderId] = 'failed';
         pullStats.failed = true;
 
+        const phase1ErrorDetails = folderCtx.connector.extractConnectorErrorDetails(error);
+
         WSLogger.error({
           source: LOG_SOURCE,
           message: 'Phase 1 fetch failed for folder',
           workbookId: folderCtx.dataFolder.workbookId,
           dataFolderId: folderId,
-          errorDetails: folderCtx.connector.extractConnectorErrorDetails(error),
+          errorDetails: phase1ErrorDetails,
         });
+
+        publicProgress.folderErrors = publicProgress.folderErrors ?? {};
+        publicProgress.folderErrors[folderId] = {
+          folderName: folderCtx.dataFolder.name,
+          message: phase1ErrorDetails.userFriendlyMessage,
+          details: phase1ErrorDetails.description,
+        };
 
         // Clear the lock so the folder can be re-pulled
         await this.prisma.dataFolder.update({
@@ -564,7 +581,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           data: {
             entityId: folderId,
             source: 'job',
-            message: 'Pull failed for data folder',
+            message: phase1ErrorDetails.userFriendlyMessage,
             jobId,
           },
         });
@@ -654,13 +671,22 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
         pullStats.failed = true;
 
+        const phase2ErrorDetails = folderCtx.connector.extractConnectorErrorDetails(error);
+
         WSLogger.error({
           source: LOG_SOURCE,
           message: 'Failed to process folder in Phase 2',
           workbookId: folderCtx.dataFolder.workbookId,
           dataFolderId: folderCtx.dataFolder.id,
-          errorDetails: folderCtx.connector.extractConnectorErrorDetails(error),
+          errorDetails: phase2ErrorDetails,
         });
+
+        publicProgress.folderErrors = publicProgress.folderErrors ?? {};
+        publicProgress.folderErrors[folderCtx.dataFolder.id] = {
+          folderName: folderCtx.dataFolder.name,
+          message: phase2ErrorDetails.userFriendlyMessage,
+          details: phase2ErrorDetails.description,
+        };
 
         await this.prisma.dataFolder.update({
           where: { id: folderCtx.dataFolder.id },
@@ -672,7 +698,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           data: {
             entityId: folderCtx.dataFolder.id,
             source: 'job',
-            message: 'Pull failed for data folder',
+            message: phase2ErrorDetails.userFriendlyMessage,
             jobId,
           },
         });

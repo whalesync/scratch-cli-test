@@ -1,11 +1,13 @@
 import { getTerminalTableStatus } from '@/app/components/jobs/job-utils';
 import { TableStatus } from '@/app/components/jobs/publish/PublishJobProgress';
 import {
+  FolderError,
   PullProgress,
   isPullFilesProgress,
   isPullLinkedFolderFilesProgress,
 } from '@/app/components/jobs/pull/PullJobProgress';
 import { SyncStatus } from '@/app/components/jobs/SyncStatus/sync-status';
+import { Text13Regular } from '@/app/components/base/text';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { JobEntity } from '@/types/server-entities/job';
 import { Alert, Stack } from '@mantine/core';
@@ -29,6 +31,8 @@ export const PullJobProgressDisplay: FC<Props> = (props) => {
 
   // Handle pull linked folder files progress (single folder)
   if (isPullLinkedFolderFilesProgress(publicProgress)) {
+    const folderErrors = publicProgress.folderErrors ? Object.entries(publicProgress.folderErrors) : [];
+
     return (
       <Stack gap="xl">
         <Stack gap="md">
@@ -47,7 +51,28 @@ export const PullJobProgressDisplay: FC<Props> = (props) => {
             </Alert>
           )}
         </Stack>
-        {failedReason && (
+
+        {folderErrors.map(([folderId, folderError]: [string, FolderError]) => (
+          <Stack key={folderId} gap="xs">
+            <SyncStatus
+              tableName={folderError.folderName}
+              connector={publicProgress.connector}
+              doneCount={0}
+              status="failed"
+              direction="left"
+            />
+            <Alert icon={<AlertCircle size={16} />} color="red" p="xs">
+              <Text13Regular>{folderError.message}</Text13Regular>
+              {folderError.details && (
+                <Text13Regular c="dimmed" mt={4}>
+                  {folderError.details}
+                </Text13Regular>
+              )}
+            </Alert>
+          </Stack>
+        ))}
+
+        {failedReason && folderErrors.length === 0 && (
           <Alert icon={<AlertCircle size={16} />} title="Pull Failed" color="red" mt="md">
             {failedReason}
           </Alert>

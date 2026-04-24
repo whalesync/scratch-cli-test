@@ -1307,6 +1307,9 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
   const createdCount = (progress.createdCount as number | undefined) ?? createdPaths.length;
   const updatedCount = (progress.updatedCount as number | undefined) ?? updatedPaths.length;
   const deletedCount = (progress.deletedCount as number | undefined) ?? deletedPaths.length;
+  const folderErrors = progress.folderErrors as Record<string, { folderName: string; message: string; details?: string }> | undefined;
+  const folderErrorEntries = folderErrors ? Object.entries(folderErrors) : [];
+
   if (!folderName && totalFiles === undefined) return null;
 
   const affectedFiles = collectAffectedFiles([{ createdPaths, updatedPaths, deletedPaths }]);
@@ -1335,6 +1338,23 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
             <Table.Td>{totalFiles ?? 0}</Table.Td>
             <Table.Td>{status ?? '-'}</Table.Td>
           </Table.Tr>
+          {folderErrorEntries.map(([folderId, folderError]) => (
+            <Table.Tr key={folderId}>
+              <Table.Td>{folderError.folderName}</Table.Td>
+              <Table.Td>{connector ?? '-'}</Table.Td>
+              <Table.Td colSpan={deletedCount > 0 ? 4 : 3}>
+                <Stack gap={2}>
+                  <Text13Regular c="var(--mantine-color-red-6)">{folderError.message}</Text13Regular>
+                  {folderError.details && (
+                    <Text13Regular c="dimmed">{folderError.details}</Text13Regular>
+                  )}
+                </Stack>
+              </Table.Td>
+              <Table.Td>
+                <Text13Regular c="var(--mantine-color-red-6)">failed</Text13Regular>
+              </Table.Td>
+            </Table.Tr>
+          ))}
         </Table.Tbody>
       </Table>
       <AffectedFilesTable files={affectedFiles} />

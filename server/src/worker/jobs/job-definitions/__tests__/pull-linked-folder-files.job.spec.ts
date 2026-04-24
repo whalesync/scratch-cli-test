@@ -560,7 +560,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             type: 'job-failed',
             data: expect.objectContaining({
               entityId: 'dfld_123',
-              message: 'Pull failed for data folder',
+              message: 'An error occurred',
             }),
           }),
         );
