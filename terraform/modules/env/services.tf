@@ -313,7 +313,7 @@ resource "google_cloud_run_v2_service" "api_service" {
             cpu    = var.opentelemetry_collector_cpu_limit
             memory = var.opentelemetry_collector_memory_limit
           }
-          cpu_idle          = false
+          cpu_idle          = true
           startup_cpu_boost = true
         }
 
