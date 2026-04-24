@@ -284,7 +284,9 @@ describeIfPostgres(
           const schemaDir = path.join(connDir, "public");
           const tableDirs = listVisibleDirs(schemaDir);
           expect(tableDirs).toContain("integration_blog_posts");
-          // Products table has no records, so its directory is not created on disk
+          // Empty tables also get a materialized directory so users can create
+          // new records into them.
+          expect(tableDirs).toContain("integration_products");
         } catch (err) {
           hasFailed = true;
           throw err;
@@ -329,7 +331,7 @@ describeIfPostgres(
         }
       });
 
-      it("should not create a local directory for the empty products table", () => {
+      it("should create an empty local directory for the empty products table", () => {
         try {
           const marker = YAML.parse(
             fs.readFileSync(
@@ -345,8 +347,11 @@ describeIfPostgres(
             "integration_products",
           );
 
-          // Empty tables have no records to write, so no directory is created
-          expect(fs.existsSync(productsDir)).toBe(false);
+          // Empty data folders are materialized as empty directories so users
+          // can create new records in them locally.
+          expect(fs.existsSync(productsDir)).toBe(true);
+          expect(fs.statSync(productsDir).isDirectory()).toBe(true);
+          expect(fs.readdirSync(productsDir)).toHaveLength(0);
         } catch (err) {
           hasFailed = true;
           throw err;

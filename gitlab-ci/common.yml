@@ -111,6 +111,7 @@ include:
     - experimental/**/*
     - scratch-git-2/**/*
     - scratch-git-tests/**/*
+    - scratch-cli-tests/**/*
     - scripts/**/*
     - "*"
     - docs/**/*
