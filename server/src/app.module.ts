@@ -13,6 +13,7 @@ import { DbModule } from './db/db.module';
 import { DesktopReleaseModule } from './desktop-release/desktop-release.module';
 import { DevToolsModule } from './dev-tools/dev-tools.module';
 import { DiscoverModule } from './discover/discover.module';
+import { EmailModule } from './email/email.module';
 import { ExperimentsModule } from './experiments/experiments.module';
 import { HealthModule } from './health/health.module';
 import { ApiRequestMetricsInterceptor } from './interceptors/api-request-metrics.interceptor';
@@ -64,6 +65,7 @@ import { WorkerModule } from './worker/workers.module';
     SyncModule,
     PaymentModule,
     SlackNotificationModule,
+    EmailModule,
     WorkerEnqueuerModule,
     JobModule,
     PublishPlanModule,

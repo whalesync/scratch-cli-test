@@ -13,6 +13,7 @@ import {
   FolderSyncIcon,
   LayoutGridIcon,
   ListChecksIcon,
+  MailIcon,
   UserIcon,
   UsersIcon,
   WrenchIcon,
@@ -96,6 +97,12 @@ const devNavItems: NavItem[] = [
     label: 'Waitlist',
     icon: ListChecksIcon,
     href: '/settings/dev/waitlist',
+  },
+  {
+    id: 'email',
+    label: 'Email Testing',
+    icon: MailIcon,
+    href: '/settings/dev/email',
   },
 ];
 

@@ -3,6 +3,7 @@ import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ClerkModule } from 'src/clerk/clerk.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { EmailModule } from 'src/email/email.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
@@ -44,6 +45,7 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     ScratchGitModule,
     PublishPlanModule,
     WorkbookEventModule,
+    EmailModule,
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
   providers: [

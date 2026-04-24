@@ -39,6 +39,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { EmailService } from 'src/email/email.service';
 import { getLastestExpiringSubscription } from 'src/payment/helpers';
 import { getPlanTypeFromString } from 'src/payment/plans';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -80,6 +81,7 @@ export class DevToolsController {
     private readonly jobService: JobService,
     private readonly scratchGitClient: ScratchGitClient,
     private readonly slackNotificationService: SlackNotificationService,
+    private readonly emailService: EmailService,
   ) {}
 
   @Post('users/change-organization')
@@ -569,5 +571,31 @@ export class DevToolsController {
     if (adminUser) {
       await this.slackNotificationService.sendMessage(SlackFormatters.waitlistUserApproved(targetUser, adminUser));
     }
+
+    if (targetUser.email) {
+      void this.emailService.sendWaitlistApproved({ to: targetUser.email });
+    }
+  }
+
+  /* Email testing */
+  @Post('email/send-test')
+  async sendTestEmail(
+    @Body() body: { templateId: string; to: string; dynamicTemplateData: Record<string, string> },
+    @Req() req: RequestWithUser,
+  ): Promise<{ success: true }> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can send test emails');
+    }
+
+    if (!body.templateId || !body.to) {
+      throw new BadRequestException('templateId and to are required');
+    }
+
+    await this.emailService.sendTestEmail({
+      to: body.to,
+      templateId: body.templateId,
+      dynamicTemplateData: body.dynamicTemplateData ?? {},
+    });
+    return { success: true };
   }
 }

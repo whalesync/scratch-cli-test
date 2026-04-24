@@ -4,6 +4,7 @@ import { DbModule } from '../db/db.module';
 
 import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
+import { EmailModule } from 'src/email/email.module';
 import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { PaymentModule } from 'src/payment/payment.module';
@@ -26,6 +27,7 @@ import { UsersService } from './users.service';
     ExperimentsModule,
     PaymentModule,
     SlackNotificationModule,
+    EmailModule,
     AuditLogModule,
   ],
   exports: [UsersService, SubscriptionService],

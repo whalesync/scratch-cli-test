@@ -106,6 +106,24 @@ export const devToolsApi = {
     }
   },
 
+  sendTestEmail: async (
+    templateId: string,
+    to: string,
+    dynamicTemplateData: Record<string, string>,
+  ): Promise<{ success: true }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.post<{ success: true }>('/dev-tools/email/send-test', {
+        templateId,
+        to,
+        dynamicTemplateData,
+      });
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to send test email');
+    }
+  },
+
   getAllJobs: async (params?: {
     limit?: number;
     offset?: number;

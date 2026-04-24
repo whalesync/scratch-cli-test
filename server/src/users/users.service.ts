@@ -11,6 +11,7 @@ import {
 } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
+import { EmailService } from 'src/email/email.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
@@ -25,6 +26,7 @@ export class UsersService {
     private readonly postHogService: PostHogService,
     private readonly configService: ScratchConfigService,
     private readonly slackNotificationService: SlackNotificationService,
+    private readonly emailService: EmailService,
   ) {}
 
   public async findOne(id: string): Promise<UserCluster.User | null> {
@@ -232,6 +234,28 @@ export class UsersService {
         }),
       ]),
     );
+
+    const user = await this.db.client.user.findUnique({ where: { id: userId }, select: { name: true } });
+    const acceptedByName = user?.name ?? email;
+
+    for (const invite of invites) {
+      if (!invite.userId) {
+        continue;
+      }
+
+      const [inviter, workbook] = await Promise.all([
+        this.db.client.user.findUnique({ where: { id: invite.userId }, select: { email: true } }),
+        this.db.client.workbook.findUnique({ where: { id: invite.workbookId }, select: { name: true } }),
+      ]);
+
+      if (inviter?.email) {
+        void this.emailService.sendInviteAccepted({
+          to: inviter.email,
+          acceptedByName,
+          workspaceName: workbook?.name ?? 'a workspace',
+        });
+      }
+    }
   }
 
   public async updateLastWorkbook(userId: string, workbookId: string | null): Promise<void> {

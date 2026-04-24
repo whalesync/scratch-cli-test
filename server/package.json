@@ -57,6 +57,7 @@
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@postlight/parser": "^2.2.3",
     "@prisma/client": "^6.16.3",
+    "@sendgrid/mail": "^8.1.6",
     "@sinclair/typebox": "^0.34.48",
     "@spinner/shared-types": "1.0.0",
     "@types/archiver": "^7.0.0",

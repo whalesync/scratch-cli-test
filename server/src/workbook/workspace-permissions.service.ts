@@ -9,6 +9,7 @@ import {
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { WorkspacePermissionCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { EmailService } from 'src/email/email.service';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { Actor, WorkspacePermissionRole } from 'src/users/types';
 
@@ -18,6 +19,7 @@ export class WorkspacePermissionsService {
     private readonly db: DbService,
     private readonly posthogService: PostHogService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailService: EmailService,
   ) {}
 
   async createByUserId(
@@ -81,6 +83,18 @@ export class WorkspacePermissionsService {
         organizationId: actor.organizationId,
         context: { workbookId, email },
       });
+
+      const [inviter, workbook] = await Promise.all([
+        this.db.client.user.findUnique({ where: { id: actor.userId }, select: { name: true } }),
+        this.db.client.workbook.findUnique({ where: { id: workbookId }, select: { name: true } }),
+      ]);
+
+      void this.emailService.sendWorkspaceInvite({
+        to: email,
+        inviterName: inviter?.name ?? 'A teammate',
+        workspaceName: workbook?.name ?? 'a workspace',
+      });
+
       return;
     }
 

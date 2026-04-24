@@ -3,6 +3,7 @@ import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { CredentialEncryptionModule } from 'src/credential-encryption/credential-encryption.module';
 import { DbModule } from 'src/db/db.module';
+import { EmailModule } from 'src/email/email.module';
 import { JobModule } from 'src/job/job.module';
 import { PaymentModule } from 'src/payment/payment.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
@@ -29,6 +30,7 @@ import { DevToolsService } from './dev-tools.service';
     AuditLogModule,
     ScratchGitModule,
     SlackNotificationModule,
+    EmailModule,
   ],
   exports: [], //export this service to use in other modules
   controllers: [DevToolsController],
