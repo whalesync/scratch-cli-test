@@ -125,7 +125,7 @@ export class CliWorkbookController {
 
     const accounts = await this.db.client.connectorAccount.findMany({
       where: { workbookId: id },
-      include: { dataFolders: { select: { id: true, name: true } } },
+      include: { dataFolders: { select: { id: true, name: true, path: true } } },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -135,7 +135,7 @@ export class CliWorkbookController {
       service: ca.service,
       repoPath: ca.repoPath ?? undefined,
       gitUrl: `${baseUrl}/cli/v1/workbooks/${id}/connectors/${ca.id}/git`,
-      dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name })),
+      dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name, path: df.path })),
     }));
 
     const configGitUrl = `${baseUrl}/cli/v1/workbooks/${id}/config/git`;

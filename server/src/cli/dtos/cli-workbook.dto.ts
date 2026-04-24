@@ -34,6 +34,7 @@ export type ValidatedListWorkbooksQueryDto = ListWorkbooksQueryDto;
 export class CliDataFolderDto {
   readonly id?: string;
   readonly name?: string;
+  readonly path?: string | null;
 }
 
 /**

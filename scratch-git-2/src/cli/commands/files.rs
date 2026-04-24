@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 
+use anyhow::Context;
 use clap::Subcommand;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::api::ConnectorAccount;
+use crate::api::{ConnectorAccount, DataFolder};
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
 
@@ -321,12 +322,21 @@ async fn run_download(
         );
     }
 
+    let folders_by_conn = fetch_folders_by_connection(
+        &workspace_server_url,
+        &workspace_marker,
+        &workspace_marker.workbook.id,
+    )
+    .await;
+
     let mut results = Vec::new();
     for ctx in &contexts {
         if contexts.len() > 1 && !json {
             println!("Downloading {}...", ctx.conn_dir_name);
         }
-        results.push(download_single_repo(ctx, &token)?);
+        let empty = Vec::new();
+        let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
+        results.push(download_single_repo(ctx, &token, folders)?);
         if update_master_worktree(ctx, &token).is_ok() {
             let _ = sync_schema_files_from_master(ctx);
             rebuild_index_for_conn(ctx, json);
@@ -1546,7 +1556,7 @@ fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<
 }
 
 pub async fn download_workbook(
-    _base_url: &str,
+    base_url: &str,
     token: &str,
     workbook_id: &str,
 ) -> anyhow::Result<()> {
@@ -1557,14 +1567,52 @@ pub async fn download_workbook(
 
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
+    let folders_by_conn =
+        fetch_folders_by_connection(base_url, &workspace_marker, workbook_id).await;
+
     for ctx in &contexts {
-        download_single_repo(ctx, token)?;
+        let empty = Vec::new();
+        let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
+        download_single_repo(ctx, token, folders)?;
         if update_master_worktree(ctx, token).is_ok() {
             let _ = sync_schema_files_from_master(ctx);
             rebuild_index_for_conn(ctx, true);
         }
     }
     Ok(())
+}
+
+/// Fetch fresh DataFolder metadata for each connection so download can
+/// reconcile empty folders after materialization. Best-effort: on any auth or
+/// network error, returns an empty map — file merge still proceeds, only the
+/// empty-folder reconcile is skipped.
+async fn fetch_folders_by_connection(
+    base_url: &str,
+    workspace_marker: &markers::WorkspaceMarker,
+    workbook_id: &str,
+) -> HashMap<String, Vec<DataFolder>> {
+    let server_url = if workspace_marker.workbook.server_url.is_empty() {
+        base_url
+    } else {
+        workspace_marker.workbook.server_url.as_str()
+    };
+    let Some(client) = crate::api::ApiClient::from_credentials(server_url) else {
+        return HashMap::new();
+    };
+    match client
+        .get::<crate::api::Workbook>(&format!("workbooks/{}", workbook_id))
+        .await
+    {
+        Ok(wb) => wb
+            .connector_accounts
+            .into_iter()
+            .map(|ca| (ca.id, ca.data_folders))
+            .collect(),
+        Err(e) => {
+            eprintln!("  Note: could not fetch folder metadata for reconcile: {e}");
+            HashMap::new()
+        }
+    }
 }
 
 fn resolve_workspace_and_connections(
@@ -1898,7 +1946,11 @@ fn update_reviewed_dirty(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<
     crate::git_ops::worktree_reset_hard(&ctx.reviewed_dirty_dir, hash)
 }
 
-fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<DownloadResult> {
+fn download_single_repo(
+    ctx: &ConnectionContext,
+    token: &str,
+    data_folders: &[DataFolder],
+) -> anyhow::Result<DownloadResult> {
     crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
 
     let local_dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
@@ -1990,6 +2042,7 @@ fn download_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<
     }
 
     materialize_local_repo(ctx, &target_map)?;
+    reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
     update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
@@ -2893,6 +2946,81 @@ fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Res
         }
     }
 
+    Ok(())
+}
+
+/// Reconcile on-disk folders under `dirty_dir` with the server's folder list.
+///
+/// 1. Creates a directory for every folder path (parents included).
+/// 2. Prunes any local directory not in the server set, but only if empty —
+///    non-empty dirs are owned by the record-file merge path.
+pub fn reconcile_data_folder_dirs(
+    dirty_dir: &Path,
+    data_folders: &[DataFolder],
+) -> anyhow::Result<()> {
+    if !dirty_dir.exists() {
+        return Ok(());
+    }
+
+    let mut wanted: HashSet<PathBuf> = HashSet::new();
+    for df in data_folders {
+        let Some(path) = df.path.as_deref() else {
+            continue;
+        };
+        let trimmed = path.trim_start_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let target = dirty_dir.join(trimmed);
+        std::fs::create_dir_all(&target)
+            .with_context(|| format!("create empty data folder dir {}", target.display()))?;
+        // Mark every ancestor up to dirty_dir as wanted so the pruner leaves
+        // the chain of intermediate folders alone, even when they are not
+        // themselves separate DataFolder entries.
+        for ancestor in target.ancestors() {
+            if ancestor == dirty_dir {
+                break;
+            }
+            wanted.insert(ancestor.to_path_buf());
+        }
+    }
+
+    prune_empty_unknown_dirs(dirty_dir, &wanted)?;
+    Ok(())
+}
+
+fn prune_empty_unknown_dirs(dir: &Path, wanted: &HashSet<PathBuf>) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("read entry in {}", dir.display()))?;
+        let path = entry.path();
+        let ft = entry.file_type()?;
+        if !ft.is_dir() {
+            continue;
+        }
+        // Skip CLI-owned entries like .scratch / .scratchmd.
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| n.starts_with('.'))
+        {
+            continue;
+        }
+        prune_empty_unknown_dirs(&path, wanted)?;
+        if wanted.contains(&path) {
+            continue;
+        }
+        let is_empty = std::fs::read_dir(&path)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(false);
+        if is_empty {
+            std::fs::remove_dir(&path)
+                .with_context(|| format!("remove empty dir {}", path.display()))?;
+        }
+    }
     Ok(())
 }
 

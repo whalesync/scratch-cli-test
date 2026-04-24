@@ -595,7 +595,7 @@ fn download_single_repo_uses_real_merge_base_and_rebases_working_tree() {
         "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"draft\",\n  \"note\": \"local note\"\n}\n",
     );
 
-    let result = download_single_repo(&ctx, "test-token").unwrap();
+    let result = download_single_repo(&ctx, "test-token", &[]).unwrap();
     assert_eq!(result.status, "downloaded");
 
     let final_local_dirty = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
@@ -1593,4 +1593,129 @@ fn run_git(dir: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn df(id: &str, name: &str, path: Option<&str>) -> crate::api::DataFolder {
+    crate::api::DataFolder {
+        id: id.to_string(),
+        name: name.to_string(),
+        path: path.map(String::from),
+    }
+}
+
+#[test]
+fn reconcile_creates_missing_folders() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    let folders = vec![
+        df("a", "Foo", Some("/Foo")),
+        df("b", "Baz", Some("/Bar/Baz")),
+    ];
+    reconcile_data_folder_dirs(root, &folders).unwrap();
+
+    assert!(root.join("Foo").is_dir());
+    assert!(root.join("Bar").is_dir());
+    assert!(root.join("Bar/Baz").is_dir());
+}
+
+#[test]
+fn reconcile_creates_deep_chain_up_to_leaf_only() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    let folders = vec![df("leaf", "D", Some("/A/B/C/D"))];
+    reconcile_data_folder_dirs(root, &folders).unwrap();
+
+    assert!(root.join("A").is_dir());
+    assert!(root.join("A/B").is_dir());
+    assert!(root.join("A/B/C").is_dir());
+    assert!(root.join("A/B/C/D").is_dir());
+}
+
+#[test]
+fn reconcile_skips_null_and_slash_only_paths() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    let folders = vec![df("a", "NoPath", None), df("b", "Root", Some("/"))];
+    reconcile_data_folder_dirs(root, &folders).unwrap();
+
+    let entries: Vec<_> = std::fs::read_dir(root).unwrap().collect();
+    assert!(entries.is_empty(), "no directories should be created");
+}
+
+#[test]
+fn reconcile_prunes_unknown_empty_dirs() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("Stale")).unwrap();
+    std::fs::create_dir(root.join("Kept")).unwrap();
+
+    let folders = vec![df("k", "Kept", Some("/Kept"))];
+    reconcile_data_folder_dirs(root, &folders).unwrap();
+
+    assert!(root.join("Kept").is_dir());
+    assert!(
+        !root.join("Stale").exists(),
+        "empty unknown dir should be pruned"
+    );
+}
+
+#[test]
+fn reconcile_preserves_non_empty_unknown_dirs() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let stale = root.join("HasFile");
+    std::fs::create_dir(&stale).unwrap();
+    std::fs::write(stale.join("record.json"), b"{}").unwrap();
+
+    reconcile_data_folder_dirs(root, &[]).unwrap();
+
+    assert!(stale.is_dir(), "non-empty unknown dir must be kept");
+    assert!(stale.join("record.json").exists());
+}
+
+#[test]
+fn reconcile_leaves_dotfiles_alone() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir(root.join(".scratch")).unwrap();
+    std::fs::write(root.join(".scratchmd"), b"").unwrap();
+
+    reconcile_data_folder_dirs(root, &[]).unwrap();
+
+    assert!(
+        root.join(".scratch").is_dir(),
+        ".scratch must survive prune"
+    );
+    assert!(
+        root.join(".scratchmd").exists(),
+        ".scratchmd must survive prune"
+    );
+}
+
+#[test]
+fn reconcile_prunes_nested_empty_chains() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("Outer/Inner")).unwrap();
+
+    reconcile_data_folder_dirs(root, &[]).unwrap();
+
+    assert!(!root.join("Outer").exists());
+}
+
+#[test]
+fn reconcile_preserves_ancestors_of_wanted_folder() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("A/B/C")).unwrap();
+
+    let folders = vec![df("c", "C", Some("/A/B/C"))];
+    reconcile_data_folder_dirs(root, &folders).unwrap();
+
+    assert!(root.join("A").is_dir());
+    assert!(root.join("A/B").is_dir());
+    assert!(root.join("A/B/C").is_dir());
 }

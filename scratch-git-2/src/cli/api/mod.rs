@@ -246,6 +246,8 @@ pub struct AuthPollResponse {
 pub struct DataFolder {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]

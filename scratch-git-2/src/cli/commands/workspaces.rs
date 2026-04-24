@@ -639,6 +639,7 @@ pub fn setup_connection(
 
     git_clone_bare(&ca.git_url, &bare_repo, token)?;
     materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
+    super::files::reconcile_data_folder_dirs(&dirty_dir, &ca.data_folders)?;
     let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
     if let Err(e) =
         crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH)
