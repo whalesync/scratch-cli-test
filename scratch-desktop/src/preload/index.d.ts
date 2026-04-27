@@ -128,6 +128,12 @@ interface ScratchFilesAPI {
     workbookId: string;
     orgId: string;
     authToken?: string;
+    connections: Array<{
+      id: string;
+      displayName: string;
+      service: string;
+      dirName: string;
+    }>;
   }>;
   listFolders: (workspacePath: string) => Promise<
     Array<{

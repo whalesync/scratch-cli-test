@@ -10,6 +10,7 @@
 import { execFile } from 'child_process';
 import { copyFile, mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { basename, dirname, extname, join, relative, sep } from 'path';
+import { parse } from 'yaml';
 
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
@@ -23,6 +24,19 @@ interface WorkspaceConfig {
   workbookId: string;
   orgId: string;
   authToken?: string;
+  connections: WorkspaceConnection[];
+}
+
+interface WorkspaceConnection {
+  id: string;
+  displayName: string;
+  service: string;
+  dirName: string;
+}
+
+interface WorkspaceMarker {
+  workbook?: Record<string, unknown>;
+  connections?: Array<Record<string, unknown>>;
 }
 
 interface FolderEntry {
@@ -72,7 +86,7 @@ type FileContent =
 // ── Constants ──
 
 const SCRATCH_DIR = '.scratch';
-const CONFIG_FILE = 'config.json';
+const MARKER_FILE = '.scratchmd';
 const SCHEMAS_DIR = 'schemas';
 const CONNECTIONS_DIR = 'connections/scratch';
 const HIDDEN_PREFIX = '.';
@@ -123,15 +137,41 @@ type JsonFieldValue = { exists: true; value: unknown } | { exists: false };
 // ── Public functions ──
 
 export async function readWorkspaceConfig(workspacePath: string): Promise<WorkspaceConfig> {
-  const configPath = join(workspacePath, SCRATCH_DIR, CONFIG_FILE);
-  const content = await readFile(configPath, 'utf-8');
-  const parsed = JSON.parse(content) as Record<string, unknown>;
+  const marker = await readWorkspaceMarker(workspacePath);
+  const workbook = marker?.workbook ?? null;
+
   return {
-    apiUrl: (parsed.api_url as string) ?? '',
-    workbookId: (parsed.workbook_id as string) ?? '',
-    orgId: (parsed.org_id as string) ?? '',
-    authToken: (parsed.auth_token as string) ?? undefined,
+    apiUrl: getString(workbook?.serverUrl) ?? '',
+    workbookId: getString(workbook?.id) ?? '',
+    orgId: getString(workbook?.orgId) ?? '',
+    authToken: undefined,
+    connections: parseWorkspaceConnections(marker),
   };
+}
+
+async function readWorkspaceMarker(workspacePath: string): Promise<WorkspaceMarker | null> {
+  try {
+    const markerPath = join(workspacePath, SCRATCH_DIR, MARKER_FILE);
+    const content = await readFile(markerPath, 'utf-8');
+    return parse(content) as WorkspaceMarker | null;
+  } catch {
+    return null;
+  }
+}
+
+function parseWorkspaceConnections(marker: WorkspaceMarker | null): WorkspaceConnection[] {
+  return (marker?.connections ?? [])
+    .map((connection) => ({
+      id: getString(connection.id) ?? '',
+      displayName: getString(connection.displayName) ?? '',
+      service: getString(connection.service) ?? '',
+      dirName: getString(connection.dirName) ?? '',
+    }))
+    .filter((connection) => connection.id && connection.dirName);
+}
+
+function getString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
 }
 
 export async function listFolders(workspacePath: string): Promise<FolderEntry[]> {

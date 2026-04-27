@@ -297,6 +297,7 @@ export function WorkspacePage() {
         onClose={() => setPullAllModalOpen(false)}
         workspaceName={workspace.name}
         localPath={localPath}
+        workspaceId={workspace.id}
         onDataRefresh={handleDataRefresh}
       />
       {localPath && (
@@ -322,6 +323,7 @@ export function WorkspacePage() {
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={setSelectedFolderPath}
         dataRefreshKey={dataRefreshKey}
+        onDataRefresh={handleDataRefresh}
         onPublishFile={(relativePath: string) => {
           setPublishFilePath(relativePath);
           setPublishModalOpen(true);

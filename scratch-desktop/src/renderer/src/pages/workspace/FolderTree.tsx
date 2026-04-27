@@ -3,8 +3,11 @@ import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, UnstyledButton } from '@mantine/core';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import type { WorkspaceConnection } from '../../types/local-files';
+import { DataFolder } from '../../types/workspace';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import classes from './FolderTree.module.css';
+import { PullFoldersModal } from './PullFoldersModal';
 import { LocalFolder } from './WorkspaceContent';
 
 // ── Tree data structure ──
@@ -18,6 +21,12 @@ interface TreeNode {
   fsPath?: string;
   /** Child nodes keyed by segment name, in insertion order */
   children: Map<string, TreeNode>;
+}
+
+interface PullRequest {
+  title: string;
+  dataFolderIds: string[];
+  emptyStateMessage: string;
 }
 
 /** Walk a node to find any descendant leaf and return its filesystem path. */
@@ -79,6 +88,10 @@ function buildTree(folders: LocalFolder[]): TreeNode {
   return root;
 }
 
+function normalizeFolderPath(path: string): string {
+  return path.startsWith('/') ? path.slice(1) : path;
+}
+
 // ── Components ──
 
 const INDENT_PX = 16;
@@ -92,6 +105,9 @@ interface FolderTreeNodeProps {
   onSelectFolder: (folderPath: string) => void;
   isDevToolsEnabled: boolean;
   onShowColumnDefs?: (folderPath: string) => void;
+  dataFolderByLocalPath: Map<string, DataFolder>;
+  dataFoldersByConnection: Map<string, DataFolder[]>;
+  onRequestPull: (request: PullRequest) => void;
 }
 
 function FolderTreeNodeRow({
@@ -101,6 +117,9 @@ function FolderTreeNodeRow({
   onSelectFolder,
   isDevToolsEnabled,
   onShowColumnDefs,
+  dataFolderByLocalPath,
+  dataFoldersByConnection,
+  onRequestPull,
 }: FolderTreeNodeProps) {
   const hasChildren = node.children.size > 0;
   const [expanded, setExpanded] = useState(true);
@@ -115,15 +134,27 @@ function FolderTreeNodeRow({
 
   const showContextMenu = useCallback(
     (path: string) => {
+      const localFolderPath = node.folder ? normalizeFolderPath(node.folder.name) : null;
+      const mappedFolder = localFolderPath ? dataFolderByLocalPath.get(localFolderPath) : undefined;
+      const connectionFolders = depth === 0 ? (dataFoldersByConnection.get(node.name) ?? []) : [];
+
       const items: Array<{
         id: string;
         label: string;
         type?: 'separator';
         submenu?: Array<{ id: string; label: string }>;
-      }> = [
+      }> = [];
+
+      if (mappedFolder || (depth === 0 && connectionFolders.length > 0)) {
+        items.push({ id: 'pull', label: mappedFolder ? 'Pull This Table' : 'Pull All Tables' });
+        items.push({ id: 'pull-sep', label: '', type: 'separator' });
+      }
+
+      items.push(
         { id: 'reveal', label: isMac ? 'Open in Finder' : 'Open in Explorer' },
         { id: 'terminal', label: isMac ? 'Open in Terminal' : 'Open in PowerShell' },
-      ];
+      );
+
       if (isDevToolsEnabled && node.folder) {
         items.push({ id: 'sep', label: '', type: 'separator' });
         items.push({
@@ -132,13 +163,37 @@ function FolderTreeNodeRow({
           submenu: [{ id: 'column-defs', label: 'Column Definitions…' }],
         });
       }
+
       window.scratchDesktop.showNativeContextMenu(items, (id) => {
+        if (id === 'pull' && mappedFolder) {
+          onRequestPull({
+            title: `Pull Table — ${node.name}`,
+            dataFolderIds: [mappedFolder.id],
+            emptyStateMessage: 'No linked table found for this local folder.',
+          });
+        }
+        if (id === 'pull' && !mappedFolder && depth === 0 && connectionFolders.length > 0) {
+          onRequestPull({
+            title: `Pull All Tables — ${node.name}`,
+            dataFolderIds: connectionFolders.map((folder) => folder.id),
+            emptyStateMessage: 'No linked tables found for this connection.',
+          });
+        }
         if (id === 'reveal') void window.scratchDesktop.showInFolder(path);
         if (id === 'terminal') void window.scratchDesktop.openInTerminal(path);
         if (id === 'column-defs') onShowColumnDefs?.(path);
       });
     },
-    [isDevToolsEnabled, node.folder, onShowColumnDefs],
+    [
+      dataFolderByLocalPath,
+      dataFoldersByConnection,
+      depth,
+      isDevToolsEnabled,
+      node.folder,
+      node.name,
+      onRequestPull,
+      onShowColumnDefs,
+    ],
   );
 
   const isSelected = node.folder != null && selectedFolderPath === node.folder.path;
@@ -232,6 +287,9 @@ function FolderTreeNodeRow({
               onSelectFolder={onSelectFolder}
               isDevToolsEnabled={isDevToolsEnabled}
               onShowColumnDefs={onShowColumnDefs}
+              dataFolderByLocalPath={dataFolderByLocalPath}
+              dataFoldersByConnection={dataFoldersByConnection}
+              onRequestPull={onRequestPull}
             />
           ))}
         </>
@@ -243,23 +301,59 @@ function FolderTreeNodeRow({
 // ── Public component ──
 
 interface FolderTreeProps {
+  workspaceId: string;
+  dataFolders: DataFolder[];
+  workspaceConnections: WorkspaceConnection[];
   localFolders: LocalFolder[];
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
   isDevToolsEnabled: boolean;
+  onDataRefresh: () => void;
 }
 
 export function FolderTree({
+  workspaceId,
+  dataFolders,
+  workspaceConnections,
   localFolders,
   selectedFolderPath,
   onSelectFolder,
   workspacePath,
   isDevToolsEnabled,
+  onDataRefresh,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
   const [columnDefsFolder, setColumnDefsFolder] = useState<string | null>(null);
+  const [pullRequest, setPullRequest] = useState<PullRequest | null>(null);
+  const connectionDirNameById = useMemo(
+    () => new Map(workspaceConnections.map((connection) => [connection.id, connection.dirName])),
+    [workspaceConnections],
+  );
+
+  const dataFolderByLocalPath = useMemo(() => {
+    const byPath = new Map<string, DataFolder>();
+    for (const folder of dataFolders) {
+      if (!folder.path) continue;
+      const connectionDir = folder.connectorAccountId ? connectionDirNameById.get(folder.connectorAccountId) : null;
+      if (!connectionDir) continue;
+      byPath.set(`${connectionDir}/${normalizeFolderPath(folder.path)}`, folder);
+    }
+    return byPath;
+  }, [connectionDirNameById, dataFolders]);
+
+  const dataFoldersByConnection = useMemo(() => {
+    const byConnection = new Map<string, DataFolder[]>();
+    for (const folder of dataFolders) {
+      const connectionName = folder.connectorAccountId ? connectionDirNameById.get(folder.connectorAccountId) : null;
+      if (!connectionName) continue;
+      const group = byConnection.get(connectionName) ?? [];
+      group.push(folder);
+      byConnection.set(connectionName, group);
+    }
+    return byConnection;
+  }, [connectionDirNameById, dataFolders]);
 
   const handleShowColumnDefs = useCallback((folderPath: string) => {
     setColumnDefsFolder(folderPath);
@@ -276,6 +370,9 @@ export function FolderTree({
           onSelectFolder={onSelectFolder}
           isDevToolsEnabled={isDevToolsEnabled}
           onShowColumnDefs={handleShowColumnDefs}
+          dataFolderByLocalPath={dataFolderByLocalPath}
+          dataFoldersByConnection={dataFoldersByConnection}
+          onRequestPull={setPullRequest}
         />
       ))}
 
@@ -284,6 +381,19 @@ export function FolderTree({
           folderPath={columnDefsFolder}
           workspacePath={workspacePath}
           onClose={() => setColumnDefsFolder(null)}
+        />
+      )}
+
+      {pullRequest && (
+        <PullFoldersModal
+          opened={true}
+          onClose={() => setPullRequest(null)}
+          localPath={workspacePath}
+          workspaceId={workspaceId}
+          title={pullRequest.title}
+          dataFolderIds={pullRequest.dataFolderIds}
+          emptyStateMessage={pullRequest.emptyStateMessage}
+          onDataRefresh={onDataRefresh}
         />
       )}
     </>

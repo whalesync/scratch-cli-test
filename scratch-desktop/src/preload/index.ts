@@ -180,6 +180,12 @@ const scratchFiles = {
     workbookId: string;
     orgId: string;
     authToken?: string;
+    connections: Array<{
+      id: string;
+      displayName: string;
+      service: string;
+      dirName: string;
+    }>;
   }> => invoke('files:workspace-config', workspacePath),
   listFolders: (
     workspacePath: string,

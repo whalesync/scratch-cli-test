@@ -1,5 +1,6 @@
 import { Box } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { WorkspaceConnection } from '../../types/local-files';
 import { Workspace } from '../../types/workspace';
 import { FolderDataGrid } from './FolderDataGrid';
 import { ResizeHandle } from './ResizeHandle';
@@ -19,6 +20,7 @@ interface WorkspaceContentProps {
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string | null) => void;
   dataRefreshKey: number;
+  onDataRefresh: () => void;
   onPublishFile?: (relativePath: string) => void;
 }
 
@@ -32,6 +34,7 @@ export function WorkspaceContent({
   selectedFolderPath,
   onSelectFolder,
   dataRefreshKey,
+  onDataRefresh,
   onPublishFile,
 }: WorkspaceContentProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
@@ -39,6 +42,7 @@ export function WorkspaceContent({
   const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
   const [isFoldersLoading, setIsFoldersLoading] = useState(false);
   const [hasLoadedFoldersOnce, setHasLoadedFoldersOnce] = useState(false);
+  const [workspaceConnections, setWorkspaceConnections] = useState<WorkspaceConnection[]>([]);
   const folderLoadGeneration = useRef(0);
 
   const handleResizeStart = useCallback(() => {
@@ -65,6 +69,7 @@ export function WorkspaceContent({
     if (!localPath) {
       folderLoadGeneration.current += 1;
       setLocalFolders([]);
+      setWorkspaceConnections([]);
       setIsFoldersLoading(false);
       setHasLoadedFoldersOnce(false);
       return;
@@ -86,6 +91,7 @@ export function WorkspaceContent({
         if (generation !== folderLoadGeneration.current) {
           return;
         }
+        setLocalFolders([]);
         setHasLoadedFoldersOnce(true);
       })
       .finally(() => {
@@ -94,6 +100,22 @@ export function WorkspaceContent({
         }
         setIsFoldersLoading(false);
       });
+
+    void window.scratchFiles.workspaceConfig(localPath).then(
+      (config) => {
+        if (generation !== folderLoadGeneration.current) {
+          return;
+        }
+        setWorkspaceConnections(config.connections);
+      },
+      (error: unknown) => {
+        if (generation !== folderLoadGeneration.current) {
+          return;
+        }
+        console.warn('[workspace] failed to load workspace config:', error);
+        setWorkspaceConnections([]);
+      },
+    );
   }, [dataRefreshKey, localPath]);
 
   return (
@@ -109,6 +131,7 @@ export function WorkspaceContent({
       {/* Sidebar */}
       <WorkspaceSidebar
         workspace={workspace}
+        workspaceConnections={workspaceConnections}
         localFolders={localFolders}
         isFoldersLoading={isFoldersLoading}
         hasLoadedFoldersOnce={hasLoadedFoldersOnce}
@@ -118,6 +141,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={handleSelectFolder}
         workspacePath={localPath}
+        onDataRefresh={onDataRefresh}
       />
 
       {/* Resize Handle */}

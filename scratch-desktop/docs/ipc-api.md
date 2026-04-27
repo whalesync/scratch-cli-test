@@ -32,7 +32,7 @@ No subprocess — reads directly from disk in the Electron main process.
 
 | IPC                                | What it does                                                                  |
 | ---------------------------------- | ----------------------------------------------------------------------------- |
-| `files:workspace-config`           | Reads `.scratch/config.json`                                                  |
+| `files:workspace-config`           | Reads `.scratch/.scratchmd`                                                   |
 | `files:list-folders`               | Walks tree, finds leaf dirs, counts files                                     |
 | `files:folder-metadata`            | Stats one folder + reads schema                                               |
 | `files:list-files`                 | readdir → filter/sort/paginate, stat only the page                            |

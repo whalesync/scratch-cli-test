@@ -6,12 +6,14 @@ import { Bug, LinkIcon, Settings, SettingsIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
 import { useDevTools } from '../../hooks/use-dev-tools';
+import type { WorkspaceConnection } from '../../types/local-files';
 import { Workspace } from '../../types/workspace';
 import { FolderTree } from './FolderTree';
 import { LocalFolder } from './WorkspaceContent';
 
 interface WorkspaceSidebarProps {
   workspace: Workspace;
+  workspaceConnections: WorkspaceConnection[];
   localFolders: LocalFolder[];
   isFoldersLoading: boolean;
   hasLoadedFoldersOnce: boolean;
@@ -21,10 +23,12 @@ interface WorkspaceSidebarProps {
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
+  onDataRefresh: () => void;
 }
 
 export function WorkspaceSidebar({
   workspace,
+  workspaceConnections,
   localFolders,
   isFoldersLoading,
   hasLoadedFoldersOnce,
@@ -34,6 +38,7 @@ export function WorkspaceSidebar({
   selectedFolderPath,
   onSelectFolder,
   workspacePath,
+  onDataRefresh,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
@@ -87,11 +92,15 @@ export function WorkspaceSidebar({
               </Stack>
             )}
             <FolderTree
+              workspaceId={workspace.id}
+              dataFolders={workspace.dataFolders ?? []}
+              workspaceConnections={workspaceConnections}
               localFolders={localFolders}
               selectedFolderPath={selectedFolderPath}
               onSelectFolder={onSelectFolder}
               workspacePath={workspacePath}
               isDevToolsEnabled={isDevToolsEnabled}
+              onDataRefresh={onDataRefresh}
             />
           </>
         )}

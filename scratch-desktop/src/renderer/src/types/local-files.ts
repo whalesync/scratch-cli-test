@@ -14,6 +14,14 @@ export interface WorkspaceConfig {
   workbookId: string;
   orgId: string;
   authToken?: string;
+  connections: WorkspaceConnection[];
+}
+
+export interface WorkspaceConnection {
+  id: string;
+  displayName: string;
+  service: string;
+  dirName: string;
 }
 
 export interface FolderEntry {

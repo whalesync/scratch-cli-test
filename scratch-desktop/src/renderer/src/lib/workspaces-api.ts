@@ -15,4 +15,18 @@ export const workspacesApi = {
     const res = await axios.get<Workspace>(`/workbook/${id}`);
     return res.data;
   },
+
+  pullFiles: async (
+    id: string,
+    dataFolderIds?: string[],
+  ): Promise<{ jobId?: string; jobIds?: string[]; warning?: string }> => {
+    const axios = API_CONFIG.getAxiosInstance();
+    const res = await axios.post<{ jobId?: string; jobIds?: string[]; warning?: string }>(
+      `/workbook/${id}/pull-files`,
+      {
+        dataFolderIds,
+      },
+    );
+    return res.data;
+  },
 };
