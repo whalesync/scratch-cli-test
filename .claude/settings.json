@@ -31,7 +31,11 @@
       "Bash(./target/release/scratchmd2 syncs:*)",
       "Bash(./target/debug/scratchmd --version)",
       "Bash(./target/debug/scratchmd auth:*)",
-      "Bash(curl -s http://localhost:3010/health)"
+      "Bash(curl -s http://localhost:3010/health)",
+      "mcp__plugin_linear_linear__get_issue",
+      "mcp__plugin_linear_linear__list_comments",
+      "mcp__plugin_linear_linear__list_issue_statuses",
+      "Bash(npx tsc *)"
     ]
   }
 }

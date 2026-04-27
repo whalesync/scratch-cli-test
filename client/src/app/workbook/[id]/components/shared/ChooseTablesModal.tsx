@@ -4,13 +4,19 @@ import { Badge } from '@/app/components/base/badge';
 import { ButtonPrimaryLight, ButtonSecondaryInline, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/app/components/base/text';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
+import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useWorkbook } from '@/hooks/use-workbook';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
+import { ScratchpadApiError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
-import { suppressFolderMutations, unsuppressFolderMutations } from '@/stores/workbook-websocket-store';
+import {
+  resetFolderMutationSuppression,
+  suppressFolderMutations,
+  unsuppressFolderMutations,
+} from '@/stores/workbook-websocket-store';
 import { TableList, TablePreview, TableSchemaPreview, TableSearchResult } from '@/types/server-entities/table-list';
 import {
   Alert,
@@ -257,6 +263,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const [selectedTableMap, setSelectedTableMap] = useState<Map<string, TablePreview>>(new Map());
   const [filterValues, setFilterValues] = useState<Map<string, string>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
+  const [partialResult, setPartialResult] = useState<{
+    errors: { displayName: string; error: string }[];
+    createdIds: DataFolderId[];
+  } | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [foldersToRemove, setFoldersToRemove] = useState<{ id: DataFolderId; name: string; tableId: string[] }[]>([]);
   const [dirtyFileCount, setDirtyFileCount] = useState(0);
@@ -376,6 +386,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     });
     setConnectorOptions(initialOptions);
     setTriggerPull(true);
+    setPartialResult(null);
   }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys, advancedSettings]);
 
   const handleToggleTable = (table: TablePreview) => {
@@ -607,8 +618,22 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   };
 
   const handleBack = () => {
+    setPartialResult(null);
     setStep(1);
   };
+
+  const handlePullPartial = useCallback(() => {
+    if (partialResult?.createdIds.length) {
+      void pullFolders(partialResult.createdIds);
+    }
+    unsuppressFolderMutations(workbookId);
+    onClose();
+  }, [partialResult, pullFolders, workbookId, onClose]);
+
+  const handleSkipPull = useCallback(() => {
+    unsuppressFolderMutations(workbookId);
+    onClose();
+  }, [workbookId, onClose]);
 
   const handleSave = async () => {
     // If there are folders to remove, check for dirty files and show confirmation
@@ -635,10 +660,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
     setIsSaving(true);
     suppressFolderMutations();
+    const createdFolderIds: DataFolderId[] = [];
+    const tableFailures: { displayName: string; error: string }[] = [];
     try {
       // Add new tables (with optional filter, field overrides, and connector options)
-      // Create all folders first with triggerPull=false, then trigger a single pull job for all
-      const createdFolderIds: DataFolderId[] = [];
+      // Create all folders first with triggerPull=false, then trigger a single pull job for all.
+      // Each table is attempted independently — a scope error on one table won't block others.
       for (const table of tablesToAdd) {
         const tableKey = table.id.remoteId.join('/');
         const filter = filterValues.get(tableKey)?.trim() || undefined;
@@ -646,20 +673,23 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         const idFieldOverride = fields?.idField || undefined;
         const nameFieldOverride = fields?.nameField || undefined;
         const options = buildOptionsForTable(tableKey);
-        const created = await addLinkedDataFolder(
-          table.id.remoteId,
-          table.displayName,
-          connectorAccount.id,
-          filter,
-          idFieldOverride,
-          nameFieldOverride,
-          options,
-          false, // defer pull until all folders are created
-        );
-        createdFolderIds.push(created.id as DataFolderId);
-      }
-      if (triggerPull !== false && createdFolderIds.length > 0) {
-        await pullFolders(createdFolderIds);
+        try {
+          const created = await addLinkedDataFolder(
+            table.id.remoteId,
+            table.displayName,
+            connectorAccount.id,
+            filter,
+            idFieldOverride,
+            nameFieldOverride,
+            options,
+            false, // defer pull until all folders are created
+          );
+          createdFolderIds.push(created.id as DataFolderId);
+        } catch (tableError) {
+          const message =
+            tableError instanceof ScratchpadApiError ? tableError.message : 'Failed to add table.';
+          tableFailures.push({ displayName: table.displayName, error: message });
+        }
       }
 
       // Update filters and connector options on existing tables that changed
@@ -687,13 +717,35 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       }
 
       setShowConfirmation(false);
+
+      if (tableFailures.length > 0) {
+        // Some tables were added but others failed. Keep the modal open so the user
+        // can choose whether to pull the succeeded tables. Don't trigger the pull job
+        // here — that causes navigation away from the modal.
+        setPartialResult({ errors: tableFailures, createdIds: createdFolderIds });
+        resetFolderMutationSuppression();
+        setIsSaving(false);
+        return;
+      }
+
+      // All tables succeeded — trigger pull then close.
+      if (triggerPull !== false && createdFolderIds.length > 0) {
+        await pullFolders(createdFolderIds);
+      }
       onClose();
     } catch (error) {
       console.error('Failed to update tables:', error);
-    } finally {
+      ScratchpadNotifications.error({
+        title: 'Failed to save tables',
+        message: error instanceof ScratchpadApiError ? error.message : 'Please try again.',
+        autoClose: false,
+      });
       unsuppressFolderMutations(workbookId);
       setIsSaving(false);
+      return;
     }
+    unsuppressFolderMutations(workbookId);
+    setIsSaving(false);
   };
 
   const handleCancelConfirmation = () => {
@@ -1091,22 +1143,41 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           </Stack>
         </ScrollArea.Autosize>
 
-        <Group justify="space-between" mt="md">
-          <Tooltip label="Immediately start pulling files for the new tables after saving">
-            <Switch
-              label="Pull files"
-              checked={triggerPull}
-              onChange={(e) => setTriggerPull(e.currentTarget.checked)}
-              size="xs"
-            />
-          </Tooltip>
-          <Group gap="sm">
-            <ButtonSecondaryOutline onClick={handleBack}>Back</ButtonSecondaryOutline>
-            <ButtonPrimaryLight onClick={handleSave} loading={isSaving}>
-              Save
-            </ButtonPrimaryLight>
+        {partialResult ? (
+          <>
+            <Alert icon={<AlertTriangleIcon size={16} />} color="red" variant="light" mt="sm">
+              <Text size="sm" fw={500} mb={4}>Some tables could not be added:</Text>
+              {partialResult.errors.map((e) => (
+                <Text key={e.displayName} size="sm">• {e.displayName}: {e.error}</Text>
+              ))}
+            </Alert>
+            <Group justify="flex-end" gap="sm" mt="md">
+              <ButtonSecondaryOutline onClick={handleSkipPull}>Close without pulling</ButtonSecondaryOutline>
+              {partialResult.createdIds.length > 0 && (
+                <ButtonPrimaryLight onClick={handlePullPartial}>
+                  Pull {partialResult.createdIds.length} succeeded {partialResult.createdIds.length === 1 ? 'table' : 'tables'}
+                </ButtonPrimaryLight>
+              )}
+            </Group>
+          </>
+        ) : (
+          <Group justify="space-between" mt="md">
+            <Tooltip label="Immediately start pulling files for the new tables after saving">
+              <Switch
+                label="Pull files"
+                checked={triggerPull}
+                onChange={(e) => setTriggerPull(e.currentTarget.checked)}
+                size="xs"
+              />
+            </Tooltip>
+            <Group gap="sm">
+              <ButtonSecondaryOutline onClick={handleBack}>Back</ButtonSecondaryOutline>
+              <ButtonPrimaryLight onClick={handleSave} loading={isSaving}>
+                Save
+              </ButtonPrimaryLight>
+            </Group>
           </Group>
-        </Group>
+        )}
       </Stack>
     );
   };

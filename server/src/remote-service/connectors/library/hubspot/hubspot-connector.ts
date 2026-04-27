@@ -304,6 +304,21 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     }
 
     if (isAxiosError(error)) {
+      // 403 from HubSpot means the PAT lacks the required scope for this object — not that the
+      // token itself is invalid. Give a targeted message so users know to update their app scopes.
+      if (error.response?.status === 403) {
+        const url = error.config?.url ?? '';
+        const match = url.match(/\/crm\/v3\/(?:properties|objects)\/([^/?]+)/);
+        const objectType = match ? match[1] : null;
+        return {
+          userFriendlyMessage: objectType
+            ? `Your HubSpot Private App token doesn't have permission to access "${objectType}". Add the required scope in your HubSpot Private App settings.`
+            : `Your HubSpot Private App token doesn't have permission to access this object. Check your Private App scopes.`,
+          description: error.message,
+          additionalContext: { status: 403, url },
+        };
+      }
+
       const commonError = extractCommonDetailsFromAxiosError(this, error);
       if (commonError) return commonError;
 
