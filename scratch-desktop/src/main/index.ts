@@ -1,9 +1,10 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, shell } from 'electron';
 import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { performance } from 'perf_hooks';
+import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
   type DiffGridFilter,
@@ -42,6 +43,7 @@ import {
   startScratchmdLiveSequence,
   triggerPublishFromGit,
 } from './scratchmd';
+import { initAutoUpdater } from './updater';
 
 const appStartTime = performance.now();
 
@@ -49,6 +51,7 @@ const PROTOCOL = 'scratch';
 
 let mainWindow: BrowserWindow | null = null;
 let pendingDeepLink: { route: string; query: string } | null = null;
+let updaterController: ReturnType<typeof initAutoUpdater> = null;
 
 function parseScratchDeepLink(url: string): { route: string; query: string } | null {
   try {
@@ -568,6 +571,86 @@ ipcMain.handle('scratch:toggle-devtools', (event) => {
 
 ipcMain.handle('scratch:get-app-version', () => app.getVersion());
 
+// Updater IPC. Routes the renderer's "Check for updates" / "Restart & install"
+// requests through the updater controller. When the controller is null
+// (development build, mac without signing, or SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE),
+// we still surface a manual-check 'error' event so the menu click feels responsive.
+ipcMain.handle('updater:check-now', async () => {
+  if (!updaterController) {
+    sendUpdaterEvent({
+      type: 'error',
+      manual: true,
+      message:
+        process.platform === 'darwin'
+          ? 'Auto-update is not yet enabled on macOS. Re-download from the website to update.'
+          : 'Auto-update is unavailable in this build.',
+    });
+    return;
+  }
+  await updaterController.checkForUpdates();
+});
+ipcMain.handle('updater:quit-and-install', () => {
+  updaterController?.quitAndInstall();
+});
+
+function sendUpdaterEvent(event: UpdaterEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send(UPDATER_EVENT_CHANNEL, event);
+}
+
+function buildApplicationMenu(): Menu {
+  const isMac = process.platform === 'darwin';
+  const checkForUpdatesItem: MenuItemConstructorOptions = {
+    label: 'Check for Updates…',
+    click: () => {
+      if (!updaterController) {
+        sendUpdaterEvent({
+          type: 'error',
+          manual: true,
+          message: isMac
+            ? 'Auto-update is not yet enabled on macOS. Re-download from the website to update.'
+            : 'Auto-update is unavailable in this build.',
+        });
+        return;
+      }
+      void updaterController.checkForUpdates();
+    },
+  };
+
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              checkForUpdatesItem,
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const },
+            ],
+          } as MenuItemConstructorOptions,
+        ]
+      : []),
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: isMac ? [] : [checkForUpdatesItem],
+    },
+  ];
+  return Menu.buildFromTemplate(template);
+}
+
 // Local file access IPC handlers
 ipcMain.handle('files:workspace-config', async (_, workspacePath: string) => readWorkspaceConfig(workspacePath));
 ipcMain.handle('files:list-folders', async (_, workspacePath: string) => listFolders(workspacePath));
@@ -684,6 +767,10 @@ void app.whenReady().then(() => {
   });
 
   createWindow();
+
+  Menu.setApplicationMenu(buildApplicationMenu());
+
+  updaterController = initAutoUpdater({ getMainWindow: () => mainWindow });
 
   const deepLinkArg = process.argv.find((arg) => typeof arg === 'string' && arg.startsWith(`${PROTOCOL}://`));
   if (deepLinkArg) {

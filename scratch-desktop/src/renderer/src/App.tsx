@@ -12,6 +12,7 @@ import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { AppMantineProvider } from './providers/MantineProvider';
 import { PostHogProvider } from './providers/PostHogProvider';
+import { UpdaterProvider } from './providers/UpdaterProvider';
 
 const HomePage = React.lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
 const WorkspacePage = React.lazy(() => import('./pages/WorkspacePage').then((m) => ({ default: m.WorkspacePage })));
@@ -101,14 +102,16 @@ function App() {
   return (
     <SWRConfig value={{ revalidateOnFocus: false }}>
       <AppMantineProvider>
-        <AuthProvider>
-          <HashRouter>
-            <DeepLinkBridge />
-            <AuthGate>
-              <AppRoutes />
-            </AuthGate>
-          </HashRouter>
-        </AuthProvider>
+        <UpdaterProvider>
+          <AuthProvider>
+            <HashRouter>
+              <DeepLinkBridge />
+              <AuthGate>
+                <AppRoutes />
+              </AuthGate>
+            </HashRouter>
+          </AuthProvider>
+        </UpdaterProvider>
       </AppMantineProvider>
     </SWRConfig>
   );

@@ -1,6 +1,7 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
+import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invoke(channel: string, ...args: unknown[]): Promise<any> {
@@ -161,6 +162,19 @@ const scratchDesktop = {
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
   getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),
+  updater: {
+    checkNow: (): Promise<void> => invoke('updater:check-now'),
+    quitAndInstall: (): Promise<void> => invoke('updater:quit-and-install'),
+    subscribe: (callback: (event: UpdaterEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: UpdaterEvent): void => {
+        callback(payload);
+      };
+      ipcRenderer.on(UPDATER_EVENT_CHANNEL, listener);
+      return () => {
+        ipcRenderer.removeListener(UPDATER_EVENT_CHANNEL, listener);
+      };
+    },
+  },
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: ScratchCommandEvent): void => {
       callback(payload);

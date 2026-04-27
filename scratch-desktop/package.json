@@ -15,10 +15,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "electron-builder install-app-deps",
-    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:mac": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --mac",
     "build:mac:local": "bash scripts/build_mac_local.sh",
     "run:mac": "OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:linux": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --linux"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.1",
@@ -38,7 +38,9 @@
     "axios": "1.14.0",
     "codemirror": "^6.0.1",
     "diff": "^8.0.2",
+    "electron-log": "^5.4.3",
     "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.3",
     "lodash": "^4.18.1",
     "lucide-react": "^0.544.0",
     "marked": "^17.0.5",

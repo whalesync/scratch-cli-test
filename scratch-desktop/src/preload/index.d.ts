@@ -1,5 +1,6 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
+import type { UpdaterEvent } from '../shared/updater-events';
 
 type ScratchCommandEvent =
   | {
@@ -120,6 +121,11 @@ interface ScratchDesktopAPI {
   toggleDevTools: () => Promise<void>;
   getAppVersion: () => Promise<string>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
+  updater: {
+    checkNow: () => Promise<void>;
+    quitAndInstall: () => Promise<void>;
+    subscribe: (callback: (event: UpdaterEvent) => void) => () => void;
+  };
 }
 
 interface ScratchFilesAPI {

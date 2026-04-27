@@ -26,6 +26,15 @@ if [ -z "$VITE_SCRATCH_API_URL" ] || [ -z "$VITE_SCRATCH_WEB_URL" ]; then
   echo "ERROR: VITE_SCRATCH_API_URL and VITE_SCRATCH_WEB_URL must be set."
   exit 1
 fi
+if [ -z "$UPDATE_CHANNEL" ]; then
+  # Read by electron-builder via ${env.UPDATE_CHANNEL} in publish.channel; controls
+  # the channel manifest filename (desktop-mac.yml vs desktop-test-mac.yml). Without
+  # it, electron-builder falls back to "latest" and stable installs would pick up
+  # CLI releases on the same repo.
+  echo "ERROR: UPDATE_CHANNEL is required (e.g. 'desktop' or 'desktop-test')."
+  exit 1
+fi
+export UPDATE_CHANNEL
 
 # Bootstrap ran on a different job/runner, so this workspace's package.json
 # still has whatever version was committed. Sync it to the release version so
@@ -68,7 +77,8 @@ DIST_DIR="./dist-release"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 echo "Collecting artifacts into $DIST_DIR..."
-for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.exe; do
+# Installers/archives + electron-updater metadata (channel manifest + delta blockmaps).
+for FILE in dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.exe dist/*.yml dist/*.blockmap; do
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   cp "$FILE" "$DIST_DIR/$FNAME"

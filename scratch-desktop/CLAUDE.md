@@ -114,6 +114,30 @@ OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch
 
 Always use native Electron context menus — never Mantine `<Menu>` dropdowns — for right-click menus and action menus (kebab/three-dot buttons, "Open in..." buttons, etc.). Use the generic `window.scratchDesktop.showNativeContextMenu(items, onClick)` API exposed via preload, which sends items to the main process `scratch:show-native-context-menu` IPC handler and returns the clicked item id via callback.
 
+## Auto-Update (`electron-updater`)
+
+The app pulls updates from the `desktop` (stable) or `desktop-test` (test) channels on `whalesync/scratch-cli` GitHub releases. The channel is baked in at packaging time via the `UPDATE_CHANNEL` env var read by `electron-builder.yml`'s `publish.channel`.
+
+- **Main**: [src/main/updater.ts](src/main/updater.ts) wires `autoUpdater` and forwards events to the renderer.
+- **Renderer**: [src/renderer/src/providers/UpdaterProvider.tsx](src/renderer/src/providers/UpdaterProvider.tsx) shows a persistent "Restart & install" toast when an update finishes downloading.
+- **Menu**: Help → Check for Updates… (and the macOS app menu) triggers an ad-hoc check.
+
+Skipped automatically when:
+
+- The build is not packaged (`!app.isPackaged`) — use `dev-app-update.yml` to test locally.
+- `process.platform === 'darwin'` — macOS auto-update is gated on Developer ID signing (planned follow-up).
+- `SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE=1` is set (use this on QA boxes that need to stay on a specific version).
+
+### Local testing
+
+`dev-app-update.yml` in this directory points at the `desktop-test` channel. To exercise the update flow without notarization:
+
+1. Bump a `*-desktop-test` release to a higher version on GitHub (or pick an existing one).
+2. Set `package.json#version` to a value *lower* than that release.
+3. Run a packaged build (`yarn build:linux` or `yarn build:mac:local`) and launch it. The updater is gated on `app.isPackaged`, so `yarn dev` won't trigger it — temporarily flip the guard in `updater.ts` if you need to test the IPC surface in dev.
+
+Don't test against real GitHub from CI; the vitest suite in `src/main/__tests__/updater.spec.ts` stubs `autoUpdater` instead.
+
 ## Performance (agent guidelines)
 
 When generating or changing `scratch-desktop` code, follow these constraints unless the user explicitly asks otherwise.

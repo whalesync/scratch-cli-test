@@ -226,6 +226,7 @@ Package prod macOS:
   variables:
     VITE_SCRATCH_API_URL: 'https://api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+    UPDATE_CHANNEL: 'desktop'
   needs:
     - job: Bootstrap prod desktop release
       artifacts: true
@@ -239,6 +240,7 @@ Package prod Linux:
   variables:
     VITE_SCRATCH_API_URL: 'https://api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+    UPDATE_CHANNEL: 'desktop'
   needs:
     - job: Bootstrap prod desktop release
       artifacts: true
@@ -252,6 +254,7 @@ Package prod Windows:
   variables:
     VITE_SCRATCH_API_URL: 'https://api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+    UPDATE_CHANNEL: 'desktop'
   needs:
     - job: Bootstrap prod desktop release
       artifacts: true
@@ -265,6 +268,7 @@ Package test macOS:
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+    UPDATE_CHANNEL: 'desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -282,6 +286,7 @@ Package test Linux:
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+    UPDATE_CHANNEL: 'desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true
@@ -294,6 +299,7 @@ Package test Windows:
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+    UPDATE_CHANNEL: 'desktop-test'
   needs:
     - job: Bootstrap test desktop release
       artifacts: true

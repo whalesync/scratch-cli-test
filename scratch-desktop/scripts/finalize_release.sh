@@ -56,6 +56,16 @@ echo "$ASSETS_JSON" | jq -c '.[] | {id, name}' | while IFS= read -r asset; do
     continue
   fi
 
+  # electron-updater's manifest (*.yml) and delta blockmaps (*.blockmap) carry
+  # their own sha512 entries; skip them so checksums.txt only covers user-
+  # downloadable installers/archives.
+  case "$ASSET_NAME" in
+    *.yml | *.blockmap)
+      echo "  Skipping update metadata: $ASSET_NAME"
+      continue
+      ;;
+  esac
+
   echo "  Hashing $ASSET_NAME..."
   curl -sSL --fail-with-body -H "Authorization: token $GITHUB_TOKEN" \
     -H "Accept: application/octet-stream" \

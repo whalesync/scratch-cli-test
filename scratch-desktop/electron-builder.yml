@@ -60,3 +60,4 @@ publish:
   provider: github
   owner: whalesync
   repo: scratch-cli
+  channel: ${env.UPDATE_CHANNEL}

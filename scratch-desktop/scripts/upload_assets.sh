@@ -5,10 +5,13 @@ cd "$(dirname "$0")/.."
 
 # Usage: ./scripts/upload_assets.sh
 #
-# For each file in dist-release/*.{dmg,zip,AppImage,deb}, upload it to the
-# GitHub release identified by $RELEASE_ID. If an asset with the same name
-# already exists, delete it first — makes the job idempotent so retries
-# (the only realistic source of duplicate-name contention) succeed cleanly.
+# For each file in dist-release/*.{dmg,zip,AppImage,deb,exe,yml,blockmap},
+# upload it to the GitHub release identified by $RELEASE_ID. The .yml and
+# .blockmap files are electron-updater's channel manifest + delta-download
+# integrity layer — without them auto-update can't find or apply releases.
+# If an asset with the same name already exists, delete it first — makes the
+# job idempotent so retries (the only realistic source of duplicate-name
+# contention) succeed cleanly.
 #
 # Required env (normally propagated via bootstrap's release.env dotenv):
 #   RELEASE_ID, RELEASE_UPLOAD_URL, NEW_VERSION
@@ -92,7 +95,7 @@ upload_with_retry() {
 
 echo "Uploading artifacts to release $NEW_VERSION (id=$RELEASE_ID)..."
 UPLOADED=0
-for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DIR"/*.deb "$DIST_DIR"/*.exe; do
+for FILE in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.zip "$DIST_DIR"/*.AppImage "$DIST_DIR"/*.deb "$DIST_DIR"/*.exe "$DIST_DIR"/*.yml "$DIST_DIR"/*.blockmap; do
   [ -f "$FILE" ] || continue
   FNAME=$(basename "$FILE")
   echo "Uploading $FNAME..."

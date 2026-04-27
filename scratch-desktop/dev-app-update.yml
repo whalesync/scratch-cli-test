@@ -1,0 +1,4 @@
+provider: github
+owner: whalesync
+repo: scratch-cli
+channel: desktop-test
