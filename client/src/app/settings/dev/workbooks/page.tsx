@@ -322,7 +322,14 @@ function WorkbookRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        <Text size="sm">{workbook.name ?? '(unnamed)'}</Text>
+        <Group gap="xs" wrap="nowrap">
+          <Text size="sm">{workbook.name ?? '(unnamed)'}</Text>
+          {workbook.isPendingDelete && (
+            <Badge color="red" size="sm" variant="light">
+              Pending Deletion
+            </Badge>
+          )}
+        </Group>
       </Table.Td>
       <Table.Td>
         <Text size="sm" c="dimmed">

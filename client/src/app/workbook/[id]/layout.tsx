@@ -47,7 +47,7 @@ export default function NewWorkbookLayout({ children }: LayoutProps) {
     return <FullPageLoader message="Loading workspace..." />;
   }
 
-  if (error || !workbook) {
+  if (error || !workbook || workbook.isPendingDelete) {
     return (
       <MainContent>
         <MainContent.BasicHeader title="" />

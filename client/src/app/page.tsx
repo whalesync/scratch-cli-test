@@ -224,35 +224,55 @@ export default function HomePage() {
             </Text13Regular>
           </Stack>
 
-          {/* Existing workbooks list */}
+          {/* Existing workbooks list — pending-delete workspaces are sorted to the bottom
+              so the active ones stay easy to scan. */}
           {hasWorkbooks && !showCreateForm && (
             <Stack gap="xs" w="100%">
-              {workbooks.map((workbook) => (
-                <UnstyledButton
-                  key={workbook.id}
-                  onClick={() => handleSelectWorkbook(workbook)}
-                  style={{
-                    padding: '12px 16px',
-                    borderRadius: 8,
-                    border: '1px solid var(--mantine-color-gray-3)',
-                    backgroundColor: 'var(--bg-base)',
-                    transition: 'all 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-                    e.currentTarget.style.borderColor = 'var(--mantine-color-gray-4)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--bg-base)';
-                    e.currentTarget.style.borderColor = 'var(--mantine-color-gray-3)';
-                  }}
-                >
-                  <Group justify="space-between" wrap="nowrap">
-                    <Text13Medium truncate>{workbook.name ?? 'Untitled'}</Text13Medium>
-                    <ChevronRightIcon size={16} color="var(--fg-muted)" />
-                  </Group>
-                </UnstyledButton>
-              ))}
+              {[...workbooks]
+                .sort((a, b) => Number(a.isPendingDelete) - Number(b.isPendingDelete))
+                .map((workbook) => {
+                  const isPendingDelete = workbook.isPendingDelete;
+                return (
+                  <UnstyledButton
+                    key={workbook.id}
+                    onClick={() => {
+                      if (!isPendingDelete) handleSelectWorkbook(workbook);
+                    }}
+                    disabled={isPendingDelete}
+                    style={{
+                      padding: '12px 16px',
+                      borderRadius: 8,
+                      border: '1px solid var(--mantine-color-gray-3)',
+                      backgroundColor: 'var(--bg-base)',
+                      transition: 'all 0.15s ease',
+                      cursor: isPendingDelete ? 'not-allowed' : 'pointer',
+                      opacity: isPendingDelete ? 0.55 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isPendingDelete) return;
+                      e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                      e.currentTarget.style.borderColor = 'var(--mantine-color-gray-4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (isPendingDelete) return;
+                      e.currentTarget.style.backgroundColor = 'var(--bg-base)';
+                      e.currentTarget.style.borderColor = 'var(--mantine-color-gray-3)';
+                    }}
+                  >
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                        <Text13Medium truncate>{workbook.name ?? 'Untitled'}</Text13Medium>
+                        {isPendingDelete && (
+                          <Text13Regular c="dimmed" truncate>
+                            Delete in progress…
+                          </Text13Regular>
+                        )}
+                      </Stack>
+                      {!isPendingDelete && <ChevronRightIcon size={16} color="var(--fg-muted)" />}
+                    </Group>
+                  </UnstyledButton>
+                );
+              })}
 
               <Divider my="xs" label="or" labelPosition="center" />
 

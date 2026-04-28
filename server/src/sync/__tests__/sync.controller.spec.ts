@@ -12,6 +12,7 @@ import { Job } from 'bullmq';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { SyncController } from '../sync.controller';
 import { SyncService } from '../sync.service';
@@ -50,6 +51,7 @@ describe('SyncController', () => {
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let dbService: jest.Mocked<DbService>;
   let posthogService: jest.Mocked<PostHogService>;
+  let workbookService: jest.Mocked<WorkbookService>;
 
   beforeEach(() => {
     syncService = {
@@ -83,12 +85,18 @@ describe('SyncController', () => {
       previewImport: jest.fn(),
     } as unknown as jest.Mocked<WhalesyncImportApiService>;
 
+    workbookService = {
+      assertReadableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID }),
+      assertWritableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID }),
+    } as unknown as jest.Mocked<WorkbookService>;
+
     controller = new SyncController(
       syncService,
       whalesyncImportApiService,
       bullEnqueuerService,
       dbService,
       posthogService,
+      workbookService,
     );
   });
 

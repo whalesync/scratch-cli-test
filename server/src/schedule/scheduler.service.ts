@@ -36,6 +36,15 @@ export class SchedulerService {
 
     for (const schedule of dueSchedules) {
       try {
+        // Skip schedules whose workbook is flagged for deletion. The hard-delete worker
+        // will tear the schedule rows down via Workbook cascade; suppressing fires here
+        // avoids enqueueing jobs that the BullEnqueuer guard would reject anyway.
+        const pending = await this.isWorkbookPendingDelete(schedule.workbookId);
+        if (pending) {
+          skipped++;
+          continue;
+        }
+
         const busy = await this.isWorkbookBusy(schedule.workbookId);
         if (busy) {
           skipped++;
@@ -85,6 +94,15 @@ export class SchedulerService {
       source: 'SchedulerService.evaluateSchedules',
       message: `Evaluated ${dueSchedules.length} schedules, triggered ${triggered}, skipped ${skipped} (busy/debounced)`,
     });
+  }
+
+  /** Check if the workbook is flagged for async deletion. */
+  private async isWorkbookPendingDelete(workbookId: string): Promise<boolean> {
+    const wb = await this.db.client.workbook.findUnique({
+      where: { id: workbookId },
+      select: { isPendingDelete: true },
+    });
+    return wb?.isPendingDelete ?? false;
   }
 
   /** Check if there are any active jobs on the workbook. */

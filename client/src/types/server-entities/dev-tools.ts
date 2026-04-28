@@ -21,6 +21,7 @@ export interface WorkbookSummary {
   id: string;
   name: string;
   numTables: number;
+  isPendingDelete: boolean;
   connections: ConnectionSummary[];
   dataFolders: DataFolderSummary[];
 }

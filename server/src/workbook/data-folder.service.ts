@@ -21,7 +21,6 @@ import { ConnectorAccountService } from 'src/remote-service/connector-account/co
 import { DecryptedCredentials } from 'src/remote-service/connector-account/types/encrypted-credentials.interface';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { Actor } from 'src/users/types';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -57,10 +56,7 @@ export class DataFolderService {
    * Lists all data folders in a workbook as a flat list.
    */
   async listAll(workbookId: WorkbookId, actor: Actor): Promise<DataFolderEntity[]> {
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
 
     const dataFolders = await this.db.client.dataFolder.findMany({
       where: { workbookId },
@@ -73,11 +69,8 @@ export class DataFolderService {
   }
 
   async listGroupedByConnectorBases(workbookId: WorkbookId, actor: Actor): Promise<DataFolderGroup[]> {
-    // Verify user has access to the workbook
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Read access: pending workbooks are still listable.
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
 
     // Fetch all data folders for the workbook with connector account info
     const dataFolders = await this.db.client.dataFolder.findMany({
@@ -143,11 +136,8 @@ export class DataFolderService {
       throw new NotFoundException('Data folder not found');
     }
 
-    // Verify user has access to the workbook
-    const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Data folder not found');
-    }
+    // Read access: pending workbooks are still readable so the client can render the soft-delete state.
+    await this.workbookService.assertReadableWorkbook(actor, dataFolder.workbookId as WorkbookId);
 
     const schedules = await this.db.client.schedule.findMany({ where: { entityId: id } });
     return new DataFolderEntity(dataFolder, schedules);
@@ -161,11 +151,8 @@ export class DataFolderService {
     const { name, workbookId, connectorAccountId, filter } = dto;
     const parentFolderId = (dto as { parentFolderId?: string }).parentFolderId;
 
-    // Get the workbook (already verified in controller, but need the data)
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Mutation: 404 if workbook is missing or pending deletion.
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     // Load parent folder if specified to build the path
     let parentFolder: DataFolderCluster.DataFolder | null = null;
@@ -380,13 +367,8 @@ export class DataFolderService {
       throw new NotFoundException('Data folder not found');
     }
 
-    // Verify user has access to the workbook
-    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
-
-    const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Mutation: 404 if workbook is missing or pending deletion.
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, dataFolder.workbookId as WorkbookId);
 
     // Delete folder in git from both branches to avoid orphaned files in git status
     // Note: dataFolder.path includes leading slash, which is handled by service
@@ -444,13 +426,8 @@ export class DataFolderService {
       throw new NotFoundException('Data folder not found');
     }
 
-    // Verify user has access to the workbook
-    const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Data folder not found');
-    }
-
-    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
+    // Mutation: 404 if workbook is missing or pending deletion.
+    await this.workbookService.assertWritableWorkbook(actor, dataFolder.workbookId as WorkbookId);
 
     // When setting a filter, verify the connector supports filters
     if (dto.filter && dataFolder.connectorAccountId) {
@@ -518,13 +495,8 @@ export class DataFolderService {
       throw new NotFoundException('Data folder not found');
     }
 
-    // Verify user has access to the workbook
-    const workbook = await this.workbookService.findOne(dataFolder.workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Data folder not found');
-    }
-
-    checkWorkspacePermissions(actor, dataFolder.workbookId as WorkbookId);
+    // Read access: building a new-file template is read-only.
+    await this.workbookService.assertReadableWorkbook(actor, dataFolder.workbookId as WorkbookId);
 
     if (dataFolder.connectorAccountId && dataFolder.connectorService) {
       const connectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, actor);

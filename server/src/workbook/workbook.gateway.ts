@@ -16,7 +16,6 @@ import type { SocketWithUser } from 'src/auth/types';
 import { WebSocketAuthGuard } from 'src/auth/websocket-auth-guard';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookEventService } from './workbook-event.service';
 import { WorkbookService } from './workbook.service';
@@ -109,15 +108,18 @@ export class WorkbookDataGateway implements OnGatewayInit, OnGatewayConnection, 
     const workbookId = data.workbookId;
 
     const actor = userToActor(client.user);
-    checkWorkspacePermissions(actor, workbookId);
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
+    // Read access: WebSocket subscribers can listen to pending workbooks so the client
+    // can render the soft-delete state and receive the deletion-job progress events.
+    let workbook;
+    try {
+      workbook = await this.workbookService.assertReadableWorkbook(actor, workbookId);
+    } catch (err) {
       WSLogger.error({
-        message: 'Workbook not found',
+        message: 'Workbook access denied or not found',
         source: 'WorkbookDataGateway',
         data,
       });
-      throw new WsException('Workbook not found');
+      throw new WsException(err instanceof Error ? err.message : 'Workbook not found');
     }
 
     const workbookObservable = this.workbookEventService.getWorkbookEvents(workbook);

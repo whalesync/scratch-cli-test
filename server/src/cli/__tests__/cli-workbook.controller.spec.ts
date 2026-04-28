@@ -89,7 +89,24 @@ describe('CliWorkbookController', () => {
       findAllForUser: jest.fn(),
       create: jest.fn(),
       delete: jest.fn(),
+      requestDeletion: jest.fn(),
+      assertReadableWorkbook: jest.fn(),
+      assertWritableWorkbook: jest.fn(),
     } as unknown as jest.Mocked<WorkbookService>;
+
+    // Have the read/write assertions delegate to `findOne` so existing tests can keep
+    // controlling controller behavior via `workbookService.findOne.mockResolvedValue(...)`.
+    // Mirrors the real WorkbookService impl (NotFound on missing, plus pending-delete on writes).
+    workbookService.assertReadableWorkbook.mockImplementation(async (actor, id) => {
+      const wb = await workbookService.findOne(id, actor);
+      if (!wb) throw new NotFoundException('Workbook not found');
+      return wb;
+    });
+    workbookService.assertWritableWorkbook.mockImplementation(async (actor, id) => {
+      const wb = await workbookService.findOne(id, actor);
+      if (!wb || wb.isPendingDelete) throw new NotFoundException('Workbook not found');
+      return wb;
+    });
 
     configService = {
       getScratchGitBackendUrl: jest.fn().mockReturnValue(GIT_BACKEND_URL),

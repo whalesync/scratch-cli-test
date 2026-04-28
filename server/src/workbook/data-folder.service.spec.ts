@@ -184,7 +184,11 @@ describe('DataFolderService dotfile filtering', () => {
     // Create service with only the dependencies these methods use
     const stub = {} as unknown;
     service = new DataFolderService(
-      { findOne: jest.fn().mockResolvedValue({ id: WORKBOOK_ID }) } as unknown as WorkbookService,
+      {
+        findOne: jest.fn().mockResolvedValue({ id: WORKBOOK_ID }),
+        assertReadableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID }),
+        assertWritableWorkbook: jest.fn().mockResolvedValue({ id: WORKBOOK_ID }),
+      } as unknown as WorkbookService,
       mockDb,
       stub as ConnectorAccountService,
       stub as ConnectorsService,
@@ -314,6 +318,12 @@ describe('DataFolderService.deleteFolder', () => {
 
     mockWorkbookService = {
       findOne: jest.fn().mockResolvedValue({ id: WORKBOOK_ID, name: 'Test Workbook', organizationId: ORG_ID }),
+      assertReadableWorkbook: jest
+        .fn()
+        .mockResolvedValue({ id: WORKBOOK_ID, name: 'Test Workbook', organizationId: ORG_ID }),
+      assertWritableWorkbook: jest
+        .fn()
+        .mockResolvedValue({ id: WORKBOOK_ID, name: 'Test Workbook', organizationId: ORG_ID }),
     } as unknown as jest.Mocked<WorkbookService>;
 
     mockWorkbookEventService = {

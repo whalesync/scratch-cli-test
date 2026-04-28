@@ -24,6 +24,7 @@ export class WorkbookSummary {
   id: string;
   name: string;
   numTables: number;
+  isPendingDelete: boolean;
   connections: ConnectionSummary[];
   dataFolders: DataFolderSummary[];
 
@@ -31,6 +32,7 @@ export class WorkbookSummary {
     this.id = workbook.id;
     this.name = workbook.name ?? 'Unnamed snapshot';
     this.numTables = workbook.dataFolders.length;
+    this.isPendingDelete = workbook.isPendingDelete;
     this.connections = connections.map((c) => new ConnectionSummary(c));
     this.dataFolders = workbook.dataFolders.map((df) => new DataFolderSummary(df));
   }

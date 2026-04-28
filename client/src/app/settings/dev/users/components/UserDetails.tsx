@@ -301,6 +301,12 @@ export const UserDetailsCard = ({
                 <Tabs.Panel key={workbook.id} value={workbook.id} pt="sm">
                   <Stack gap="sm">
                     <LabelValuePair label="ID" value={workbook.id} canCopy />
+                    <LabelValuePair
+                      label="Status"
+                      value={
+                        workbook.isPendingDelete ? <BadgeError>Pending Deletion</BadgeError> : <BadgeOK>Active</BadgeOK>
+                      }
+                    />
                     <LabelValuePair label="Tables" value={String(workbook.numTables)} />
                     <TextTitle4>Data Folders</TextTitle4>
                     {workbook.dataFolders.length > 0 ? (

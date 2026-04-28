@@ -238,12 +238,16 @@ describe('WorkbookService', () => {
       expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });
     });
 
-    it('deletes DbJob rows for the workbook', async () => {
+    it('deletes DbJob rows for the workbook (excluding the running delete-workbook job)', async () => {
       (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(createMockWorkbook(1));
 
       await service.delete(WORKBOOK_ID, ACTOR);
 
-      expect(dbService.client.dbJob.deleteMany).toHaveBeenCalledWith({ where: { workbookId: WORKBOOK_ID } });
+      // The DeleteWorkbook job's own DbJob row must survive cleanup so the worker can
+      // mark itself complete after the handler returns.
+      expect(dbService.client.dbJob.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, type: { not: 'delete-workbook' } },
+      });
     });
 
     it('deletes SyncMatchKeys when syncs exist', async () => {
@@ -278,7 +282,9 @@ describe('WorkbookService', () => {
 
       expect(fileIndexService.deleteForWorkbook).toHaveBeenCalledWith(WORKBOOK_ID);
       expect(fileReferenceService.deleteForWorkbook).toHaveBeenCalledWith(WORKBOOK_ID);
-      expect(dbService.client.dbJob.deleteMany).toHaveBeenCalledWith({ where: { workbookId: WORKBOOK_ID } });
+      expect(dbService.client.dbJob.deleteMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, type: { not: 'delete-workbook' } },
+      });
       expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });
     });
 

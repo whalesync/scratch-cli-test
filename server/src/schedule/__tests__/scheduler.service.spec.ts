@@ -70,6 +70,9 @@ describe('SchedulerService', () => {
       client: {
         dbJob: { count: jest.fn().mockResolvedValue(0), findFirst: jest.fn().mockResolvedValue(null) },
         user: { findFirst: jest.fn() },
+        // Default the workbook lookup to "not pending deletion" so the scheduler
+        // proceeds to the existing busy/claim logic.
+        workbook: { findUnique: jest.fn().mockResolvedValue({ isPendingDelete: false }) },
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -127,6 +130,18 @@ describe('SchedulerService', () => {
 
     await service.evaluateSchedules();
 
+    expect(scheduleService.atomicClaim).not.toHaveBeenCalled();
+    expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
+  });
+
+  it('skips workbook flagged for pending deletion (no busy check, no claim)', async () => {
+    const schedule = makeSchedule();
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+    (dbService.client.workbook.findUnique as jest.Mock).mockResolvedValue({ isPendingDelete: true });
+
+    await service.evaluateSchedules();
+
+    expect(dbService.client.dbJob.count).not.toHaveBeenCalled();
     expect(scheduleService.atomicClaim).not.toHaveBeenCalled();
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
   });

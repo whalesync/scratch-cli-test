@@ -4,6 +4,7 @@ import {
   AdminWorkbookDto,
   CreateWorkbookDto,
   DataFolderGroup,
+  DeleteWorkbookResponseDto,
   DirtyFileCountResponse,
   GitGcResponse,
   GitObjectCountsResponse,
@@ -141,10 +142,13 @@ export const workbookApi = {
     }
   },
 
-  async delete(id: WorkbookId): Promise<void> {
+  async delete(id: WorkbookId, options?: { force?: boolean }): Promise<DeleteWorkbookResponseDto> {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      await axios.delete(`/workbook/${id}`);
+      const res = await axios.delete<DeleteWorkbookResponseDto>(`/workbook/${id}`, {
+        params: options?.force ? { force: 'true' } : undefined,
+      });
+      return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to delete workspace');
     }

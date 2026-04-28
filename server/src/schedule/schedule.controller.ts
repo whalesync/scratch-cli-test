@@ -23,15 +23,18 @@ import { ScheduleAction } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
+import { WorkbookService } from 'src/workbook/workbook.service';
 import { ScheduleService } from './schedule.service';
 
 @Controller('workbooks/:workbookId/schedules')
 @UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
 @UseInterceptors(ClassSerializerInterceptor)
 export class ScheduleController {
-  constructor(private readonly scheduleService: ScheduleService) {}
+  constructor(
+    private readonly scheduleService: ScheduleService,
+    private readonly workbookService: WorkbookService,
+  ) {}
 
   @Post()
   async create(
@@ -40,14 +43,14 @@ export class ScheduleController {
     @Req() req: RequestWithUser,
   ): Promise<Schedule> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     return this.scheduleService.create(workbookId, dto as ValidatedCreateScheduleDto, actor);
   }
 
   @Get()
   async list(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<Schedule[]> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.scheduleService.findAllForWorkbook(workbookId);
   }
 
@@ -59,7 +62,7 @@ export class ScheduleController {
     @Req() req: RequestWithUser,
   ): Promise<Schedule | null> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.scheduleService.findByEntity(workbookId, action, entityId);
   }
 
@@ -70,7 +73,7 @@ export class ScheduleController {
     @Req() req: RequestWithUser,
   ): Promise<Schedule> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.scheduleService.findOne(workbookId, scheduleId);
   }
 
@@ -82,7 +85,7 @@ export class ScheduleController {
     @Req() req: RequestWithUser,
   ): Promise<Schedule> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     return this.scheduleService.update(workbookId, scheduleId, dto);
   }
 
@@ -93,7 +96,7 @@ export class ScheduleController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     return this.scheduleService.delete(workbookId, scheduleId);
   }
 }

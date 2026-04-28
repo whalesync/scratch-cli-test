@@ -2,7 +2,13 @@ import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi, WorkbookSortBy, WorkbookSortOrder } from '@/lib/api/workbook';
 import { RouteUrls } from '@/utils/route-urls';
-import { CreateWorkbookDto, UpdateWorkbookDto, Workbook, WorkbookId } from '@spinner/shared-types';
+import {
+  CreateWorkbookDto,
+  DeleteWorkbookResponseDto,
+  UpdateWorkbookDto,
+  Workbook,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 
@@ -18,7 +24,12 @@ export interface UseWorkbooksReturn {
   error: string | undefined;
   createWorkbook: (dto: CreateWorkbookDto) => Promise<Workbook>;
   updateWorkbook: (id: WorkbookId, updateDto: UpdateWorkbookDto) => Promise<Workbook>;
-  deleteWorkbook: (id: WorkbookId) => Promise<void>;
+  /**
+   * Delete a workbook. Default path is asynchronous: server flags the workbook for
+   * deletion and the worker tears it down. Pass `{ force: true }` for synchronous
+   * hard delete (admin/non-prod only) — used by integration & smoke tests.
+   */
+  deleteWorkbook: (id: WorkbookId, options?: { force?: boolean }) => Promise<DeleteWorkbookResponseDto>;
   refreshWorkbooks: () => Promise<void>;
   getWorkbookPageUrl: (id: WorkbookId) => string;
 }
@@ -54,9 +65,12 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
   );
 
   const deleteWorkbook = useCallback(
-    async (id: WorkbookId): Promise<void> => {
-      await workbookApi.delete(id);
+    async (id: WorkbookId, options?: { force?: boolean }): Promise<DeleteWorkbookResponseDto> => {
+      const result = await workbookApi.delete(id, options);
+      // Revalidate the list so the row immediately reflects either the pending state
+      // (default async path) or removal (force path).
       mutate(SWR_KEYS.workbook.listKeyMatcher());
+      return result;
     },
     [mutate],
   );

@@ -37,6 +37,8 @@ export class JobController {
   ): Promise<JobEntity[]> {
     const actor = userToActor(req.user);
     if (workbookId) {
+      // Read access: job history is observable for pending workbooks so users can see
+      // background deletion progress.
       checkWorkspacePermissions(actor, workbookId as WorkbookId);
     }
     const userId = req.user.id;
@@ -56,6 +58,7 @@ export class JobController {
     @Req() req: RequestWithUser,
   ): Promise<JobEntity[]> {
     const actor = userToActor(req.user);
+    // Read access: pending workbooks should still surface active jobs (the deletion job runs against them).
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     return await this.jobService.getActiveJobsByWorkbookId(workbookId);
   }

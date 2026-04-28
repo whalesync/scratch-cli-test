@@ -24,7 +24,6 @@ import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.ser
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -71,7 +70,7 @@ export class CliLinkedController {
   @Get('workbooks/:workbookId/linked')
   async listLinkedTables(@Req() req: RequestWithUser, @Param('workbookId') workbookId: string) {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId as WorkbookId);
     const result = await this.dataFolderService.listGroupedByConnectorBases(workbookId as WorkbookId, actor);
     this.posthogService.trackCliListDataFolders(actor, workbookId, { scope: 'list' });
     return result;
@@ -87,14 +86,9 @@ export class CliLinkedController {
     @Body() dto: CreateCliLinkedTableDto,
   ) {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    // Mutation: 404 if workbook is missing or pending deletion.
+    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
     const validatedDto = dto as ValidatedCreateCliLinkedTableDto;
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
 
     // Check if the table is disabled (e.g. no unique column)
     const { tables } = await this.connectorAccountService.listTables(validatedDto.connectorAccountId, actor);
@@ -127,13 +121,8 @@ export class CliLinkedController {
     @Param('folderId') folderId: string,
   ): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId as WorkbookId);
-
-    // Verify workbook access
-    const workbook = await this.workbookService.findOne(workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Mutation: 404 if workbook is missing or pending deletion.
+    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
     await this.dataFolderService.deleteFolder(folderId as DataFolderId, actor);
 
@@ -150,13 +139,8 @@ export class CliLinkedController {
     @Param('folderId') folderId: string,
   ) {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId as WorkbookId);
-
-    // Verify workbook access
-    const workbook = await this.workbookService.findOne(workbookId as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Read access: pending workbooks remain inspectable.
+    await this.workbookService.assertReadableWorkbook(actor, workbookId as WorkbookId);
 
     const dataFolder = await this.dataFolderService.findOne(folderId as DataFolderId, actor);
     if (!dataFolder) {
@@ -204,7 +188,7 @@ export class CliLinkedController {
     @Param('workbookId') workbookId: string,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
     return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, undefined, createRunContext('cli'));
   }
@@ -219,7 +203,7 @@ export class CliLinkedController {
     @Param('folderId') folderId: string,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
     return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, [folderId], createRunContext('cli'));
   }
@@ -236,14 +220,8 @@ export class CliLinkedController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const wbId = workbookId as WorkbookId;
-    checkWorkspacePermissions(actor, wbId);
+    await this.workbookService.assertWritableWorkbook(actor, wbId);
     const dfId = folderId as DataFolderId;
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(wbId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
 
     // Verify the data folder exists and belongs to this workbook
     const dataFolder = await this.dataFolderService.findOne(dfId, actor);
@@ -308,14 +286,8 @@ export class CliLinkedController {
 
     const actor = userToActor(req.user);
     const wbId = workbookId as WorkbookId;
-    checkWorkspacePermissions(actor, wbId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, wbId);
     const dfId = folderId as DataFolderId;
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(wbId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
 
     // Verify the data folder exists and belongs to this workbook
     const dataFolder = await this.dataFolderService.findOne(dfId, actor);

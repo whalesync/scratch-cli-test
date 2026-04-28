@@ -4,9 +4,9 @@ import {
   ClassSerializerInterceptor,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
-  NotFoundException,
   Param,
   Post,
   Query,
@@ -15,19 +15,17 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
+import { DeleteWorkbookResponseDto, WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
-import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishFromGitDto } from 'src/publish-plan/dto/publish-v2.dto';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -77,7 +75,8 @@ export class CliWorkbookController {
     const sortBy = query.sortBy ?? 'createdAt';
     const sortOrder = query.sortOrder ?? 'desc';
 
-    const workbooks = await this.workbookService.findAllForUser(actor, sortBy, sortOrder);
+    const allWorkbooks = await this.workbookService.findAllForUser(actor, sortBy, sortOrder);
+    const workbooks = allWorkbooks.filter((wb) => !wb.isPendingDelete);
 
     this.posthogService.trackCliListWorkbooks(actor, { workbookCount: workbooks.length, scope: 'list' });
 
@@ -112,12 +111,7 @@ export class CliWorkbookController {
   @Get(':id')
   async getWorkbook(@Req() req: RequestWithUser & Request, @Param('id') id: string): Promise<CliWorkbookResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id as WorkbookId);
-    const workbook = await this.workbookService.findOne(id as WorkbookId, actor);
-
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
 
     this.posthogService.trackCliListWorkbooks(actor, { scope: 'single', workbookId: id });
 
@@ -143,22 +137,32 @@ export class CliWorkbookController {
   }
 
   /**
-   * Delete a workbook by ID.
+   * Delete a workbook by ID. Returns 202 with `status: 'deletion_scheduled'` for the
+   * default async path. With `?force=true` (admin-only in production), runs the synchronous
+   * hard-delete and returns `status: 'deleted'`.
    */
   @Delete(':id')
-  async deleteWorkbook(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ success: boolean }> {
+  async deleteWorkbook(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Query('force') force: string | undefined,
+  ): Promise<DeleteWorkbookResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id as WorkbookId);
+    const workbookId = id as WorkbookId;
 
-    // Verify workbook exists and user has access
-    const workbook = await this.workbookService.findOne(id as WorkbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
+    const forceRequested = force === 'true' || force === '1';
+    if (forceRequested) {
+      const allowed = actor.isAdmin || !this.configService.isProductionEnvironment();
+      if (!allowed) {
+        throw new ForbiddenException('force=true is restricted to admins in production');
+      }
+      await this.workbookService.delete(workbookId, actor);
+      return { status: 'deleted', workbookId };
     }
 
-    await this.workbookService.delete(id as WorkbookId, actor);
-
-    return { success: true };
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
+    await this.workbookService.requestDeletion(workbookId, actor);
+    return { status: 'deletion_scheduled', workbookId };
   }
 
   /**
@@ -174,13 +178,9 @@ export class CliWorkbookController {
   ): Promise<void> {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
-    checkWorkspacePermissions(actor, workbookId);
-
-    // Verify access
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Git proxy is treated as a read for visibility purposes — pending workbooks remain
+    // cloneable so users can pull final state before the deletion job purges the repo.
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
 
     this.posthogService.trackCliGitOperation(actor, workbookId, { method: req.method });
 
@@ -229,12 +229,8 @@ export class CliWorkbookController {
   ): Promise<void> {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
-    checkWorkspacePermissions(actor, workbookId);
-
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    // Mutation: discarding dirty changes blocked once the workbook is pending deletion.
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
     await this.scratchGitService.discardChanges(repoId, body.path);
@@ -422,7 +418,7 @@ export class CliWorkbookController {
     @Body() body: PublishFromGitDto,
   ): Promise<{ jobId: string | number | undefined }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id as WorkbookId);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
 
     const job = await this.bullEnqueuerService.enqueuePublishFromGitJob(
       id as WorkbookId,
@@ -447,7 +443,8 @@ export class CliWorkbookController {
   @Post(':id/config/init')
   async initWorkbookRepo(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
-    const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    // Init is a mutation — block on pending workbooks.
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
     WSLogger.warn({
       source: 'CliWorkbookController.initWorkbookRepo',
       message: 'Deprecated workbook config init endpoint called',
@@ -470,7 +467,8 @@ export class CliWorkbookController {
   @Post(':id/config/push-syncs')
   async pushSyncsToGit(@Req() req: RequestWithUser, @Param('id') id: string): Promise<{ count: number }> {
     const actor = userToActor(req.user);
-    const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    // Push-syncs is a mutation — block on pending workbooks.
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
     WSLogger.warn({
       source: 'CliWorkbookController.pushSyncsToGit',
       message: 'Deprecated workbook config push-syncs endpoint called',
@@ -491,7 +489,9 @@ export class CliWorkbookController {
     @Res() res: Response,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    const workbook = await this.loadWorkbookForConfigAction(actor, id as WorkbookId);
+    // Config git proxy is a read for visibility purposes — pending workbooks remain
+    // cloneable so users can pull final state before the deletion job purges the repo.
+    const workbook = await this.workbookService.assertReadableWorkbook(actor, id as WorkbookId);
     const repoId = getWorkbookRepoPath(workbook.organizationId, id as WorkbookId);
     const gitPath = req.url.replace(`/cli/v1/workbooks/${id}/config/git`, '');
     const targetUrl = `${this.gitBackendUrl}/${repoId}.git${gitPath}`;
@@ -505,19 +505,5 @@ export class CliWorkbookController {
     });
 
     await this.proxyToGitBackend(targetUrl, id as WorkbookId, req, res);
-  }
-
-  private async loadWorkbookForConfigAction(
-    actor: ReturnType<typeof userToActor>,
-    workbookId: WorkbookId,
-  ): Promise<WorkbookCluster.Workbook> {
-    checkWorkspacePermissions(actor, workbookId);
-
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
-    return workbook;
   }
 }

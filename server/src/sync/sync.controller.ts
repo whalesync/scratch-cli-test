@@ -37,8 +37,8 @@ import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
+import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { SyncService } from './sync.service';
@@ -54,6 +54,7 @@ export class SyncController {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly dbService: DbService,
     private readonly posthogService: PostHogService,
+    private readonly workbookService: WorkbookService,
   ) {}
 
   @Post()
@@ -63,7 +64,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     return await this.syncService.createSync(workbookId, body, actor);
   }
 
@@ -75,13 +76,13 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     return await this.syncService.updateSync(workbookId, syncId, body, actor);
   }
   @Get()
   async listSyncs(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<unknown> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return await this.syncService.findAllForWorkbook(workbookId, actor);
   }
 
@@ -91,7 +92,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<AiContextResponse> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.syncService.generateAiContext(workbookId, actor);
   }
 
@@ -102,7 +103,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<ExportSyncConfig[]> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return await this.syncService.exportSyncs(workbookId, syncId, actor);
   }
 
@@ -113,7 +114,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return await this.syncService.findOneForWorkbook(workbookId, syncId, actor);
   }
 
@@ -124,7 +125,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ) {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     const workbook = await this.dbService.client.workbook.findUnique({
       where: { id: workbookId },
@@ -177,7 +178,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<SyncOneRecordResponse> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     if (!body.sourceFilePath || !body.sourceDataFolderId) {
       throw new BadRequestException('sourceFilePath and sourceDataFolderId are required');
@@ -200,7 +201,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     return await this.syncService.deleteSync(workbookId, syncId as SyncId, actor);
   }
 
@@ -211,7 +212,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<WhalesyncImportPreviewResponse> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.whalesyncImportApiService.previewImport(workbookId, body, actor);
   }
 
@@ -222,7 +223,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<PreviewRecordResponse> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.syncService.previewRecord(workbookId, body, actor);
   }
 
@@ -233,7 +234,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<{ valid: boolean }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     const valid = await this.syncService.validateFolderMapping(
       workbookId,
       body.sourceId as DataFolderId,
@@ -252,7 +253,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<MappingTypeTraceResponse | { error: string }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     const result = await this.syncService.traceMappingType(workbookId, body, actor);
     return result as MappingTypeTraceResponse | { error: string };
   }
@@ -265,7 +266,7 @@ export class SyncController {
     @Req() req: RequestWithUser,
   ): Promise<ValidateSyncMappingTypesResponse> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return await this.syncService.validateSyncMappingTypes(workbookId, syncId, actor);
   }
 }

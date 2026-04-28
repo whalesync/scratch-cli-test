@@ -3,7 +3,6 @@ import {
   ClassSerializerInterceptor,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   HttpCode,
   NotFoundException,
@@ -19,7 +18,6 @@ import type { RequestWithUser } from 'src/auth/types';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { TableList } from 'src/remote-service/connector-account/entities/table-list.entity';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { CreateCliConnectionDto, type ValidatedCreateCliConnectionDto } from './dtos/cli-connection.dto';
@@ -39,8 +37,9 @@ export class CliConnectionController {
 
   @Get()
   async list(@Param('workbookId') workbookId: string, @Req() req: RequestWithUser) {
-    await this.verifyWorkbookAccess(workbookId as WorkbookId, req);
-    const accounts = await this.connectorAccountService.findAll(workbookId as WorkbookId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId as WorkbookId);
+    const accounts = await this.connectorAccountService.findAll(workbookId as WorkbookId, actor);
     return accounts.map((a) => this.toResponse(a));
   }
 
@@ -50,7 +49,8 @@ export class CliConnectionController {
     @Body() dto: CreateCliConnectionDto,
     @Req() req: RequestWithUser,
   ) {
-    await this.verifyWorkbookAccess(workbookId as WorkbookId, req);
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
     const validatedDto = dto as ValidatedCreateCliConnectionDto;
 
     const account = await this.connectorAccountService.create(
@@ -61,7 +61,7 @@ export class CliConnectionController {
         userProvidedParams: validatedDto.userProvidedParams,
         displayName: validatedDto.displayName,
       },
-      userToActor(req.user),
+      actor,
     );
 
     return this.toResponse(account);
@@ -69,8 +69,9 @@ export class CliConnectionController {
 
   @Get(':id')
   async show(@Param('workbookId') workbookId: string, @Param('id') id: string, @Req() req: RequestWithUser) {
-    await this.verifyWorkbookAccess(workbookId as WorkbookId, req);
-    const account = await this.connectorAccountService.findOne(workbookId as WorkbookId, id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId as WorkbookId);
+    const account = await this.connectorAccountService.findOne(workbookId as WorkbookId, id, actor);
     if (!account) {
       throw new NotFoundException('Connection not found');
     }
@@ -83,8 +84,9 @@ export class CliConnectionController {
     @Param('connectorAccountId') connectorAccountId: string,
     @Req() req: RequestWithUser,
   ): Promise<TableList> {
-    await this.verifyWorkbookAccess(workbookId as WorkbookId, req);
-    return this.connectorAccountService.listTables(connectorAccountId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId as WorkbookId);
+    return this.connectorAccountService.listTables(connectorAccountId, actor);
   }
 
   @Delete(':id')
@@ -94,8 +96,9 @@ export class CliConnectionController {
     @Param('id') id: string,
     @Req() req: RequestWithUser,
   ): Promise<void> {
-    await this.verifyWorkbookAccess(workbookId as WorkbookId, req);
-    await this.connectorAccountService.remove(workbookId as WorkbookId, id, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
+    await this.connectorAccountService.remove(workbookId as WorkbookId, id, actor);
   }
 
   private toResponse(account: {
@@ -120,15 +123,5 @@ export class CliConnectionController {
       createdAt: account.createdAt.toISOString(),
       updatedAt: account.updatedAt.toISOString(),
     };
-  }
-
-  private async verifyWorkbookAccess(workbookId: WorkbookId, req: RequestWithUser) {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new ForbiddenException('You do not have access to this workbook');
-    }
-    return workbook;
   }
 }

@@ -3,7 +3,6 @@ import {
   ClassSerializerInterceptor,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -21,7 +20,6 @@ import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { SyncService } from 'src/sync/sync.service';
-import { checkWorkspacePermissions } from 'src/users/permissions';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -46,7 +44,7 @@ export class CliSyncController {
   @Get('syncs')
   async listSyncs(@Param('workbookId') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<unknown> {
     const actor = userToActor(req.user);
-    await this.verifyWorkbookAccess(workbookId, req);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     const result = await this.syncService.findAllForWorkbook(workbookId, actor);
     this.posthogService.trackCliListSyncs(actor, workbookId, { scope: 'list' });
     return result;
@@ -58,8 +56,9 @@ export class CliSyncController {
     @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    await this.verifyWorkbookAccess(workbookId, req);
-    return await this.syncService.createSync(workbookId, body, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    return await this.syncService.createSync(workbookId, body, actor);
   }
 
   @Get('syncs/export')
@@ -69,7 +68,7 @@ export class CliSyncController {
     @Req() req: RequestWithUser,
   ): Promise<ExportSyncConfig[]> {
     const actor = userToActor(req.user);
-    await this.verifyWorkbookAccess(workbookId, req);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return await this.syncService.exportSyncs(workbookId, syncId, actor);
   }
 
@@ -80,7 +79,7 @@ export class CliSyncController {
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
-    await this.verifyWorkbookAccess(workbookId, req);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     const sync = await this.db.client.sync.findUnique({
       where: { id: syncId },
       include: { syncTablePairs: true },
@@ -99,8 +98,9 @@ export class CliSyncController {
     @Body() body: SaveSyncBody,
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
-    await this.verifyWorkbookAccess(workbookId, req);
-    return await this.syncService.updateSync(workbookId, syncId as SyncId, body, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    return await this.syncService.updateSync(workbookId, syncId as SyncId, body, actor);
   }
 
   @Delete('syncs/:syncId')
@@ -109,8 +109,9 @@ export class CliSyncController {
     @Param('syncId') syncId: string,
     @Req() req: RequestWithUser,
   ): Promise<{ success: boolean }> {
-    await this.verifyWorkbookAccess(workbookId, req);
-    await this.syncService.deleteSync(workbookId, syncId as SyncId, userToActor(req.user));
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    await this.syncService.deleteSync(workbookId, syncId as SyncId, actor);
     return { success: true };
   }
 
@@ -120,7 +121,8 @@ export class CliSyncController {
     @Param('syncId') syncId: string,
     @Req() req: RequestWithUser,
   ) {
-    const workbook = await this.verifyWorkbookAccess(workbookId, req);
+    const actor = userToActor(req.user);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     const sync = await this.db.client.sync.findFirst({
       where: {
@@ -155,15 +157,5 @@ export class CliSyncController {
       jobId: job.id,
       message: 'Sync job queued successfully',
     };
-  }
-
-  private async verifyWorkbookAccess(workbookId: WorkbookId, req: RequestWithUser) {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new ForbiddenException('You do not have access to this workbook');
-    }
-    return workbook;
   }
 }

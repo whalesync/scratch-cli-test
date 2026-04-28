@@ -4,6 +4,7 @@ import {
   createWorkbookId,
   createWorkspacePermissionId,
   DataFolderId,
+  JobType,
   PullAssetsResponseDto,
   PullFilesResponseDto,
   UpdateWorkbookDto,
@@ -16,6 +17,7 @@ import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { checkWorkspacePermissions } from 'src/users/permissions';
 import { Actor, SYSTEM_ACTOR } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RunContext } from 'src/worker/jobs/base-types';
@@ -26,6 +28,30 @@ import { Schedule } from '@prisma/client';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
 import { WorkbookRepoService } from './workbook-repo.service';
+
+export type HardDeleteWorkbookPhase =
+  | 'starting'
+  | 'deleting_connection_repos'
+  | 'deleting_workbook_repo'
+  | 'cleaning_indices'
+  | 'deleting_syncs'
+  | 'deleting_jobs'
+  | 'deleting_workbook_row'
+  | 'completed';
+
+export type HardDeleteWorkbookProgress = {
+  phase: HardDeleteWorkbookPhase;
+  connectionsDeleted: number;
+  totalConnections: number;
+  reposDeleted: number;
+  dataFoldersDeleted: number;
+  totalDataFolders: number;
+};
+
+export type HardDeleteWorkbookOptions = {
+  actor?: Actor;
+  onProgress?: (progress: HardDeleteWorkbookProgress) => Promise<void>;
+};
 
 @Injectable()
 export class WorkbookService {
@@ -104,7 +130,7 @@ export class WorkbookService {
 
   async delete(id: WorkbookId, actor: Actor): Promise<void> {
     await this.findOneOrThrow(id, actor); // Permissions
-    await this.executeHardDeleteWorkbook(id, actor);
+    await this.executeHardDeleteWorkbook(id, { actor });
   }
 
   /**
@@ -146,9 +172,15 @@ export class WorkbookService {
   /**
    * Hard-delete a workbook and all of its associated resources. Idempotent: if the workbook
    * row is already gone, returns silently. Safe to invoke from a background job under the
-   * SYSTEM_ACTOR (the default).
+   * SYSTEM_ACTOR (the default actor).
+   *
+   * `onProgress` lets long-running callers (e.g. the DeleteWorkbook job handler) checkpoint
+   * partial progress as each phase completes. Errors thrown from `onProgress` propagate.
    */
-  async executeHardDeleteWorkbook(id: WorkbookId, actor: Actor = SYSTEM_ACTOR): Promise<void> {
+  async executeHardDeleteWorkbook(id: WorkbookId, options: HardDeleteWorkbookOptions = {}): Promise<void> {
+    const actor = options.actor ?? SYSTEM_ACTOR;
+    const onProgress = options.onProgress;
+
     const workbook = await this.db.client.workbook.findFirst({
       where: { id },
       include: WorkbookCluster._validator.include,
@@ -162,15 +194,35 @@ export class WorkbookService {
       return;
     }
 
-    // Delete Git Repos — one repo per connection
     const connectorAccounts = await this.db.client.connectorAccount.findMany({
       where: { workbookId: id },
       select: { id: true },
     });
+
+    const progress: HardDeleteWorkbookProgress = {
+      phase: 'starting',
+      connectionsDeleted: 0,
+      totalConnections: connectorAccounts.length,
+      reposDeleted: 0,
+      dataFoldersDeleted: 0,
+      totalDataFolders: workbook.dataFolders.length,
+    };
+    const emit = async (next: Partial<HardDeleteWorkbookProgress>): Promise<void> => {
+      Object.assign(progress, next);
+      if (onProgress) {
+        await onProgress({ ...progress });
+      }
+    };
+
+    await emit({ phase: 'starting' });
+
+    // Delete Git Repos — one repo per connection
+    await emit({ phase: 'deleting_connection_repos' });
     for (const ca of connectorAccounts) {
       try {
         const repoId = await this.scratchGitService.resolveConnectionRepoPath(ca.id);
         await this.scratchGitService.deleteRepo(repoId);
+        progress.reposDeleted += 1;
       } catch (err) {
         WSLogger.error({
           source: 'WorkbookService.executeHardDeleteWorkbook',
@@ -180,27 +232,53 @@ export class WorkbookService {
           connectorAccountId: ca.id,
         });
       }
+      await emit({ connectionsDeleted: progress.connectionsDeleted + 1 });
     }
 
     // Delete workbook git repo (best-effort)
-    await this.workbookRepoService.deleteWorkbookRepo(workbook.organizationId, id);
+    await emit({ phase: 'deleting_workbook_repo' });
+    try {
+      await this.workbookRepoService.deleteWorkbookRepo(workbook.organizationId, id);
+      progress.reposDeleted += 1;
+      await emit({});
+    } catch (err) {
+      WSLogger.error({
+        source: 'WorkbookService.executeHardDeleteWorkbook',
+        message: 'Failed to delete workbook git repo',
+        error: err,
+        workbookId: id,
+      });
+    }
 
     // Cleanup index and references
+    await emit({ phase: 'cleaning_indices' });
     await this.fileIndexService.deleteForWorkbook(id);
     await this.fileReferenceService.deleteForWorkbook(id);
 
     // Delete orphaned SyncMatchKeys (no FK, must delete before cascade removes Sync rows)
+    await emit({ phase: 'deleting_syncs' });
     const syncs = await this.db.client.sync.findMany({ where: { workbookId: id }, select: { id: true } });
     if (syncs.length > 0) {
       await this.db.client.syncMatchKeys.deleteMany({ where: { syncId: { in: syncs.map((s) => s.id) } } });
     }
 
-    // Delete orphaned DbJob rows
-    await this.db.client.dbJob.deleteMany({ where: { workbookId: id } });
+    // Delete orphaned DbJob rows. Exclude DeleteWorkbook jobs — when this hard-delete
+    // runs from the worker, the worker still needs to mark its own DbJob row complete
+    // after the handler returns. Deleting the row here would crash the worker's
+    // finalization step (`updateJobStatus` → `findUniqueOrThrow`). Leftover
+    // DeleteWorkbook rows are harmless: `DbJob.workbookId` has no FK, so they just
+    // become orphaned audit entries pointing at a now-gone workbook id.
+    await emit({ phase: 'deleting_jobs' });
+    await this.db.client.dbJob.deleteMany({
+      where: { workbookId: id, type: { not: JobType.DeleteWorkbook } },
+    });
 
+    // workbook.delete cascades through Prisma to dataFolders, syncs, etc.
+    await emit({ phase: 'deleting_workbook_row' });
     await this.db.client.workbook.delete({
       where: { id },
     });
+    await emit({ phase: 'completed', dataFoldersDeleted: progress.totalDataFolders });
 
     this.posthogService.trackRemoveWorkbook(actor, workbook);
     await this.auditLogService.logEvent({
@@ -379,6 +457,43 @@ export class WorkbookService {
   async findOneOrThrow(id: WorkbookId, actor: Actor): Promise<WorkbookCluster.Workbook> {
     const workbook = await this.findOne(id, actor);
     if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+    return workbook;
+  }
+
+  /**
+   * Permission + existence check for a **read** of a workbook (or anything nested under it).
+   * Pending-deletion workbooks remain readable so the client can render the soft-delete state
+   * — callers that intend to mutate must use `assertWritableWorkbook` instead.
+   *
+   * Throws:
+   * - `ForbiddenException` if the actor lacks workspace permission.
+   * - `NotFoundException` if the workbook does not exist.
+   */
+  async assertReadableWorkbook(actor: Actor, workbookId: WorkbookId): Promise<WorkbookCluster.Workbook> {
+    checkWorkspacePermissions(actor, workbookId);
+    const workbook = await this.findOne(workbookId, actor);
+    if (!workbook) {
+      throw new NotFoundException('Workbook not found');
+    }
+    return workbook;
+  }
+
+  /**
+   * Permission + existence + writability check for a **mutation** against a workbook (or
+   * anything nested under it). Soft-deleted workbooks are treated as missing so users can't
+   * keep editing a workspace that is about to disappear. Dev-tools controllers must NOT route
+   * through this helper — they keep operating on pending workbooks for support/recovery.
+   *
+   * Throws:
+   * - `ForbiddenException` if the actor lacks workspace permission.
+   * - `NotFoundException` if the workbook does not exist OR `isPendingDelete: true`.
+   */
+  async assertWritableWorkbook(actor: Actor, workbookId: WorkbookId): Promise<WorkbookCluster.Workbook> {
+    checkWorkspacePermissions(actor, workbookId);
+    const workbook = await this.findOne(workbookId, actor);
+    if (!workbook || workbook.isPendingDelete) {
       throw new NotFoundException('Workbook not found');
     }
     return workbook;

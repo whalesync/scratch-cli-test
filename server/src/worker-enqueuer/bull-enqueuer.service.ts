@@ -1,8 +1,9 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { createPlainId, DataFolderId, JobType, RunId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { Job, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
@@ -25,6 +26,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
   constructor(
     private readonly configService: ScratchConfigService,
     private readonly jobService: JobService,
+    private readonly dbService: DbService,
   ) {
     if (configService.getUseJobs()) {
       this.redis = new IORedis({
@@ -311,7 +313,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
    * is idempotent.
    */
   async enqueueDeleteWorkbookJob(workbookId: WorkbookId, actor: Actor): Promise<Job> {
-    const id = `delete-workbook-${workbookId}`;
+    const id = `delete-workbook-${workbookId}-${createPlainId(5)}`;
     const data: DeleteWorkbookJobDefinition['data'] = {
       type: JobType.DeleteWorkbook,
       workbookId,
@@ -363,6 +365,12 @@ export class BullEnqueuerService implements OnModuleDestroy {
     data: JobData,
     id: string,
   ): Promise<Job> {
+    // Guard: do not enqueue user-initiated work for workbooks pending deletion. The
+    // delete-workbook job itself bypasses this check (it's the worker draining the workbook).
+    if (params.workbookId && data.type !== JobType.DeleteWorkbook) {
+      await this.assertWorkbookNotPendingDelete(params.workbookId as WorkbookId);
+    }
+
     const dbJob = await this.jobService.createJob(params);
     try {
       return await this.enqueueJobWithId(data, id);
@@ -379,6 +387,21 @@ export class BullEnqueuerService implements OnModuleDestroy {
         finishedOn: new Date(),
       });
       throw error;
+    }
+  }
+
+  /**
+   * Throws a NotFound (matching the controller-level visibility model) if the workbook is
+   * already flagged for deletion. Avoids stacking long-running work on a workspace that's
+   * about to be wiped.
+   */
+  private async assertWorkbookNotPendingDelete(workbookId: WorkbookId): Promise<void> {
+    const workbook = await this.dbService.client.workbook.findUnique({
+      where: { id: workbookId },
+      select: { isPendingDelete: true },
+    });
+    if (workbook?.isPendingDelete) {
+      throw new NotFoundException('Workbook not found');
     }
   }
 

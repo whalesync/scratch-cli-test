@@ -19,5 +19,6 @@ export interface AdminWorkbookDto {
   organizationId: string;
   organizationName: string;
   userId: string | null;
+  isPendingDelete: boolean;
   connections: AdminWorkbookConnectionDto[];
 }

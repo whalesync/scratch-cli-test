@@ -418,6 +418,7 @@ export class DevToolsController {
         organizationId: w.organizationId,
         organizationName: org.name,
         userId: w.userId,
+        isPendingDelete: w.isPendingDelete,
         connections,
       };
     });

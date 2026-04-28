@@ -4,6 +4,7 @@ import {
   ClassSerializerInterceptor,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   Param,
@@ -16,6 +17,7 @@ import {
 } from '@nestjs/common';
 import type {
   DataFolderGroup,
+  DeleteWorkbookResponseDto,
   PullAssetsResponseDto,
   PullFilesResponseDto,
   WorkbookId,
@@ -40,7 +42,7 @@ import { DataFolderService } from './data-folder.service';
 import { Workbook, WorkspaceInviteEntity, WorkspacePermissionEntity } from './entities';
 
 import { WorkbookCluster } from 'src/db/cluster-types';
-import { checkWorkspacePermissions } from 'src/users/permissions';
+import { ScratchConfigService } from '../config/scratch-config.service';
 import { WorkbookService } from './workbook.service';
 import { WorkspacePermissionsService } from './workspace-permissions.service';
 
@@ -53,6 +55,7 @@ export class WorkbookController {
     private readonly dataFolderService: DataFolderService,
     private readonly usersService: UsersService,
     private readonly workspacePermissionsService: WorkspacePermissionsService,
+    private readonly configService: ScratchConfigService,
   ) {}
 
   @Post()
@@ -91,14 +94,9 @@ export class WorkbookController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<Workbook | null> {
+  async findOne(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<Workbook> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
-
-    const workbook = await this.service.findOne(id, actor);
-    if (!workbook) {
-      return null;
-    }
+    const workbook = await this.service.assertReadableWorkbook(actor, id);
     const schedulesByEntityId = await this.service.fetchSchedulesByEntityId(workbook.id as WorkbookId);
     return new Workbook(workbook, schedulesByEntityId);
   }
@@ -110,7 +108,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<Workbook> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
+    await this.service.assertWritableWorkbook(actor, id);
     const dto = updateWorkbookDto;
     return new Workbook(await this.service.update(id, dto, actor));
   }
@@ -122,7 +120,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
+    await this.service.assertWritableWorkbook(actor, id);
     const dto = pullDto;
     return this.service.pullFiles(id, actor, dto.dataFolderIds, createRunContext('web'));
   }
@@ -134,18 +132,40 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<PullAssetsResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
+    await this.service.assertWritableWorkbook(actor, id);
     return this.service.pullAssets(id, actor, pullDto.dataFolderIds, createRunContext('web'), {
       rehost: pullDto.rehost,
     });
   }
 
   @Delete(':id')
-  @HttpCode(204)
-  async remove(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<void> {
+  @HttpCode(202)
+  async remove(
+    @Param('id') id: WorkbookId,
+    @Query('force') force: string | undefined,
+    @Req() req: RequestWithUser,
+  ): Promise<DeleteWorkbookResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
-    await this.service.delete(id, actor);
+
+    // `force=true` runs the synchronous hard-delete. Reserved for admins (production) or any
+    // caller in non-production envs so integration/smoke tests can assert on a fully-deleted
+    // workbook without polling for the background worker.
+    const forceRequested = force === 'true' || force === '1';
+    if (forceRequested) {
+      const allowed = actor.isAdmin || !this.configService.isProductionEnvironment();
+      if (!allowed) {
+        throw new ForbiddenException('force=true is restricted to admins in production');
+      }
+      // Permission check happens inside service.delete via findOneOrThrow.
+      await this.service.delete(id, actor);
+      return { status: 'deleted', workbookId: id };
+    }
+
+    // Standard async path: read-only assertion (so non-admins can re-trigger on a workbook
+    // that's already pending without leaking 404s mid-deletion). requestDeletion is idempotent.
+    await this.service.assertReadableWorkbook(actor, id);
+    await this.service.requestDeletion(id, actor);
+    return { status: 'deletion_scheduled', workbookId: id };
   }
 
   @Post(':id/discard-changes')
@@ -156,7 +176,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
+    await this.service.assertWritableWorkbook(actor, id);
     await this.service.discardChanges(id, actor, body.path);
   }
 
@@ -164,7 +184,7 @@ export class WorkbookController {
   @HttpCode(204)
   async reset(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, id);
+    await this.service.assertWritableWorkbook(actor, id);
     await this.service.resetWorkbook(id, actor);
   }
 
@@ -172,7 +192,7 @@ export class WorkbookController {
   @Get(':id/data-folders/list')
   async listDataFolders(@Param('id') workbookId: WorkbookId, @Req() req: RequestWithUser): Promise<DataFolderGroup[]> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertReadableWorkbook(actor, workbookId);
     return await this.dataFolderService.listGroupedByConnectorBases(workbookId, actor);
   }
 
@@ -183,7 +203,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<WorkspacePermissionEntity[]> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertReadableWorkbook(actor, workbookId);
     const permissions = await this.workspacePermissionsService.listByWorkbook(workbookId);
     return permissions.map((p) => new WorkspacePermissionEntity(p));
   }
@@ -194,7 +214,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<WorkspaceInviteEntity[]> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertReadableWorkbook(actor, workbookId);
     const invites = await this.workspacePermissionsService.listInvitesByWorkbook(workbookId);
     return invites.map((i) => new WorkspaceInviteEntity(i));
   }
@@ -206,7 +226,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<WorkspacePermissionEntity | void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertWritableWorkbook(actor, workbookId);
     const role = (dto.role ?? 'editor') as WorkspacePermissionRole;
 
     if (dto.userId) {
@@ -226,7 +246,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertWritableWorkbook(actor, workbookId);
     await this.workspacePermissionsService.delete(permissionId, actor);
   }
 
@@ -238,7 +258,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertWritableWorkbook(actor, workbookId);
     await this.workspacePermissionsService.deleteInvite(inviteId, actor);
   }
 
@@ -250,7 +270,7 @@ export class WorkbookController {
     @Req() req: RequestWithUser,
   ): Promise<WorkspacePermissionEntity> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.service.assertWritableWorkbook(actor, workbookId);
     const role = dto.role as WorkspacePermissionRole;
     const permission = await this.workspacePermissionsService.update(permissionId, role, actor);
     return new WorkspacePermissionEntity(permission);

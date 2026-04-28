@@ -1,10 +1,16 @@
 import { JobType, type WorkbookId } from '@spinner/shared-types';
-import { WorkbookService } from 'src/workbook/workbook.service';
+import { HardDeleteWorkbookPhase, HardDeleteWorkbookProgress, WorkbookService } from 'src/workbook/workbook.service';
 import { WSLogger } from '../../../logger';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 
 export type DeleteWorkbookPublicProgress = {
-  status: 'running' | 'completed' | 'failed';
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  phase: HardDeleteWorkbookPhase;
+  connectionsDeleted: number;
+  totalConnections: number;
+  reposDeleted: number;
+  dataFoldersDeleted: number;
+  totalDataFolders: number;
 };
 
 export type DeleteWorkbookJobDefinition = JobDefinitionBuilder<
@@ -40,6 +46,15 @@ export class DeleteWorkbookJobHandler implements JobHandlerBuilder<DeleteWorkboo
   }) {
     const { jobId, data, checkpoint } = params;
 
+    let latestProgress: HardDeleteWorkbookProgress = {
+      phase: 'starting',
+      connectionsDeleted: 0,
+      totalConnections: 0,
+      reposDeleted: 0,
+      dataFoldersDeleted: 0,
+      totalDataFolders: 0,
+    };
+
     WSLogger.info({
       source: 'DeleteWorkbookJobHandler',
       message: 'Starting hard delete for workbook',
@@ -48,16 +63,25 @@ export class DeleteWorkbookJobHandler implements JobHandlerBuilder<DeleteWorkboo
     });
 
     await checkpoint({
-      publicProgress: { status: 'running' },
+      publicProgress: { status: 'active', ...latestProgress },
       jobProgress: {},
       connectorProgress: {},
     });
 
+    const onProgress = async (progress: HardDeleteWorkbookProgress): Promise<void> => {
+      latestProgress = progress;
+      await checkpoint({
+        publicProgress: { status: 'active', ...progress },
+        jobProgress: {},
+        connectorProgress: {},
+      });
+    };
+
     try {
-      await this.workbookService.executeHardDeleteWorkbook(data.workbookId);
+      await this.workbookService.executeHardDeleteWorkbook(data.workbookId, { onProgress });
 
       await checkpoint({
-        publicProgress: { status: 'completed' },
+        publicProgress: { status: 'completed', ...latestProgress },
         jobProgress: {},
         connectorProgress: {},
       });
@@ -70,7 +94,7 @@ export class DeleteWorkbookJobHandler implements JobHandlerBuilder<DeleteWorkboo
       });
     } catch (err) {
       await checkpoint({
-        publicProgress: { status: 'failed' },
+        publicProgress: { status: 'failed', ...latestProgress },
         jobProgress: {},
         connectorProgress: {},
       });

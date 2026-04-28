@@ -33,9 +33,9 @@ import { DbService } from '../db/db.service';
 import { WSLogger } from '../logger';
 import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
-import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { FilesService } from './files.service';
+import { WorkbookService } from './workbook.service';
 
 @Controller('workbooks/:workbookId/files')
 @UseGuards(ScratchAuthGuard, ApiRateLimitGuard)
@@ -45,6 +45,7 @@ export class FilesController {
     private readonly filesService: FilesService,
     private readonly scratchGitService: ScratchGitService,
     private readonly db: DbService,
+    private readonly workbookService: WorkbookService,
   ) {}
 
   /**
@@ -60,7 +61,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<ListFilesResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
     if (limit !== undefined && (isNaN(limit) || limit < 1)) {
       return await this.filesService.listByFolderId(workbookId, folderId, actor, { cursor });
@@ -80,7 +81,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<{ references: Record<string, Record<string, string>> }> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
 
     try {
       const references = await this.filesService.resolveReferences(workbookId, path, branch);
@@ -109,7 +110,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<FileDetailsResponseDto> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return await this.filesService.getFileByPathGit(workbookId, path, actor);
   }
 
@@ -126,7 +127,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     await this.filesService.updateFileByPathGit(workbookId, path, updateFileDto, actor);
   }
 
@@ -154,7 +155,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     try {
       const repoId = await this.resolveConnectionRepoPathForPath(workbookId, path);
@@ -182,7 +183,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<FileRefEntity> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     const dto = createFileDto as ValidatedCreateFileDto;
     return this.filesService.createFile(workbookId, dto, actor);
   }
@@ -199,7 +200,7 @@ export class FilesController {
     @Req() req: RequestWithUser,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     const { path } = body;
 
     try {
@@ -235,7 +236,7 @@ export class FilesController {
     @Res() res: Response,
   ): Promise<void> {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertReadableWorkbook(actor, workbookId);
 
     const folder = await this.db.client.dataFolder.findUnique({ where: { id: folderId } });
     if (!folder || !folder.path) {

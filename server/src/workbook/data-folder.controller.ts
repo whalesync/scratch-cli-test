@@ -28,7 +28,6 @@ import { DbService } from '../db/db.service';
 import { PostHogService } from '../posthog/posthog.service';
 import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
-import { checkWorkspacePermissions } from '../users/permissions';
 import { userToActor } from '../users/types';
 import { SchemaField } from '../utils/schema-helpers';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
@@ -52,14 +51,8 @@ export class DataFolderController {
   async create(@Body() createDataFolderDto: CreateDataFolderDto, @Req() req: RequestWithUser): Promise<DataFolder> {
     const dto = createDataFolderDto as ValidatedCreateDataFolderDto;
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, dto.workbookId);
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(dto.workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
-
+    // Service-level assertion runs again, but we want to fail fast at the controller boundary.
+    await this.workbookService.assertWritableWorkbook(actor, dto.workbookId);
     return await this.dataFolderService.createFolder(dto, actor, createRunContext('web'));
   }
 
@@ -90,7 +83,7 @@ export class DataFolderController {
     @Req() req: RequestWithUser,
   ) {
     const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, body.workbookId as WorkbookId);
+    await this.workbookService.assertWritableWorkbook(actor, body.workbookId as WorkbookId);
     return await this.dataFolderService.createFile(
       body.workbookId as WorkbookId,
       id,
@@ -107,13 +100,7 @@ export class DataFolderController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const workbookId = body.workbookId as WorkbookId;
-    checkWorkspacePermissions(actor, workbookId);
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
-    }
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     // Verify the data folder exists and belongs to this workbook
     const dataFolder = await this.dataFolderService.findOne(id, actor);
@@ -159,17 +146,11 @@ export class DataFolderController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const workbookId = body.workbookId as WorkbookId;
-    checkWorkspacePermissions(actor, workbookId);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
     const filePaths = body.filePaths;
 
     if (!filePaths || filePaths.length === 0) {
       throw new BadRequestException('At least one file path is required');
-    }
-
-    // Verify the user has access to the workbook
-    const workbook = await this.workbookService.findOne(workbookId, actor);
-    if (!workbook) {
-      throw new NotFoundException('Workbook not found');
     }
 
     // Verify the data folder exists and belongs to this workbook
