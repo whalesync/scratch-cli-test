@@ -8,6 +8,7 @@ import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
+import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
 import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/publish-data-folder.job';
 import { PublishFromGitJobDefinition } from '../worker/jobs/job-definitions/publish-from-git.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
@@ -298,6 +299,32 @@ export class BullEnqueuerService implements OnModuleDestroy {
         dataFolderId,
         runId: runContext.runId as RunId,
         runContext,
+      },
+      data,
+      id,
+    );
+  }
+
+  /**
+   * Enqueue an asynchronous hard-delete for a workbook. Uses a deterministic Bull job id
+   * (`delete-workbook-${workbookId}`) so retries do not stack duplicate work; the handler
+   * is idempotent.
+   */
+  async enqueueDeleteWorkbookJob(workbookId: WorkbookId, actor: Actor): Promise<Job> {
+    const id = `delete-workbook-${workbookId}`;
+    const data: DeleteWorkbookJobDefinition['data'] = {
+      type: JobType.DeleteWorkbook,
+      workbookId,
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+    };
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
       },
       data,
       id,

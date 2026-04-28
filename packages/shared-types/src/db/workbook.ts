@@ -12,6 +12,7 @@ export interface Workbook {
   createdAt: string;
   updatedAt: string;
   version: number;
+  isPendingDelete: boolean;
   dataFolders?: DataFolder[];
   userId: string;
 }

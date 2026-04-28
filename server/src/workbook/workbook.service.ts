@@ -16,7 +16,7 @@ import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { Actor } from 'src/users/types';
+import { Actor, SYSTEM_ACTOR } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
@@ -103,7 +103,64 @@ export class WorkbookService {
   }
 
   async delete(id: WorkbookId, actor: Actor): Promise<void> {
-    const workbook = await this.findOneOrThrow(id, actor); // Permissions
+    await this.findOneOrThrow(id, actor); // Permissions
+    await this.executeHardDeleteWorkbook(id, actor);
+  }
+
+  /**
+   * Flag a workbook for asynchronous hard deletion. Idempotent: if the workbook is already
+   * pending deletion, re-enqueues the job (deterministic id deduplicates) and returns.
+   * Permission check is up to the caller.
+   */
+  async requestDeletion(id: WorkbookId, actor: Actor): Promise<void> {
+    const workbook = await this.findOneOrThrow(id, actor);
+
+    if (workbook.isPendingDelete) {
+      // Already flagged; skip work to avoid creating duplicate Bull/DbJob rows.
+      return;
+    }
+
+    await this.db.client.$transaction([
+      this.db.client.workbook.update({
+        where: { id },
+        data: { isPendingDelete: true },
+      }),
+      this.db.client.user.updateMany({
+        where: { lastWorkbookId: id },
+        data: { lastWorkbookId: null },
+      }),
+    ]);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'delete',
+      message: `Scheduled workbook ${workbook.name} for deletion`,
+      entityId: id,
+      organizationId: workbook.organizationId,
+      context: { action: 'request_workbook_deletion' },
+    });
+
+    await this.bullEnqueuerService.enqueueDeleteWorkbookJob(id, actor);
+  }
+
+  /**
+   * Hard-delete a workbook and all of its associated resources. Idempotent: if the workbook
+   * row is already gone, returns silently. Safe to invoke from a background job under the
+   * SYSTEM_ACTOR (the default).
+   */
+  async executeHardDeleteWorkbook(id: WorkbookId, actor: Actor = SYSTEM_ACTOR): Promise<void> {
+    const workbook = await this.db.client.workbook.findFirst({
+      where: { id },
+      include: WorkbookCluster._validator.include,
+    });
+    if (!workbook) {
+      WSLogger.info({
+        source: 'WorkbookService.executeHardDeleteWorkbook',
+        message: 'Workbook already deleted; nothing to do',
+        workbookId: id,
+      });
+      return;
+    }
 
     // Delete Git Repos — one repo per connection
     const connectorAccounts = await this.db.client.connectorAccount.findMany({
@@ -116,7 +173,7 @@ export class WorkbookService {
         await this.scratchGitService.deleteRepo(repoId);
       } catch (err) {
         WSLogger.error({
-          source: 'WorkbookService.delete',
+          source: 'WorkbookService.executeHardDeleteWorkbook',
           message: 'Failed to delete git repo',
           error: err,
           workbookId: id,

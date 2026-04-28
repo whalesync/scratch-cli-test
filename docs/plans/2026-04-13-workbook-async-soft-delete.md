@@ -1,8 +1,14 @@
 # Workbook async soft delete (design)
 
-**Status:** proposed  
+**Status:** in progress  
 **Date:** 2026-04-13  
 **Source:** Design plan for async workbook deletion (see [docs/plans/CLAUDE.md](CLAUDE.md))
+
+## Progress
+
+- **Phase 1 — Schema + shared types + entity (2026-04-27).** Added `isPendingDelete Boolean @default(false)` to Prisma `Workbook` ([`server/prisma/schema.prisma`](../../server/prisma/schema.prisma)), to the shared-types `Workbook` interface ([`packages/shared-types/src/db/workbook.ts`](../../packages/shared-types/src/db/workbook.ts)), and to the server [`Workbook` entity](../../server/src/workbook/entities/workbook.entity.ts). Optional `deletionRequestedByUserId` and the `@@index([isPendingDelete])` index were intentionally skipped — revisit if admin "all pending" queries appear. **Migration:** to be applied manually by user (`yarn run migrate` after `prisma migrate dev`).
+- **Phase 2 — Hard-delete extraction + job + enqueuer (2026-04-27).** Extracted hard-delete body into [`WorkbookService.executeHardDeleteWorkbook(id, actor = SYSTEM_ACTOR)`](../../server/src/workbook/workbook.service.ts) (idempotent — returns silently if row is already gone). Added [`WorkbookService.requestDeletion(id, actor)`](../../server/src/workbook/workbook.service.ts) which flags the workbook, clears any `User.lastWorkbookId` referencing it, audit-logs the schedule event, and enqueues the job (early-returns if already flagged to avoid stacking `DbJob` rows). New [`DeleteWorkbookJobDefinition` + `DeleteWorkbookJobHandler`](../../server/src/worker/jobs/job-definitions/delete-workbook.job.ts) registered in `union-types.ts` and `JobHandlerService`. New [`BullEnqueuerService.enqueueDeleteWorkbookJob`](../../server/src/worker-enqueuer/bull-enqueuer.service.ts) using deterministic Bull job id `delete-workbook-${workbookId}`. Existing `WorkbookService.delete(id, actor)` now does the permission check and delegates to `executeHardDeleteWorkbook` — controllers still call this synchronous path until phase 3 rewires them.
+- **Phases 3–6 — pending.** See [Implementation todos](#implementation-todos).
 
 ## Problem
 
@@ -63,6 +69,7 @@ stateDiagram-v2
 - **Transactional core:** set `isPendingDelete` to `true` (Prisma will bump **`updatedAt`**), **clear `User.lastWorkbookId`** wherever it points at this workbook (avoid landing users on a disappearing workspace).
 - **Enqueue** a dedicated job (see below) with a **deterministic Bull job id** (e.g. `delete-workbook-${workbookId}`) so retries do not stack duplicate work — pattern aligns with [`BullEnqueuerService.enqueueJobWithId`](../../server/src/worker-enqueuer/bull-enqueuer.service.ts).
 - **Response:** prefer **`202 Accepted`** with a small JSON body `{ "status": "deletion_scheduled", "workbookId": "..." }` (breaking change vs current `204` — document for CLI and any external clients). Alternative: keep `204` to minimize breakage; product preference should decide.
+- **`force` opt-in for tests:** accept an optional `force=true` query param (and matching CLI flag) that bypasses the async path and runs `executeHardDeleteWorkbook` synchronously, returning when the workbook row is gone. Required so integration tests and smoke tests can assert on a fully-cleaned workbook without polling for the background job. **Authorization:** gate `force=true` to admins (or a non-prod env flag) so the slow synchronous path is not user-reachable in production. Response shape when forced: `200 OK` with `{ "status": "deleted", "workbookId": "..." }` (or keep `204` — pick one, document it). Test fixtures should default to `force=true` so suites stay fast and deterministic.
 
 ### GET `/workbook` (list)
 
@@ -135,8 +142,9 @@ Add a new **`JobType`** entry in [`packages/shared-types/src/job-types.ts`](../.
 
 ## Testing strategy
 
-- Unit: `assertReadableWorkbook`, list filters, idempotent DELETE.
+- Unit: `assertReadableWorkbook`, list filters, idempotent DELETE, `force=true` gating (admin-only / env-gated).
 - Integration: enqueue job + worker processes (or handler unit with mocks); scheduler skips pending workbook.
+- **Integration + smoke suites use `force=true`** when tearing down workbooks so assertions can run against fully-deleted state without polling for the Bull job. Add a shared helper (e.g. `deleteWorkbookForTest`) so suites do not duplicate the flag.
 
 ---
 
@@ -161,8 +169,9 @@ Add a new **`JobType`** entry in [`packages/shared-types/src/job-types.ts`](../.
 
 ## Implementation todos
 
-- [ ] Add `isPendingDelete` to Prisma `Workbook` + shared-types + entity; plan user-run migration
-- [ ] Extract hard delete; add requestDeletion, BullMQ DeleteWorkbook job + handler + enqueue with deterministic job id
+- [x] Add `isPendingDelete` to Prisma `Workbook` + shared-types + entity; plan user-run migration _(2026-04-27)_
+- [x] Extract hard delete; add requestDeletion, BullMQ DeleteWorkbook job + handler + enqueue with deterministic job id _(2026-04-27)_
 - [ ] Add assertReadableWorkbook; filter findAll\*; 404 detail for non-admins; scheduler/enqueue guards
 - [ ] REST/CLI DELETE 202 + body; MCP/code-migrations; client + dev-tools badge on AdminWorkbookDto
+- [ ] REST/CLI DELETE `force=true` synchronous opt-in (admin/env-gated) + shared `deleteWorkbookForTest` helper for integration & smoke suites
 - [ ] Tests + yarn build/lint from repo root

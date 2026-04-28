@@ -18,9 +18,11 @@ import { ConnectorsService } from 'src/remote-service/connectors/connectors.serv
 import { SyncService } from 'src/sync/sync.service';
 import { DataFolderPublishingService } from 'src/workbook/data-folder-publishing.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
+import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
 import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
 import { PublishFromGitJobHandler } from './jobs/job-definitions/publish-from-git.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
@@ -51,6 +53,7 @@ export class JobHandlerService {
     private readonly publishFromGitService: PublishFromGitService,
     private readonly dbService: DbService,
     private readonly postHogService: PostHogService,
+    private readonly workbookService: WorkbookService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
@@ -123,6 +126,9 @@ export class JobHandlerService {
 
       case JobType.PublishFromGit:
         return new PublishFromGitJobHandler(this.publishFromGitService) as JobHandler<JobDefinition>;
+
+      case JobType.DeleteWorkbook:
+        return new DeleteWorkbookJobHandler(this.workbookService) as JobHandler<JobDefinition>;
 
       case JobType.Publish:
         return new PublishJobHandler(

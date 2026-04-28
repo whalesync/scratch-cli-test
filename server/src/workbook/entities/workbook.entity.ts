@@ -9,6 +9,7 @@ export class Workbook {
   createdAt: Date;
   updatedAt: Date;
   version: number;
+  isPendingDelete: boolean;
   userId: string | null;
   organizationId: string;
   dataFolders?: DataFolderEntity[];
@@ -19,6 +20,7 @@ export class Workbook {
     this.createdAt = workbook.createdAt;
     this.updatedAt = workbook.updatedAt;
     this.version = workbook.version;
+    this.isPendingDelete = workbook.isPendingDelete;
     this.userId = workbook.userId ?? null;
     this.organizationId = workbook.organizationId;
     this.dataFolders = workbook.dataFolders?.map(

@@ -158,6 +158,9 @@ model Workbook {
   updatedAt DateTime @updatedAt
   version   Int      @default(2)
 
+  // True once a user has requested deletion. The async hard-delete worker removes the row when complete.
+  isPendingDelete Boolean @default(false)
+
   user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId         String?
   organizationId String

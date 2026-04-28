@@ -20,6 +20,7 @@ export const JobType = {
   RehostAssets: 'rehost-assets',
   PlanPipeline: 'plan-pipeline',
   RunPipeline: 'run-pipeline',
+  DeleteWorkbook: 'delete-workbook',
 } as const;
 
 export type JobType = (typeof JobType)[keyof typeof JobType];
