@@ -1,0 +1,7 @@
+# Local / dev: ad-hoc sign + no notarization. Use via yarn build:mac:unsigned
+# (CSC_IDENTITY=- in the package script). Release: yarn build:mac with CSC_* and APPLE_*.
+extends: electron-builder.yml
+mac:
+  notarize: false
+  # Parent sets forceCodeSigning: true; allow ad-hoc for local unsigned packaging.
+  forceCodeSigning: false

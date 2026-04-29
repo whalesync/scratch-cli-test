@@ -5,6 +5,9 @@
 # Usage (from scratch-desktop/):
 #   yarn build:mac:local
 #
+# Uses yarn build:mac:unsigned (ad-hoc sign, not notarized). For Developer ID + notarization
+# use yarn build:mac with CSC_* and APPLE_* env — see electron-builder.yml.
+#
 # Prerequisites: Rust toolchain, cargo-zigbuild, and Zig (same as CI scratch-git-2 builds).
 
 set -euo pipefail
@@ -25,6 +28,6 @@ mkdir -p "cli-binaries/$RUST_TARGET"
 cp "target/$RUST_TARGET/release/scratchmd" "cli-binaries/$RUST_TARGET/scratchmd"
 echo "==> CLI binary: $SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd"
 
-echo "==> Building Scratch.app (electron-vite + electron-builder --mac)"
+echo "==> Building Scratch.app (electron-vite + electron-builder --mac, ad-hoc / unsigned)"
 cd "$SCRATCH_DESKTOP"
-yarn build:mac
+yarn build:mac:unsigned

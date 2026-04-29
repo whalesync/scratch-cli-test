@@ -3,7 +3,9 @@ dist/
 dist-release/
 dist-release-test/
 resources/bin/
-*.env
+.env
+.env.*
+!.env.example*
 node_modules/
 
 # electron-vite writes a temp bundled config file next to electron.vite.config.ts

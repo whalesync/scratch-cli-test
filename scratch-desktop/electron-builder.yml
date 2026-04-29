@@ -26,7 +26,13 @@ afterPack: scripts/afterPack.cjs
 
 mac:
   icon: build/icons/mac/icon.icns
+  # Release mac builds: set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID.
+  # On arm64, if true, missing/wrong cert fails the build instead of "falling back to ad-hoc" (see app-builder MacPackager#sign).
+  forceCodeSigning: true
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
   extendInfo:
     - NSDocumentsFolderUsageDescription: Scratch needs access to manage your workspace files.
   protocols:

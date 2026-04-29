@@ -60,9 +60,9 @@ include:
   # ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
   #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
   #    NOTE: update the list of users in ALL three rules below.
-  local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
-  local_runner_users_master: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
-  local_runner_users_prod: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+  local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324)$/'
+  local_runner_users_master: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324)$/'
+  local_runner_users_prod: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324)$/'
 
   # Local runner user list
   #
@@ -72,7 +72,7 @@ include:
   # ✏️  ADD YOUR USERNAME HERE (2 of 2 — you must also update
   #    .rules.local_runner_users_mr in gitlab-ci/local-runners.yml)
   skip_for_local_runner_users:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|luciocesolari|rob324)$/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324)$/'
       when: never
 
 # =============================================================================

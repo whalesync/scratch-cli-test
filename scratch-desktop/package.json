@@ -16,7 +16,10 @@
     "test:watch": "vitest",
     "postinstall": "electron-builder install-app-deps",
     "build:mac": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --mac",
+    "build:mac:unsigned": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} CSC_IDENTITY='-' electron-builder --mac --config electron-builder.unsigned-mac.yml",
     "build:mac:local": "bash scripts/build_mac_local.sh",
+    "build:mac:local-signed": "bash scripts/build_mac_local_signed.sh",
+    "build:mac:prod-local": "bash scripts/build_mac_prod_local.sh",
     "run:mac": "OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch",
     "build:linux": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --linux"
   },
@@ -53,6 +56,7 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@eslint/js": "^9.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
