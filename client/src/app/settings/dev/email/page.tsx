@@ -5,51 +5,19 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { devToolsApi } from '@/lib/api/dev-tools';
 import { Select, Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { EmailTemplate } from '@spinner/shared-types';
+import { EMAIL_TEMPLATE_PAYLOADS, EmailTemplate } from '@spinner/shared-types';
 import { MailIcon } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
-interface TemplateDefinition {
-  label: string;
-  templateId: EmailTemplate;
-  fields: { key: string; label: string; placeholder: string }[];
-}
-
-const TEMPLATES: TemplateDefinition[] = [
-  {
-    label: 'Workspace Invite',
-    templateId: EmailTemplate.WorkspaceInvite,
-    fields: [
-      { key: 'inviterName', label: 'Inviter Name', placeholder: 'Jane Doe' },
-      { key: 'workspaceName', label: 'Workspace Name', placeholder: 'My Workspace' },
-      { key: 'loginUrl', label: 'Login URL', placeholder: 'https://app.scratch.dev' },
-    ],
-  },
-  {
-    label: 'Invite Accepted',
-    templateId: EmailTemplate.InviteAccepted,
-    fields: [
-      { key: 'acceptedByName', label: 'Accepted By Name', placeholder: 'John Smith' },
-      { key: 'workspaceName', label: 'Workspace Name', placeholder: 'My Workspace' },
-      { key: 'workspaceUrl', label: 'Workspace URL', placeholder: 'https://app.scratch.dev' },
-    ],
-  },
-  {
-    label: 'Waitlist Approved',
-    templateId: EmailTemplate.WaitlistApproved,
-    fields: [{ key: 'loginUrl', label: 'Login URL', placeholder: 'https://app.scratch.dev' }],
-  },
-];
-
 export default function EmailTestingDevPage() {
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [dynamicData, setDynamicData] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
 
-  const template = TEMPLATES.find((t) => t.templateId === selectedTemplate);
+  const fields = selectedTemplate ? EMAIL_TEMPLATE_PAYLOADS[selectedTemplate] : [];
 
-  const handleTemplateChange = useCallback((value: string | null) => {
+  const handleTemplateChange = useCallback((value: EmailTemplate | null) => {
     setSelectedTemplate(value);
     setDynamicData({});
   }, []);
@@ -84,9 +52,9 @@ export default function EmailTestingDevPage() {
           <Select
             label="Template"
             placeholder="Select a template"
-            data={TEMPLATES.map((t) => ({ value: t.templateId, label: t.label }))}
+            data={Object.entries(EmailTemplate).map(([name, id]) => ({ value: id, label: name }))}
             value={selectedTemplate}
-            onChange={handleTemplateChange}
+            onChange={(v) => handleTemplateChange(v as EmailTemplate)}
           />
 
           <TextInput
@@ -97,13 +65,12 @@ export default function EmailTestingDevPage() {
             onChange={(e) => setRecipientEmail(e.currentTarget.value)}
           />
 
-          {template?.fields.map((field) => (
+          {fields.map((field) => (
             <TextInput
-              key={field.key}
-              label={field.label}
-              placeholder={field.placeholder}
-              value={dynamicData[field.key] ?? ''}
-              onChange={(e) => handleFieldChange(field.key, e.currentTarget.value)}
+              key={field}
+              label={field}
+              value={dynamicData[field] ?? ''}
+              onChange={(e) => handleFieldChange(field, e.currentTarget.value)}
             />
           ))}
 

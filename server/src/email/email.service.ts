@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import sgMail from '@sendgrid/mail';
-import { EmailTemplate } from '@spinner/shared-types';
+import { EmailTemplate, EmailTemplatePayload } from '@spinner/shared-types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 
@@ -23,15 +23,20 @@ export class EmailService {
     }
   }
 
-  private async sendTemplatedEmail(
+  private async sendTemplatedEmail<T extends EmailTemplate>(
     to: string,
-    templateId: EmailTemplate,
-    dynamicTemplateData: Record<string, string>,
+    templateId: T,
+    dynamicTemplateData: EmailTemplatePayload[T],
   ): Promise<void> {
     if (!this.apiKey) {
       return;
     }
 
+    WSLogger.info({
+      source: 'EmailService',
+      message: `Sending email (template: ${templateId})`,
+      data: { to, dynamicTemplateData },
+    });
     try {
       await sgMail.send({
         to,
@@ -99,6 +104,13 @@ export class EmailService {
       throw new Error('SendGrid API key is not configured');
     }
 
+    WSLogger.info({
+      source: 'EmailService',
+      message: `Sending test email (template: ${templateId})`,
+      data: { to, dynamicTemplateData },
+    });
+
+    // Bypass everything and go straight to the API.
     try {
       await sgMail.send({
         to,

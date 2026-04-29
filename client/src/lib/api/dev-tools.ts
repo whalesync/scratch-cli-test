@@ -4,6 +4,8 @@ import {
   ChangeUserOrganizationDto,
   ConnectorAccountId,
   DecryptedCredentials,
+  EmailTemplate,
+  EmailTemplatePayload,
   GetAllJobsResponseDto,
   ScratchPlanType,
 } from '@spinner/shared-types';
@@ -106,10 +108,10 @@ export const devToolsApi = {
     }
   },
 
-  sendTestEmail: async (
-    templateId: string,
+  sendTestEmail: async <T extends EmailTemplate>(
+    templateId: T,
     to: string,
-    dynamicTemplateData: Record<string, string>,
+    dynamicTemplateData: EmailTemplatePayload[T],
   ): Promise<{ success: true }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
