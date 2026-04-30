@@ -1,5 +1,6 @@
-//! `scratchmd build-index`, `scratchmd dump-index`, `scratchmd list-stale-records`, and
-//! `scratchmd refresh-record-index`.
+//! `scratchmd build-index`, `scratchmd dump-index`, `scratchmd list-stale-records`,
+//! `scratchmd refresh-record-index`, `scratchmd dump-validations`, and
+//! `scratchmd get-validation-results`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use crate::shared::layout::WorkspaceLayout;
 use crate::shared::record_index::{
     self, RefreshOptions, RefreshSummary, StaleRecord, StatusCandidate,
 };
+use crate::shared::validators;
 use serde::Serialize;
 
 pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
@@ -297,6 +299,7 @@ pub fn refresh_record_index_command(
         }
 
         let dirty_dir = layout.dirty_checkout_path(&connection.dir_name);
+        let scratch_dir = layout.connection_scratch_path(&connection.dir_name);
         let db_path = layout.index_db_path(&connection.repo_path);
 
         if !dirty_dir.exists() {
@@ -327,16 +330,32 @@ pub fn refresh_record_index_command(
             RefreshOptions { rebuild },
             selected_paths,
         ) {
-            Ok(summary) => results.push(ConnectionRefreshOutput {
-                connection_name: connection.dir_name.clone(),
-                inserted: summary.inserted,
-                updated: summary.updated,
-                deleted: summary.deleted,
-                unchanged: summary.unchanged,
-                skipped: summary.skipped,
-                rebuilt: rebuild,
-                error: None,
-            }),
+            Ok(summary) => {
+                // Run validators after a successful record index refresh.
+                // `run_validations` is a no-op when no validation.json files exist.
+                if let Err(err) = validators::run_validations(
+                    &scratch_dir,
+                    &dirty_dir,
+                    &db_path,
+                    rebuild,
+                    selected_paths,
+                ) {
+                    eprintln!(
+                        "[validation] error processing {}: {err}",
+                        connection.dir_name
+                    );
+                }
+                results.push(ConnectionRefreshOutput {
+                    connection_name: connection.dir_name.clone(),
+                    inserted: summary.inserted,
+                    updated: summary.updated,
+                    deleted: summary.deleted,
+                    unchanged: summary.unchanged,
+                    skipped: summary.skipped,
+                    rebuilt: rebuild,
+                    error: None,
+                });
+            }
             Err(err) => {
                 results.push(ConnectionRefreshOutput {
                     connection_name: connection.dir_name.clone(),
@@ -371,6 +390,51 @@ pub fn refresh_record_index_command(
 
     if had_error {
         anyhow::bail!("record index refresh failed for one or more connections");
+    }
+
+    Ok(())
+}
+
+/// Print all `validation.json` configs found in the workspace.
+/// Reads from the filesystem only — no DB required.
+pub fn dump_validations_command(
+    workspace_start: &std::path::Path,
+    connection_filter: Option<&str>,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    if workspace_marker.connections.is_empty() {
+        anyhow::bail!(
+            "No connections found in {}. Run 'scratchmd workspaces init' first.",
+            workspace_dir.display()
+        );
+    }
+
+    let mut found_any = false;
+    for connection in &workspace_marker.connections {
+        if let Some(filter) = connection_filter {
+            if connection.dir_name != filter {
+                continue;
+            }
+        }
+
+        let scratch_dir = layout.connection_scratch_path(&connection.dir_name);
+
+        println!("=== {} ===", connection.dir_name);
+        validators::dump_validation_config(&scratch_dir)?;
+        found_any = true;
+    }
+
+    if !found_any {
+        if let Some(filter) = connection_filter {
+            anyhow::bail!(
+                "Connection '{}' was not found in {}",
+                filter,
+                workspace_dir.display()
+            );
+        }
     }
 
     Ok(())
@@ -816,4 +880,81 @@ connections:
         assert_eq!(connection_name, "Conn");
         assert_eq!(rel_path, "posts/one.json");
     }
+}
+
+// ---------------------------------------------------------------------------
+// get-validation-results command
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct ValidationResultRow {
+    field_path: String,
+    validator_kind: String,
+    is_valid: bool,
+    message: Option<String>,
+}
+
+/// Return all validation results for a single record as a JSON array.
+///
+/// `record_path` is workspace-relative: `<connection>/<folder>/<filename>`.
+/// Returns an empty array when no DB exists or no results are stored.
+pub fn get_validation_results_command(
+    workspace_start: &std::path::Path,
+    record_path: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    // Split "<connection>/<folder...>/<filename>" into components.
+    let slash = record_path.find('/').ok_or_else(|| {
+        anyhow::anyhow!("record path must be '<connection>/<file>', got: {record_path}")
+    })?;
+    let connection_name = &record_path[..slash];
+    let rest = &record_path[slash + 1..]; // "public/posts/post-2.json"
+
+    let (folder_path, file_name) = match rest.rfind('/') {
+        Some(pos) => (&rest[..pos], &rest[pos + 1..]),
+        None => ("", rest),
+    };
+
+    let connection = workspace_marker
+        .connections
+        .iter()
+        .find(|c| c.dir_name == connection_name)
+        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
+
+    let db_path = layout.index_db_path(&connection.repo_path);
+
+    if !db_path.exists() {
+        println!("[]");
+        return Ok(());
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT field_path, validator_kind, is_valid, message \
+             FROM validation_results \
+             WHERE folder_path = ?1 AND file_name = ?2",
+        )
+        .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
+
+    let rows: Vec<ValidationResultRow> = stmt
+        .query_map(rusqlite::params![folder_path, file_name], |row| {
+            Ok(ValidationResultRow {
+                field_path: row.get(0)?,
+                validator_kind: row.get(1)?,
+                is_valid: row.get::<_, i64>(2)? != 0,
+                message: row.get(3)?,
+            })
+        })
+        .map_err(|e| anyhow::anyhow!("query failed: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("row read failed: {e}"))?;
+
+    println!("{}", serde_json::to_string(&rows)?);
+    Ok(())
 }

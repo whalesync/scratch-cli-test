@@ -366,6 +366,12 @@ const scratchFiles = {
     masterData: Record<string, unknown> | null;
     displayData: Record<string, unknown> | null;
   } | null> => invoke('files:read-diff-record-data', folderPath, workspacePath, filename),
+  getValidationResults: (
+    workspacePath: string,
+    folderPath: string,
+    filename: string,
+  ): Promise<Array<{ field_path: string; validator_kind: string; is_valid: boolean; message: string | null }>> =>
+    invoke('files:get-validation-results', workspacePath, folderPath, filename),
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

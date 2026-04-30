@@ -155,6 +155,26 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
     },
+    /// Get validation results for a single record as JSON
+    #[command(name = "get-validation-results")]
+    GetValidationResults {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative record path: <connection>/<folder>/<filename>
+        #[arg(long)]
+        record: String,
+    },
+    /// Print validation config loaded from validation.json files in the workspace
+    #[command(name = "dump-validations")]
+    DumpValidations {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Only inspect the named connection (case-sensitive)
+        #[arg(long)]
+        connection: Option<String>,
+    },
 }
 
 fn require_git() -> anyhow::Result<()> {
@@ -267,6 +287,13 @@ async fn main() {
             rebuild,
             cli.json,
         ),
+        Commands::GetValidationResults { workspace, record } => {
+            index::get_validation_results_command(&workspace, &record)
+        }
+        Commands::DumpValidations {
+            workspace,
+            connection,
+        } => index::dump_validations_command(&workspace, connection.as_deref()),
         Commands::GenerateDocs { workspace } => (|| -> anyhow::Result<()> {
             let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;
             let name = wb_dir

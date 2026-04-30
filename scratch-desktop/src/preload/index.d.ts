@@ -292,6 +292,11 @@ interface ScratchFilesAPI {
     masterData: Record<string, unknown> | null;
     displayData: Record<string, unknown> | null;
   } | null>;
+  getValidationResults: (
+    workspacePath: string,
+    folderPath: string,
+    filename: string,
+  ) => Promise<Array<{ field_path: string; validator_kind: string; is_valid: boolean; message: string | null }>>;
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

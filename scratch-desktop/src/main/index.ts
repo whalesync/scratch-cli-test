@@ -31,9 +31,11 @@ import {
   acceptFieldChanges,
   deleteLocalPublishPlans,
   discardCreatedRecord as discardCreatedRecordViaCli,
+  getValidationResults,
   listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
+  refreshRecordIndex,
   rejectFieldChanges,
   restoreDeletedRecord as restoreDeletedRecordViaCli,
   runScratchmd,
@@ -399,6 +401,32 @@ async function withFilePathInternalMutation<T>(filePath: string, action: () => P
   return withWorkspaceInternalMutation(workspacePath, action);
 }
 
+async function refreshRecordIndexForWorkspace(
+  workspacePath: string,
+  opts?: { rebuild?: boolean; paths?: string[] },
+): Promise<void> {
+  await refreshRecordIndex(workspacePath, opts);
+}
+
+async function refreshRecordIndexForFilePath(filePath: string): Promise<void> {
+  const workspacePath = await findWorkspaceRootForPath(filePath);
+  if (!workspacePath) {
+    return;
+  }
+  const recordPath = relative(workspacePath, filePath).replace(/\\/g, '/');
+  await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
+}
+
+async function refreshRecordIndexForRecord(
+  workspacePath: string,
+  folderPath: string,
+  filename: string,
+  rebuild = false,
+): Promise<void> {
+  const recordPath = toWorkspaceRecordPath(workspacePath, folderPath, filename);
+  await refreshRecordIndexForWorkspace(workspacePath, { rebuild, paths: [recordPath] });
+}
+
 function startWorkspaceInternalLiveCommand(
   sender: Electron.WebContents,
   workspacePath: string,
@@ -505,27 +533,51 @@ ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'accept-all'];
   if (folderPath) args.push('--folder', folderPath);
-  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
+  return withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmdCapture(args, workspacePath);
+    if (result.exitCode === 0) {
+      await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    }
+    return result;
+  });
 });
 ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'discard-all'];
   if (folderPath) args.push('--folder', folderPath);
-  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
+  return withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmdCapture(args, workspacePath);
+    if (result.exitCode === 0) {
+      await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    }
+    return result;
+  });
 });
 ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
-  withWorkspaceInternalMutation(workspacePath, () =>
-    runScratchmdCapture(['files', 'accept', recordPath], workspacePath),
-  ),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmdCapture(['files', 'accept', recordPath], workspacePath);
+    if (result.exitCode === 0) {
+      await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
+    }
+    return result;
+  }),
 );
 ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
-  withWorkspaceInternalMutation(workspacePath, () =>
-    runScratchmdCapture(['files', 'reject', recordPath], workspacePath),
-  ),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmdCapture(['files', 'reject', recordPath], workspacePath);
+    if (result.exitCode === 0) {
+      await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
+    }
+    return result;
+  }),
 );
 ipcMain.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
-  withWorkspaceInternalMutation(workspacePath, () =>
-    runScratchmdCapture(['files', 'discard', recordPath], workspacePath),
-  ),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmdCapture(['files', 'discard', recordPath], workspacePath);
+    if (result.exitCode === 0) {
+      await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
+    }
+    return result;
+  }),
 );
 ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
@@ -538,14 +590,22 @@ ipcMain.handle('scratch:delete-local-publish-plans', async (_, workspacePath: st
   deleteLocalPublishPlans(workspacePath),
 );
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
-  runScratchmd(['files', 'upload'], workspacePath),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmd(['files', 'upload'], workspacePath);
+    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    return result;
+  }),
 );
 ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string, opts?: { onDelete?: string }) => {
   const args = ['files', 'download'];
   if (opts?.onDelete) {
     args.push('--on-delete', opts.onDelete);
   }
-  return withWorkspaceInternalMutation(workspacePath, () => runScratchmd(args, workspacePath));
+  return withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await runScratchmd(args, workspacePath);
+    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    return result;
+  });
 });
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
@@ -738,7 +798,11 @@ ipcMain.handle(
 ipcMain.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
 ipcMain.handle('files:read-file-text-raw', async (_, filePath: string) => readFileTextRaw(filePath));
 ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents: string) =>
-  withFilePathInternalMutation(filePath, () => writeFileTextRaw(filePath, contents)),
+  withFilePathInternalMutation(filePath, async () => {
+    const result = await writeFileTextRaw(filePath, contents);
+    await refreshRecordIndexForFilePath(filePath);
+    return result;
+  }),
 );
 ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
   readBatch(filePaths, opts),
@@ -786,42 +850,69 @@ ipcMain.handle(
 ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>
   readDiffRecordData(folderPath, workspacePath, filename),
 );
+ipcMain.handle('files:get-validation-results', async (_, workspacePath: string, folderPath: string, filename: string) =>
+  getValidationResults(workspacePath, folderPath, filename),
+);
 ipcMain.handle(
   'files:accept-cell-input-text',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
-    withWorkspaceInternalMutation(workspacePath, () =>
-      acceptCellInputText(folderPath, workspacePath, filename, fieldName, value),
-    ),
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await acceptCellInputText(folderPath, workspacePath, filename, fieldName, value);
+      await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+      return result;
+    }),
 );
 ipcMain.handle(
   'files:accept-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
-    withWorkspaceInternalMutation(workspacePath, () =>
-      acceptCellChange(folderPath, workspacePath, filename, fieldName, value),
-    ),
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await acceptCellChange(folderPath, workspacePath, filename, fieldName, value);
+      await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+      return result;
+    }),
 );
 ipcMain.handle(
   'files:undo-approved-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
-    withWorkspaceInternalMutation(workspacePath, () =>
-      undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
-    ),
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await undoApprovedCellChange(folderPath, workspacePath, filename, fieldName);
+      await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+      return result;
+    }),
 );
 ipcMain.handle('files:restore-deleted-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  withWorkspaceInternalMutation(workspacePath, () =>
-    restoreDeletedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
-  ),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await restoreDeletedRecordViaCli(
+      workspacePath,
+      toWorkspaceRecordPath(workspacePath, folderPath, filename),
+    );
+    await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+    return result;
+  }),
 );
 ipcMain.handle('files:discard-created-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  withWorkspaceInternalMutation(workspacePath, () =>
-    discardCreatedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
-  ),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await discardCreatedRecordViaCli(
+      workspacePath,
+      toWorkspaceRecordPath(workspacePath, folderPath, filename),
+    );
+    await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+    return result;
+  }),
 );
 ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
-  withWorkspaceInternalMutation(workspacePath, () => acceptFieldChanges(workspacePath, folderPath, fieldName)),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await acceptFieldChanges(workspacePath, folderPath, fieldName);
+    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    return result;
+  }),
 );
 ipcMain.handle('files:reject-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
-  withWorkspaceInternalMutation(workspacePath, () => rejectFieldChanges(workspacePath, folderPath, fieldName)),
+  withWorkspaceInternalMutation(workspacePath, async () => {
+    const result = await rejectFieldChanges(workspacePath, folderPath, fieldName);
+    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    return result;
+  }),
 );
 
 void app.whenReady().then(() => {

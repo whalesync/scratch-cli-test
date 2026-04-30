@@ -1074,6 +1074,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setReloadKey((k) => k + 1);
   }, []);
 
+  const refreshGridDataInBackground = useCallback(() => {
+    if (currentQueryRef.current) {
+      void loadDiffData('refreshing', currentQueryRef.current);
+    }
+  }, [loadDiffData]);
+
   const acceptGridCellChange = useCallback(
     (filename: string, fieldName: string, nextValue: string, logLabel: string) => {
       if (!selectedFolderPath || !workspacePath) {
@@ -2037,7 +2043,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 columnLabels={columnLabelsMap}
                 onSelectIndex={setDetailRowIndex}
                 onClose={() => setDetailRowIndex(null)}
-                onRecordChanged={() => setReloadKey((k) => k + 1)}
+                onRecordChanged={refreshGridDataInBackground}
                 onRecordFieldChanged={(filename, fieldName, nextValue) =>
                   setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev))
                 }
@@ -2066,7 +2072,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             </Text12Regular>
 
             <Group gap={10} align="center">
-              {isRefreshing && (
+              {isRefreshing && detailRowIndex === null && (
                 <Group gap={6} align="center">
                   <Loader size="xs" />
                   <Text12Regular c="var(--fg-muted)">Refreshing…</Text12Regular>

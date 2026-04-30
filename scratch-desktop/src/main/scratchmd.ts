@@ -16,7 +16,7 @@ import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { app } from 'electron';
 import { readdir, readFile, rm } from 'fs/promises';
-import { join, resolve } from 'path';
+import { join, relative, resolve } from 'path';
 
 // ── Types ──
 
@@ -135,6 +135,20 @@ export async function runScratchmd(args: string[], cwd?: string): Promise<{ stdo
 
   const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
   throw new Error(message);
+}
+
+export async function refreshRecordIndex(
+  workspacePath: string,
+  opts?: { rebuild?: boolean; paths?: string[] },
+): Promise<{ stdout: string; stderr: string }> {
+  const args = ['refresh-record-index'];
+  if (opts?.rebuild) {
+    args.push('--rebuild');
+  }
+  for (const path of opts?.paths ?? []) {
+    args.push('--path', path);
+  }
+  return runScratchmd(args, workspacePath);
 }
 
 // ── Streaming helpers ──
@@ -456,6 +470,30 @@ export async function rejectFieldChanges(
 
 export async function restoreDeletedRecord(workspacePath: string, recordPath: string): Promise<void> {
   await runScratchmd(['files', 'restore-deleted-record', recordPath], workspacePath);
+}
+
+export interface RecordValidationResult {
+  field_path: string;
+  validator_kind: string;
+  is_valid: boolean;
+  message: string | null;
+}
+
+export async function getValidationResults(
+  workspacePath: string,
+  folderPath: string,
+  filename: string,
+): Promise<RecordValidationResult[]> {
+  const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
+  const recordPath = `${relFolder}/${filename}`;
+  try {
+    return await runScratchmdJson<RecordValidationResult[]>(
+      ['get-validation-results', '--record', recordPath],
+      workspacePath,
+    );
+  } catch {
+    return [];
+  }
 }
 
 export async function discardCreatedRecord(workspacePath: string, recordPath: string): Promise<void> {

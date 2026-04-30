@@ -233,10 +233,15 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
+  const [validationReloadKey, setValidationReloadKey] = useState(0);
+  const [validationResults, setValidationResults] = useState<
+    Array<{ field_path: string; is_valid: boolean; message: string | null }>
+  >([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
+  const loadedRecordKeyRef = useRef<string | null>(null);
 
   const currentRow = rows[selectedIndex];
   const recordName = currentRow ? getRecordName(currentRow, titleColumnId) : '';
@@ -285,26 +290,53 @@ export const RecordDetailView = memo(function RecordDetailView({
     }
 
     let cancelled = false;
-    setLoading(true);
+    const recordKey = `${workspacePath}::${folderPath}::${selectedFilename}`;
+    const isSameRecordReload = loadedRecordKeyRef.current === recordKey;
+    if (!isSameRecordReload) {
+      setLoading(true);
+    }
 
     window.scratchFiles
       .readDiffRecordData(folderPath, workspacePath, selectedFilename)
       .then((result) => {
         if (!cancelled) {
           setRecordData(result);
+          loadedRecordKeyRef.current = recordKey;
         }
       })
       .catch(() => {
-        if (!cancelled) setRecordData(null);
+        if (!cancelled) {
+          setRecordData(null);
+          loadedRecordKeyRef.current = null;
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !isSameRecordReload) setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
   }, [selectedFilename, folderPath, workspacePath, recordReloadKey]);
+
+  useEffect(() => {
+    if (!selectedFilename) {
+      setValidationResults([]);
+      return;
+    }
+    let cancelled = false;
+    window.scratchFiles
+      .getValidationResults(workspacePath, folderPath, selectedFilename)
+      .then((results) => {
+        if (!cancelled) setValidationResults(results ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setValidationResults([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, validationReloadKey]);
 
   // Escape key closes overlay (capture phase so it fires before the grid handles it)
   useEffect(() => {
@@ -337,41 +369,55 @@ export const RecordDetailView = memo(function RecordDetailView({
     if (selectedIndex < rows.length - 1) onSelectIndex(selectedIndex + 1);
   }, [selectedIndex, rows.length, onSelectIndex]);
 
+  const reloadRecordAndValidations = useCallback(() => {
+    setRecordReloadKey((k) => k + 1);
+    setValidationReloadKey((k) => k + 1);
+  }, []);
+
   const handleAccept = useCallback(() => {
     if (!currentRecordCliPath) return;
     void window.scratchDesktop
       .acceptRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
-        if (result.exitCode === 0) onRecordChanged?.();
+        if (result.exitCode === 0) {
+          reloadRecordAndValidations();
+          onRecordChanged?.();
+        }
       })
       .catch((err: unknown) => {
         console.debug('acceptRecord failed', err);
       });
-  }, [workspacePath, currentRecordCliPath, onRecordChanged]);
+  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordChanged]);
 
   const handleReject = useCallback(() => {
     if (!currentRecordCliPath) return;
     void window.scratchDesktop
       .rejectRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
-        if (result.exitCode === 0) onRecordChanged?.();
+        if (result.exitCode === 0) {
+          reloadRecordAndValidations();
+          onRecordChanged?.();
+        }
       })
       .catch((err: unknown) => {
         console.debug('rejectRecord failed', err);
       });
-  }, [workspacePath, currentRecordCliPath, onRecordChanged]);
+  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordChanged]);
 
   const handleDiscard = useCallback(() => {
     if (!currentRecordCliPath) return;
     void window.scratchDesktop
       .discardRecord(workspacePath, currentRecordCliPath)
       .then((result) => {
-        if (result.exitCode === 0) onRecordChanged?.();
+        if (result.exitCode === 0) {
+          reloadRecordAndValidations();
+          onRecordChanged?.();
+        }
       })
       .catch((err: unknown) => {
         console.debug('discardRecord failed', err);
       });
-  }, [workspacePath, currentRecordCliPath, onRecordChanged]);
+  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordChanged]);
 
   const handleRestore = useCallback(() => {
     const filename = filenameRef.current;
@@ -379,13 +425,13 @@ export const RecordDetailView = memo(function RecordDetailView({
     void window.scratchFiles
       .restoreDeletedRecord(folderPath, workspacePath, filename)
       .then(() => {
-        setRecordReloadKey((k) => k + 1);
+        reloadRecordAndValidations();
         onRecordChanged?.();
       })
       .catch((err: unknown) => {
         console.debug('restoreDeletedRecord failed', err);
       });
-  }, [folderPath, workspacePath, onRecordChanged]);
+  }, [folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged]);
 
   const handleDiscardCreate = useCallback(() => {
     const filename = filenameRef.current;
@@ -393,12 +439,13 @@ export const RecordDetailView = memo(function RecordDetailView({
     void window.scratchFiles
       .discardCreatedRecord(folderPath, workspacePath, filename)
       .then(() => {
+        reloadRecordAndValidations();
         onRecordChanged?.();
       })
       .catch((err: unknown) => {
         console.debug('discardCreatedRecord failed', err);
       });
-  }, [folderPath, workspacePath, onRecordChanged]);
+  }, [folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged]);
 
   const clearFieldEdit = useCallback(() => {
     editingFieldRef.current = null;
@@ -417,6 +464,7 @@ export const RecordDetailView = memo(function RecordDetailView({
         .acceptCellChange(folderPath, workspacePath, filename, fieldName, value)
         .then((result) => {
           setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
+          setValidationReloadKey((k) => k + 1);
           onRecordFieldChanged?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
@@ -434,14 +482,14 @@ export const RecordDetailView = memo(function RecordDetailView({
       void window.scratchFiles
         .acceptCellChange(folderPath, workspacePath, filename, fieldName, dirtyValue)
         .then(() => {
-          setRecordReloadKey((k) => k + 1);
+          reloadRecordAndValidations();
           onRecordChanged?.();
         })
         .catch((err: unknown) => {
           console.error('[acceptCellChange] discard unreviewed failed:', err);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged],
   );
 
   const handleUndoApprovedCellChange = useCallback(
@@ -452,20 +500,20 @@ export const RecordDetailView = memo(function RecordDetailView({
       void window.scratchFiles
         .undoApprovedCellChange(folderPath, workspacePath, filename, fieldName)
         .then(() => {
-          setRecordReloadKey((k) => k + 1);
+          reloadRecordAndValidations();
           onRecordChanged?.();
         })
         .catch((err: unknown) => {
           console.error('[undoApprovedCellChange] undo failed:', err);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged],
   );
 
   const handleRawFileSaved = useCallback(() => {
-    setRecordReloadKey((k) => k + 1);
+    reloadRecordAndValidations();
     onRecordChanged?.();
-  }, [onRecordChanged]);
+  }, [reloadRecordAndValidations, onRecordChanged]);
 
   const beginFieldEdit = useCallback((fieldName: string) => {
     editingFieldRef.current = fieldName;
@@ -511,6 +559,7 @@ export const RecordDetailView = memo(function RecordDetailView({
         .acceptCellInputText(folderPath, workspacePath, filename, fieldName, nextValue)
         .then((result) => {
           setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
+          setValidationReloadKey((k) => k + 1);
           onRecordFieldChanged?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
@@ -524,6 +573,18 @@ export const RecordDetailView = memo(function RecordDetailView({
     },
     [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged, schema],
   );
+
+  const validationWarnings = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const r of validationResults) {
+      if (!r.is_valid && r.message) {
+        const msgs = map.get(r.field_path) ?? [];
+        msgs.push(r.message);
+        map.set(r.field_path, msgs);
+      }
+    }
+    return map;
+  }, [validationResults]);
 
   const fieldRows = useMemo<RecordFieldRow[]>(() => {
     if (!recordData || !displayData) {
@@ -1026,6 +1087,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                 >
                   <RecordFieldsGrid
                     rows={fieldRows}
+                    validationWarnings={validationWarnings}
                     footer={
                       hiddenCount > 0 ? (
                         <Box style={{ padding: '8px 12px' }}>

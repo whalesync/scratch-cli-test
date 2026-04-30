@@ -1,6 +1,8 @@
-import { Box, Portal, ScrollArea, Table, Textarea } from '@mantine/core';
+import { Box, Portal, ScrollArea, Table, Textarea, Tooltip } from '@mantine/core';
+import { TriangleAlert } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Text12Medium, Text12Regular } from '../../components/base/text';
+import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
 
@@ -24,6 +26,8 @@ export interface RecordFieldRow {
 interface RecordFieldsGridProps {
   rows: RecordFieldRow[];
   footer?: React.ReactNode;
+  /** Maps field name → list of validation warning messages to show. */
+  validationWarnings?: Map<string, string[]>;
 }
 
 const FLOATING_PANEL_GAP = 5;
@@ -76,14 +80,18 @@ const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) 
   );
 });
 
-export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows, footer }: RecordFieldsGridProps) {
+export const RecordFieldsGrid = memo(function RecordFieldsGrid({
+  rows,
+  footer,
+  validationWarnings,
+}: RecordFieldsGridProps) {
   const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
   const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
 
   const editingRow = useMemo(() => rows.find((row) => row.editing) ?? null, [rows]);
 
   useEffect(() => {
-    if (!editingAnchorEl || !editingRow?.referenceValue || !editingRow.onUndo) {
+    if (!editingAnchorEl || editingRow?.referenceValue == null || !editingRow.onUndo) {
       setEditingAnchorRect(null);
       return;
     }
@@ -135,12 +143,27 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({ rows, footer }:
           {rows.map((row) => (
             <Table.Tr key={row.fieldName}>
               <Table.Td style={{ width: 280, height: 40 }} py="xs">
-                <Text12Medium
-                  c="var(--fg-primary)"
-                  style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
-                >
-                  {row.displayLabel ?? row.fieldName}
-                </Text12Medium>
+                <Box style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Text12Medium
+                    c="var(--fg-primary)"
+                    style={{ flex: 1, wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
+                  >
+                    {row.displayLabel ?? row.fieldName}
+                  </Text12Medium>
+                  {validationWarnings?.has(row.fieldName) && (
+                    <Tooltip
+                      label={validationWarnings.get(row.fieldName)!.join('\n')}
+                      position="top-end"
+                      withArrow
+                      zIndex={10020}
+                      multiline
+                    >
+                      <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default', flexShrink: 0 }}>
+                        <StyledLucideIcon Icon={TriangleAlert} size={16} c="var(--mantine-color-orange-6)" />
+                      </Box>
+                    </Tooltip>
+                  )}
+                </Box>
               </Table.Td>
               <Table.Td>
                 <Box

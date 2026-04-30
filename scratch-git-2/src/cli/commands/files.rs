@@ -9,6 +9,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use crate::api::{ConnectorAccount, DataFolder};
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
+use crate::shared::record_index::{self, RefreshOptions};
+use crate::shared::validators;
 
 type FileMap = HashMap<String, Vec<u8>>;
 
@@ -229,6 +231,35 @@ struct FieldCommandResult {
 struct RemoteDiscardResult {
     changed_paths: Vec<String>,
     remote_discarded_paths: Vec<String>,
+}
+
+fn refresh_record_index_for_ctx(
+    ctx: &ConnectionContext,
+    rel_paths: &[String],
+    rebuild: bool,
+) -> anyhow::Result<()> {
+    let selected_paths = if rebuild || rel_paths.is_empty() {
+        None
+    } else {
+        Some(rel_paths.iter().cloned().collect::<HashSet<_>>())
+    };
+    record_index::refresh(
+        &ctx.dirty_dir,
+        &ctx.db_path,
+        &[],
+        RefreshOptions { rebuild },
+        selected_paths.as_ref(),
+    )?;
+    if let Err(err) = validators::run_validations(
+        &ctx.scratch_dir,
+        &ctx.dirty_dir,
+        &ctx.db_path,
+        rebuild,
+        selected_paths.as_ref(),
+    ) {
+        eprintln!("[validation] error processing {}: {err}", ctx.conn_dir_name);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -625,14 +656,18 @@ fn run_discard_all(
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            results.push(discard_all_single_repo(&ctx, Some(repo_folder.as_str()))?);
+            let result = discard_all_single_repo(&ctx, Some(repo_folder.as_str()))?;
+            refresh_record_index_for_ctx(&ctx, &result.discarded_paths, true)?;
+            results.push(result);
         }
         None => {
             for ctx in &contexts {
                 if contexts.len() > 1 && !json {
                     println!("Discarding changes in {}...", ctx.conn_dir_name);
                 }
-                results.push(discard_all_single_repo(ctx, None)?);
+                let result = discard_all_single_repo(ctx, None)?;
+                refresh_record_index_for_ctx(ctx, &result.discarded_paths, true)?;
+                results.push(result);
             }
         }
     }
@@ -696,14 +731,18 @@ fn run_accept_all(
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            results.push(accept_all_single_repo(&ctx, Some(repo_folder.as_str()))?);
+            let result = accept_all_single_repo(&ctx, Some(repo_folder.as_str()))?;
+            refresh_record_index_for_ctx(&ctx, &result.accepted_paths, true)?;
+            results.push(result);
         }
         None => {
             for ctx in &contexts {
                 if contexts.len() > 1 && !json {
                     println!("Accepting changes in {}...", ctx.conn_dir_name);
                 }
-                results.push(accept_all_single_repo(ctx, None)?);
+                let result = accept_all_single_repo(ctx, None)?;
+                refresh_record_index_for_ctx(ctx, &result.accepted_paths, true)?;
+                results.push(result);
             }
         }
     }
@@ -832,6 +871,8 @@ fn run_accept(
         )?;
         update_dirty_worktree_index(ctx, &new_dirty_hash)?;
         update_reviewed_dirty(ctx, &new_dirty_hash)?;
+        let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
+        refresh_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
 
         all_accepted.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
@@ -1011,6 +1052,7 @@ fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result
             skipped_any = true;
             continue;
         }
+        refresh_record_index_for_ctx(ctx, &result.discarded_paths, path_pairs.len() > 1)?;
         for rel in &result.discarded_paths {
             if let Some(input) = input_by_rel.get(rel.as_str()) {
                 all_discarded.push((*input).to_string());
@@ -1109,6 +1151,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     )?;
     update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
     update_reviewed_dirty(&ctx, &new_dirty_hash)?;
+    refresh_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
     if json {
         println!(
@@ -1205,6 +1248,7 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
         update_reviewed_dirty(&ctx, &new_dirty_hash)?;
     }
+    refresh_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
     if json {
         println!(
@@ -1263,6 +1307,7 @@ fn run_restore_deleted_record(
             .map(|(_, rel_path)| rel_path.clone())
             .collect();
         restore_deleted_records_locally(ctx, &rel_paths)?;
+        refresh_record_index_for_ctx(ctx, &rel_paths, false)?;
         all_restored.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
 
@@ -1324,6 +1369,7 @@ async fn run_discard_created_record(
             .collect();
 
         discard_created_records_locally(ctx, &rel_paths)?;
+        refresh_record_index_for_ctx(ctx, &rel_paths, false)?;
         result
             .changed_paths
             .extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
@@ -2045,6 +2091,7 @@ fn download_single_repo(
     reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
     update_reviewed_dirty(ctx, &new_dirty_hash)?;
+    refresh_record_index_for_ctx(ctx, &[], true)?;
 
     Ok(result)
 }
@@ -2142,6 +2189,7 @@ fn upload_single_repo(
             apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &remote_map)?;
             update_dirty_worktree_index(ctx, &remote_hash)?;
             update_reviewed_dirty(ctx, &remote_hash)?;
+            refresh_record_index_for_ctx(ctx, &[], true)?;
             return Ok(UploadResult {
                 status: "up_to_date".to_string(),
                 messages,
@@ -2168,6 +2216,7 @@ fn upload_single_repo(
                 apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &merged)?;
                 update_dirty_worktree_index(ctx, &new_dirty_hash)?;
                 update_reviewed_dirty(ctx, &new_dirty_hash)?;
+                refresh_record_index_for_ctx(ctx, &[], true)?;
                 result.files_plan = plan_file_count;
                 result.messages = messages;
                 return Ok(result);

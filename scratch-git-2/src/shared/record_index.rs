@@ -227,6 +227,7 @@ fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
         "file_size_bytes",
         "ALTER TABLE record_index ADD COLUMN file_size_bytes INTEGER NOT NULL DEFAULT -1",
     )?;
+    crate::shared::validators::ensure_validation_schema(conn)?;
     Ok(())
 }
 
@@ -628,7 +629,8 @@ fn is_record_rel_path(rel_path: &str) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
-    if file_name == "schema.json" || !file_name.ends_with(".json") {
+    if file_name == "schema.json" || file_name == "validation.json" || !file_name.ends_with(".json")
+    {
         return false;
     }
 
@@ -717,6 +719,7 @@ mod tests {
         PROCESSOR_VERSION,
     };
     use rusqlite::Connection;
+    use std::collections::HashSet;
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
@@ -866,6 +869,79 @@ mod tests {
         let rows = read_index(&db_path).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].processor_version, PROCESSOR_VERSION);
+    }
+
+    #[test]
+    fn refresh_with_selected_paths_only_bootstraps_selected_records() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("record-index.db");
+
+        write_file(tmp.path(), "posts/one.json", "{\"id\":1}");
+        write_file(tmp.path(), "posts/two.json", "{\"id\":2}");
+        write_file(tmp.path(), "posts/three.json", "{\"id\":3}");
+
+        let mut selected = HashSet::new();
+        selected.insert("posts/one.json".to_string());
+
+        let summary = refresh(
+            tmp.path(),
+            &db_path,
+            &[],
+            RefreshOptions::default(),
+            Some(&selected),
+        )
+        .unwrap();
+        assert_eq!(summary.inserted, 1);
+        assert_eq!(summary.updated, 0);
+        assert_eq!(summary.deleted, 0);
+
+        let rows = read_index(&db_path).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].folder_path, "posts");
+        assert_eq!(rows[0].file_name, "one.json");
+    }
+
+    #[test]
+    fn inspect_with_selected_paths_only_reports_selected_stale_records() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("record-index.db");
+
+        write_file(tmp.path(), "posts/one.json", "{\"id\":1}");
+        write_file(tmp.path(), "posts/two.json", "{\"id\":2}");
+        refresh(tmp.path(), &db_path, &[], RefreshOptions::default(), None).unwrap();
+
+        write_file(
+            tmp.path(),
+            "posts/one.json",
+            "{\"id\":1,\"name\":\"updated\"}",
+        );
+        write_file(tmp.path(), "posts/three.json", "{\"id\":3}");
+
+        let mut selected = HashSet::new();
+        selected.insert("posts/one.json".to_string());
+
+        let stale = inspect(
+            tmp.path(),
+            &db_path,
+            &[],
+            RefreshOptions::default(),
+            Some(&selected),
+        )
+        .unwrap();
+
+        assert_eq!(
+            stale,
+            vec![StaleRecord {
+                path: "posts/one.json".to_string(),
+                reasons: vec!["file-metadata-mismatch".to_string()],
+            }]
+        );
+
+        let rows = read_index(&db_path).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.file_name == "one.json"));
+        assert!(rows.iter().any(|row| row.file_name == "two.json"));
+        assert!(!rows.iter().any(|row| row.file_name == "three.json"));
     }
 
     #[test]
