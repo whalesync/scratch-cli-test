@@ -5,7 +5,12 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 
 const GITHUB_REPO = 'whalesync/scratch-cli';
-const RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=30`;
+const RELEASES_PER_PAGE = 30;
+const MAX_RELEASE_PAGES = 5;
+
+function releasesListUrl(page: number): string {
+  return `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
+}
 const CACHE_KEY_PREFIX = 'desktop-release:latest:v2:';
 const CACHE_TTL_SECONDS = 5 * 60;
 const FETCH_TIMEOUT_MS = 5000;
@@ -112,20 +117,26 @@ export class DesktopReleaseService implements OnModuleDestroy {
 
   private async fetchLatestRelease(tagSuffix: string): Promise<GitHubRelease | null> {
     try {
-      const res = await fetch(RELEASES_API_URL, {
-        headers: { Accept: 'application/vnd.github+json' },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (!res.ok) {
-        WSLogger.warn({
-          source: 'DesktopReleaseService',
-          message: 'GitHub releases API returned non-ok status',
-          status: res.status,
+      for (let page = 1; page <= MAX_RELEASE_PAGES; page++) {
+        const res = await fetch(releasesListUrl(page), {
+          headers: { Accept: 'application/vnd.github+json' },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
-        return null;
+        if (!res.ok) {
+          WSLogger.warn({
+            source: 'DesktopReleaseService',
+            message: 'GitHub releases API returned non-ok status',
+            status: res.status,
+            page,
+          });
+          return null;
+        }
+        const releases = (await res.json()) as GitHubRelease[];
+        const match = releases.find((r) => !r.draft && r.tag_name.endsWith(tagSuffix));
+        if (match) return match;
+        if (releases.length < RELEASES_PER_PAGE) break;
       }
-      const releases = (await res.json()) as GitHubRelease[];
-      return releases.find((r) => !r.draft && r.tag_name.endsWith(tagSuffix)) ?? null;
+      return null;
     } catch (err) {
       WSLogger.error({
         source: 'DesktopReleaseService',

@@ -49,6 +49,7 @@ include:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes: !reference [.changes, release_pipeline]
       when: manual
+      allow_failure: true
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
   rest_of_pipeline:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

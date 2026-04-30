@@ -49,16 +49,28 @@ echo "Bootstrapping desktop ${VARIANT} release (${RELEASE_TYPE})..."
 git config --global user.email "ci@whalesync.com"
 git config --global user.name "GitLab CI"
 
+curl_releases_page() {
+  local page="${1:?page number required}"
+  curl -sS --fail-with-body \
+    -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100&page=${page}"
+}
+
 # 1. Find the latest matching tag on GitHub, considering both published
 #    releases AND drafts. `GET /releases` returns every release visible to
 #    the token — drafts don't have git refs yet, but their reserved tag_name
 #    still has to be avoided, or concurrent pipelines will both pick the
-#    same version.
-LATEST_TAG=$(curl -sS --fail-with-body \
-  -H "Authorization: token $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.v3+json" \
-  "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100" \
-  | jq -r --arg suf "$TAG_SUFFIX" '.[] | select(.tag_name | endswith($suf)) | .tag_name' \
+#    same version. Fetch the first 3 API pages (300 releases) so the max tag
+#    is less likely to be missed than with a single page (same pattern as
+#    preview_desktop_release_version.sh).
+LATEST_TAG=$(
+  {
+    for page in 1 2 3; do
+      curl_releases_page "$page"
+      printf '\n'
+    done
+  } | jq -s 'add | .[] | select(.tag_name | endswith($suf)) | .tag_name' --arg suf "$TAG_SUFFIX" -r \
   | sort -V -r \
   | head -n1)
 if [ -z "$LATEST_TAG" ]; then
