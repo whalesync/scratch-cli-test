@@ -2101,6 +2101,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               </UnstyledButton>
             )}
             <FolderGridHeaderMenu
+              columnId={headerMenu?.columnId ?? ''}
               columnTitle={headerMenu?.columnTitle ?? ''}
               bounds={headerMenu?.bounds ?? null}
               initialFilterValue={

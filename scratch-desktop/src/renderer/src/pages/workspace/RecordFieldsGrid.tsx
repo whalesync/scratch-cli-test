@@ -1,8 +1,7 @@
-import { Box, Portal, ScrollArea, Table, Textarea, Tooltip } from '@mantine/core';
-import { TriangleAlert } from 'lucide-react';
+import { Box, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip } from '@mantine/core';
+import { TriangleAlertIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Text12Medium, Text12Regular } from '../../components/base/text';
-import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { Text12Medium, Text12Regular, TextMono9Regular } from '../../components/base/text';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
 
@@ -89,7 +88,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
 
   const editingRow = useMemo(() => rows.find((row) => row.editing) ?? null, [rows]);
-
   useEffect(() => {
     if (!editingAnchorEl || editingRow?.referenceValue == null || !editingRow.onUndo) {
       setEditingAnchorRect(null);
@@ -143,13 +141,18 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           {rows.map((row) => (
             <Table.Tr key={row.fieldName}>
               <Table.Td style={{ width: 280, height: 40 }} py="xs">
-                <Box style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <Text12Medium
-                    c="var(--fg-primary)"
-                    style={{ flex: 1, wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
-                  >
-                    {row.displayLabel ?? row.fieldName}
-                  </Text12Medium>
+                <Group w="100%" align="top">
+                  <Stack gap="xs" flex={1}>
+                    <Text12Medium
+                      c="var(--fg-primary)"
+                      style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
+                    >
+                      {row.displayLabel ?? row.fieldName}
+                    </Text12Medium>
+                    {row.displayLabel !== row.fieldName && (
+                      <TextMono9Regular c="dimmed">{row.fieldName}</TextMono9Regular>
+                    )}
+                  </Stack>
                   {validationWarnings?.has(row.fieldName) && (
                     <Tooltip
                       label={validationWarnings.get(row.fieldName)!.join('\n')}
@@ -158,12 +161,12 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                       zIndex={10020}
                       multiline
                     >
-                      <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default', flexShrink: 0 }}>
-                        <StyledLucideIcon Icon={TriangleAlert} size={16} c="var(--mantine-color-orange-6)" />
+                      <Box w={16} h={16} c="var(--mantine-color-orange-6)">
+                        <TriangleAlertIcon size={16} />
                       </Box>
                     </Tooltip>
                   )}
-                </Box>
+                </Group>
               </Table.Td>
               <Table.Td>
                 <Box
