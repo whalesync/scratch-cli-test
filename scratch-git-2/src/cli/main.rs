@@ -114,6 +114,40 @@ enum Commands {
         #[arg(long)]
         connection: Option<String>,
     },
+    /// Refresh the local record index for dirty worktrees
+    #[command(name = "refresh-record-index", alias = "sync-record-index")]
+    RefreshRecordIndex {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Only refresh the named connection (case-sensitive)
+        #[arg(long)]
+        connection: Option<String>,
+        /// Refresh only this record path. Accepts absolute paths, workspace-relative
+        /// '<connection>/<path>' values, or plain relative paths when the workspace has one connection.
+        #[arg(long = "path")]
+        paths: Vec<String>,
+        /// Reconcile every record in the connection, not just changed candidates
+        #[arg(long)]
+        rebuild: bool,
+    },
+    /// List records that would be processed by refresh-record-index
+    #[command(name = "list-stale-records")]
+    ListStaleRecords {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Only inspect the named connection (case-sensitive)
+        #[arg(long)]
+        connection: Option<String>,
+        /// Restrict inspection to this record path. Accepts absolute paths, workspace-relative
+        /// '<connection>/<path>' values, or plain relative paths when the workspace has one connection.
+        #[arg(long = "path")]
+        paths: Vec<String>,
+        /// Treat the run as a full rebuild when computing stale records
+        #[arg(long)]
+        rebuild: bool,
+    },
     /// Regenerate CLAUDE.md and .scratch/docs/ in the current workspace
     #[command(name = "generate-docs")]
     GenerateDocs {
@@ -209,6 +243,30 @@ async fn main() {
             workspace,
             connection,
         } => index::dump_command(&workspace, connection.as_deref()),
+        Commands::RefreshRecordIndex {
+            workspace,
+            connection,
+            paths,
+            rebuild,
+        } => index::refresh_record_index_command(
+            &workspace,
+            connection.as_deref(),
+            &paths,
+            rebuild,
+            cli.json,
+        ),
+        Commands::ListStaleRecords {
+            workspace,
+            connection,
+            paths,
+            rebuild,
+        } => index::list_stale_records_command(
+            &workspace,
+            connection.as_deref(),
+            &paths,
+            rebuild,
+            cli.json,
+        ),
         Commands::GenerateDocs { workspace } => (|| -> anyhow::Result<()> {
             let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;
             let name = wb_dir

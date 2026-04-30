@@ -551,6 +551,7 @@ pub(crate) struct WorktreeStatusEntry {
     pub(crate) x: u8,
     pub(crate) y: u8,
     pub(crate) path: String,
+    pub(crate) original_path: Option<String>,
 }
 
 /// Returns git status entries for the worktree using `--porcelain=v1 -z`.
@@ -558,7 +559,7 @@ pub(crate) struct WorktreeStatusEntry {
 pub(crate) fn worktree_status_entries(
     worktree_path: &Path,
 ) -> anyhow::Result<Vec<WorktreeStatusEntry>> {
-    if !worktree_path.join(".git").is_file() {
+    if !worktree_path.join(".git").exists() {
         return Ok(vec![]);
     }
 
@@ -597,13 +598,24 @@ pub(crate) fn worktree_status_entries(
         i = path_start + nul_offset + 1;
 
         // Renames / copies have a second NUL-terminated original path — consume it
-        if x == b'R' || x == b'C' {
+        let original_path = if x == b'R' || x == b'C' || y == b'R' || y == b'C' {
             if let Some(nul2) = bytes[i..].iter().position(|&b| b == 0) {
+                let original = String::from_utf8_lossy(&bytes[i..i + nul2]).into_owned();
                 i += nul2 + 1;
+                Some(original)
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
-        entries.push(WorktreeStatusEntry { x, y, path });
+        entries.push(WorktreeStatusEntry {
+            x,
+            y,
+            path,
+            original_path,
+        });
     }
 
     Ok(entries)
