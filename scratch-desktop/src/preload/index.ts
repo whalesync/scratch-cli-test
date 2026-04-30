@@ -2,6 +2,7 @@ import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
+import { WORKSPACE_FILE_WATCH_EVENT_CHANNEL, type WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invoke(channel: string, ...args: unknown[]): Promise<any> {
@@ -162,6 +163,8 @@ const scratchDesktop = {
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
   getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),
+  watchWorkspaceFiles: (workspacePath: string): Promise<void> => invoke('scratch:watch-workspace-files', workspacePath),
+  clearWorkspaceFileWatch: (): Promise<void> => invoke('scratch:clear-workspace-file-watch'),
   updater: {
     checkNow: (): Promise<void> => invoke('updater:check-now'),
     quitAndInstall: (): Promise<void> => invoke('updater:quit-and-install'),
@@ -182,6 +185,15 @@ const scratchDesktop = {
     ipcRenderer.on('scratch:command-event', listener);
     return () => {
       ipcRenderer.removeListener('scratch:command-event', listener);
+    };
+  },
+  onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: WorkspaceFilesChangedEvent): void => {
+      callback(payload);
+    };
+    ipcRenderer.on(WORKSPACE_FILE_WATCH_EVENT_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(WORKSPACE_FILE_WATCH_EVENT_CHANNEL, listener);
     };
   },
 };

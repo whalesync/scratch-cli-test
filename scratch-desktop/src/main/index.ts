@@ -44,6 +44,7 @@ import {
   triggerPublishFromGit,
 } from './scratchmd';
 import { initAutoUpdater } from './updater';
+import { WorkspaceFileWatchService } from './workspace-file-watch';
 
 const appStartTime = performance.now();
 
@@ -52,6 +53,7 @@ const PROTOCOL = 'scratch';
 let mainWindow: BrowserWindow | null = null;
 let pendingDeepLink: { route: string; query: string } | null = null;
 let updaterController: ReturnType<typeof initAutoUpdater> = null;
+const workspaceFileWatchService = new WorkspaceFileWatchService();
 
 function parseScratchDeepLink(url: string): { route: string; query: string } | null {
   try {
@@ -341,6 +343,7 @@ function createWindow(): void {
   logPerf('main createBrowserWindow', performance.now() - windowStart);
 
   mainWindow.on('closed', () => {
+    void workspaceFileWatchService.clearWorkspaceFileWatch();
     mainWindow = null;
   });
 
@@ -367,6 +370,51 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
+}
+
+async function findWorkspaceRootForPath(filePath: string): Promise<string | null> {
+  const absolutePath = resolve(filePath);
+  const rawEntries = await readWorkspaceRegistry();
+  const entries = await pruneStaleWorkspaceRegistryEntries(rawEntries);
+  const matchingEntries = entries
+    .filter((entry) => absolutePath === entry.path || absolutePath.startsWith(`${entry.path}${sep}`))
+    .sort((a, b) => b.path.length - a.path.length);
+  return matchingEntries[0]?.path ?? null;
+}
+
+async function withWorkspaceInternalMutation<T>(workspacePath: string, action: () => Promise<T>): Promise<T> {
+  const endInternalMutation = workspaceFileWatchService.beginInternalWorkspaceMutation(workspacePath);
+  try {
+    return await action();
+  } finally {
+    endInternalMutation();
+  }
+}
+
+async function withFilePathInternalMutation<T>(filePath: string, action: () => Promise<T>): Promise<T> {
+  const workspacePath = await findWorkspaceRootForPath(filePath);
+  if (!workspacePath) {
+    return action();
+  }
+  return withWorkspaceInternalMutation(workspacePath, action);
+}
+
+function startWorkspaceInternalLiveCommand(
+  sender: Electron.WebContents,
+  workspacePath: string,
+  args: string[],
+): Promise<{ sessionId: string }> {
+  const endInternalMutation = workspaceFileWatchService.beginInternalWorkspaceMutation(workspacePath);
+  return startScratchmdLiveCommand(sender, args, workspacePath, { onExit: endInternalMutation });
+}
+
+function startWorkspaceInternalLiveSequence(
+  sender: Electron.WebContents,
+  workspacePath: string,
+  steps: Array<{ label: string; args: string[] }>,
+): Promise<{ sessionId: string }> {
+  const endInternalMutation = workspaceFileWatchService.beginInternalWorkspaceMutation(workspacePath);
+  return startScratchmdLiveSequence(sender, steps, workspacePath, { onExit: endInternalMutation });
 }
 
 // Auth IPC handlers
@@ -449,27 +497,35 @@ ipcMain.handle('scratch:create-workspace', async (_, name: string) =>
 ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: string, opts?: { force?: boolean }) =>
   runScratchmd(['workspaces', 'init', workbookId, ...(opts?.force ? ['--force'] : [])], cwd),
 );
-ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) =>
-  runScratchmd(['workspaces', 'unsync', workbookId, '--yes']),
-);
+ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
+  const result = await runScratchmd(['workspaces', 'unsync', workbookId, '--yes']);
+  await workspaceFileWatchService.clearWorkspaceFileWatch();
+  return result;
+});
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'accept-all'];
   if (folderPath) args.push('--folder', folderPath);
-  return runScratchmdCapture(args, workspacePath);
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'discard-all'];
   if (folderPath) args.push('--folder', folderPath);
-  return runScratchmdCapture(args, workspacePath);
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
-  runScratchmdCapture(['files', 'accept', recordPath], workspacePath),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    runScratchmdCapture(['files', 'accept', recordPath], workspacePath),
+  ),
 );
 ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
-  runScratchmdCapture(['files', 'reject', recordPath], workspacePath),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    runScratchmdCapture(['files', 'reject', recordPath], workspacePath),
+  ),
 );
 ipcMain.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
-  runScratchmdCapture(['files', 'discard', recordPath], workspacePath),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    runScratchmdCapture(['files', 'discard', recordPath], workspacePath),
+  ),
 );
 ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: string) =>
   listUnreviewedChanges(workspacePath),
@@ -489,39 +545,44 @@ ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string
   if (opts?.onDelete) {
     args.push('--on-delete', opts.onDelete);
   }
-  return runScratchmd(args, workspacePath);
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmd(args, workspacePath));
 });
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
   runScratchmdCapture(['syncs', 'validate-local', '--sync', syncName], workspacePath),
 );
 ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: string, syncName: string) =>
-  startScratchmdLiveCommand(event.sender, ['syncs', 'run-local', '--sync', syncName], workspacePath),
+  startWorkspaceInternalLiveCommand(event.sender, workspacePath, ['syncs', 'run-local', '--sync', syncName]),
 );
 ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string, filterPath?: string) => {
   const args = filterPath ? ['plan-publish', '--filter', filterPath] : ['plan-publish'];
-  return startScratchmdLiveCommand(event.sender, args, workspacePath);
+  return startWorkspaceInternalLiveCommand(event.sender, workspacePath, args);
 });
 ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: string) =>
-  startScratchmdLiveCommand(event.sender, ['publish-from-git'], workspacePath),
+  startWorkspaceInternalLiveCommand(event.sender, workspacePath, ['publish-from-git']),
 );
 ipcMain.handle('scratch:trigger-publish-from-git', async (_, workspacePath: string) =>
   triggerPublishFromGit(workspacePath),
 );
 ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string) =>
-  runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),
-);
-ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string) =>
-  startScratchmdLiveSequence(
-    event.sender,
-    [
-      { label: 'plan-publish', args: ['plan-publish'] },
-      { label: 'files upload', args: ['files', 'upload'] },
-      { label: 'publish-from-git', args: ['publish-from-git'] },
-    ],
-    workspacePath,
+  withWorkspaceInternalMutation(workspacePath, () =>
+    runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),
   ),
 );
+ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string) =>
+  startWorkspaceInternalLiveSequence(event.sender, workspacePath, [
+    { label: 'plan-publish', args: ['plan-publish'] },
+    { label: 'files upload', args: ['files', 'upload'] },
+    { label: 'publish-from-git', args: ['publish-from-git'] },
+  ]),
+);
+ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
+  const config = await readWorkspaceConfig(workspacePath);
+  await workspaceFileWatchService.watchWorkspaceFiles(event.sender, workspacePath, config.connections);
+});
+ipcMain.handle('scratch:clear-workspace-file-watch', async () => {
+  await workspaceFileWatchService.clearWorkspaceFileWatch();
+});
 ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
   void shell.openPath(folderPath);
 });
@@ -677,7 +738,7 @@ ipcMain.handle(
 ipcMain.handle('files:read-file', async (_, filePath: string) => readFileContent(filePath));
 ipcMain.handle('files:read-file-text-raw', async (_, filePath: string) => readFileTextRaw(filePath));
 ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents: string) =>
-  writeFileTextRaw(filePath, contents),
+  withFilePathInternalMutation(filePath, () => writeFileTextRaw(filePath, contents)),
 );
 ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
   readBatch(filePaths, opts),
@@ -728,29 +789,39 @@ ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, work
 ipcMain.handle(
   'files:accept-cell-input-text',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
-    acceptCellInputText(folderPath, workspacePath, filename, fieldName, value),
+    withWorkspaceInternalMutation(workspacePath, () =>
+      acceptCellInputText(folderPath, workspacePath, filename, fieldName, value),
+    ),
 );
 ipcMain.handle(
   'files:accept-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
-    acceptCellChange(folderPath, workspacePath, filename, fieldName, value),
+    withWorkspaceInternalMutation(workspacePath, () =>
+      acceptCellChange(folderPath, workspacePath, filename, fieldName, value),
+    ),
 );
 ipcMain.handle(
   'files:undo-approved-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
-    undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
+    withWorkspaceInternalMutation(workspacePath, () =>
+      undoApprovedCellChange(folderPath, workspacePath, filename, fieldName),
+    ),
 );
 ipcMain.handle('files:restore-deleted-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  restoreDeletedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    restoreDeletedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
+  ),
 );
 ipcMain.handle('files:discard-created-record', async (_, folderPath: string, workspacePath: string, filename: string) =>
-  discardCreatedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
+  withWorkspaceInternalMutation(workspacePath, () =>
+    discardCreatedRecordViaCli(workspacePath, toWorkspaceRecordPath(workspacePath, folderPath, filename)),
+  ),
 );
 ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
-  acceptFieldChanges(workspacePath, folderPath, fieldName),
+  withWorkspaceInternalMutation(workspacePath, () => acceptFieldChanges(workspacePath, folderPath, fieldName)),
 );
 ipcMain.handle('files:reject-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
-  rejectFieldChanges(workspacePath, folderPath, fieldName),
+  withWorkspaceInternalMutation(workspacePath, () => rejectFieldChanges(workspacePath, folderPath, fieldName)),
 );
 
 void app.whenReady().then(() => {

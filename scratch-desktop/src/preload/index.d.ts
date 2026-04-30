@@ -1,6 +1,7 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
+import type { WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 type ScratchCommandEvent =
   | {
@@ -120,7 +121,10 @@ interface ScratchDesktopAPI {
   openInTerminal: (folderPath: string) => Promise<void>;
   toggleDevTools: () => Promise<void>;
   getAppVersion: () => Promise<string>;
+  watchWorkspaceFiles: (workspacePath: string) => Promise<void>;
+  clearWorkspaceFileWatch: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
+  onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void) => () => void;
   updater: {
     checkNow: () => Promise<void>;
     quitAndInstall: () => Promise<void>;

@@ -57,6 +57,10 @@ interface LocalPublishPlan {
   tablePaths: string[];
 }
 
+interface ScratchmdLiveCommandOptions {
+  onExit?: () => void;
+}
+
 // ── Binary path resolution ──
 
 function getScratchmdBinaryPath(): string {
@@ -139,6 +143,7 @@ export function startScratchmdLiveCommand(
   sender: Electron.WebContents,
   args: string[],
   cwd?: string,
+  options?: ScratchmdLiveCommandOptions,
 ): Promise<{ sessionId: string }> {
   return new Promise((resolve, reject) => {
     const sessionId = randomUUID();
@@ -177,6 +182,7 @@ export function startScratchmdLiveCommand(
     });
 
     child.on('error', (error: NodeJS.ErrnoException) => {
+      options?.onExit?.();
       const message =
         error.code === 'ENOENT'
           ? app.isPackaged
@@ -187,6 +193,7 @@ export function startScratchmdLiveCommand(
     });
 
     child.on('close', (code) => {
+      options?.onExit?.();
       emitExit(code ?? -1);
     });
   });
@@ -196,6 +203,7 @@ export function startScratchmdLiveSequence(
   sender: Electron.WebContents,
   steps: Array<{ label: string; args: string[] }>,
   cwd?: string,
+  options?: ScratchmdLiveCommandOptions,
 ): Promise<{ sessionId: string }> {
   return new Promise((resolve, reject) => {
     const sessionId = randomUUID();
@@ -255,20 +263,24 @@ export function startScratchmdLiveSequence(
               : "scratchmd binary not found. Run 'cargo build --bin scratchmd' in scratch-git-2/."
             : `Failed to start scratchmd: ${error.message}`;
         if (!started) {
+          options?.onExit?.();
           reject(new Error(message));
           return;
         }
+        options?.onExit?.();
         emitExit(-1, message);
       });
 
       child.on('close', (code) => {
         if ((code ?? -1) !== 0) {
+          options?.onExit?.();
           emitExit(code ?? -1);
           return;
         }
 
         stepIndex += 1;
         if (stepIndex >= steps.length) {
+          options?.onExit?.();
           emitExit(0);
           return;
         }

@@ -2,13 +2,16 @@ import { Alert, Box, Center, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import type { WorkspaceFilesChangedEvent } from '../../../shared/workspace-file-watch';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
+import { useCurrentUser } from '../hooks/use-current-user';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { jobApi } from '../lib/job-api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
+import { isWorkspaceFileWatcherExperimentEnabled } from '../lib/workspace-file-watcher-experiment';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
@@ -22,10 +25,26 @@ function isNoConnectionsScratchmdError(message: string): boolean {
 }
 
 const FOCUS_SYNC_THROTTLE_MS = 10_000;
+const WORKSPACE_FILE_WATCH_NOTIFICATION_ID = 'workspace-file-watch-change';
+
+function formatWorkspaceFileWatchMessage(event: WorkspaceFilesChangedEvent): string {
+  if (event.changedPathCount === 1) {
+    return `${event.samplePaths[0] ?? '1 file'} changed on disk. Refreshing the workspace view.`;
+  }
+
+  const preview = event.samplePaths.slice(0, 2).join(', ');
+  const extraCount = Math.max(0, event.changedPathCount - 2);
+  if (extraCount === 0) {
+    return `${preview} changed on disk. Refreshing the workspace view.`;
+  }
+
+  return `${preview}, and ${extraCount} more changed on disk. Refreshing the workspace view.`;
+}
 
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +67,7 @@ export function WorkspacePage() {
   const lastFocusSyncAtRef = useRef(0);
   const previousFolderCountRef = useRef<number | null>(null);
   const previousConnectionCountRef = useRef<number | null>(null);
+  const isWorkspaceWatcherEnabled = user?.isAdmin === true && isWorkspaceFileWatcherExperimentEnabled();
 
   const fetchWorkspace = useCallback(
     async (options?: {
@@ -238,6 +258,49 @@ export function WorkspacePage() {
       window.removeEventListener('focus', handleWindowFocus);
     };
   }, [id, workspaceId, fetchWorkspace, handleDataRefresh]);
+
+  useEffect(() => {
+    if (!localPath || !isWorkspaceWatcherEnabled) {
+      void window.scratchDesktop.clearWorkspaceFileWatch();
+      return;
+    }
+
+    const unsubscribe = window.scratchDesktop.onWorkspaceFilesChanged((event) => {
+      if (event.workspacePath !== localPath) {
+        return;
+      }
+
+      handleDataRefresh();
+
+      if (event.source === 'external') {
+        notifications.show({
+          id: WORKSPACE_FILE_WATCH_NOTIFICATION_ID,
+          title: 'Files changed on disk',
+          message: formatWorkspaceFileWatchMessage(event),
+          color: 'blue',
+        });
+      }
+    });
+
+    void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
+      console.debug('[workspace] failed to start workspace file watch:', error);
+    });
+
+    return () => {
+      unsubscribe();
+      void window.scratchDesktop.clearWorkspaceFileWatch();
+    };
+  }, [handleDataRefresh, isWorkspaceWatcherEnabled, localPath]);
+
+  useEffect(() => {
+    if (!localPath || !isWorkspaceWatcherEnabled) {
+      return;
+    }
+
+    void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
+      console.debug('[workspace] failed to reconcile workspace file watch roots:', error);
+    });
+  }, [dataRefreshKey, isWorkspaceWatcherEnabled, localPath]);
 
   if (loading) {
     return (
