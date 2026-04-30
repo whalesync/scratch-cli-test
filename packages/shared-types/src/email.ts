@@ -1,6 +1,5 @@
 /**
  * SendGrid dynamic template IDs.
- * Replace these placeholder values with real template IDs from the SendGrid dashboard.
  */
 export enum EmailTemplate {
   WorkspaceInvite = 'd-d62ed43be3b64fb6b30d69cd3a1f3495',

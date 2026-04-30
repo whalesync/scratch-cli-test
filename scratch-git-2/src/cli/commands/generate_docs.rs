@@ -125,11 +125,18 @@ Each table has a `schema.json` file that describes its fields.
 These files are **read-only** — they are generated from the CMS field definitions
 and will be overwritten on the next pull.
 
+The schema is written using JSON Schema notation, with some custom extensions:
+- x-scratch-readonly: indicates the field's data MUST NOT be modified
+- x-scratch-connector-data-type: the service-specific type for the field, use only for context
+
+Records may contain additional fields that not documented in the schema file. Those should be
+treated as read-only unless explicitly instructed otherwise by the user.
+
+
 ## Location
 
 ```
-.scratch/connections/scratch/{SERVICE - Connection}/{Base}/{Table}/schema.json
-.scratch/connections/master/{SERVICE - Connection}/{Base}/{Table}/.scratch/schema.json
+.scratch/connections/scratch/{SERVICE - Connection}/[{Base}/]{Table}/schema.json
 ```
 
 ## What a schema looks like
@@ -150,16 +157,6 @@ and will be overwritten on the next pull.
 }
 ```
 
-For Airtable, fields are at the top level (no `fieldData` wrapper):
-```json
-{
-  "type": "object",
-  "properties": {
-    "Name":      { "type": "string" },
-    "Post Body": { "type": "string" }
-  }
-}
-```
 
 ## Using schemas
 
