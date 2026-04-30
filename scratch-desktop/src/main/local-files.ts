@@ -1023,6 +1023,10 @@ function compareFlattenedRecordVersions(
       if (wStr !== dStr) {
         changedFields.push(k);
         fromFields[k] = dirtyRow[k];
+        // Capture the master value too — once the user accepts this change, the
+        // field flips to "unpublished" and the popover renders the master value
+        // as "Last published". Without this we'd lose that baseline at accept time.
+        masterFields[k] = comparableMasterRow[k];
       } else if (dStr !== mStr) {
         unpublishedFields.push(k);
         masterFields[k] = comparableMasterRow[k];

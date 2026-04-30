@@ -1,6 +1,7 @@
 import { ButtonSecondaryGhost, ButtonSecondaryOutline } from '@/components/base/buttons';
 import DataEditor, {
   CompactSelection,
+  getMiddleCenterBias,
   GridCellKind,
   GridColumnMenuIcon,
   type DataEditorRef,
@@ -31,6 +32,8 @@ import { notifications } from '@mantine/notifications';
 import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
+import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
+import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import type { ColumnDefinition } from '../../types/local-files';
@@ -104,6 +107,8 @@ interface CellPopoverState {
   value: string;
   fromValue: string;
   diffKind: FieldValueDiffKind;
+  /** Null for record-level popovers (creates/deletes), where there's no per-field change to classify. */
+  classification: FieldChangeClassification | null;
   bounds: { x: number; y: number; width: number; height: number };
   recordLevel?: boolean;
   recordAction?: 'added' | 'deleted';
@@ -198,6 +203,53 @@ function drawStatusIcon(ctx: CanvasRenderingContext2D, x: number, y: number, siz
     ctx.stroke();
   }
 
+  ctx.restore();
+}
+
+/**
+ * Draw the new value of a modified text cell with each changed word coloured blue
+ * (matching `--modified-needs-review-stroke`) while unchanged words use the design
+ * system's default text colour. The cell background is already painted by the grid
+ * before drawCell runs, so we only paint text on top.
+ */
+function drawWordDiffText(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; width: number; height: number },
+  theme: { cellHorizontalPadding: number; baseFontStyle: string; fontFamily: string },
+  fromText: string,
+  toText: string,
+): void {
+  const segments = getWordDiffSegments(fromText, toText);
+  if (segments.length === 0) return;
+
+  // Glide's text rendering matches: left-aligned, `middle` baseline biased so
+  // x-height visually centers in the row.
+  const padX = theme.cellHorizontalPadding;
+  const startX = rect.x + padX + 0.5;
+  const fontFull = `${theme.baseFontStyle} ${theme.fontFamily}`;
+  const bias = getMiddleCenterBias(ctx, fontFull);
+  const y = rect.y + rect.height / 2 + bias;
+
+  const baseColor = getCssVar('--fg-primary') || '#000';
+  const accentColor = getCssVar('--modified-needs-review-stroke') || '#0551cd';
+
+  ctx.save();
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  // Clip so an over-long value can't bleed into the next cell.
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.width, rect.height);
+  ctx.clip();
+
+  let x = startX;
+  for (const seg of segments) {
+    ctx.fillStyle = seg.changed ? accentColor : baseColor;
+    ctx.fillText(seg.text, x, y);
+    x += ctx.measureText(seg.text).width;
+    // Stop early once we're past the visible region; clipping handles correctness,
+    // but skipping measureText/fillText for off-screen tail saves work on long values.
+    if (x > rect.x + rect.width) break;
+  }
   ctx.restore();
 }
 
@@ -340,7 +392,14 @@ function applyAcceptedCellChange(
   return replaceRowInResult(result, prevRow, nextRow);
 }
 
-function getCellDiffState(row: DiffRow, fieldName: string): { diffKind: FieldValueDiffKind; fromValue: string } {
+interface CellDiffState {
+  diffKind: FieldValueDiffKind;
+  fromValue: string;
+  /** Populated only when diffKind !== null. */
+  classification: FieldChangeClassification | null;
+}
+
+function getCellDiffState(row: DiffRow, fieldName: string, colDef: ColumnDefinition | undefined): CellDiffState {
   // Row-level statuses (added, deleted, invalidJson) are styled at the row level — don't
   // overlay per-cell diff colours on top.
   if (
@@ -350,23 +409,27 @@ function getCellDiffState(row: DiffRow, fieldName: string): { diffKind: FieldVal
     row.__rowStatus === 'deletedUnpublished' ||
     row.__rowStatus === 'invalidJson'
   ) {
-    return { diffKind: null, fromValue: '' };
+    return { diffKind: null, fromValue: '', classification: null };
   }
   const isUnreviewed = row.__changedFields.includes(fieldName);
   const isUnpublished = !isUnreviewed && row.__unpublishedFields.includes(fieldName);
   if (isUnreviewed) {
+    const rawFrom = row.__fromFields[fieldName];
     return {
       diffKind: 'unreviewed',
-      fromValue: toDisplayString(row.__fromFields[fieldName]),
+      fromValue: toDisplayString(rawFrom),
+      classification: classifyFieldChange(rawFrom, row[fieldName], colDef),
     };
   }
   if (isUnpublished) {
+    const rawFrom = row.__masterFields[fieldName];
     return {
       diffKind: 'unpublished',
-      fromValue: toDisplayString(row.__masterFields[fieldName]),
+      fromValue: toDisplayString(rawFrom),
+      classification: classifyFieldChange(rawFrom, row[fieldName], colDef),
     };
   }
-  return { diffKind: null, fromValue: '' };
+  return { diffKind: null, fromValue: '', classification: null };
 }
 
 function inferCellKind(value: unknown): GridCellKind {
@@ -988,6 +1051,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           value: '',
           fromValue: '',
           diffKind: 'unreviewed',
+          classification: null,
           bounds,
           recordLevel: true,
           recordAction: record.__rowStatus,
@@ -1000,7 +1064,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return null;
       }
 
-      const { diffKind, fromValue } = getCellDiffState(record, columnId);
+      const { diffKind, fromValue, classification } = getCellDiffState(record, columnId, columnDefsMap.get(columnId));
       if (diffKind === null) {
         return null;
       }
@@ -1018,13 +1082,20 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         value: toDisplayString(record[columnId]),
         fromValue,
         diffKind,
+        classification,
         bounds,
       };
     },
-    [columns, pagedRows, titleColumnId],
+    [columnDefsMap, columns, pagedRows, titleColumnId],
   );
 
   useEffect(() => {
+    // While the record detail view is open, suppress the cell popover entirely —
+    // otherwise the rebuild path here re-creates it on top of (or alongside) the detail view.
+    if (detailRowIndex !== null) {
+      setCellPopover(null);
+      return;
+    }
     const currentCell = gridSelection?.current?.cell;
     if (!currentCell) {
       setCellPopover(null);
@@ -1033,7 +1104,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
     const [col, row] = currentCell;
     setCellPopover(buildCellPopoverState(col, row));
-  }, [buildCellPopoverState, gridSelection]);
+  }, [buildCellPopoverState, detailRowIndex, gridSelection]);
 
   useEffect(() => {
     const currentCell = gridSelection?.current?.cell;
@@ -1348,7 +1419,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const isReadOnly = colDef?.attributes.readOnly === true;
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
       const val = r[colId];
-      const { diffKind } = getCellDiffState(r, colId);
+      const { diffKind } = getCellDiffState(r, colId, colDef);
       const diffTheme =
         diffKind === 'unreviewed'
           ? { bgCell: DIFF_WORKING_BG(), textDark: DIFF_WORKING_BORDER() }
@@ -1546,13 +1617,29 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
-      drawContent();
       const colId = columns[args.col]?.id;
       if (!row || !colId) {
+        drawContent();
         return;
       }
 
-      const { diffKind } = getCellDiffState(row, colId);
+      const { diffKind, fromValue, classification } = getCellDiffState(row, colId, columnDefsMap.get(colId));
+
+      // Small / extra-small text fields render the new value with changed words highlighted
+      // blue. Boolean / Number cells fall through to glide's default rendering even when
+      // their classification is XS — only string text is word-diffable.
+      const isWordDiffCandidate =
+        diffKind !== null &&
+        args.cell.kind === GridCellKind.Text &&
+        (classification?.fieldSize === 'XS' || classification?.fieldSize === 'S');
+      if (isWordDiffCandidate) {
+        const cell = args.cell;
+        const toText = 'displayData' in cell && typeof cell.displayData === 'string' ? cell.displayData : '';
+        drawWordDiffText(args.ctx, args.rect, args.theme, fromValue, toText);
+      } else {
+        drawContent();
+      }
+
       if (diffKind !== null) {
         args.ctx.save();
         args.ctx.fillStyle = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER() : DIFF_UNPUBLISHED_BORDER();
@@ -1581,7 +1668,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         }
       }
     },
-    [columns, page, pagedRows],
+    [columnDefsMap, columns, page, pagedRows],
   );
 
   const onCellClicked = useCallback(
@@ -1648,7 +1735,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (!r || !colId) return;
       if (r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished' || r.__rowStatus === 'invalidJson')
         return;
-      const { diffKind } = getCellDiffState(r, colId);
+      const { diffKind } = getCellDiffState(r, colId, columnDefsMap.get(colId));
       setActiveEditorDiffKind(diffKind ?? 'none');
       setEditingCell([col, row]);
       if (diffKind === null) {
@@ -1657,7 +1744,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
       setCellPopover(buildCellPopoverState(col, row));
     },
-    [buildCellPopoverState, columns, pagedRows],
+    [buildCellPopoverState, columnDefsMap, columns, pagedRows],
   );
 
   const onCellEdited = useCallback(
@@ -2042,7 +2129,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 columnOrder={effectiveVisibleColumns}
                 columnLabels={columnLabelsMap}
                 onSelectIndex={setDetailRowIndex}
-                onClose={() => setDetailRowIndex(null)}
+                onClose={() => {
+                  setDetailRowIndex(null);
+                  // Drop the cell selection so the rebuild effect can't restore the popover
+                  // when returning to the grid — require a fresh click.
+                  setGridSelection(undefined);
+                }}
                 onRecordChanged={refreshGridDataInBackground}
                 onRecordFieldChanged={(filename, fieldName, nextValue) =>
                   setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev))
@@ -2262,8 +2354,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         selectedFolderPath &&
         workspacePath &&
         (() => {
-          const { bounds, diffKind, value, fromValue, filename, fieldName } = cellPopover;
-          const popoverWidth = Math.max(280, Math.floor(bounds.width));
+          const { bounds, diffKind, value, fromValue, filename, fieldName, classification } = cellPopover;
+          const shouldTruncate = classification?.fieldSize === 'M' || classification?.fieldSize === 'L';
+          // Truncated previews cap at 100 chars; widen the popover so the single-line preview fits.
+          const minPopoverWidth = shouldTruncate ? 560 : 280;
+          const popoverWidth = Math.min(Math.max(minPopoverWidth, Math.floor(bounds.width)), window.innerWidth - 24);
           const left = Math.max(12, Math.min(bounds.x, window.innerWidth - popoverWidth - 12));
 
           // Record-level popover for creates/deletes
@@ -2430,13 +2525,23 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                     fromValue={fromValue}
                     diffKind={diffKind}
                     displayMode="diff"
+                    truncate={shouldTruncate}
                     onApprove={() => acceptGridCellChange(filename, fieldName, value, 'approve')}
                     onUndo={undoAction}
+                    onView={
+                      shouldTruncate
+                        ? () => {
+                            setCellPopover(null);
+                            setDetailRowIndex(cellPopover.row);
+                          }
+                        : undefined
+                    }
                   />
                 ) : (
                   <FieldReferenceStrip
                     value={fromValue}
                     label={diffKind === 'unpublished' ? 'Last published' : 'Last approved'}
+                    truncate={shouldTruncate}
                     onUndo={undoAction}
                   />
                 )}

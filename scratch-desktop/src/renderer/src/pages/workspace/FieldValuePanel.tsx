@@ -1,5 +1,5 @@
 import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
-import { Check, RotateCcw } from 'lucide-react';
+import { Check, Eye, RotateCcw } from 'lucide-react';
 import { memo } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
@@ -14,6 +14,18 @@ interface FieldValuePanelProps {
   onClick?: () => void;
   onApprove?: () => void;
   onUndo?: () => void;
+  /** When set, render a "View" action above Approve (used to open the record detail view). */
+  onView?: () => void;
+  /** When true, before/after values render on a single line, truncated to TRUNCATED_MAX_CHARS. */
+  truncate?: boolean;
+}
+
+const TRUNCATED_MAX_CHARS = 50;
+
+/** Collapse whitespace and cap length so the value fits on one line of the popover. */
+function truncateOneLine(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  return normalized.length > TRUNCATED_MAX_CHARS ? `${normalized.slice(0, TRUNCATED_MAX_CHARS)}...` : normalized;
 }
 
 const DIFF_WORKING_BG = 'var(--modified-needs-review-bg)';
@@ -90,9 +102,16 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   onClick,
   onApprove,
   onUndo,
+  onView,
+  truncate = false,
 }: FieldValuePanelProps) {
-  const hasActions = Boolean(onApprove || onUndo);
-  const actionCount = (onApprove ? 1 : 0) + (onUndo ? 1 : 0);
+  const hasActions = Boolean(onApprove || onUndo || onView);
+  const actionCount = (onApprove ? 1 : 0) + (onUndo ? 1 : 0) + (onView ? 1 : 0);
+  const renderedFromValue = truncate ? truncateOneLine(fromValue) : fromValue;
+  const renderedValue = truncate ? truncateOneLine(value) : value;
+  const lineWrapStyle: React.CSSProperties = truncate
+    ? { whiteSpace: 'nowrap', overflow: 'hidden' }
+    : { whiteSpace: 'pre-wrap', wordBreak: 'break-word' };
 
   return (
     <Group align="stretch" gap={8} wrap="nowrap">
@@ -121,19 +140,19 @@ export const FieldValuePanel = memo(function FieldValuePanel({
           }}
         >
           {displayMode === 'diff' ? (
-            <Box style={{ maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }}>
+            <Box style={truncate ? undefined : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }}>
               <Box
                 style={{
                   padding: '6px 12px 2px',
                   fontFamily: 'monospace',
                   fontSize: 12,
                   lineHeight: 1.45,
+                  ...(truncate ? { overflow: 'hidden' } : {}),
                 }}
               >
                 <span
                   style={{
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
+                    ...lineWrapStyle,
                     color: '#dc2626',
                     textDecoration: 'line-through',
                     backgroundColor: DIFF_REMOVED_BG,
@@ -142,7 +161,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                     padding: '0 2px',
                   }}
                 >
-                  {fromValue}
+                  {renderedFromValue}
                 </span>
               </Box>
               <Box
@@ -151,12 +170,12 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                   fontFamily: 'monospace',
                   fontSize: 13,
                   lineHeight: 1.5,
+                  ...(truncate ? { overflow: 'hidden' } : {}),
                 }}
               >
                 <span
                   style={{
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
+                    ...lineWrapStyle,
                     backgroundColor: diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG,
                     color: 'var(--modified-needs-review-stroke)',
                     boxDecorationBreak: 'clone',
@@ -164,7 +183,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                     padding: '0 2px',
                   }}
                 >
-                  {value}
+                  {renderedValue}
                 </span>
               </Box>
             </Box>
@@ -175,14 +194,12 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                 fontFamily: 'monospace',
                 fontSize: 13,
                 lineHeight: 1.5,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
+                ...lineWrapStyle,
                 color: 'var(--fg-primary)',
-                maxHeight: MAX_CONTENT_HEIGHT,
-                overflowY: 'auto',
+                ...(truncate ? {} : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }),
               }}
             >
-              {value}
+              {renderedValue}
             </Box>
           )}
         </Box>
@@ -197,6 +214,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
         >
           {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
           {onUndo && <IconActionButton label="Reject" onClick={onUndo} tone="undo" icon={RotateCcw} />}
+          {onView && <IconActionButton label="View change" onClick={onView} tone="secondary" icon={Eye} />}
         </Stack>
       )}
     </Group>
