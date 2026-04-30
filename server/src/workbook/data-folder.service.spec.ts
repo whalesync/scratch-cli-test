@@ -4,6 +4,8 @@ import type { AuditLogService } from 'src/audit/audit-log.service';
 import type { ScratchConfigService } from 'src/config/scratch-config.service';
 import type { DbService } from 'src/db/db.service';
 import type { PostHogService } from 'src/posthog/posthog.service';
+import type { FileIndexService } from 'src/publish-plan/file-index.service';
+import type { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import type { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import type { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -276,6 +278,8 @@ describe('DataFolderService.deleteFolder', () => {
   let mockWorkbookEventService: jest.Mocked<WorkbookEventService>;
   let mockPosthogService: jest.Mocked<PostHogService>;
   let mockAuditLogService: jest.Mocked<AuditLogService>;
+  let mockFileIndexService: jest.Mocked<FileIndexService>;
+  let mockFileReferenceService: jest.Mocked<FileReferenceService>;
 
   const now = new Date();
 
@@ -308,6 +312,9 @@ describe('DataFolderService.deleteFolder', () => {
         schedule: {
           deleteMany: jest.fn().mockResolvedValue(undefined),
         },
+        syncMatchKeys: {
+          deleteMany: jest.fn().mockResolvedValue(undefined),
+        },
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -338,6 +345,14 @@ describe('DataFolderService.deleteFolder', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditLogService>;
 
+    mockFileIndexService = {
+      removeAll: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<FileIndexService>;
+
+    mockFileReferenceService = {
+      deleteForFolder: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<FileReferenceService>;
+
     const stub = {} as unknown;
     service = new DataFolderService(
       mockWorkbookService,
@@ -351,6 +366,8 @@ describe('DataFolderService.deleteFolder', () => {
       mockScratchGitService,
       stub as FilesService,
       mockWorkbookEventService,
+      mockFileIndexService,
+      mockFileReferenceService,
     );
   });
 
@@ -406,5 +423,23 @@ describe('DataFolderService.deleteFolder', () => {
       where: { entityId: FOLDER_ID, action: { in: ['PULL', 'PUBLISH'] } },
     });
     expect(mockDb.client.dataFolder.delete).toHaveBeenCalledWith({ where: { id: FOLDER_ID } });
+  });
+
+  it('should clean up FileIndex, FileReference, and SyncMatchKeys rows that lack FK cascade', async () => {
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    expect(mockFileIndexService.removeAll).toHaveBeenCalledWith(WORKBOOK_ID, '/Companies');
+    expect(mockFileReferenceService.deleteForFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/Companies');
+    expect(mockDb.client.syncMatchKeys.deleteMany).toHaveBeenCalledWith({ where: { dataFolderId: FOLDER_ID } });
+  });
+
+  it('should skip path-keyed cleanup when folder has no path', async () => {
+    (mockDb.client.dataFolder.findUnique as jest.Mock).mockResolvedValue(makeDataFolder({ path: null }));
+
+    await service.deleteFolder(FOLDER_ID, ACTOR);
+
+    expect(mockFileIndexService.removeAll).not.toHaveBeenCalled();
+    expect(mockFileReferenceService.deleteForFolder).not.toHaveBeenCalled();
+    expect(mockDb.client.syncMatchKeys.deleteMany).toHaveBeenCalledWith({ where: { dataFolderId: FOLDER_ID } });
   });
 });

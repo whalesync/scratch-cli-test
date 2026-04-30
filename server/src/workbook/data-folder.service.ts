@@ -17,6 +17,8 @@ import { DataFolderCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { FileIndexService } from 'src/publish-plan/file-index.service';
+import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { DecryptedCredentials } from 'src/remote-service/connector-account/types/encrypted-credentials.interface';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
@@ -50,6 +52,8 @@ export class DataFolderService {
     private readonly scratchGitService: ScratchGitService,
     private readonly filesService: FilesService,
     private readonly workbookEventService: WorkbookEventService,
+    private readonly fileIndexService: FileIndexService,
+    private readonly fileReferenceService: FileReferenceService,
   ) {}
 
   /**
@@ -390,6 +394,14 @@ export class DataFolderService {
     await this.db.client.schedule.deleteMany({
       where: { entityId: id, action: { in: ['PULL', 'PUBLISH'] } },
     });
+
+    // Clean up rows that aren't FK-linked to DataFolder and so don't cascade.
+    // Without this, re-creating a folder at the same path resurrects stale state.
+    if (dataFolder.path) {
+      await this.fileIndexService.removeAll(dataFolder.workbookId, dataFolder.path);
+      await this.fileReferenceService.deleteForFolder(dataFolder.workbookId, dataFolder.path);
+    }
+    await this.db.client.syncMatchKeys.deleteMany({ where: { dataFolderId: id } });
 
     // Delete the data folder (cascades to children due to schema relation)
     await this.db.client.dataFolder.delete({

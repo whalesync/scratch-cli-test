@@ -234,4 +234,13 @@ export class FileReferenceService {
       where: { workbookId },
     });
   }
+
+  async deleteForFolder(workbookId: string, folderPath: string): Promise<void> {
+    await this.db.client.fileReference.deleteMany({
+      where: {
+        workbookId,
+        sourceFilePath: { startsWith: folderPath.endsWith('/') ? folderPath : `${folderPath}/` },
+      },
+    });
+  }
 }
