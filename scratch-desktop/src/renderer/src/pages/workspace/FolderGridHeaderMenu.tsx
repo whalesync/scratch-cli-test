@@ -1,11 +1,12 @@
 import type { Rectangle } from '@glideapps/glide-data-grid';
 import { Box, Divider, Portal, Stack, TextInput } from '@mantine/core';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Text12Medium, Text12Regular, TextMono9Regular } from '../../components/base/text';
+import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
 
 interface FolderGridHeaderMenuProps {
   columnId: string;
   columnTitle: string;
+  columnDescription: string;
   bounds: Rectangle | null;
   initialFilterValue: string;
   onShowNeedsReview: () => void;
@@ -19,6 +20,7 @@ interface FolderGridHeaderMenuProps {
 export function FolderGridHeaderMenu({
   columnId,
   columnTitle,
+  columnDescription,
   bounds,
   initialFilterValue,
   onShowNeedsReview,
@@ -94,7 +96,10 @@ export function FolderGridHeaderMenu({
           >
             {columnTitle ?? columnId}
           </Text12Medium>
-          {columnTitle !== columnId && <TextMono9Regular c="dimmed">{columnId}</TextMono9Regular>}
+          {columnTitle !== columnId && <TextMono9Regular c="var(--fg-secondary)">{columnId}</TextMono9Regular>}
+          {columnDescription && columnDescription !== columnId && columnDescription !== columnTitle && (
+            <Text9Regular c="var(--fg-secondary)">{columnDescription}</Text9Regular>
+          )}
         </Stack>
         <Stack gap={4} p={8}>
           <MenuAction onClick={onClose}>Sort A {'\u2192'} Z</MenuAction>

@@ -91,6 +91,7 @@ type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
 interface HeaderMenuState {
   columnId: string;
   columnTitle: string;
+  columnDescription: string;
   bounds: Rectangle;
 }
 
@@ -954,6 +955,17 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return map;
   }, [diffData?.columns]);
 
+  /** Map from column ID to description (for header menu, detail view, etc.) */
+  const columnDescriptionsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const col of diffData?.columns ?? []) {
+      if (typeof col.id === 'string' && typeof col.description === 'string' && col.description.length > 0) {
+        map.set(col.id, col.description);
+      }
+    }
+    return map;
+  }, [diffData?.columns]);
+
   const titleColumnId = useMemo(() => {
     const raw = schema?.titleColumnRemoteId;
     const colIds = diffData?.columns?.map((c) => c.id) ?? [];
@@ -1530,10 +1542,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       setHeaderMenu({
         columnId: String(column.id),
         columnTitle: column.title,
+        columnDescription: columnDefsMap.get(String(column.id))?.description ?? '',
         bounds,
       });
     },
-    [closeGridEditorChrome, columns],
+    [closeGridEditorChrome, columnDefsMap, columns],
   );
 
   const onHeaderMenuClick = useCallback(
@@ -2108,6 +2121,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             <FolderGridHeaderMenu
               columnId={headerMenu?.columnId ?? ''}
               columnTitle={headerMenu?.columnTitle ?? ''}
+              columnDescription={headerMenu?.columnDescription ?? ''}
               bounds={headerMenu?.bounds ?? null}
               initialFilterValue={
                 headerMenu == null
@@ -2134,6 +2148,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 titleColumnId={titleColumnId}
                 columnOrder={effectiveVisibleColumns}
                 columnLabels={columnLabelsMap}
+                columnDescriptions={columnDescriptionsMap}
                 initialFocusedFieldName={detailFocusFieldName ?? undefined}
                 onSelectIndex={(nextIndex) => {
                   if (nextIndex !== detailRowIndex) setDetailFocusFieldName(null);

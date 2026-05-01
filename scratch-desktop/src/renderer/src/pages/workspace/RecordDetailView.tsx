@@ -70,6 +70,8 @@ interface RecordDetailViewProps {
   columnOrder: string[];
   /** Map from column ID to display label. Falls back to the raw field name when missing. */
   columnLabels?: Map<string, string>;
+  /** Map from column ID to description text. */
+  columnDescriptions?: Map<string, string>;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
@@ -224,6 +226,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   titleColumnId,
   columnOrder,
   columnLabels,
+  columnDescriptions,
   onSelectIndex,
   onClose,
   onRecordChanged,
@@ -625,6 +628,7 @@ export const RecordDetailView = memo(function RecordDetailView({
       return {
         fieldName,
         displayLabel: columnLabels?.get(fieldName) ?? fieldName,
+        description: columnDescriptions?.get(fieldName),
         value,
         fromValue,
         diffKind,
@@ -647,6 +651,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   }, [
     beginFieldEdit,
     cancelFieldEdit,
+    columnDescriptions,
     columnLabels,
     columnOrder,
     commitFieldEdit,

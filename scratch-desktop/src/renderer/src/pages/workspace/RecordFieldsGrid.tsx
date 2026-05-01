@@ -3,7 +3,7 @@ import { Box, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip, Unstyl
 import { ChevronDown, TriangleAlertIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
-import { Text12Medium, Text12Regular, TextMono9Regular } from '../../components/base/text';
+import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
 
@@ -17,6 +17,8 @@ export interface RecordFieldRow {
   fieldName: string;
   /** Human-readable label for the field. Falls back to fieldName when not set. */
   displayLabel?: string;
+  /** Optional description shown below the field name. Hidden if it matches displayLabel or fieldName. */
+  description?: string;
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
@@ -339,8 +341,13 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                       {row.displayLabel ?? row.fieldName}
                     </Text12Medium>
                     {row.displayLabel !== row.fieldName && (
-                      <TextMono9Regular c="dimmed">{row.fieldName}</TextMono9Regular>
+                      <TextMono9Regular c="var(--fg-secondary)">{row.fieldName}</TextMono9Regular>
                     )}
+                    {row.description &&
+                      row.description !== row.fieldName &&
+                      row.description !== (row.displayLabel ?? row.fieldName) && (
+                        <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
+                      )}
                   </Stack>
                   {validationWarnings?.has(row.fieldName) && (
                     <Tooltip
