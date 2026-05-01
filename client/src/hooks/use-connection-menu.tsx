@@ -12,6 +12,7 @@ import type { ContextMenuItem } from '@/app/workbook/[id]/components/shared/Cont
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useGitActions } from '@/hooks/use-git-actions';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
+import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { initiateOAuth } from '@/utils/oauth';
 import { useDisclosure } from '@mantine/hooks';
@@ -20,6 +21,7 @@ import { AuthType, type WorkbookId } from '@spinner/shared-types';
 import {
   ActivityIcon,
   CloudCogIcon,
+  CopyIcon,
   FileCodeIcon,
   GitGraphIcon,
   GitMergeIcon,
@@ -108,6 +110,20 @@ export function useConnectionMenu(
     });
   };
 
+  const handleCopyGitCloneCommand = async () => {
+    try {
+      const { gitCloneCommand } = await workbookApi.getConnectionGitUrl(cId);
+      await navigator.clipboard.writeText(gitCloneCommand);
+      notifications.show({
+        title: 'Copied',
+        message: 'Git clone command copied to clipboard',
+        color: 'green',
+      });
+    } catch {
+      notifications.show({ title: 'Error', message: 'Failed to copy git clone command', color: 'red' });
+    }
+  };
+
   const handleReauthorize = async () => {
     if (connection.authType !== AuthType.OAUTH) return;
     onReauthorizeStart?.();
@@ -167,6 +183,12 @@ export function useConnectionMenu(
     ...(connection.repoPath
       ? [{ label: 'Move Repo', icon: MoveIcon, devtool: true, onClick: () => setMoveRepoOpen(true) }]
       : []),
+    {
+      label: 'Copy Git Clone Command',
+      icon: CopyIcon,
+      devtool: true,
+      onClick: () => void handleCopyGitCloneCommand(),
+    },
     { type: 'divider' as const },
     {
       label: 'Build Index',

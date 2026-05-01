@@ -32,6 +32,7 @@ import {
   ValidatedUpdateSettingsDto,
   WorkbookId,
 } from '@spinner/shared-types';
+import type { Request } from 'express';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { hasAdminToolsPermission } from 'src/auth/permissions';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -483,6 +484,40 @@ export class DevToolsController {
       req.user.id,
       req.user.organizationId ?? '',
     );
+  }
+
+  /* Get the git URL and clone command for a connector account's repo (for `git clone`). */
+  @Get('connections/:id/git-url')
+  async getConnectionGitUrl(
+    @Param('id') connectorAccountId: string,
+    @Req() req: RequestWithUser & Request,
+  ): Promise<{ gitUrl: string; gitCloneCommand: string }> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can view connection git URLs');
+    }
+
+    const account = await this.dbService.client.connectorAccount.findUnique({
+      where: { id: connectorAccountId },
+      select: { id: true, workbookId: true },
+    });
+
+    if (!account) {
+      throw new NotFoundException(`Connector account ${connectorAccountId} not found`);
+    }
+
+    // The CLI git endpoint requires `Authorization: API-Token <token>`. Build a clone
+    // command that injects the requesting user's API token via http.extraHeader so
+    // `git clone` works without prompting.
+    const now = new Date();
+    const apiToken = req.user.apiTokens?.find((t) => t.expiresAt > now);
+    if (!apiToken) {
+      throw new BadRequestException('No valid API token found for the current user');
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const gitUrl = `${baseUrl}/cli/v1/workbooks/${account.workbookId}/connectors/${account.id}/git`;
+    const gitCloneCommand = `git -c http.extraHeader="Authorization: API-Token ${apiToken.token}" clone ${gitUrl}`;
+    return { gitUrl, gitCloneCommand };
   }
 
   /* Move a connection's git repo to a new path (copy -> update DB -> delete old) */

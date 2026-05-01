@@ -757,6 +757,21 @@ export const workbookApi = {
     }
   },
 
+  getConnectionGitUrl: async (
+    connectorAccountId: string,
+  ): Promise<{ gitUrl: string; gitCloneCommand: string }> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<{ gitUrl: string; gitCloneCommand: string }>(
+        `/dev-tools/connections/${connectorAccountId}/git-url`,
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to get connection git URL');
+      throw error;
+    }
+  },
+
   moveRepo: async (
     connectorAccountId: string,
     newRepoPath: string,
