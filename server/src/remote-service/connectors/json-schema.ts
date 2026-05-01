@@ -25,6 +25,9 @@ export const SUGGESTED_IN_TRANSFORMER = 'x-scratch-suggested-in-transformer';
 // An array of virtual field definitions that provide human-readable shortcuts for complex nested fields.
 export const VIRTUAL_FIELDS = 'x-scratch-virtual-fields';
 
+// The maximum length of a string field as enforced by the external service (e.g. PostgreSQL VARCHAR(n)).
+export const MAX_LENGTH = 'x-scratch-max-length';
+
 // Marks a field as containing file/media assets that should be indexed.
 export const ASSET_FIELD = 'x-scratch-asset-field';
 

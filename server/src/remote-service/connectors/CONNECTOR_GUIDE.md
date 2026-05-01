@@ -540,6 +540,16 @@ fieldSchema[CONNECTOR_DATA_TYPE] = 'RichText'; // Webflow
 fieldSchema[CONNECTOR_DATA_TYPE] = 'multipleAttachments'; // Airtable
 ```
 
+### `x-scratch-max-length`
+
+Preserve the maximum length of a string field as enforced by the external service (e.g. PostgreSQL `VARCHAR(n)` / `CHAR(n)`). The value is the maximum number of characters allowed.
+
+```typescript
+import { MAX_LENGTH } from '../json-schema';
+
+fieldSchema[MAX_LENGTH] = 11; // VARCHAR(11)
+```
+
 ### `x-scratch-foreign-key`
 
 Define relationships between tables.

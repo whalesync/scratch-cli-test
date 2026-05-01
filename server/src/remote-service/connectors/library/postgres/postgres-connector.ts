@@ -12,7 +12,7 @@ import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
-import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
+import { FOREIGN_KEY_OPTIONS, MAX_LENGTH } from '../../json-schema';
 import { Service } from '../../service-constants';
 import {
   type BaseJsonTableSpec,
@@ -197,6 +197,10 @@ export class PostgresConnector extends Connector {
         const { schema: colSchema, pgType } = mapPgType(col.data_type, col.udt_name, isNullable);
 
         const annotated = { ...colSchema, [CONNECTOR_DATA_TYPE]: pgType } as TSchema;
+
+        if (col.character_maximum_length !== null) {
+          (annotated as Record<string, unknown>)[MAX_LENGTH] = col.character_maximum_length;
+        }
 
         if (isGeneratedColumn(col) || col.is_updatable === 'NO') {
           (annotated as Record<string, unknown>)[READONLY_FLAG] = true;

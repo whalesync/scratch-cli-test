@@ -15,7 +15,7 @@ import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
-import { FOREIGN_KEY_OPTIONS } from '../../json-schema';
+import { FOREIGN_KEY_OPTIONS, MAX_LENGTH } from '../../json-schema';
 import { Service } from '../../service-constants';
 import {
   type BaseJsonTableSpec,
@@ -280,6 +280,11 @@ export class SupabaseConnector extends Connector {
 
         // Annotate with connector data type
         const annotated = { ...colSchema, [CONNECTOR_DATA_TYPE]: pgType } as TSchema;
+
+        // Preserve VARCHAR(n)/CHAR(n) length limits from information_schema
+        if (col.character_maximum_length !== null) {
+          (annotated as Record<string, unknown>)[MAX_LENGTH] = col.character_maximum_length;
+        }
 
         // Generated/identity columns are read-only
         if (isGeneratedColumn(col) || col.is_updatable === 'NO') {
