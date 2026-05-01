@@ -125,8 +125,7 @@ The app pulls updates from the `desktop` (stable) or `desktop-test` (test) chann
 Skipped automatically when:
 
 - The build is not packaged (`!app.isPackaged`) — use `dev-app-update.yml` to test locally.
-- `process.platform === 'darwin'` — macOS auto-update is gated on Developer ID signing (planned follow-up).
-- `SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE=1` is set (use this on QA boxes that need to stay on a specific version).
+- `SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE=1` is set (use this on QA boxes that need to stay on a specific version, or on locally-built unsigned macOS apps where Squirrel.Mac will reject Developer ID-signed updates).
 
 ### Local testing
 

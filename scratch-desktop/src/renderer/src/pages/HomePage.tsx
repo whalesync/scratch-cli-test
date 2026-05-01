@@ -24,6 +24,13 @@ function getLocalSectionLabel(): string {
   return platform === 'darwin' ? 'On my Mac' : 'On this PC';
 }
 
+function getEnvironmentLabel(): string | null {
+  const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || '';
+  if (webUrl.includes('localhost')) return 'Dev';
+  if (webUrl.includes('test.scratch.md')) return 'Test';
+  return null;
+}
+
 function ZeroState({ onCreate }: { onCreate: () => void }) {
   return (
     <Box
@@ -351,7 +358,11 @@ export function HomePage() {
         style={{ flexShrink: 0, borderTop: '1px solid var(--mantine-color-default-border)' }}
       >
         <UserMenu />
-        {appVersion && <Text12Regular c="dimmed">v{appVersion}</Text12Regular>}
+        {appVersion && (
+          <Text12Regular c="dimmed">
+            {getEnvironmentLabel() ? `${getEnvironmentLabel()} v${appVersion}` : `v${appVersion}`}
+          </Text12Regular>
+        )}
       </Group>
 
       <Modal

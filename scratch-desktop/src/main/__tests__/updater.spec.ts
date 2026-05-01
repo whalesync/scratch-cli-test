@@ -67,14 +67,16 @@ describe('initAutoUpdater guards', () => {
     expect(autoUpdaterStub.on).not.toHaveBeenCalled();
   });
 
-  it('returns null on darwin (signing prerequisite not met)', async () => {
+  it('initializes on darwin now that builds are signed and notarized', async () => {
     setPlatform('darwin');
     const { initAutoUpdater } = await import('../updater');
 
     const controller = initAutoUpdater({ getMainWindow: () => null });
 
-    expect(controller).toBeNull();
-    expect(autoUpdaterStub.on).not.toHaveBeenCalled();
+    expect(controller).not.toBeNull();
+    expect(autoUpdaterStub.on).toHaveBeenCalled();
+
+    controller?.dispose();
   });
 
   it('returns null when SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE=1', async () => {

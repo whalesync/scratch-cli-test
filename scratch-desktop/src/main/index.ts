@@ -694,17 +694,14 @@ ipcMain.handle('scratch:get-app-version', () => app.getVersion());
 
 // Updater IPC. Routes the renderer's "Check for updates" / "Restart & install"
 // requests through the updater controller. When the controller is null
-// (development build, mac without signing, or SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE),
-// we still surface a manual-check 'error' event so the menu click feels responsive.
+// (development build or SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE), we still surface
+// a manual-check 'error' event so the menu click feels responsive.
 ipcMain.handle('updater:check-now', async () => {
   if (!updaterController) {
     sendUpdaterEvent({
       type: 'error',
       manual: true,
-      message:
-        process.platform === 'darwin'
-          ? 'Auto-update is not yet enabled on macOS. Re-download from the website to update.'
-          : 'Auto-update is unavailable in this build.',
+      message: 'Auto-update is unavailable in this build.',
     });
     return;
   }
@@ -730,9 +727,7 @@ function buildApplicationMenu(): Menu {
         sendUpdaterEvent({
           type: 'error',
           manual: true,
-          message: isMac
-            ? 'Auto-update is not yet enabled on macOS. Re-download from the website to update.'
-            : 'Auto-update is unavailable in this build.',
+          message: 'Auto-update is unavailable in this build.',
         });
         return;
       }

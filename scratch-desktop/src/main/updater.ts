@@ -36,14 +36,6 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
     return null;
   }
 
-  if (process.platform === 'darwin') {
-    // Squirrel.Mac refuses updates whose Developer ID identity does not match
-    // the installed app's. Until we ship a properly signed + notarized build
-    // (separate MR), there is no point asking the updater to fetch anything.
-    console.warn('[updater] mac auto-update disabled pending Developer ID signing');
-    return null;
-  }
-
   electronLog.transports.file.level = 'info';
   autoUpdater.logger = electronLog;
   autoUpdater.autoDownload = true;
