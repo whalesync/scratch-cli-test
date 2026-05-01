@@ -397,9 +397,13 @@ export class DataFolderService {
 
     // Clean up rows that aren't FK-linked to DataFolder and so don't cascade.
     // Without this, re-creating a folder at the same path resurrects stale state.
+    // FileIndex.folderPath and FileReference.sourceFilePath are stored without
+    // a leading slash (see pull-linked-folder-files.job.ts), so we strip it here
+    // to match — otherwise the queries match zero rows.
     if (dataFolder.path) {
-      await this.fileIndexService.removeAll(dataFolder.workbookId, dataFolder.path);
-      await this.fileReferenceService.deleteForFolder(dataFolder.workbookId, dataFolder.path);
+      const folderPathNoSlash = dataFolder.path.replace(/^\//, '');
+      await this.fileIndexService.removeAll(dataFolder.workbookId, folderPathNoSlash);
+      await this.fileReferenceService.deleteForFolder(dataFolder.workbookId, folderPathNoSlash);
     }
     await this.db.client.syncMatchKeys.deleteMany({ where: { dataFolderId: id } });
 

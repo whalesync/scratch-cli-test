@@ -428,8 +428,10 @@ describe('DataFolderService.deleteFolder', () => {
   it('should clean up FileIndex, FileReference, and SyncMatchKeys rows that lack FK cascade', async () => {
     await service.deleteFolder(FOLDER_ID, ACTOR);
 
-    expect(mockFileIndexService.removeAll).toHaveBeenCalledWith(WORKBOOK_ID, '/Companies');
-    expect(mockFileReferenceService.deleteForFolder).toHaveBeenCalledWith(WORKBOOK_ID, '/Companies');
+    // FileIndex.folderPath and FileReference.sourceFilePath are stored without a leading slash,
+    // so the cleanup must pass the path without one to match.
+    expect(mockFileIndexService.removeAll).toHaveBeenCalledWith(WORKBOOK_ID, 'Companies');
+    expect(mockFileReferenceService.deleteForFolder).toHaveBeenCalledWith(WORKBOOK_ID, 'Companies');
     expect(mockDb.client.syncMatchKeys.deleteMany).toHaveBeenCalledWith({ where: { dataFolderId: FOLDER_ID } });
   });
 
