@@ -168,6 +168,7 @@ export function ColumnPickerMenu({
         style={{
           flex: 1,
           minHeight: 0,
+          maxHeight: 'calc(80vh - 120px)',
           overflowY: 'auto',
           overflowX: 'hidden',
         }}
