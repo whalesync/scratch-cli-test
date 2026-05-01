@@ -26,6 +26,12 @@ interface FieldValuePanelProps {
   truncate?: boolean;
   /** When true, the panel fills its parent's available vertical space instead of capping at MAX_CONTENT_HEIGHT. */
   expanded?: boolean;
+  /**
+   * When true, render the rich diff UI (toggle between side-by-side and inline-word views) instead of the
+   * simple stacked old/new layout. Implied by `expanded`. Use this for non-expanded views (e.g. record-detail
+   * rows for medium/large text fields) that should still offer the diff toggle.
+   */
+  richDiff?: boolean;
 }
 
 const TRUNCATED_MAX_CHARS = 50;
@@ -289,6 +295,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   onMinimize,
   truncate = false,
   expanded = false,
+  richDiff = false,
 }: FieldValuePanelProps) {
   const [diffViewMode, setDiffViewMode] = useDiffViewMode();
   const hasActions = Boolean(onApprove || onUndo || onView || onExpand || onMinimize);
@@ -300,6 +307,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
     ? { whiteSpace: 'nowrap', overflow: 'hidden' }
     : { whiteSpace: 'pre-wrap', wordBreak: 'break-word' };
   const useFullHeight = expanded && !truncate;
+  const showRichDiff = !truncate && (useFullHeight || richDiff);
 
   return (
     <Group align="stretch" gap={8} wrap="nowrap" style={useFullHeight ? { flex: 1, minHeight: 0 } : undefined}>
@@ -333,55 +341,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
           }}
         >
           {displayMode === 'diff' ? (
-            truncate ? (
-              <Box>
-                <Box
-                  style={{
-                    padding: '6px 12px 2px',
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    lineHeight: 1.45,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <span
-                    style={{
-                      ...lineWrapStyle,
-                      color: DIFF_REMOVED_FG,
-                      textDecoration: 'line-through',
-                      backgroundColor: DIFF_REMOVED_BG,
-                      boxDecorationBreak: 'clone',
-                      WebkitBoxDecorationBreak: 'clone',
-                      padding: '0 2px',
-                    }}
-                  >
-                    {renderedFromValue}
-                  </span>
-                </Box>
-                <Box
-                  style={{
-                    padding: '2px 12px 8px',
-                    fontFamily: 'monospace',
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <span
-                    style={{
-                      ...lineWrapStyle,
-                      backgroundColor: getAddedBg(diffKind),
-                      color: 'var(--modified-needs-review-stroke)',
-                      boxDecorationBreak: 'clone',
-                      WebkitBoxDecorationBreak: 'clone',
-                      padding: '0 2px',
-                    }}
-                  >
-                    {renderedValue}
-                  </span>
-                </Box>
-              </Box>
-            ) : (
+            showRichDiff ? (
               <Box
                 style={useFullHeight ? { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } : undefined}
               >
@@ -408,6 +368,54 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                   ) : (
                     <InlineWordsDiff fromValue={fromValue} value={value} diffKind={diffKind} />
                   )}
+                </Box>
+              </Box>
+            ) : (
+              <Box style={truncate ? undefined : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }}>
+                <Box
+                  style={{
+                    padding: '6px 12px 2px',
+                    fontFamily: 'monospace',
+                    fontSize: truncate ? 12 : 13,
+                    lineHeight: truncate ? 1.45 : 1.5,
+                    ...(truncate ? { overflow: 'hidden' } : {}),
+                  }}
+                >
+                  <span
+                    style={{
+                      ...lineWrapStyle,
+                      color: DIFF_REMOVED_FG,
+                      textDecoration: 'line-through',
+                      backgroundColor: DIFF_REMOVED_BG,
+                      boxDecorationBreak: 'clone',
+                      WebkitBoxDecorationBreak: 'clone',
+                      padding: '0 2px',
+                    }}
+                  >
+                    {renderedFromValue}
+                  </span>
+                </Box>
+                <Box
+                  style={{
+                    padding: '2px 12px 8px',
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                    ...(truncate ? { overflow: 'hidden' } : {}),
+                  }}
+                >
+                  <span
+                    style={{
+                      ...lineWrapStyle,
+                      backgroundColor: getAddedBg(diffKind),
+                      color: 'var(--modified-needs-review-stroke)',
+                      boxDecorationBreak: 'clone',
+                      WebkitBoxDecorationBreak: 'clone',
+                      padding: '0 2px',
+                    }}
+                  >
+                    {renderedValue}
+                  </span>
                 </Box>
               </Box>
             )

@@ -382,6 +382,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                       onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
                       onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
                       onExpand={isMediumOrLargeChange(row) ? () => setFocusedFieldName(row.fieldName) : undefined}
+                      richDiff={isMediumOrLargeChange(row)}
                     />
                   )}
                 </Box>
