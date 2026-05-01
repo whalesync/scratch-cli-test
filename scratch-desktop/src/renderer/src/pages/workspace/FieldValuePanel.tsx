@@ -1,10 +1,12 @@
 import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
-import { Check, Eye, RotateCcw } from 'lucide-react';
-import { memo } from 'react';
+import { diffWordsWithSpace } from 'diff';
+import { Check, Columns2, Eye, Maximize2, Minimize2, RotateCcw, WrapText } from 'lucide-react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
 export type FieldValueDiffKind = 'unreviewed' | 'unpublished' | null;
 export type FieldValueDisplayMode = 'diff' | 'current';
+export type FieldValueDiffViewMode = 'side-by-side' | 'inline-words';
 
 interface FieldValuePanelProps {
   value: string;
@@ -16,8 +18,14 @@ interface FieldValuePanelProps {
   onUndo?: () => void;
   /** When set, render a "View" action above Approve (used to open the record detail view). */
   onView?: () => void;
+  /** When set, render an "Expand" action below Approve/Reject (used to focus this field). */
+  onExpand?: () => void;
+  /** When set, render a "Minimize" action below Approve/Reject (used to exit focus mode). */
+  onMinimize?: () => void;
   /** When true, before/after values render on a single line, truncated to TRUNCATED_MAX_CHARS. */
   truncate?: boolean;
+  /** When true, the panel fills its parent's available vertical space instead of capping at MAX_CONTENT_HEIGHT. */
+  expanded?: boolean;
 }
 
 const TRUNCATED_MAX_CHARS = 50;
@@ -31,8 +39,182 @@ function truncateOneLine(text: string): string {
 const DIFF_WORKING_BG = 'var(--modified-needs-review-bg)';
 const DIFF_UNPUBLISHED_BG = 'var(--modified-approved-bg)';
 const DIFF_REMOVED_BG = '#fee2e2'; // red-100
+const DIFF_REMOVED_FG = '#dc2626'; // red-600
 const MAX_CONTENT_HEIGHT = 'calc(1.5em * 5 + 12px)';
 const ACTION_BUTTON_SIZE = 24;
+const TOGGLE_BUTTON_SIZE = 20;
+
+const DIFF_VIEW_MODE_STORAGE_KEY = 'scratch-desktop:field-value-diff-view-mode';
+const DEFAULT_DIFF_VIEW_MODE: FieldValueDiffViewMode = 'inline-words';
+
+function isDiffViewMode(value: unknown): value is FieldValueDiffViewMode {
+  return value === 'side-by-side' || value === 'inline-words';
+}
+
+function readStoredDiffViewMode(): FieldValueDiffViewMode {
+  if (typeof window === 'undefined') return DEFAULT_DIFF_VIEW_MODE;
+  const stored = window.localStorage.getItem(DIFF_VIEW_MODE_STORAGE_KEY);
+  return isDiffViewMode(stored) ? stored : DEFAULT_DIFF_VIEW_MODE;
+}
+
+// Module-level pub/sub so a toggle in one panel propagates to all visible panels.
+const diffViewModeSubscribers = new Set<(mode: FieldValueDiffViewMode) => void>();
+
+function setSharedDiffViewMode(mode: FieldValueDiffViewMode) {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(DIFF_VIEW_MODE_STORAGE_KEY, mode);
+  }
+  diffViewModeSubscribers.forEach((subscriber) => subscriber(mode));
+}
+
+function useDiffViewMode(): [FieldValueDiffViewMode, (mode: FieldValueDiffViewMode) => void] {
+  const [mode, setMode] = useState<FieldValueDiffViewMode>(readStoredDiffViewMode);
+  useEffect(() => {
+    diffViewModeSubscribers.add(setMode);
+    return () => {
+      diffViewModeSubscribers.delete(setMode);
+    };
+  }, []);
+  return [mode, setSharedDiffViewMode];
+}
+
+const DIFF_TEXT_STYLE: React.CSSProperties = {
+  fontFamily: 'monospace',
+  fontSize: 13,
+  lineHeight: 1.5,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+};
+
+function getAddedBg(diffKind: FieldValueDiffKind): string {
+  return diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG;
+}
+
+function SideBySideDiff({
+  fromValue,
+  value,
+  diffKind,
+}: {
+  fromValue: string;
+  value: string;
+  diffKind: FieldValueDiffKind;
+}) {
+  return (
+    <Box style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
+      <Box style={{ padding: '8px 12px', minWidth: 0, ...DIFF_TEXT_STYLE }}>
+        <span
+          style={{
+            color: DIFF_REMOVED_FG,
+            textDecoration: 'line-through',
+            backgroundColor: DIFF_REMOVED_BG,
+            boxDecorationBreak: 'clone',
+            WebkitBoxDecorationBreak: 'clone',
+            padding: '0 2px',
+          }}
+        >
+          {fromValue}
+        </span>
+      </Box>
+      <Box style={{ backgroundColor: 'var(--fg-divider)' }} />
+      <Box style={{ padding: '8px 12px', minWidth: 0, ...DIFF_TEXT_STYLE }}>
+        <span
+          style={{
+            color: 'var(--modified-needs-review-stroke)',
+            backgroundColor: getAddedBg(diffKind),
+            boxDecorationBreak: 'clone',
+            WebkitBoxDecorationBreak: 'clone',
+            padding: '0 2px',
+          }}
+        >
+          {value}
+        </span>
+      </Box>
+    </Box>
+  );
+}
+
+function InlineWordsDiff({
+  fromValue,
+  value,
+  diffKind,
+}: {
+  fromValue: string;
+  value: string;
+  diffKind: FieldValueDiffKind;
+}) {
+  const changes = useMemo(() => diffWordsWithSpace(fromValue, value), [fromValue, value]);
+  const addedBg = getAddedBg(diffKind);
+  return (
+    <Box style={{ padding: '8px 12px', color: 'var(--fg-primary)', ...DIFF_TEXT_STYLE }}>
+      {changes.map((change, index) => {
+        if (change.removed) {
+          return (
+            <span
+              key={index}
+              style={{
+                color: DIFF_REMOVED_FG,
+                textDecoration: 'line-through',
+                backgroundColor: DIFF_REMOVED_BG,
+                boxDecorationBreak: 'clone',
+                WebkitBoxDecorationBreak: 'clone',
+              }}
+            >
+              {change.value}
+            </span>
+          );
+        }
+        if (change.added) {
+          return (
+            <span
+              key={index}
+              style={{
+                color: 'var(--modified-needs-review-stroke)',
+                backgroundColor: addedBg,
+                boxDecorationBreak: 'clone',
+                WebkitBoxDecorationBreak: 'clone',
+              }}
+            >
+              {change.value}
+            </span>
+          );
+        }
+        return <span key={index}>{change.value}</span>;
+      })}
+    </Box>
+  );
+}
+
+function DiffViewToggle({
+  mode,
+  onChange,
+}: {
+  mode: FieldValueDiffViewMode;
+  onChange: (mode: FieldValueDiffViewMode) => void;
+}) {
+  const next: FieldValueDiffViewMode = mode === 'side-by-side' ? 'inline-words' : 'side-by-side';
+  const label = mode === 'side-by-side' ? 'Switch to inline word diff' : 'Switch to side-by-side diff';
+  const Icon = mode === 'side-by-side' ? WrapText : Columns2;
+  return (
+    <Tooltip label={label} position="left" withArrow zIndex={10020}>
+      <ActionIcon
+        variant="subtle"
+        size={TOGGLE_BUTTON_SIZE}
+        radius={3}
+        aria-label={label}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.stopPropagation();
+          onChange(next);
+        }}
+      >
+        <StyledLucideIcon Icon={Icon} size={14} strokeWidth={2.25} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
 
 function IconActionButton({
   label,
@@ -103,20 +285,30 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   onApprove,
   onUndo,
   onView,
+  onExpand,
+  onMinimize,
   truncate = false,
+  expanded = false,
 }: FieldValuePanelProps) {
-  const hasActions = Boolean(onApprove || onUndo || onView);
-  const actionCount = (onApprove ? 1 : 0) + (onUndo ? 1 : 0) + (onView ? 1 : 0);
+  const [diffViewMode, setDiffViewMode] = useDiffViewMode();
+  const hasActions = Boolean(onApprove || onUndo || onView || onExpand || onMinimize);
+  const actionCount =
+    (onApprove ? 1 : 0) + (onUndo ? 1 : 0) + (onView ? 1 : 0) + (onExpand ? 1 : 0) + (onMinimize ? 1 : 0);
   const renderedFromValue = truncate ? truncateOneLine(fromValue) : fromValue;
   const renderedValue = truncate ? truncateOneLine(value) : value;
   const lineWrapStyle: React.CSSProperties = truncate
     ? { whiteSpace: 'nowrap', overflow: 'hidden' }
     : { whiteSpace: 'pre-wrap', wordBreak: 'break-word' };
+  const useFullHeight = expanded && !truncate;
 
   return (
-    <Group align="stretch" gap={8} wrap="nowrap">
+    <Group align="stretch" gap={8} wrap="nowrap" style={useFullHeight ? { flex: 1, minHeight: 0 } : undefined}>
       <Box
-        style={{ flex: 1, minWidth: 0 }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          ...(useFullHeight ? { display: 'flex', flexDirection: 'column' } : {}),
+        }}
         onClick={onClick}
         onKeyDown={
           onClick
@@ -137,56 +329,88 @@ export const FieldValuePanel = memo(function FieldValuePanel({
             borderRadius: 0,
             overflow: 'hidden',
             cursor: onClick ? 'text' : 'default',
+            ...(useFullHeight ? { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } : {}),
           }}
         >
           {displayMode === 'diff' ? (
-            <Box style={truncate ? undefined : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }}>
-              <Box
-                style={{
-                  padding: '6px 12px 2px',
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  lineHeight: 1.45,
-                  ...(truncate ? { overflow: 'hidden' } : {}),
-                }}
-              >
-                <span
+            truncate ? (
+              <Box>
+                <Box
                   style={{
-                    ...lineWrapStyle,
-                    color: '#dc2626',
-                    textDecoration: 'line-through',
-                    backgroundColor: DIFF_REMOVED_BG,
-                    boxDecorationBreak: 'clone',
-                    WebkitBoxDecorationBreak: 'clone',
-                    padding: '0 2px',
+                    padding: '6px 12px 2px',
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                    overflow: 'hidden',
                   }}
                 >
-                  {renderedFromValue}
-                </span>
-              </Box>
-              <Box
-                style={{
-                  padding: '2px 12px 8px',
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  lineHeight: 1.5,
-                  ...(truncate ? { overflow: 'hidden' } : {}),
-                }}
-              >
-                <span
+                  <span
+                    style={{
+                      ...lineWrapStyle,
+                      color: DIFF_REMOVED_FG,
+                      textDecoration: 'line-through',
+                      backgroundColor: DIFF_REMOVED_BG,
+                      boxDecorationBreak: 'clone',
+                      WebkitBoxDecorationBreak: 'clone',
+                      padding: '0 2px',
+                    }}
+                  >
+                    {renderedFromValue}
+                  </span>
+                </Box>
+                <Box
                   style={{
-                    ...lineWrapStyle,
-                    backgroundColor: diffKind === 'unreviewed' ? DIFF_WORKING_BG : DIFF_UNPUBLISHED_BG,
-                    color: 'var(--modified-needs-review-stroke)',
-                    boxDecorationBreak: 'clone',
-                    WebkitBoxDecorationBreak: 'clone',
-                    padding: '0 2px',
+                    padding: '2px 12px 8px',
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                    overflow: 'hidden',
                   }}
                 >
-                  {renderedValue}
-                </span>
+                  <span
+                    style={{
+                      ...lineWrapStyle,
+                      backgroundColor: getAddedBg(diffKind),
+                      color: 'var(--modified-needs-review-stroke)',
+                      boxDecorationBreak: 'clone',
+                      WebkitBoxDecorationBreak: 'clone',
+                      padding: '0 2px',
+                    }}
+                  >
+                    {renderedValue}
+                  </span>
+                </Box>
               </Box>
-            </Box>
+            ) : (
+              <Box
+                style={useFullHeight ? { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } : undefined}
+              >
+                <Box
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    padding: '4px 6px 0',
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <DiffViewToggle mode={diffViewMode} onChange={setDiffViewMode} />
+                </Box>
+                <Box
+                  style={
+                    useFullHeight
+                      ? { flex: 1, minHeight: 0, overflowY: 'auto' }
+                      : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }
+                  }
+                >
+                  {diffViewMode === 'side-by-side' ? (
+                    <SideBySideDiff fromValue={fromValue} value={value} diffKind={diffKind} />
+                  ) : (
+                    <InlineWordsDiff fromValue={fromValue} value={value} diffKind={diffKind} />
+                  )}
+                </Box>
+              </Box>
+            )
           ) : (
             <Box
               style={{
@@ -196,7 +420,11 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                 lineHeight: 1.5,
                 ...lineWrapStyle,
                 color: 'var(--fg-primary)',
-                ...(truncate ? {} : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }),
+                ...(truncate
+                  ? {}
+                  : useFullHeight
+                    ? { flex: 1, minHeight: 0, overflowY: 'auto' }
+                    : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }),
               }}
             >
               {renderedValue}
@@ -209,11 +437,13 @@ export const FieldValuePanel = memo(function FieldValuePanel({
         <Stack
           gap={6}
           align="center"
-          justify={actionCount === 1 ? 'center' : 'flex-start'}
+          justify={useFullHeight || actionCount > 1 ? 'flex-start' : 'center'}
           style={{ flexShrink: 0, width: ACTION_BUTTON_SIZE + 4, padding: '2px 0' }}
         >
           {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
           {onUndo && <IconActionButton label="Reject" onClick={onUndo} tone="undo" icon={RotateCcw} />}
+          {onExpand && <IconActionButton label="Expand" onClick={onExpand} tone="secondary" icon={Maximize2} />}
+          {onMinimize && <IconActionButton label="Minimize" onClick={onMinimize} tone="secondary" icon={Minimize2} />}
           {onView && <IconActionButton label="View change" onClick={onView} tone="secondary" icon={Eye} />}
         </Stack>
       )}

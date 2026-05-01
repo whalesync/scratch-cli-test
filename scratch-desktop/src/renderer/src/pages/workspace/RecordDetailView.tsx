@@ -75,6 +75,8 @@ interface RecordDetailViewProps {
   onRecordChanged?: () => void;
   onRecordFieldChanged?: (filename: string, fieldName: string, nextValue: unknown) => void;
   onPublishFile?: (relativePath: string) => void;
+  /** When set, the field grid mounts focused on this field. */
+  initialFocusedFieldName?: string;
 }
 
 function rowHasUnreviewedChanges(
@@ -227,6 +229,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   onRecordChanged,
   onRecordFieldChanged,
   onPublishFile,
+  initialFocusedFieldName,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
   const [rawEditorOpen, setRawEditorOpen] = useState(false);
@@ -1088,6 +1091,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                   <RecordFieldsGrid
                     rows={fieldRows}
                     validationWarnings={validationWarnings}
+                    initialFocusedFieldName={initialFocusedFieldName}
                     footer={
                       hiddenCount > 0 ? (
                         <Box style={{ padding: '8px 12px' }}>

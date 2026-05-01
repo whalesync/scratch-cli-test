@@ -629,6 +629,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [activeFilters, setActiveFilters] = useState<GridFilter[]>([]);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
+  const [detailFocusFieldName, setDetailFocusFieldName] = useState<string | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(1);
   const [headerMenu, setHeaderMenu] = useState<HeaderMenuState | null>(null);
@@ -801,6 +802,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setActiveFilters([]);
     setColumnWidths({});
     setDetailRowIndex(null);
+    setDetailFocusFieldName(null);
     setHoveredRowIdx(null);
     setInspectButtonRect(null);
     setHeaderMenu(null);
@@ -2076,7 +2078,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={(e) => {
                   e.currentTarget.blur();
-                  if (hoveredRowIdx !== null) setDetailRowIndex(hoveredRowIdx);
+                  if (hoveredRowIdx !== null) {
+                    setDetailFocusFieldName(null);
+                    setDetailRowIndex(hoveredRowIdx);
+                  }
                 }}
                 tabIndex={-1}
                 aria-label="Open record detail"
@@ -2129,9 +2134,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 titleColumnId={titleColumnId}
                 columnOrder={effectiveVisibleColumns}
                 columnLabels={columnLabelsMap}
-                onSelectIndex={setDetailRowIndex}
+                initialFocusedFieldName={detailFocusFieldName ?? undefined}
+                onSelectIndex={(nextIndex) => {
+                  if (nextIndex !== detailRowIndex) setDetailFocusFieldName(null);
+                  setDetailRowIndex(nextIndex);
+                }}
                 onClose={() => {
                   setDetailRowIndex(null);
+                  setDetailFocusFieldName(null);
                   // Drop the cell selection so the rebuild effect can't restore the popover
                   // when returning to the grid — require a fresh click.
                   setGridSelection(undefined);
@@ -2418,6 +2428,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       <UnstyledButton
                         onClick={() => {
                           setCellPopover(null);
+                          setDetailFocusFieldName(null);
                           setDetailRowIndex(cellPopover.row);
                         }}
                       >
@@ -2533,6 +2544,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       shouldTruncate
                         ? () => {
                             setCellPopover(null);
+                            setDetailFocusFieldName(fieldName);
                             setDetailRowIndex(cellPopover.row);
                           }
                         : undefined
