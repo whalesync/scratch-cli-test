@@ -100,19 +100,38 @@ export function wordpressFieldToJsonSchema(
   const description = fieldId;
   const fieldType = isArray(field.type) ? field.type[0] : field.type;
   const dataType = resolveWordPressDataType(fieldId, field, isAcf, foreignKeyColumnIds);
-  let schema: TSchema;
 
   // Handle rendered objects (title, content, excerpt, etc.)
   if (field.properties?.rendered) {
-    schema = Type.Object(
+    const topObjectSchema = Type.Object(
       {
-        rendered: Type.String({ description: 'HTML rendered content' }),
-        raw: Type.Optional(Type.String({ description: 'Raw content' })),
-        protected: Type.Optional(Type.Boolean()),
+        raw: Type.String({
+          title: fieldId,
+          // description: `${fieldId} (raw)`,
+          [READONLY_FLAG]: field.readonly === true ? true : undefined,
+        }),
+        rendered: Type.String({
+          title: `${fieldId}.rendered`,
+          description: 'Display-ready HTML. Edit "raw" to modify this.',
+          [READONLY_FLAG]: true,
+        }),
+        protected: Type.Optional(
+          Type.Boolean({
+            title: `${fieldId}.protected`,
+            description: 'Whether this field is password protected',
+          }),
+        ),
       },
       { description },
     );
-  } else if (field.enum && field.enum.length > 0) {
+
+    // schema[CONNECTOR_DATA_TYPE] = dataType;
+
+    return topObjectSchema;
+  }
+
+  let schema: TSchema;
+  if (field.enum && field.enum.length > 0) {
     // Handle enums
     schema = Type.Union(
       field.enum.map((val) => Type.Literal(val)),
@@ -225,7 +244,7 @@ export function buildWordPressJsonTableSpec(
 
     // Track main content column
     if (fieldId === 'content' && !mainContentColumnRemoteId) {
-      mainContentColumnRemoteId = [fieldId];
+      mainContentColumnRemoteId = [fieldId, 'raw'];
     }
   }
 
@@ -260,7 +279,7 @@ export function buildWordPressJsonTableSpec(
   if (tableId === 'media') {
     schemaOptions[ASSET_TABLE] = {
       urlPath: 'source_url',
-      filenamePath: 'title.rendered',
+      filenamePath: 'title.raw',
       mimeTypePath: 'mime_type',
       sizePath: 'media_details.filesize',
       widthPath: 'media_details.width',

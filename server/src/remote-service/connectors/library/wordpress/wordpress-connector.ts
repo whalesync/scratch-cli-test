@@ -309,9 +309,9 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
         continue;
       }
 
-      // Handle rendered objects - WordPress expects just the value, not the rendered wrapper
-      if (value && typeof value === 'object' && 'rendered' in value) {
-        wpRecord[key] = (value as { rendered: unknown }).rendered;
+      // Handle rendered objects - WordPress expects the raw value for writes
+      if (value && typeof value === 'object' && 'raw' in value) {
+        wpRecord[key] = (value as { raw: unknown }).raw;
       } else {
         wpRecord[key] = value;
       }
