@@ -3,6 +3,7 @@
 // Keep dead-code warnings quiet until the wiring lands.
 
 pub mod builtin;
+pub mod python;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,6 +25,7 @@ pub struct FieldValidationContext {
     pub args: serde_json::Value,
 }
 
+#[derive(Debug)]
 pub struct ValidationResult {
     pub is_valid: bool,
     pub message: Option<String>,
@@ -89,6 +91,7 @@ pub fn ensure_validation_schema(conn: &Connection) -> anyhow::Result<()> {
 ///
 /// - `scratch_dir`: where `validation.json` files live (`.scratch/connections/scratch/<connection>`)
 /// - `dirty_dir`: where record JSON files live (the dirty checkout, `<connection>`)
+/// - `workspace_dir`: base directory for resolving `python:` script paths (`.scratch/workspace`)
 ///
 /// `is_full_rebuild` controls whether stale results cleanup runs:
 /// - full rebuild → clean up rows whose records no longer exist in record_index
@@ -96,6 +99,7 @@ pub fn ensure_validation_schema(conn: &Connection) -> anyhow::Result<()> {
 pub fn run_validations(
     scratch_dir: &Path,
     dirty_dir: &Path,
+    workspace_dir: &Path,
     db_path: &Path,
     is_full_rebuild: bool,
     selected_paths: Option<&std::collections::HashSet<String>>,
@@ -112,7 +116,7 @@ pub fn run_validations(
     }
 
     // Walk every record file and apply configured validators.
-    validate_records(dirty_dir, &configs, &conn, selected_paths)?;
+    validate_records(dirty_dir, workspace_dir, &configs, &conn, selected_paths)?;
 
     // Stale cleanup — only on full refresh to avoid deleting results for
     // records not included in this partial run.
@@ -268,8 +272,10 @@ fn collect_configs_recursive(
 }
 
 /// Apply all validators to all records under `dirty_dir`.
+/// `workspace_dir` is used to resolve `python:` script paths.
 fn validate_records(
     dirty_dir: &Path,
+    workspace_dir: &Path,
     configs: &HashMap<String, Vec<ValidatorEntry>>,
     conn: &Connection,
     selected_paths: Option<&std::collections::HashSet<String>>,
@@ -312,7 +318,7 @@ fn validate_records(
             let record: serde_json::Value = serde_json::from_slice(&bytes)
                 .with_context(|| format!("failed to parse JSON in {}", record_path.display()))?;
 
-            apply_validators_to_record(conn, folder_path, file_name, &record, entries)?;
+            apply_validators_to_record(conn, folder_path, file_name, &record, entries, workspace_dir)?;
         }
     }
     Ok(())
@@ -325,6 +331,7 @@ fn apply_validators_to_record(
     file_name: &str,
     record: &serde_json::Value,
     entries: &[ValidatorEntry],
+    workspace_dir: &Path,
 ) -> anyhow::Result<()> {
     // Sort by order if present (stable sort keeps original order for ties).
     let mut sorted: Vec<&ValidatorEntry> = entries.iter().collect();
@@ -364,7 +371,7 @@ fn apply_validators_to_record(
                     record: record.clone(),
                     args: entry.params.clone(),
                 };
-                let result = dispatch_validator(&entry.validator, &ctx)?;
+                let result = dispatch_validator(&entry.validator, &ctx, workspace_dir)?;
                 upsert_result(
                     conn,
                     folder_path,
@@ -395,15 +402,23 @@ fn apply_validators_to_record(
     Ok(())
 }
 
-/// Dispatch to a built-in validator by kind string.
+/// Dispatch to a validator by kind string.
+///
+/// Built-in validators use plain names (e.g. `"max_length"`).
+/// Python validators use the `python:` prefix followed by a path relative to
+/// `workspace_dir` (e.g. `"python:validators/check_name.py"`).
 fn dispatch_validator(
     kind: &str,
     ctx: &FieldValidationContext,
+    workspace_dir: &Path,
 ) -> anyhow::Result<ValidationResult> {
+    if let Some(rel_path) = kind.strip_prefix("python:") {
+        return python::run_python_validator(rel_path, workspace_dir, ctx);
+    }
     match kind {
         "max_length" => Ok(builtin::max_length(ctx)),
         other => anyhow::bail!(
-            "unknown validator '{}' — valid validators: max_length",
+            "unknown validator '{}' — valid validators: max_length, python:<path>",
             other
         ),
     }
@@ -525,10 +540,10 @@ mod tests {
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
-        run_validations(&scratch_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
 
         write_file(&dirty_dir, "posts/one.json", r#"{"title":"ok"}"#);
-        run_validations(&scratch_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
 
         let conn = Connection::open(&db_path).unwrap();
         let rows: Vec<(i64, Option<String>)> = conn
@@ -561,10 +576,10 @@ mod tests {
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
-        run_validations(&scratch_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
 
         fs::remove_file(dirty_dir.join("posts/one.json")).unwrap();
-        run_validations(&scratch_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
 
         let conn = Connection::open(&db_path).unwrap();
         let count: i64 = conn
@@ -591,10 +606,10 @@ mod tests {
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
-        run_validations(&scratch_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
 
         fs::remove_file(scratch_dir.join("posts/validation.json")).unwrap();
-        run_validations(&scratch_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
 
         let conn = Connection::open(&db_path).unwrap();
         let count: i64 = conn

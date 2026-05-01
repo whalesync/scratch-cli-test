@@ -1,3 +1,5 @@
+#![allow(dead_code)] // slice 7 (materialized-page-index) will wire up the refresh pipeline
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;

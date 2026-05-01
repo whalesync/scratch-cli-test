@@ -336,6 +336,7 @@ pub fn refresh_record_index_command(
                 if let Err(err) = validators::run_validations(
                     &scratch_dir,
                     &dirty_dir,
+                    &layout.workbook_materialization_path(),
                     &db_path,
                     rebuild,
                     selected_paths,

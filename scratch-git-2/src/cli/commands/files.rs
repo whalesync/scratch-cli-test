@@ -153,6 +153,7 @@ struct ConnectionContext {
     conn_dir_name: String,
     dirty_dir: PathBuf,
     scratch_dir: PathBuf,
+    workspace_dir: PathBuf,
     master_dir: PathBuf,
     reviewed_dirty_dir: PathBuf,
     bare_repo: PathBuf,
@@ -253,6 +254,7 @@ fn refresh_record_index_for_ctx(
     if let Err(err) = validators::run_validations(
         &ctx.scratch_dir,
         &ctx.dirty_dir,
+        &ctx.workspace_dir,
         &ctx.db_path,
         rebuild,
         selected_paths.as_ref(),
@@ -1721,6 +1723,7 @@ fn build_connection_contexts(
             conn_dir_name: connection.dir_name.clone(),
             dirty_dir: layout.dirty_checkout_path(&connection.dir_name),
             scratch_dir: layout.connection_scratch_path(&connection.dir_name),
+            workspace_dir: layout.workbook_materialization_path(),
             master_dir: layout.master_worktree_path(&connection.dir_name),
             reviewed_dirty_dir: layout.reviewed_dirty_checkout_path(&connection.dir_name),
             bare_repo: layout.bare_repo_path(&connection.repo_path),
