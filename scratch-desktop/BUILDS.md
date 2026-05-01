@@ -8,16 +8,16 @@ There are several ways to build the app locally, each suited to a different purp
 
 ### Quick reference
 
-| Command                        | Output                       | Signing                  | Notarized | scratchmd | API URLs              | Channel        | Purpose                                      |
-| ------------------------------ | ---------------------------- | ------------------------ | --------- | --------- | --------------------- | -------------- | -------------------------------------------- |
-| `yarn dev`                     | (no package, hot reload)     | —                        | —         | —         | from `.env`           | —              | Day-to-day development                       |
-| `yarn build`                   | `out/` (bundled JS only)     | —                        | —         | —         | from `.env`           | —              | Verify the bundle compiles                   |
-| `yarn build:mac:unsigned`      | `dist/mac-arm64/Scratch.app` | ad-hoc (`-`)             | No        | Not built | from `.env`           | `desktop-test` | Fast packaged build, no certs needed         |
-| `yarn build:mac:local`         | `dist/mac-arm64/Scratch.app` | ad-hoc (`-`)             | No        | Built     | from `.env`           | `desktop-test` | Local end-to-end with the bundled CLI        |
-| `yarn build:mac:local-signed`  | `dist/mac-arm64/Scratch.app` | Developer ID             | Yes       | Not built | from `.env`           | `desktop-test` | Verify signing + notarization locally        |
-| `yarn build:mac:prod-local`    | `dist-release/`              | Developer ID             | Yes       | Built     | `*.scratch.md` (prod) | `desktop`      | Mirror the GitLab "Package prod macOS" job   |
-| `yarn build:mac`               | `dist/mac-arm64/Scratch.app` | Developer ID (env-based) | Yes       | Not built | from `.env`           | `desktop-test` | Raw electron-builder; you supply the env     |
-| `yarn build:linux`             | `dist/`                      | —                        | —         | Not built | from `.env`           | `desktop-test` | Linux AppImage / .deb                        |
+| Command                       | Output                       | Signing                  | Notarized | scratchmd | API URLs              | Channel        | Purpose                                    |
+| ----------------------------- | ---------------------------- | ------------------------ | --------- | --------- | --------------------- | -------------- | ------------------------------------------ |
+| `yarn dev`                    | (no package, hot reload)     | —                        | —         | —         | from `.env`           | —              | Day-to-day development                     |
+| `yarn build`                  | `out/` (bundled JS only)     | —                        | —         | —         | from `.env`           | —              | Verify the bundle compiles                 |
+| `yarn build:mac:unsigned`     | `dist/mac-arm64/Scratch.app` | ad-hoc (`-`)             | No        | Not built | from `.env`           | `desktop-test` | Fast packaged build, no certs needed       |
+| `yarn build:mac:local`        | `dist/mac-arm64/Scratch.app` | ad-hoc (`-`)             | No        | Built     | from `.env`           | `desktop-test` | Local end-to-end with the bundled CLI      |
+| `yarn build:mac:local-signed` | `dist/mac-arm64/Scratch.app` | Developer ID             | Yes       | Not built | from `.env`           | `desktop-test` | Verify signing + notarization locally      |
+| `yarn build:mac:prod-local`   | `dist-release/`              | Developer ID             | Yes       | Built     | `*.scratch.md` (prod) | `desktop`      | Mirror the GitLab "Package prod macOS" job |
+| `yarn build:mac`              | `dist/mac-arm64/Scratch.app` | Developer ID (env-based) | Yes       | Not built | from `.env`           | `desktop-test` | Raw electron-builder; you supply the env   |
+| `yarn build:linux`            | `dist/`                      | —                        | —         | Not built | from `.env`           | `desktop-test` | Linux AppImage / .deb                      |
 
 ### `yarn dev` — development
 
@@ -120,6 +120,8 @@ The desktop release pipeline lives in [.gitlab-ci-release.yml](.gitlab-ci-releas
 The macOS runner must be running when the pipeline reaches the `release desktop app` stage, otherwise the job will sit pending until it's available.
 
 ### Cutting a release
+
+[Walkthrough Video](https://www.loom.com/share/74b4024c7ab54c18802e8b2c2c3a76ec)
 
 1. Go to **CI/CD → Pipelines → Run pipeline** in GitLab.
 2. Pick the branch:
