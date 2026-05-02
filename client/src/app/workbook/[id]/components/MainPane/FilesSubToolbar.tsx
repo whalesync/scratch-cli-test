@@ -7,7 +7,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { Box, Group } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
-import { DownloadIcon, PlusIcon } from 'lucide-react';
+import { CloudDownloadIcon, PlusIcon } from 'lucide-react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
@@ -92,7 +92,7 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
         </ButtonPrimaryLight>
         <ButtonSecondaryOutline
           size="compact-sm"
-          leftSection={<DownloadIcon size={12} />}
+          leftSection={<CloudDownloadIcon size={12} />}
           onClick={handlePullAll}
           loading={isPulling}
           disabled={!hasLinkedFolders}

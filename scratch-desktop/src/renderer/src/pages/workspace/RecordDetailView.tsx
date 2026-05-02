@@ -5,12 +5,12 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  CloudUpload,
   FilePlus,
   Minus,
   Plus,
   RotateCcw,
   Trash2,
-  Upload,
   Wrench,
   X,
 } from 'lucide-react';
@@ -921,7 +921,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                 {onPublishFile && hasPublishableChanges && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
-                    leftSection={<Upload size={12} />}
+                    leftSection={<CloudUpload size={12} />}
                     onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
                     disabled={!currentRecordCliPath || !hasPublishableChanges}
                   >

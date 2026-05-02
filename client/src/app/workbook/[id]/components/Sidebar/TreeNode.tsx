@@ -30,6 +30,7 @@ import {
   ChevronRightIcon,
   ClockIcon,
   CloudCogIcon,
+  CloudDownloadIcon,
   DownloadIcon,
   Edit2Icon,
   EyeIcon,
@@ -462,7 +463,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
           position={contextMenu}
           onClose={() => setContextMenu(null)}
           extraItemsBefore={[
-            { label: 'Pull All Tables', icon: DownloadIcon, onClick: handlePullAll },
+            { label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAll },
             { label: 'Pull All Assets', icon: ImageIcon, onClick: openPullAssetsModal },
           ]}
           extraItemsAfter={[
@@ -797,7 +798,7 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           onClose={() => setContextMenu(null)}
           position={contextMenu}
           items={[
-            { label: 'Pull this table', icon: DownloadIcon, onClick: handlePullTable },
+            { label: 'Pull this table', icon: CloudDownloadIcon, onClick: handlePullTable },
             { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
             {
               label: 'New File',

@@ -9,7 +9,7 @@ import { Box, Group, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import type { Sync, WorkbookId } from '@spinner/shared-types';
-import { ClockIcon, DownloadIcon, GitBranchIcon, PlayIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
+import { ClockIcon, CloudDownloadIcon, GitBranchIcon, PlayIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -118,7 +118,7 @@ export function SyncsList({ workbookId }: SyncsListProps) {
             style={{ width: '100%', backgroundColor: 'transparent' }}
           >
             <Group gap={6} wrap="nowrap">
-              <StyledLucideIcon Icon={DownloadIcon} size="sm" c="var(--mantine-color-devTool-9)" />
+              <StyledLucideIcon Icon={CloudDownloadIcon} size="sm" c="var(--mantine-color-devTool-9)" />
               <Text12Regular c="var(--mantine-color-devTool-9)">Import from Whalesync</Text12Regular>
             </Group>
           </UnstyledButton>

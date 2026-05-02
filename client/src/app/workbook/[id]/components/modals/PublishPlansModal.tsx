@@ -26,6 +26,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import {
   ChevronDownIcon,
+  CloudUploadIcon,
   FilePenLineIcon,
   InfoIcon,
   ListIcon,
@@ -37,7 +38,6 @@ import {
   RepeatIcon,
   RocketIcon,
   Trash2Icon,
-  UploadIcon,
   XIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -307,7 +307,7 @@ export function PublishPlansModal({ opened, onClose, workbookId }: PublishPlansM
                   <Table.Th>Phase</Table.Th>
                   <Table.Th>
                     <Group gap={4} wrap="nowrap">
-                      <UploadIcon size={12} />
+                      <CloudUploadIcon size={12} />
                       Uploads
                     </Group>
                   </Table.Th>

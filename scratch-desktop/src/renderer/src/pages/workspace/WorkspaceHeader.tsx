@@ -2,7 +2,7 @@ import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
 import { Group, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
-import { Download, HardDriveDownload as DownloadIcon, Upload } from 'lucide-react';
+import { CloudDownload, CloudUpload, HardDriveDownload as DownloadIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
@@ -75,13 +75,13 @@ export function WorkspaceHeader({
         {compact ? (
           <Tooltip label="Pull All">
             <IconButtonGhost size="compact-xs" disabled={!isDownloaded} onClick={() => void onPullAll()}>
-              <Download size={12} />
+              <CloudDownload size={12} />
             </IconButtonGhost>
           </Tooltip>
         ) : (
           <ButtonSecondaryGhost
             size="compact-xs"
-            leftSection={<Download size={12} />}
+            leftSection={<CloudDownload size={12} />}
             disabled={!isDownloaded}
             onClick={() => void onPullAll()}
           >
@@ -92,13 +92,13 @@ export function WorkspaceHeader({
           (compact ? (
             <Tooltip label="Publish All">
               <IconButtonGhost size="compact-xs" onClick={() => void onPublishAll()}>
-                <Upload size={12} />
+                <CloudUpload size={12} />
               </IconButtonGhost>
             </Tooltip>
           ) : (
             <ButtonSecondaryGhost
               size="compact-xs"
-              leftSection={<Upload size={12} />}
+              leftSection={<CloudUpload size={12} />}
               onClick={() => void onPublishAll()}
             >
               Publish All
