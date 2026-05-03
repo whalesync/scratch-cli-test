@@ -49,6 +49,7 @@ export function WorkspacePage() {
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [reDownloading, setReDownloading] = useState(false);
   const [localWorkspaceMissingModalOpen, setLocalWorkspaceMissingModalOpen] = useState(false);
 
   /** Last known local path after a successful registry sync; used to detect “had local → missing” on refresh. */
@@ -164,6 +165,28 @@ export function WorkspacePage() {
   const handleDataRefresh = useCallback(() => {
     setDataRefreshKey((current) => current + 1);
   }, []);
+
+  const handleReDownload = useCallback(async () => {
+    if (!localPath || reDownloading) return;
+    try {
+      setReDownloading(true);
+      await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'keep' });
+      handleDataRefresh();
+      notifications.show({
+        title: 'Workspace updated',
+        message: 'Re-downloaded the latest file updates from Scratch.',
+        color: 'green',
+      });
+    } catch (err) {
+      notifications.show({
+        title: 'Re-download failed',
+        message: err instanceof Error ? err.message : 'Failed to re-download workspace files',
+        color: 'red',
+      });
+    } finally {
+      setReDownloading(false);
+    }
+  }, [handleDataRefresh, localPath, reDownloading]);
 
   useEffect(() => {
     focusSyncBootAtRef.current = performance.now();
@@ -376,7 +399,11 @@ export function WorkspacePage() {
         workspace={workspace}
         isDownloaded={localPath !== null}
         downloading={downloading}
+        reDownloading={reDownloading}
+        pullingAll={pullAllModalOpen}
+        publishingAll={publishModalOpen}
         onDownload={() => void handleDownload()}
+        onReDownload={() => void handleReDownload()}
         onPublishAll={() => setPublishModalOpen(true)}
         onPullAll={() => setPullAllModalOpen(true)}
       />

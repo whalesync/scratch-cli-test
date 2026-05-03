@@ -1,8 +1,8 @@
 import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
-import { Group, Tooltip } from '@mantine/core';
+import { Group, Loader, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
-import { CloudDownload, CloudUpload, HardDriveDownload as DownloadIcon } from 'lucide-react';
+import { CloudDownload, CloudUpload, Download, HardDriveDownload as DownloadIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
@@ -12,22 +12,36 @@ interface WorkspaceHeaderProps {
   workspace: Workspace;
   isDownloaded: boolean;
   downloading: boolean;
+  reDownloading: boolean;
+  pullingAll: boolean;
+  publishingAll: boolean;
   onDownload: () => void;
+  onReDownload: () => void;
   onPublishAll: () => void;
   onPullAll: () => void;
 }
+
+const RE_DOWNLOAD_TOOLTIP = 'Re-download latest file updates from Scratch Web';
+const PULL_ALL_TOOLTIP = 'Pull the latest data from all connected services';
+const PUBLISH_ALL_TOOLTIP = 'Publish all pending local changes to connected services';
 
 export function WorkspaceHeader({
   workspace,
   isDownloaded,
   downloading,
+  reDownloading,
+  pullingAll,
+  publishingAll,
   onDownload,
+  onReDownload,
   onPublishAll,
   onPullAll,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
   const { width } = useViewportSize();
   const compact = width > 0 && width < 800;
+
+  const anyRunning = reDownloading || pullingAll || publishingAll;
 
   return (
     <Group
@@ -72,37 +86,61 @@ export function WorkspaceHeader({
               Download
             </ButtonPrimaryLight>
           ))}
-        {compact ? (
-          <Tooltip label="Pull All">
-            <IconButtonGhost size="compact-xs" disabled={!isDownloaded} onClick={() => void onPullAll()}>
-              <CloudDownload size={12} />
-            </IconButtonGhost>
-          </Tooltip>
-        ) : (
-          <ButtonSecondaryGhost
-            size="compact-xs"
-            leftSection={<CloudDownload size={12} />}
-            disabled={!isDownloaded}
-            onClick={() => void onPullAll()}
-          >
-            Pull All
-          </ButtonSecondaryGhost>
-        )}
         {isDownloaded &&
           (compact ? (
-            <Tooltip label="Publish All">
-              <IconButtonGhost size="compact-xs" onClick={() => void onPublishAll()}>
-                <CloudUpload size={12} />
+            <Tooltip label={RE_DOWNLOAD_TOOLTIP}>
+              <IconButtonGhost size="compact-xs" disabled={anyRunning} onClick={() => void onReDownload()}>
+                {reDownloading ? <Loader size={12} /> : <Download size={12} />}
               </IconButtonGhost>
             </Tooltip>
           ) : (
+            <Tooltip label={RE_DOWNLOAD_TOOLTIP}>
+              <ButtonSecondaryGhost
+                size="compact-xs"
+                leftSection={reDownloading ? <Loader size={12} /> : <Download size={12} />}
+                disabled={anyRunning}
+                onClick={() => void onReDownload()}
+              >
+                Re-download files
+              </ButtonSecondaryGhost>
+            </Tooltip>
+          ))}
+        {compact ? (
+          <Tooltip label={PULL_ALL_TOOLTIP}>
+            <IconButtonGhost size="compact-xs" disabled={!isDownloaded || anyRunning} onClick={() => void onPullAll()}>
+              {pullingAll ? <Loader size={12} /> : <CloudDownload size={12} />}
+            </IconButtonGhost>
+          </Tooltip>
+        ) : (
+          <Tooltip label={PULL_ALL_TOOLTIP}>
             <ButtonSecondaryGhost
               size="compact-xs"
-              leftSection={<CloudUpload size={12} />}
-              onClick={() => void onPublishAll()}
+              leftSection={pullingAll ? <Loader size={12} /> : <CloudDownload size={12} />}
+              disabled={!isDownloaded || anyRunning}
+              onClick={() => void onPullAll()}
             >
-              Publish All
+              Pull all
             </ButtonSecondaryGhost>
+          </Tooltip>
+        )}
+        {isDownloaded &&
+          (compact ? (
+            <Tooltip label={PUBLISH_ALL_TOOLTIP}>
+              <IconButtonGhost size="compact-xs" disabled={anyRunning} onClick={() => void onPublishAll()}>
+                {publishingAll ? <Loader size={12} /> : <CloudUpload size={12} />}
+              </IconButtonGhost>
+            </Tooltip>
+          ) : (
+            <Tooltip label={PUBLISH_ALL_TOOLTIP}>
+              <ButtonSecondaryGhost
+                size="compact-xs"
+                leftSection={publishingAll ? <Loader size={12} /> : <CloudUpload size={12} />}
+                disabled={anyRunning}
+                onClick={() => void onPublishAll()}
+              >
+                Publish all
+              </ButtonSecondaryGhost>
+            </Tooltip>
           ))}
       </Group>
     </Group>

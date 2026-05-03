@@ -52,6 +52,7 @@ node_modules/
 repos/
 
 .claude/worktrees
+.claude/scheduled_tasks.lock
 
 # Test report artifacts
 junit.xml

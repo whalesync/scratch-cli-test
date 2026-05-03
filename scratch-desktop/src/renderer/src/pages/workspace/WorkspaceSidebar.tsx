@@ -127,7 +127,7 @@ export function WorkspaceSidebar({
         >
           <Group gap={8} wrap="nowrap">
             <Settings size={14} color="var(--fg-secondary)" />
-            <Text13Regular c="var(--fg-secondary)">Manage Connections</Text13Regular>
+            <Text13Regular c="var(--fg-secondary)">Manage connections</Text13Regular>
           </Group>
         </UnstyledButton>
 
