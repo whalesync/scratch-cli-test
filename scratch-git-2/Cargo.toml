@@ -40,11 +40,16 @@ chrono = { version = "0.4", default-features = false, features = ["now", "serde"
 urlencoding = "2"
 rayon = "1.11.0"
 rhai = { version = "1", features = ["sync"] }
-# rustpython-vm temporarily disabled — python: validators return a clear error until build fix lands
-# rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler"] }
+rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler"] }
 flate2 = "1.1.9"
 jsonschema = { version = "0.46", default-features = false }
 sha2 = "0.10"
+
+[patch.crates-io]
+# Fix for x86_64-pc-windows-gnu (MinGW): get_tz_info was gated on cfg(target_env="msvc")
+# but is referenced unconditionally on cfg(windows) targets. Upstream bug in rustpython-vm 0.5.0.
+# https://github.com/whalesync/rustpython-vm-patched/tree/fix/windows-gnu-get-tz-info
+rustpython-vm = { git = "https://github.com/whalesync/rustpython-vm-patched", rev = "613427c807c193566b46759445c991809ebbb682" }
 
 [dev-dependencies]
 tempfile = "3"
