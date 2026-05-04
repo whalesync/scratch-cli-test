@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { app } from 'electron';
 import { readdir, readFile, rm } from 'fs/promises';
 import { join, relative, resolve } from 'path';
+import type { ValidationResultRow } from '../shared/validation-types';
 
 // ── Types ──
 
@@ -476,25 +477,17 @@ export async function restoreDeletedRecord(workspacePath: string, recordPath: st
   await runScratchmd(['files', 'restore-deleted-record', recordPath], workspacePath);
 }
 
-export interface RecordValidationResult {
-  file_name?: string;
-  field_path: string;
-  validator_kind: string;
-  level: 'error' | 'warning';
-  message: string | null;
-  description: string | null;
-  fixable: boolean;
-}
+export type { ValidationResultRow } from '../shared/validation-types';
 
 export async function getValidationResults(
   workspacePath: string,
   folderPath: string,
   filename: string,
-): Promise<RecordValidationResult[]> {
+): Promise<ValidationResultRow[]> {
   const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
   const recordPath = `${relFolder}/${filename}`;
   try {
-    return await runScratchmdJson<RecordValidationResult[]>(
+    return await runScratchmdJson<ValidationResultRow[]>(
       ['get-validation-results', '--record', recordPath],
       workspacePath,
     );
@@ -506,10 +499,10 @@ export async function getValidationResults(
 export async function getFolderValidationResults(
   workspacePath: string,
   folderPath: string,
-): Promise<RecordValidationResult[]> {
+): Promise<ValidationResultRow[]> {
   const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
   try {
-    return await runScratchmdJson<RecordValidationResult[]>(
+    return await runScratchmdJson<ValidationResultRow[]>(
       ['get-folder-validation-results', '--folder', relFolder],
       workspacePath,
     );

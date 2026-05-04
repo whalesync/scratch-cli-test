@@ -540,6 +540,31 @@ ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
 ipcMain.handle('scratch:prepare-workspace-index', async (_, workspacePath: string) => {
   await prepareWorkspaceIndex(workspacePath);
 });
+ipcMain.handle('scratch:refresh-paths', async (_, workspacePath: string, paths: string[]) => {
+  return withWorkspaceInternalMutation(workspacePath, async () => {
+    // --path requires individual file paths, not folder paths.
+    // Expand each folder into its direct .json children.
+    const filePaths: string[] = [];
+    for (const p of paths) {
+      try {
+        const entries = await readdir(p, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isFile() && entry.name.endsWith('.json')) {
+            filePaths.push(relative(workspacePath, join(p, entry.name)));
+          }
+        }
+      } catch {
+        // path may be a file or no longer exist — pass it through as-is
+        filePaths.push(relative(workspacePath, p));
+      }
+    }
+    if (filePaths.length === 0) {
+      return { success: true };
+    }
+    await refreshRecordIndex(workspacePath, { paths: filePaths });
+    return { success: true };
+  });
+});
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'accept-all'];
   if (folderPath) args.push('--folder', folderPath);

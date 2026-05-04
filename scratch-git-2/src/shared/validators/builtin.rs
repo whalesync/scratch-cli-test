@@ -103,11 +103,21 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
 
     // ── Required check ────────────────────────────────────────────────────────
     if let Some(required) = schema_obj.get("required").and_then(|v| v.as_array()) {
+        // The id column is assigned by the remote service on first publish.
+        // New records (no master) won't have it yet — skip the required check for it.
+        let id_column = ctx.schema.get("idColumnRemoteId").and_then(|v| v.as_str());
+        let is_new_record = ctx.master_record.is_none();
+
         for field_val in required {
             let field_name = match field_val.as_str() {
                 Some(s) => s,
                 None => continue,
             };
+
+            if is_new_record && id_column == Some(field_name) {
+                continue;
+            }
+
             let value = ctx.record.get(field_name);
             let is_missing = match value {
                 None => true,
@@ -131,27 +141,49 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
     }
 
     // ── Readonly check ────────────────────────────────────────────────────────
-    if let Some(master) = &ctx.master_record {
-        if let Some(properties) = schema_obj.get("properties").and_then(|v| v.as_object()) {
-            for (field_name, props) in properties {
-                if props.get("x-scratch-readonly").and_then(|v| v.as_bool()) != Some(true) {
-                    continue;
+    if let Some(properties) = schema_obj.get("properties").and_then(|v| v.as_object()) {
+        for (field_name, props) in properties {
+            if props.get("x-scratch-readonly").and_then(|v| v.as_bool()) != Some(true) {
+                continue;
+            }
+            let working = ctx.record.get(field_name.as_str());
+            match &ctx.master_record {
+                Some(master) => {
+                    // Existing record: warn if the value differs from master.
+                    let master_val = master.get(field_name.as_str());
+                    if working != master_val {
+                        results.push(RecordValidationResult {
+                            field_path: field_name.clone(),
+                            level: ValidationLevel::Warning,
+                            message: Some("Updated read-only field".to_string()),
+                            description: Some(format!(
+                                "Field {} changed from {} to {}. The new value will be ignored during publishing.",
+                                field_name,
+                                format_validation_value(master_val),
+                                format_validation_value(working)
+                            )),
+                            fixable: false,
+                        });
+                    }
                 }
-                let working = ctx.record.get(field_name.as_str());
-                let master_val = master.get(field_name.as_str());
-                if working != master_val {
-                    results.push(RecordValidationResult {
-                        field_path: field_name.clone(),
-                        level: ValidationLevel::Warning,
-                        message: Some("Updated read-only field".to_string()),
-                        description: Some(format!(
-                            "Field {} changed from {} to {}. The new value will be ignored during publishing.",
-                            field_name,
-                            format_validation_value(master_val),
-                            format_validation_value(working)
-                        )),
-                        fixable: false,
-                    });
+                None => {
+                    // New record: warn if a readonly field has been set (remote assigns it).
+                    let is_set = match working {
+                        None | Some(serde_json::Value::Null) => false,
+                        _ => true,
+                    };
+                    if is_set {
+                        results.push(RecordValidationResult {
+                            field_path: field_name.clone(),
+                            level: ValidationLevel::Warning,
+                            message: Some("Updated read-only field".to_string()),
+                            description: Some(format!(
+                                "Field {} is read-only and will be ignored during publishing.",
+                                field_name,
+                            )),
+                            fixable: false,
+                        });
+                    }
                 }
             }
         }
@@ -185,6 +217,20 @@ mod tests {
             props.insert(f.to_string(), json!({ "x-scratch-readonly": true }));
         }
         json!({ "schema": { "required": [], "properties": props } })
+    }
+
+    /// Schema where `id` is the primary key (idColumnRemoteId) and also required.
+    fn schema_with_id_column() -> serde_json::Value {
+        json!({
+            "idColumnRemoteId": "id",
+            "schema": {
+                "required": ["id", "name"],
+                "properties": {
+                    "id": { "type": "number" },
+                    "name": { "type": "string" }
+                }
+            }
+        })
     }
 
     fn record_ctx(
@@ -254,6 +300,33 @@ mod tests {
     }
 
     #[test]
+    fn id_column_required_skipped_for_new_record() {
+        // New record (master=None): id not yet assigned by remote — no required error.
+        let ctx = record_ctx(
+            json!({"name": "Alice"}),
+            None,
+            schema_with_id_column(),
+        );
+        let results = enforce_schema(&ctx);
+        assert!(results.is_empty(), "id column should not error on new records");
+    }
+
+    #[test]
+    fn id_column_required_enforced_for_existing_record() {
+        // Existing record (master=Some): id is required and must be present.
+        let ctx = record_ctx(
+            json!({"name": "Alice"}),
+            Some(json!({"id": 1, "name": "Alice"})),
+            schema_with_id_column(),
+        );
+        let results = enforce_schema(&ctx);
+        let required_error = results
+            .iter()
+            .find(|r| r.field_path == "id" && r.level == ValidationLevel::Error);
+        assert!(required_error.is_some(), "expected a required error for 'id'");
+    }
+
+    #[test]
     fn readonly_field_changed_is_warning() {
         let schema = schema_with_readonly(&["id"]);
         let ctx = record_ctx(json!({"id": 99}), Some(json!({"id": 1})), schema);
@@ -280,9 +353,27 @@ mod tests {
     }
 
     #[test]
-    fn readonly_check_skipped_when_no_master() {
-        let schema = schema_with_readonly(&["id"]);
-        let ctx = record_ctx(json!({"id": 99}), None, schema);
+    fn readonly_field_set_on_new_record_is_warning() {
+        let schema = schema_with_readonly(&["ts"]);
+        let ctx = record_ctx(json!({"ts": "2024-01-01"}), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "ts");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+    }
+
+    #[test]
+    fn readonly_field_absent_on_new_record_is_clean() {
+        let schema = schema_with_readonly(&["ts"]);
+        let ctx = record_ctx(json!({}), None, schema);
+        let results = enforce_schema(&ctx);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn readonly_field_null_on_new_record_is_clean() {
+        let schema = schema_with_readonly(&["ts"]);
+        let ctx = record_ctx(json!({"ts": null}), None, schema);
         let results = enforce_schema(&ctx);
         assert!(results.is_empty());
     }

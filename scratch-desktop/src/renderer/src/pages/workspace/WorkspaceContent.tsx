@@ -153,6 +153,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         workspacePath={localPath}
         dataRefreshKey={dataRefreshKey}
+        onDataRefresh={onDataRefresh}
         onPublishFile={onPublishFile}
       />
     </Box>

@@ -2,7 +2,7 @@ export const WORKSPACE_FILE_WATCH_EVENT_CHANNEL = 'scratch:workspace-files-chang
 
 export type WorkspaceFilesChangedEvent = {
   workspacePath: string;
-  changedPathCount: number;
-  samplePaths: string[];
   source: 'external' | 'internal';
+  singleFile?: string;
+  changedFolderPaths: string[];
 };

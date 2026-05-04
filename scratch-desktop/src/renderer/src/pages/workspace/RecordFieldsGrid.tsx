@@ -1,8 +1,9 @@
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, Button, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
+import { Box, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
 import { ChevronDown, TriangleAlertIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
+import type { ValidationEntry } from '../../../../shared/validation-types';
 import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
@@ -32,14 +33,7 @@ export interface RecordFieldRow {
   onUndo?: () => void;
 }
 
-export type ValidationEntry = {
-  level: 'error' | 'warning';
-  message: string | null;
-  description: string | null;
-  fixable: boolean;
-  validatorKind: string;
-  fieldPath?: string;
-};
+export type { ValidationEntry } from '../../../../shared/validation-types';
 
 interface RecordFieldsGridProps {
   rows: RecordFieldRow[];
@@ -110,7 +104,6 @@ export function ValidationTooltipContent({
             {showFieldColumn && <Table.Th style={{ width: 150 }}>Field</Table.Th>}
             <Table.Th>Message</Table.Th>
             <Table.Th style={{ width: 150 }}>Validator</Table.Th>
-            <Table.Th style={{ width: 120 }}>Actions</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -161,18 +154,6 @@ export function ValidationTooltipContent({
                 }}
               >
                 {formatValidatorName(violation.validatorKind)}
-              </Table.Td>
-              <Table.Td>
-                <Group gap={4} wrap="nowrap">
-                  {violation.fixable && (
-                    <Button size="compact-xs" variant="light" color="gray">
-                      Fix
-                    </Button>
-                  )}
-                  <Button size="compact-xs" variant="light" color="gray">
-                    Ignore
-                  </Button>
-                </Group>
               </Table.Td>
             </Table.Tr>
           ))}

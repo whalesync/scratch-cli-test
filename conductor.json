@@ -1,0 +1,4 @@
+{
+  "setupScript": "cp $CONDUCTOR_ROOT_PATH/client/.env client/.env && cp $CONDUCTOR_ROOT_PATH/server/.env server/.env && ln -s $CONDUCTOR_ROOT_PATH/node_modules node_modules && ln -s $CONDUCTOR_ROOT_PATH/client/node_modules client/node_modules && ln -s $CONDUCTOR_ROOT_PATH/server/node_modules server/node_modules && ln -s $CONDUCTOR_ROOT_PATH/packages/shared-types/node_modules packages/shared-types/node_modules && ln -s $CONDUCTOR_ROOT_PATH/packages/test-utils/node_modules packages/test-utils/node_modules",
+  "runScript": "yarn dev"
+}

@@ -1,6 +1,7 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
+import type { ValidationResultRow } from '../shared/validation-types';
 import type { WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 type ScratchCommandEvent =
@@ -21,16 +22,6 @@ type DiffGridFilter =
   | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
   | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
-
-type ValidationResultRow = {
-  file_name?: string;
-  field_path: string;
-  validator_kind: string;
-  level: 'error' | 'warning';
-  message: string | null;
-  description: string | null;
-  fixable: boolean;
-};
 
 interface ScratchDeepLinkAPI {
   onDeepLink: (callback: (route: string, query: string) => void) => () => void;
@@ -65,6 +56,7 @@ interface ScratchDesktopAPI {
   ) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
   prepareWorkspaceIndex: (workspacePath: string) => Promise<void>;
+  refreshPaths: (workspacePath: string, paths: string[]) => Promise<void>;
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,

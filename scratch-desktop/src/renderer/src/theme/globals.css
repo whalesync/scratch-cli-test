@@ -111,6 +111,15 @@
   --bg-reject: var(--bg-reject);
 }
 
+@keyframes scratch-icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @supports (font-variation-settings: normal) {
   :root {
     font-family: InterVariable, sans-serif;

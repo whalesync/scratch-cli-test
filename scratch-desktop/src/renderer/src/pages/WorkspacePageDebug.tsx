@@ -21,12 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useConfirmModal } from '../components/ConfirmModal';
 import { LiveCommandOutput } from '../components/LiveCommandOutput';
-import { useCurrentUser } from '../hooks/use-current-user';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
-import {
-  isWorkspaceFileWatcherExperimentEnabled,
-  setWorkspaceFileWatcherExperimentEnabled,
-} from '../lib/workspace-file-watcher-experiment';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 import { AdminPlaygroundGrid } from './workspace/AdminPlaygroundGrid';
@@ -47,7 +42,6 @@ interface UnreviewedChangeEntry {
 export function WorkspacePageDebug() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useCurrentUser();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -97,7 +91,6 @@ export function WorkspacePageDebug() {
   const [publishAllExitCode, setPublishAllExitCode] = useState<number | null>(null);
   const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [workspaceWatcherEnabled, setWorkspaceWatcherEnabled] = useState(isWorkspaceFileWatcherExperimentEnabled());
   const { confirm, confirmModal } = useConfirmModal();
   const runSyncSessionIdRef = useRef<string | null>(null);
   const publishPlanSessionIdRef = useRef<string | null>(null);
@@ -692,20 +685,6 @@ export function WorkspacePageDebug() {
   }
 
   const folderCount = workspace.dataFolders?.length ?? 0;
-  const canControlWorkspaceWatcher = user?.isAdmin === true;
-
-  const handleToggleWorkspaceWatcher = (checked: boolean): void => {
-    setWorkspaceFileWatcherExperimentEnabled(checked);
-    setWorkspaceWatcherEnabled(checked);
-    notifications.show({
-      title: checked ? 'Workspace watcher enabled' : 'Workspace watcher disabled',
-      message: checked
-        ? 'Normal workspace pages will now start the experimental file watcher on this machine.'
-        : 'Normal workspace pages will stop using the experimental file watcher on this machine.',
-      color: checked ? 'green' : 'gray',
-    });
-  };
-
   return (
     <Stack p="xl" gap="lg">
       {confirmModal}
@@ -1166,14 +1145,6 @@ export function WorkspacePageDebug() {
 
       <Stack gap="xs">
         <Title order={4}>Admin Playground</Title>
-        {canControlWorkspaceWatcher && (
-          <Checkbox
-            checked={workspaceWatcherEnabled}
-            onChange={(event) => handleToggleWorkspaceWatcher(event.currentTarget.checked)}
-            label="Enable experimental workspace file watcher on normal workspace pages"
-            description="Admin opt-in only. Keeps default production behavior unchanged until rollout."
-          />
-        )}
         <AdminPlaygroundGrid />
       </Stack>
 

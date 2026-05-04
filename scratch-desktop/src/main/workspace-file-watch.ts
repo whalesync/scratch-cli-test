@@ -1,12 +1,12 @@
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { WebContents } from 'electron';
 import { stat } from 'fs/promises';
-import { basename, join, relative } from 'path';
+import { basename, dirname, join } from 'path';
 import { WORKSPACE_FILE_WATCH_EVENT_CHANNEL, type WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
+import { runScratchmd } from './scratchmd';
 
 const WATCH_DEBOUNCE_MS = 500;
 const INTERNAL_MUTATION_GRACE_MS = 1_500;
-const MAX_SAMPLE_PATHS = 5;
 
 export interface WorkspaceConnectionWatchInput {
   dirName: string;
@@ -72,6 +72,8 @@ export class WorkspaceFileWatchService {
   private pendingHasExternal = false;
   private internalMutationCounts = new Map<string, number>();
   private internalMutationUntil = new Map<string, number>();
+  private validationState: 'idle' | 'running' = 'idle';
+  private pendingValidationPaths = new Set<string>();
 
   async watchWorkspaceFiles(
     subscriber: WebContents,
@@ -138,6 +140,37 @@ export class WorkspaceFileWatchService {
     };
   }
 
+  async runValidationForPaths(workspacePath: string, paths: string[]): Promise<void> {
+    if (this.validationState === 'running') {
+      paths.forEach((p) => this.pendingValidationPaths.add(p));
+      return;
+    }
+    this.validationState = 'running';
+    try {
+      await this.doValidation(workspacePath, paths);
+    } finally {
+      if (this.pendingValidationPaths.size > 0) {
+        const next = Array.from(this.pendingValidationPaths);
+        this.pendingValidationPaths.clear();
+        this.validationState = 'idle';
+        await this.runValidationForPaths(workspacePath, next);
+      } else {
+        this.validationState = 'idle';
+      }
+    }
+  }
+
+  private async doValidation(workspacePath: string, paths: string[]): Promise<void> {
+    const endMutation = this.beginInternalWorkspaceMutation(workspacePath);
+    try {
+      const args = ['refresh-record-index'];
+      for (const p of paths) args.push('--path', p);
+      await runScratchmd(args, workspacePath);
+    } finally {
+      endMutation();
+    }
+  }
+
   private enqueueChange(workspacePath: string, changedPath: string): void {
     if (!this.activeWorkspacePath || this.activeWorkspacePath !== workspacePath) {
       return;
@@ -174,16 +207,15 @@ export class WorkspaceFileWatchService {
       return;
     }
 
-    const changedPaths = Array.from(this.pendingPaths).sort((a, b) => a.localeCompare(b));
-    const samplePaths = changedPaths
-      .slice(0, MAX_SAMPLE_PATHS)
-      .map((changedPath) => relative(this.activeWorkspacePath as string, changedPath).replace(/\\/g, '/'));
+    const changedPaths = Array.from(this.pendingPaths);
+    const singleFile = changedPaths.length === 1 ? changedPaths[0] : undefined;
+    const changedFolderPaths = Array.from(new Set(changedPaths.map((p) => dirname(p)))).sort();
 
     const payload: WorkspaceFilesChangedEvent = {
       workspacePath: this.activeWorkspacePath,
-      changedPathCount: changedPaths.length,
-      samplePaths,
       source: this.pendingHasExternal ? 'external' : 'internal',
+      singleFile,
+      changedFolderPaths,
     };
 
     this.pendingPaths.clear();

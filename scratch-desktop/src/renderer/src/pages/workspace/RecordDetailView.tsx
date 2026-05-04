@@ -18,6 +18,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { getByPath } from '../../../../shared/schema-columns';
+import type { ValidationEntry, ValidationResultRow } from '../../../../shared/validation-types';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
@@ -242,16 +243,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
   const [validationReloadKey, setValidationReloadKey] = useState(0);
-  const [validationResults, setValidationResults] = useState<
-    Array<{
-      field_path: string;
-      validator_kind: string;
-      level: 'error' | 'warning';
-      message: string | null;
-      description: string | null;
-      fixable: boolean;
-    }>
-  >([]);
+  const [validationResults, setValidationResults] = useState<ValidationResultRow[]>([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
@@ -601,16 +593,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   }, [validationResults]);
 
   const validationWarnings = useMemo(() => {
-    const map = new Map<
-      string,
-      Array<{
-        level: 'error' | 'warning';
-        message: string | null;
-        description: string | null;
-        fixable: boolean;
-        validatorKind: string;
-      }>
-    >();
+    const map = new Map<string, ValidationEntry[]>();
     for (const r of validationResults) {
       const entries = map.get(r.field_path) ?? [];
       entries.push({

@@ -18,7 +18,6 @@ import '@glideapps/glide-data-grid/dist/index.css';
 import {
   ActionIcon,
   Box,
-  Button,
   Divider,
   Group,
   Loader,
@@ -35,6 +34,7 @@ import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'luci
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
+import type { ValidationResultRow } from '../../../../shared/validation-types';
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -87,16 +87,6 @@ interface DiffGridResult {
   invalidJsonFiles: InvalidJsonFileListEntry[];
 }
 
-type GridValidationEntry = {
-  file_name?: string;
-  field_path: string;
-  validator_kind: string;
-  level: 'error' | 'warning';
-  message: string | null;
-  description: string | null;
-  fixable: boolean;
-};
-
 type FilterKind = 'unreviewed' | 'unpublished';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
 
@@ -131,7 +121,7 @@ interface ValidationHoverState {
   col: number;
   row: number;
   bounds: { x: number; y: number; width: number; height: number };
-  entries: GridValidationEntry[];
+  entries: ValidationResultRow[];
 }
 
 interface FolderDataGridProps {
@@ -140,6 +130,7 @@ interface FolderDataGridProps {
   selectedFolderPath: string | null;
   workspacePath: string | null;
   dataRefreshKey: number;
+  onDataRefresh: () => void;
   onPublishFile?: (relativePath: string) => void;
 }
 
@@ -676,10 +667,12 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
 // ── Component ──
 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
-  const { selectedFolderPath, workspacePath, dataRefreshKey } = props;
+  const { selectedFolderPath, workspacePath, dataRefreshKey, onDataRefresh } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
-  const [validationByCell, setValidationByCell] = useState<Map<string, GridValidationEntry[]>>(new Map());
+  const [validationByCell, setValidationByCell] = useState<Map<string, ValidationResultRow[]>>(new Map());
+  const [validationRefreshKey, setValidationRefreshKey] = useState(0);
   const [loadingMode, setLoadingMode] = useState<GridLoadMode>('idle');
+  const [validationLoading, setValidationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorQueryKey, setErrorQueryKey] = useState<string | null>(null);
   const [resolvedQueryKey, setResolvedQueryKey] = useState<string | null>(null);
@@ -849,23 +842,25 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
 
     const generation = ++validationLoadGenerationRef.current;
+    setValidationLoading(true);
     void window.scratchFiles
       .getFolderValidationResults(workspacePath, selectedFolderPath)
       .then((results) => {
         if (generation !== validationLoadGenerationRef.current) {
           return;
         }
-        const next = new Map<string, GridValidationEntry[]>();
-        for (const result of results as GridValidationEntry[]) {
+        const newEntries = new Map<string, ValidationResultRow[]>();
+        for (const result of results) {
           if (!result.file_name) {
             continue;
           }
           const key = validationCellKey(result.file_name, result.field_path);
-          const entries = next.get(key) ?? [];
+          const entries = newEntries.get(key) ?? [];
           entries.push(result);
-          next.set(key, entries);
+          newEntries.set(key, entries);
         }
-        setValidationByCell(next);
+        setValidationByCell(newEntries);
+        setValidationLoading(false);
       })
       .catch((error: unknown) => {
         if (generation !== validationLoadGenerationRef.current) {
@@ -873,8 +868,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         }
         console.debug('[FolderDataGrid] failed to load validation results:', error);
         setValidationByCell(new Map());
+        setValidationLoading(false);
       });
-  }, [diffData, selectedFolderPath, workspacePath]);
+  }, [diffData, selectedFolderPath, validationRefreshKey, workspacePath]);
 
   // Keep the current rows painted during passive background refreshes (e.g. app focus).
   // currentQuery is intentionally NOT in the dep array — we read it via ref so this effect
@@ -1314,7 +1310,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       void window.scratchFiles
         .acceptCellInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
-          closeGridEditorChrome();
+          setValidationRefreshKey((k) => k + 1);
         })
         .catch((err: unknown) => {
           console.error(`[acceptCellChange] ${logLabel} failed:`, err);
@@ -2159,6 +2155,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 />
               </Popover.Dropdown>
             </Popover>
+            <Divider orientation="vertical" />
+            <Tooltip label="Refresh data and validation">
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="gray"
+                onClick={onDataRefresh}
+                disabled={validationLoading || loadingMode === 'blocking'}
+              >
+                <RotateCcw
+                  size={14}
+                  style={validationLoading ? { animation: 'scratch-icon-spin 1s linear infinite' } : undefined}
+                />
+              </ActionIcon>
+            </Tooltip>
           </Group>
         </Box>
       )}
@@ -2588,7 +2599,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       <Table.Th style={{ width: 76 }}>Level</Table.Th>
                       <Table.Th>Message</Table.Th>
                       <Table.Th style={{ width: 132 }}>Validator</Table.Th>
-                      <Table.Th style={{ width: 120 }}>Actions</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -2633,18 +2643,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                             }}
                           >
                             {entry.validator_kind.replace(/[_-]+/g, ' ')}
-                          </Table.Td>
-                          <Table.Td>
-                            <Group gap={4} wrap="nowrap">
-                              {entry.fixable && (
-                                <Button size="compact-xs" variant="light" color="gray">
-                                  Fix
-                                </Button>
-                              )}
-                              <Button size="compact-xs" variant="light" color="gray">
-                                Ignore
-                              </Button>
-                            </Group>
                           </Table.Td>
                         </Table.Tr>
                       );

@@ -2,6 +2,7 @@ import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
+import type { ValidationResultRow } from '../shared/validation-types';
 import { WORKSPACE_FILE_WATCH_EVENT_CHANNEL, type WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,16 +29,6 @@ type DiffGridFilter =
   | { scope: 'global'; kind: 'unreviewed' | 'unpublished' }
   | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
-
-type ValidationResultRow = {
-  file_name?: string;
-  field_path: string;
-  validator_kind: string;
-  level: 'error' | 'warning';
-  message: string | null;
-  description: string | null;
-  fixable: boolean;
-};
 
 const scratchDeepLink = {
   onDeepLink: (callback: (route: string, query: string) => void): (() => void) => {
@@ -82,6 +73,8 @@ const scratchDesktop = {
   removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
   prepareWorkspaceIndex: (workspacePath: string): Promise<void> =>
     invoke('scratch:prepare-workspace-index', workspacePath),
+  refreshPaths: (workspacePath: string, paths: string[]): Promise<void> =>
+    invoke('scratch:refresh-paths', workspacePath, paths),
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,
