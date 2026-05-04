@@ -12,4 +12,14 @@ export const desktopReleaseApi = {
       handleAxiosError(error, 'Failed to fetch latest desktop release');
     }
   },
+
+  getLatestCli: async (): Promise<DesktopReleaseResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<DesktopReleaseResponse>('/desktop-release/cli/latest');
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch latest CLI release');
+    }
+  },
 };

@@ -1,13 +1,14 @@
 'use client';
 
-import { ButtonPrimaryLight, ButtonSecondaryOutline, DevToolButtonGhost } from '@/app/components/base/buttons';
+import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text16Regular, TextTitle3, TextTitle4 } from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import MainContent from '@/app/components/layouts/MainContent';
+import { useCliRelease } from '@/hooks/use-cli-release';
 import { useDesktopRelease } from '@/hooks/use-desktop-release';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { Box, Card, Center, Group, Image, Stack } from '@mantine/core';
+import { Anchor, Box, Card, Center, Divider, Group, Image, Stack } from '@mantine/core';
 import { DesktopReleaseAsset, DesktopReleaseResponse } from '@spinner/shared-types';
 import { Download, ExternalLink } from 'lucide-react';
 
@@ -16,10 +17,16 @@ const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases`;
 
 const OS_ICON_BASE_URL = 'https://static.scratch.md/os-icons';
 
+const PLATFORM_ICONS = {
+  MacOS: `${OS_ICON_BASE_URL}/Apple.svg`,
+  Windows: `${OS_ICON_BASE_URL}/Windows-11.svg`,
+  Linux: `${OS_ICON_BASE_URL}/Linux.svg`,
+} as const;
+
 type AssetVariant = { label: string; asset: DesktopReleaseAsset };
 type PlatformGroup = { platform: string; iconUrl: string; variants: AssetVariant[] };
 
-function variantLabel(filename: string): string {
+function desktopVariantLabel(filename: string): string {
   if (/arm64.*\.dmg$/i.test(filename)) return 'Apple Silicon (.dmg)';
   if (/x64.*\.dmg$/i.test(filename)) return 'Intel (.dmg)';
   if (/\.exe$/i.test(filename)) return 'x64 (.exe)';
@@ -28,19 +35,41 @@ function variantLabel(filename: string): string {
   return filename;
 }
 
-function groupAssetsByPlatform(assets: DesktopReleaseAsset[]): PlatformGroup[] {
+function cliVariantLabel(filename: string): string {
+  if (/darwin_arm64/i.test(filename)) return 'Apple Silicon (.tar.gz)';
+  if (/darwin_amd64/i.test(filename)) return 'Intel (.tar.gz)';
+  if (/linux_arm64/i.test(filename)) return 'ARM64 (.tar.gz)';
+  if (/linux_amd64/i.test(filename)) return 'x64 (.tar.gz)';
+  if (/windows_amd64/i.test(filename)) return 'x64 (.zip)';
+  return filename;
+}
+
+function groupDesktopAssetsByPlatform(assets: DesktopReleaseAsset[]): PlatformGroup[] {
   const downloadable = assets.filter((a) => !/^checksums\.txt$/i.test(a.name));
   const variantsFor = (match: (n: string) => boolean): AssetVariant[] =>
-    downloadable.filter((a) => match(a.name)).map((asset) => ({ label: variantLabel(asset.name), asset }));
+    downloadable.filter((a) => match(a.name)).map((asset) => ({ label: desktopVariantLabel(asset.name), asset }));
 
   const groups: PlatformGroup[] = [];
   const mac = variantsFor((n) => /\.dmg$/i.test(n));
-  if (mac.length) groups.push({ platform: 'MacOS', iconUrl: `${OS_ICON_BASE_URL}/Apple.svg`, variants: mac });
+  if (mac.length) groups.push({ platform: 'MacOS', iconUrl: PLATFORM_ICONS.MacOS, variants: mac });
   const windows = variantsFor((n) => /\.exe$/i.test(n));
-  if (windows.length)
-    groups.push({ platform: 'Windows', iconUrl: `${OS_ICON_BASE_URL}/Windows-11.svg`, variants: windows });
+  if (windows.length) groups.push({ platform: 'Windows', iconUrl: PLATFORM_ICONS.Windows, variants: windows });
   const linux = variantsFor((n) => /\.(AppImage|deb)$/i.test(n));
-  if (linux.length) groups.push({ platform: 'Linux', iconUrl: `${OS_ICON_BASE_URL}/Linux.svg`, variants: linux });
+  if (linux.length) groups.push({ platform: 'Linux', iconUrl: PLATFORM_ICONS.Linux, variants: linux });
+  return groups;
+}
+
+function groupCliAssetsByPlatform(assets: DesktopReleaseAsset[]): PlatformGroup[] {
+  const variantsFor = (match: (n: string) => boolean): AssetVariant[] =>
+    assets.filter((a) => match(a.name)).map((asset) => ({ label: cliVariantLabel(asset.name), asset }));
+
+  const groups: PlatformGroup[] = [];
+  const mac = variantsFor((n) => /scratchmd_darwin_/i.test(n));
+  if (mac.length) groups.push({ platform: 'MacOS', iconUrl: PLATFORM_ICONS.MacOS, variants: mac });
+  const windows = variantsFor((n) => /scratchmd_windows_/i.test(n));
+  if (windows.length) groups.push({ platform: 'Windows', iconUrl: PLATFORM_ICONS.Windows, variants: windows });
+  const linux = variantsFor((n) => /scratchmd_linux_/i.test(n));
+  if (linux.length) groups.push({ platform: 'Linux', iconUrl: PLATFORM_ICONS.Linux, variants: linux });
   return groups;
 }
 
@@ -52,20 +81,28 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DownloadPage() {
-  const { release, isLoading, error } = useDesktopRelease();
+  const { release: desktopRelease, isLoading: desktopLoading, error: desktopError } = useDesktopRelease();
+  const { release: cliRelease, error: cliError } = useCliRelease();
   const { isDevToolsEnabled } = useDevTools();
 
-  if (isLoading) return <FullPageLoader message="Loading latest release…" />;
+  if (desktopLoading) return <FullPageLoader message="Loading latest release…" />;
 
   return (
     <MainContent h="100vh">
       <MainContent.Body p="xl">
-        <Center h="100%" w="100%">
-          <Stack gap="lg" maw={960} w="100%" align="center">
-            {!release || error ? (
+        <Center w="100%">
+          <Stack gap="xl" maw={960} w="100%" align="center" py="xl">
+            {!desktopRelease || desktopError ? (
               <UnavailableState />
             ) : (
-              <ReleaseDetails release={release} showDevTools={isDevToolsEnabled} />
+              <DesktopSection release={desktopRelease} showDevTools={isDevToolsEnabled} />
+            )}
+
+            {cliRelease && !cliError && (
+              <>
+                <Divider w="100%" />
+                <CliSection release={cliRelease} showDevTools={isDevToolsEnabled} />
+              </>
             )}
           </Stack>
         </Center>
@@ -89,8 +126,8 @@ function UnavailableState() {
   );
 }
 
-function ReleaseDetails({ release, showDevTools }: { release: DesktopReleaseResponse; showDevTools: boolean }) {
-  const groups = groupAssetsByPlatform(release.assets);
+function DesktopSection({ release, showDevTools }: { release: DesktopReleaseResponse; showDevTools: boolean }) {
+  const groups = groupDesktopAssetsByPlatform(release.assets);
   return (
     <Stack gap="lg" w="100%" align="center">
       <Box
@@ -114,9 +151,35 @@ function ReleaseDetails({ release, showDevTools }: { release: DesktopReleaseResp
       </Group>
 
       {showDevTools && (
-        <DevToolButtonGhost component="a" href={release.htmlUrl} size="xs">
-          View release on GitHub
-        </DevToolButtonGhost>
+        <Group align="center" justify="flex-end" w="100%">
+          <Anchor href={release.htmlUrl} size="xs" c="devTool">
+            View on Github
+          </Anchor>
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
+function CliSection({ release, showDevTools }: { release: DesktopReleaseResponse; showDevTools: boolean }) {
+  const groups = groupCliAssetsByPlatform(release.assets);
+  if (!groups.length) return null;
+  return (
+    <Stack gap="lg" w="100%" align="center">
+      <TextTitle3>Download Scratch CLI {release.version}</TextTitle3>
+
+      <Group gap="md" align="stretch" justify="center" w="100%">
+        {groups.map((group) => (
+          <PlatformCard key={group.platform} group={group} />
+        ))}
+      </Group>
+
+      {showDevTools && (
+        <Group align="center" justify="flex-end" w="100%">
+          <Anchor href={release.htmlUrl} size="xs" c="devTool">
+            View on Github
+          </Anchor>
+        </Group>
       )}
     </Stack>
   );

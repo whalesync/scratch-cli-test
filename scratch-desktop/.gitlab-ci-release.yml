@@ -438,11 +438,12 @@ Finalize test release:
 
 # -----------------------------------------------------------------------------
 # SLACK — notify when a desktop release is published (after finalize succeeds).
-# Dotenv (NEW_VERSION) comes from bootstrap artifacts; Finalize must succeed.
+# NEW_VERSION comes from bootstrap’s dotenv report — do not use dependencies: []
+# here; GitLab treats that as blocking all artifact/dotenv downloads, so the tag
+# would be empty in the GitHub URL.
 # -----------------------------------------------------------------------------
 .notify_slack_desktop_release_published:
   stage: release desktop app
-  dependencies: []
   allow_failure: true
   script:
     - |
@@ -461,6 +462,7 @@ Notify slack prod desktop release published:
     - job: Bootstrap prod desktop release
       artifacts: true
     - job: Finalize prod release
+      artifacts: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
 
@@ -474,6 +476,7 @@ Notify slack test desktop release published:
     - job: Bootstrap test desktop release
       artifacts: true
     - job: Finalize test release
+      artifacts: false
   rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 # -----------------------------------------------------------------------------

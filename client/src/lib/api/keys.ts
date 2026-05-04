@@ -45,6 +45,9 @@ export const SWR_KEYS = {
   desktopRelease: {
     latest: () => ['desktop-release', 'latest'] as const,
   },
+  cliRelease: {
+    latest: () => ['cli-release', 'latest'] as const,
+  },
   files: {
     listByFolder: (workbookId: WorkbookId, folderId: string) => ['files', 'list', workbookId, folderId] as const,
     detail: (workbookId: WorkbookId, fileId: string) => ['files', 'detail', workbookId, fileId] as const,

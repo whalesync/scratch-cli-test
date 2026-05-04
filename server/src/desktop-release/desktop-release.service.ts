@@ -11,7 +11,7 @@ const MAX_RELEASE_PAGES = 5;
 function releasesListUrl(page: number): string {
   return `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
 }
-const CACHE_KEY_PREFIX = 'desktop-release:latest:v2:';
+const CACHE_KEY_PREFIX = 'desktop-release:latest:v3:';
 const CACHE_TTL_SECONDS = 5 * 60;
 const FETCH_TIMEOUT_MS = 5000;
 
@@ -31,6 +31,38 @@ interface GitHubRelease {
 }
 
 type Channel = 'production' | 'test';
+type ReleaseKind = 'desktop' | 'cli';
+
+interface ReleaseLookup {
+  kind: ReleaseKind;
+  channel: Channel;
+  matchTag: (tag: string) => boolean;
+  notFoundMessage: string;
+}
+
+function lookupFor(kind: ReleaseKind, channel: Channel): ReleaseLookup {
+  if (kind === 'desktop') {
+    const suffix = channel === 'production' ? '-desktop' : '-desktop-test';
+    return {
+      kind,
+      channel,
+      matchTag: (t) => t.endsWith(suffix),
+      notFoundMessage: `No desktop release found matching tag suffix "${suffix}"`,
+    };
+  }
+  // kind === 'cli' — prod tags have no suffix (vX.Y.Z); test tags end in -test
+  // but must NOT also end in -desktop-test (those are desktop builds).
+  const matchTag =
+    channel === 'production'
+      ? (t: string) => /^v\d+\.\d+\.\d+$/.test(t)
+      : (t: string) => t.endsWith('-test') && !t.endsWith('-desktop-test');
+  return {
+    kind,
+    channel,
+    matchTag,
+    notFoundMessage: `No CLI release found for channel "${channel}"`,
+  };
+}
 
 function extractVersion(tagName: string): string {
   return tagName.match(/\d+\.\d+\.\d+/)?.[0] ?? tagName;
@@ -53,16 +85,24 @@ export class DesktopReleaseService implements OnModuleDestroy {
     await this.redis.quit().catch(() => {});
   }
 
-  async getLatestDesktopRelease(): Promise<DesktopReleaseResponse> {
-    const channel: Channel = this.configService.isProductionEnvironment() ? 'production' : 'test';
-    const tagSuffix = channel === 'production' ? '-desktop' : '-desktop-test';
+  getLatestDesktopRelease(): Promise<DesktopReleaseResponse> {
+    return this.getLatest('desktop');
+  }
 
-    const cached = await this.readFromCache(channel);
+  getLatestCliRelease(): Promise<DesktopReleaseResponse> {
+    return this.getLatest('cli');
+  }
+
+  private async getLatest(kind: ReleaseKind): Promise<DesktopReleaseResponse> {
+    const channel: Channel = this.configService.isProductionEnvironment() ? 'production' : 'test';
+    const lookup = lookupFor(kind, channel);
+
+    const cached = await this.readFromCache(kind, channel);
     if (cached) return cached;
 
-    const release = await this.fetchLatestRelease(tagSuffix);
+    const release = await this.fetchLatestRelease(lookup.matchTag);
     if (!release) {
-      throw new NotFoundException(`No desktop release found matching tag suffix "${tagSuffix}"`);
+      throw new NotFoundException(lookup.notFoundMessage);
     }
 
     const response: DesktopReleaseResponse = {
@@ -81,41 +121,45 @@ export class DesktopReleaseService implements OnModuleDestroy {
       ),
     };
 
-    await this.writeToCache(channel, response);
+    await this.writeToCache(kind, channel, response);
     return response;
   }
 
-  private cacheKey(channel: Channel): string {
-    return `${CACHE_KEY_PREFIX}${channel}`;
+  private cacheKey(kind: ReleaseKind, channel: Channel): string {
+    return `${CACHE_KEY_PREFIX}${kind}:${channel}`;
   }
 
-  private async readFromCache(channel: Channel): Promise<DesktopReleaseResponse | null> {
+  private async readFromCache(kind: ReleaseKind, channel: Channel): Promise<DesktopReleaseResponse | null> {
     try {
-      const data = await this.redis.get(this.cacheKey(channel));
+      const data = await this.redis.get(this.cacheKey(kind, channel));
       return data ? (JSON.parse(data) as DesktopReleaseResponse) : null;
     } catch (err) {
       WSLogger.warn({
         source: 'DesktopReleaseService',
-        message: 'Failed to read desktop release from Redis cache',
+        message: 'Failed to read release from Redis cache',
+        kind,
+        channel,
         error: err instanceof Error ? err.message : String(err),
       });
       return null;
     }
   }
 
-  private async writeToCache(channel: Channel, value: DesktopReleaseResponse): Promise<void> {
+  private async writeToCache(kind: ReleaseKind, channel: Channel, value: DesktopReleaseResponse): Promise<void> {
     try {
-      await this.redis.set(this.cacheKey(channel), JSON.stringify(value), 'EX', CACHE_TTL_SECONDS);
+      await this.redis.set(this.cacheKey(kind, channel), JSON.stringify(value), 'EX', CACHE_TTL_SECONDS);
     } catch (err) {
       WSLogger.warn({
         source: 'DesktopReleaseService',
-        message: 'Failed to write desktop release to Redis cache',
+        message: 'Failed to write release to Redis cache',
+        kind,
+        channel,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  private async fetchLatestRelease(tagSuffix: string): Promise<GitHubRelease | null> {
+  private async fetchLatestRelease(matchTag: (tag: string) => boolean): Promise<GitHubRelease | null> {
     try {
       for (let page = 1; page <= MAX_RELEASE_PAGES; page++) {
         const res = await fetch(releasesListUrl(page), {
@@ -132,7 +176,7 @@ export class DesktopReleaseService implements OnModuleDestroy {
           return null;
         }
         const releases = (await res.json()) as GitHubRelease[];
-        const match = releases.find((r) => !r.draft && r.tag_name.endsWith(tagSuffix));
+        const match = releases.find((r) => !r.draft && matchTag(r.tag_name));
         if (match) return match;
         if (releases.length < RELEASES_PER_PAGE) break;
       }
