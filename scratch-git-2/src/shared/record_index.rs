@@ -10,6 +10,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub const PROCESSOR_VERSION: &str = "record-index-v1";
+pub const RECORD_INDEX_TABLE: &str = "record_index_v1";
+const LEGACY_RECORD_INDEX_TABLE: &str = "record_index";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RecordKey {
@@ -184,10 +186,10 @@ pub fn inspect(
 pub fn read_index(db_path: &Path) -> anyhow::Result<Vec<RecordIndexRow>> {
     let conn = open_db(db_path)?;
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT folder_path, file_name, content_hash, processor_version, mtime_ns, file_size_bytes \
-             FROM record_index ORDER BY folder_path, file_name",
-        )
+             FROM {RECORD_INDEX_TABLE} ORDER BY folder_path, file_name"
+        ))
         .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
@@ -206,9 +208,24 @@ pub fn read_index(db_path: &Path) -> anyhow::Result<Vec<RecordIndexRow>> {
     Ok(rows)
 }
 
-fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS record_index (
+pub fn create_index_tables(db_path: &Path) -> anyhow::Result<()> {
+    let conn = open_raw_db(db_path)?;
+    create_index_tables_on_conn(&conn)
+}
+
+pub fn drop_index_tables(db_path: &Path) -> anyhow::Result<()> {
+    let conn = open_raw_db(db_path)?;
+    drop_index_tables_on_conn(&conn)
+}
+
+pub fn assert_index_tables_exist(db_path: &Path) -> anyhow::Result<()> {
+    let conn = open_raw_db(db_path)?;
+    assert_index_tables_exist_on_conn(&conn)
+}
+
+fn create_index_tables_on_conn(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {RECORD_INDEX_TABLE} (
             folder_path       TEXT NOT NULL,
             file_name         TEXT NOT NULL,
             content_hash      TEXT NOT NULL,
@@ -216,24 +233,35 @@ fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
             mtime_ns          INTEGER NOT NULL DEFAULT 0,
             file_size_bytes   INTEGER NOT NULL DEFAULT -1,
             PRIMARY KEY (folder_path, file_name)
-        );",
-    )
+        );"
+    ))
     .map_err(|e| anyhow::anyhow!("failed to ensure record index schema: {e}"))?;
-    ensure_column(
-        conn,
-        "mtime_ns",
-        "ALTER TABLE record_index ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0",
-    )?;
-    ensure_column(
-        conn,
-        "file_size_bytes",
-        "ALTER TABLE record_index ADD COLUMN file_size_bytes INTEGER NOT NULL DEFAULT -1",
-    )?;
-    crate::shared::validators::ensure_validation_schema(conn)?;
+    crate::shared::validators::create_validation_schema(conn)?;
     Ok(())
 }
 
-fn open_db(db_path: &Path) -> anyhow::Result<Connection> {
+fn drop_index_tables_on_conn(conn: &Connection) -> anyhow::Result<()> {
+    crate::shared::validators::drop_validation_schema(conn)?;
+    conn.execute_batch(&format!("DROP TABLE IF EXISTS {RECORD_INDEX_TABLE};"))
+        .map_err(|e| anyhow::anyhow!("failed to drop record_index schema: {e}"))?;
+    Ok(())
+}
+
+fn assert_index_tables_exist_on_conn(conn: &Connection) -> anyhow::Result<()> {
+    if record_index_schema_exists(conn)?
+        && crate::shared::validators::validation_schema_exists(conn)?
+    {
+        return Ok(());
+    }
+
+    // These tables are derived caches. On any partial/mismatched schema, clear
+    // all index tables and recreate a coherent set; callers then reindex.
+    drop_index_tables_on_conn(conn)?;
+    create_index_tables_on_conn(conn)?;
+    Ok(())
+}
+
+fn open_raw_db(db_path: &Path) -> anyhow::Result<Connection> {
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create record index dir {}", parent.display()))?;
@@ -241,17 +269,22 @@ fn open_db(db_path: &Path) -> anyhow::Result<Connection> {
 
     let conn = Connection::open(db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
-    ensure_schema(&conn)?;
+    Ok(conn)
+}
+
+fn open_db(db_path: &Path) -> anyhow::Result<Connection> {
+    let conn = open_raw_db(db_path)?;
+    assert_index_tables_exist_on_conn(&conn)?;
     migrate_legacy_record_index_if_needed(db_path, &conn)?;
     Ok(conn)
 }
 
 fn read_rows_map(conn: &Connection) -> anyhow::Result<HashMap<RecordKey, RecordIndexRow>> {
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT folder_path, file_name, content_hash, processor_version, mtime_ns, file_size_bytes \
-             FROM record_index",
-        )
+             FROM {RECORD_INDEX_TABLE}"
+        ))
         .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
@@ -435,7 +468,11 @@ fn build_refresh_plan(
 
 fn migrate_legacy_record_index_if_needed(db_path: &Path, conn: &Connection) -> anyhow::Result<()> {
     let current_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM record_index", [], |row| row.get(0))
+        .query_row(
+            &format!("SELECT COUNT(*) FROM {RECORD_INDEX_TABLE}"),
+            [],
+            |row| row.get(0),
+        )
         .unwrap_or(0);
     if current_count > 0 {
         return Ok(());
@@ -459,8 +496,8 @@ fn migrate_legacy_record_index_if_needed(db_path: &Path, conn: &Connection) -> a
 
     let has_legacy_table: bool = legacy
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='record_index'",
-            [],
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            [LEGACY_RECORD_INDEX_TABLE],
             |row| row.get::<_, i64>(0),
         )
         .map(|count| count > 0)
@@ -469,14 +506,27 @@ fn migrate_legacy_record_index_if_needed(db_path: &Path, conn: &Connection) -> a
         return Ok(());
     }
 
-    ensure_schema(&legacy)?;
+    let legacy_columns = table_columns(&legacy, "record_index")?;
+    let mtime_expr = if legacy_columns.iter().any(|column| column == "mtime_ns") {
+        "mtime_ns"
+    } else {
+        "0"
+    };
+    let file_size_expr = if legacy_columns
+        .iter()
+        .any(|column| column == "file_size_bytes")
+    {
+        "file_size_bytes"
+    } else {
+        "-1"
+    };
 
     let mut stmt = legacy
-        .prepare(
-            "SELECT folder_path, file_name, content_hash, processor_version,
-                    COALESCE(mtime_ns, 0), COALESCE(file_size_bytes, -1)
-             FROM record_index",
-        )
+        .prepare(&format!(
+            "SELECT folder_path, file_name, content_hash, processor_version, \
+                    COALESCE({mtime_expr}, 0), COALESCE({file_size_expr}, -1) \
+             FROM {LEGACY_RECORD_INDEX_TABLE}"
+        ))
         .map_err(|e| anyhow::anyhow!("failed to read legacy record_index: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
@@ -494,9 +544,11 @@ fn migrate_legacy_record_index_if_needed(db_path: &Path, conn: &Connection) -> a
     for row in rows {
         let row = row.map_err(|e| anyhow::anyhow!("{e}"))?;
         conn.execute(
-            "INSERT OR REPLACE INTO record_index \
+            &format!(
+                "INSERT OR REPLACE INTO {RECORD_INDEX_TABLE} \
              (folder_path, file_name, content_hash, processor_version, mtime_ns, file_size_bytes) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            ),
             params![
                 row.folder_path,
                 row.file_name,
@@ -530,9 +582,11 @@ fn upsert_row(
     fingerprint: FileFingerprint,
 ) -> anyhow::Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO record_index \
+        &format!(
+            "INSERT OR REPLACE INTO {RECORD_INDEX_TABLE} \
          (folder_path, file_name, content_hash, processor_version, mtime_ns, file_size_bytes) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+        ),
         params![
             key.folder_path,
             key.file_name,
@@ -554,7 +608,7 @@ fn upsert_row(
 
 fn delete_row(conn: &Connection, key: &RecordKey) -> anyhow::Result<()> {
     conn.execute(
-        "DELETE FROM record_index WHERE folder_path = ?1 AND file_name = ?2",
+        &format!("DELETE FROM {RECORD_INDEX_TABLE} WHERE folder_path = ?1 AND file_name = ?2"),
         params![key.folder_path, key.file_name],
     )
     .map_err(|e| {
@@ -681,27 +735,43 @@ fn status_candidate_matches(status_candidates: &[StatusCandidate], rel_path: &st
     })
 }
 
-fn ensure_column(conn: &Connection, column_name: &str, sql: &str) -> anyhow::Result<()> {
+fn record_index_schema_exists(conn: &Connection) -> anyhow::Result<bool> {
+    let table_exists = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            [RECORD_INDEX_TABLE],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !table_exists {
+        return Ok(false);
+    }
+
+    let columns = table_columns(conn, RECORD_INDEX_TABLE)?;
+
+    Ok([
+        "folder_path",
+        "file_name",
+        "content_hash",
+        "processor_version",
+        "mtime_ns",
+        "file_size_bytes",
+    ]
+    .iter()
+    .all(|required| columns.iter().any(|column| column == required)))
+}
+
+fn table_columns(conn: &Connection, table_name: &str) -> anyhow::Result<Vec<String>> {
     let mut stmt = conn
-        .prepare("PRAGMA table_info(record_index)")
-        .map_err(|e| anyhow::anyhow!("failed to inspect record_index schema: {e}"))?;
+        .prepare(&format!("PRAGMA table_info({table_name})"))
+        .map_err(|e| anyhow::anyhow!("failed to inspect {table_name} schema: {e}"))?;
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| anyhow::anyhow!("failed to query record_index schema: {e}"))?
+        .map_err(|e| anyhow::anyhow!("failed to query {table_name} schema: {e}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    if columns.iter().any(|column| column == column_name) {
-        return Ok(());
-    }
-
-    if let Err(err) = conn.execute_batch(sql) {
-        let text = err.to_string();
-        if !text.contains("duplicate column name") {
-            return Err(anyhow::anyhow!("failed to add column {column_name}: {err}"));
-        }
-    }
-    Ok(())
+    Ok(columns)
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
@@ -718,7 +788,7 @@ fn hash_bytes(bytes: &[u8]) -> String {
 mod tests {
     use super::{
         inspect, read_index, refresh, RefreshOptions, StaleRecord, StatusCandidate,
-        PROCESSOR_VERSION,
+        PROCESSOR_VERSION, RECORD_INDEX_TABLE,
     };
     use rusqlite::Connection;
     use std::collections::HashSet;
@@ -860,7 +930,10 @@ mod tests {
 
         let conn = Connection::open(&db_path).unwrap();
         conn.execute(
-            "UPDATE record_index SET processor_version = 'old-version' WHERE folder_path = 'posts' AND file_name = 'one.json'",
+            &format!(
+                "UPDATE {RECORD_INDEX_TABLE} SET processor_version = 'old-version' \
+                 WHERE folder_path = 'posts' AND file_name = 'one.json'"
+            ),
             [],
         )
         .unwrap();

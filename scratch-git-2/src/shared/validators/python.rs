@@ -4,9 +4,21 @@ use std::time::Duration;
 
 use rustpython_vm::AsObject;
 
-use super::{FieldValidationContext, ValidationResult};
+use super::{FieldValidationContext, ValidationLevel, ValidationResult};
+
+// ── level parsing helper ──────────────────────────────────────────────────────
+
+fn parse_level(s: &str) -> ValidationLevel {
+    if s == "error" {
+        ValidationLevel::Error
+    } else {
+        ValidationLevel::Warning
+    }
+}
 
 const TIMEOUT_SECS: u64 = 5;
+
+type PythonValidationItem = (ValidationLevel, Option<String>, Option<String>, bool);
 
 /// Run a Python validator script against one field value using an embedded
 /// RustPython interpreter (no system Python required).
@@ -20,17 +32,23 @@ const TIMEOUT_SECS: u64 = 5;
 /// def validate(ctx):
 ///     # ctx keys: table, filename, field_path, value, record, args
 ///     if len(ctx["value"] or "") > ctx["args"]["max"]:
-///         return [{"is_valid": False, "message": "too long"}]
-///     return [{"is_valid": True, "message": None}]
+///         return [{"level": "warning", "message": "too long"}]
+///     return []   # empty list = pass
 /// ```
 ///
-/// Multiple results are combined: all must be valid for the overall result to be
-/// valid. The message from the first invalid result is used.
+/// **Python contract (violations-only):** every item in the returned list is a failure.
+/// Return an empty list to signal that the value is valid. The `is_valid` key is not used.
+///
+/// Item shape: `{"level": "warning"|"error", "message": "...", "description": "...", "fixable": true}`.
+/// `level` defaults to `"warning"` when absent. `message` and `description` are optional.
+/// `fixable` defaults to `false` when absent.
+///
+/// Returns `None` when no violations are reported; `Some` for the first violation.
 pub fn run_python_validator(
     relative_path: &str,
     workspace_dir: &Path,
     ctx: &FieldValidationContext,
-) -> anyhow::Result<ValidationResult> {
+) -> anyhow::Result<Option<ValidationResult>> {
     let validator_path = workspace_dir.join(relative_path);
 
     let source = std::fs::read_to_string(&validator_path).map_err(|e| {
@@ -54,7 +72,7 @@ pub fn run_python_validator(
     let args = ctx.args.clone();
     let script_name = relative_path.to_string();
 
-    let (tx, rx) = mpsc::channel::<anyhow::Result<Vec<ValidationResult>>>();
+    let (tx, rx) = mpsc::channel::<anyhow::Result<Vec<PythonValidationItem>>>();
 
     std::thread::spawn(move || {
         let result = exec_in_vm(
@@ -87,13 +105,16 @@ pub fn run_python_validator(
         }
     };
 
-    // Combine: all results must be valid; message from first invalid result.
-    let is_valid = results.iter().all(|r| r.is_valid);
-    let message = results
-        .iter()
-        .find(|r| !r.is_valid)
-        .and_then(|r| r.message.clone());
-    Ok(ValidationResult { is_valid, message })
+    // Every item is a violation; empty list means pass.
+    match results.into_iter().next() {
+        Some((level, message, description, fixable)) => Ok(Some(ValidationResult {
+            level,
+            message,
+            description,
+            fixable,
+        })),
+        None => Ok(None),
+    }
 }
 
 // ── VM execution (runs in its own thread) ────────────────────────────────────
@@ -108,14 +129,14 @@ fn exec_in_vm(
     value: &serde_json::Value,
     record: &serde_json::Value,
     args: &serde_json::Value,
-) -> anyhow::Result<Vec<ValidationResult>> {
+) -> anyhow::Result<Vec<PythonValidationItem>> {
     use rustpython_vm as rvm;
 
     // Create an interpreter with no stdlib added — only Python builtins are
     // available. This prevents `import subprocess`, `import socket`, etc.
     let interp = rvm::Interpreter::with_init(Default::default(), |_vm| {});
 
-    interp.enter(|vm| -> anyhow::Result<Vec<ValidationResult>> {
+    interp.enter(|vm| -> anyhow::Result<Vec<PythonValidationItem>> {
         let scope = vm.new_scope_with_builtins();
 
         // ── compile ──────────────────────────────────────────────────────────
@@ -179,13 +200,13 @@ fn extract_results(
     result_obj: rustpython_vm::PyObjectRef,
     script_name: &str,
     vm: &rustpython_vm::VirtualMachine,
-) -> anyhow::Result<Vec<ValidationResult>> {
+) -> anyhow::Result<Vec<PythonValidationItem>> {
     use rustpython_vm::builtins::PyList;
 
-    // Must be a list.
+    // Must be a list. Every item in the list is a violation.
     let list = result_obj.downcast::<PyList>().map_err(|obj| {
         anyhow::anyhow!(
-            "python validator {} returned {}: expected list[dict] with is_valid and message",
+            "python validator {} returned {}: expected list[dict] (violations only — return [] for pass)",
             script_name,
             obj.class().name()
         )
@@ -194,33 +215,39 @@ fn extract_results(
     let mut out = Vec::new();
     let items = list.borrow_vec();
     for (i, item) in items.iter().enumerate() {
-        // is_valid — required, any truthy/falsy value accepted
-        let is_valid_obj = item.get_item("is_valid", vm).map_err(|_| {
-            anyhow::anyhow!(
-                "python validator {} result at index {} is missing 'is_valid' key \
-                 (expected a dict with is_valid and message)",
-                script_name,
-                i
-            )
-        })?;
-        let is_valid = is_valid_obj.is_true(vm).map_err(|exc| {
-            anyhow::anyhow!(
-                "python validator {} 'is_valid' at index {} cannot be used as bool: {}",
-                script_name,
-                i,
-                exc_to_string(vm, &exc)
-            )
-        })?;
+        // level — optional str; defaults to "warning"
+        let level = match item.get_item("level", vm) {
+            Ok(level_obj) if !vm.is_none(&level_obj) => {
+                let s = obj_to_string(vm, &level_obj, script_name, i, "level")?;
+                parse_level(&s)
+            }
+            _ => ValidationLevel::Warning,
+        };
 
         // message — optional str/None
         let message = match item.get_item("message", vm) {
             Ok(msg_obj) if !vm.is_none(&msg_obj) => {
-                Some(obj_to_string(vm, &msg_obj, script_name, i)?)
+                Some(obj_to_string(vm, &msg_obj, script_name, i, "message")?)
             }
             _ => None,
         };
 
-        out.push(ValidationResult { is_valid, message });
+        // description — optional str/None
+        let description = match item.get_item("description", vm) {
+            Ok(desc_obj) if !vm.is_none(&desc_obj) => {
+                Some(obj_to_string(vm, &desc_obj, script_name, i, "description")?)
+            }
+            _ => None,
+        };
+
+        let fixable = match item.get_item("fixable", vm) {
+            Ok(fixable_obj) if !vm.is_none(&fixable_obj) => {
+                obj_to_bool(vm, &fixable_obj, script_name, i, "fixable")?
+            }
+            _ => false,
+        };
+
+        out.push((level, message, description, fixable));
     }
 
     Ok(out)
@@ -231,15 +258,38 @@ fn obj_to_string(
     obj: &rustpython_vm::PyObjectRef,
     script_name: &str,
     index: usize,
+    field_name: &str,
 ) -> anyhow::Result<String> {
     obj.str(vm).map(|s| s.to_string()).map_err(|exc| {
         anyhow::anyhow!(
-            "python validator {} 'message' at index {} is not convertible to string: {}",
+            "python validator {} '{}' at index {} is not convertible to string: {}",
             script_name,
+            field_name,
             index,
             exc_to_string(vm, &exc)
         )
     })
+}
+
+fn obj_to_bool(
+    vm: &rustpython_vm::VirtualMachine,
+    obj: &rustpython_vm::PyObjectRef,
+    script_name: &str,
+    index: usize,
+    field_name: &str,
+) -> anyhow::Result<bool> {
+    let value = obj_to_string(vm, obj, script_name, index, field_name)?;
+    match value.as_str() {
+        "True" | "true" | "1" => Ok(true),
+        "False" | "false" | "0" => Ok(false),
+        other => anyhow::bail!(
+            "python validator {} '{}' at index {} must be a boolean, got {}",
+            script_name,
+            field_name,
+            index,
+            other
+        ),
+    }
 }
 
 // ── dict helpers ─────────────────────────────────────────────────────────────
@@ -342,7 +392,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::run_python_validator;
-    use crate::shared::validators::FieldValidationContext;
+    use crate::shared::validators::{FieldValidationContext, ValidationLevel};
 
     fn write(root: &Path, rel: &str, contents: &str) {
         let path = root.join(rel);
@@ -366,35 +416,36 @@ mod tests {
     // ── happy path ────────────────────────────────────────────────────────────
 
     #[test]
-    fn valid_result_stored_correctly() {
+    fn valid_result_returns_none() {
         let tmp = TempDir::new().unwrap();
+        // Empty list = pass (violations-only contract)
         write(
             tmp.path(),
             "validators/check.py",
-            "def validate(ctx):\n    return [{'is_valid': True, 'message': None}]\n",
+            "def validate(ctx):\n    return []\n",
         );
         let result =
             run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi"))).unwrap();
-        assert!(result.is_valid);
-        assert!(result.message.is_none());
+        assert!(result.is_none());
     }
 
     #[test]
-    fn invalid_result_stored_with_message() {
+    fn invalid_result_returns_warning_with_message() {
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "validators/check.py",
-            "def validate(ctx):\n    return [{'is_valid': False, 'message': 'too short'}]\n",
+            "def validate(ctx):\n    return [{'message': 'too short'}]\n",
         );
-        let result =
-            run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi"))).unwrap();
-        assert!(!result.is_valid);
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.level, ValidationLevel::Warning);
         assert_eq!(result.message.as_deref(), Some("too short"));
     }
 
     #[test]
-    fn empty_result_list_treated_as_valid() {
+    fn empty_result_list_returns_none() {
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
@@ -403,21 +454,66 @@ mod tests {
         );
         let result =
             run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi"))).unwrap();
-        assert!(result.is_valid);
+        assert!(result.is_none());
     }
 
     #[test]
-    fn multiple_results_combined_any_invalid_fails() {
+    fn level_error_is_preserved() {
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "validators/check.py",
-            "def validate(ctx):\n    return [{'is_valid': True, 'message': None}, {'is_valid': False, 'message': 'bad'}]\n",
+            "def validate(ctx):\n    return [{'level': 'error', 'message': 'hard fail'}]\n",
         );
-        let result =
-            run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi"))).unwrap();
-        assert!(!result.is_valid);
-        assert_eq!(result.message.as_deref(), Some("bad"));
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.level, ValidationLevel::Error);
+        assert_eq!(result.message.as_deref(), Some("hard fail"));
+    }
+
+    #[test]
+    fn description_is_preserved() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/check.py",
+            "def validate(ctx):\n    return [{'message': 'short', 'description': 'long explanation'}]\n",
+        );
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.message.as_deref(), Some("short"));
+        assert_eq!(result.description.as_deref(), Some("long explanation"));
+    }
+
+    #[test]
+    fn fixable_is_preserved() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/check.py",
+            "def validate(ctx):\n    return [{'message': 'can fix', 'fixable': True}]\n",
+        );
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert!(result.fixable);
+    }
+
+    #[test]
+    fn first_violation_is_returned() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/check.py",
+            "def validate(ctx):\n    return [{'message': 'first'}, {'message': 'second'}]\n",
+        );
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.level, ValidationLevel::Warning);
+        assert_eq!(result.message.as_deref(), Some("first"));
     }
 
     #[test]
@@ -435,17 +531,22 @@ def validate(ctx):
         ctx['value'] == 'hello' and
         ctx['args']['max'] == 10
     )
-    return [{'is_valid': ok, 'message': None}]
+    if not ok:
+        return [{'message': 'ctx mismatch'}]
+    return []
 "#,
         );
         let mut c = ctx(json!("hello"));
         c.args = json!({"max": 10});
         let result = run_python_validator("validators/check.py", tmp.path(), &c).unwrap();
-        assert!(result.is_valid, "ctx fields not accessible correctly");
+        assert!(
+            result.is_none(),
+            "all ctx fields matched — expected no failure"
+        );
     }
 
     #[test]
-    fn real_max_length_validator_in_python() {
+    fn real_length_validator_in_python() {
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
@@ -455,15 +556,33 @@ def validate(ctx):
     val = ctx['value'] or ''
     max_len = ctx['args']['max']
     if len(val) > max_len:
-        return [{'is_valid': False, 'message': 'value is {} chars (max {})'.format(len(val), max_len)}]
-    return [{'is_valid': True, 'message': None}]
+        return [{'message': 'value is {} chars (max {})'.format(len(val), max_len)}]
+    return []
 "#,
         );
         let mut c = ctx(json!("this is too long"));
         c.args = json!({"max": 5});
-        let result = run_python_validator("validators/max_len.py", tmp.path(), &c).unwrap();
-        assert!(!result.is_valid);
+        let result = run_python_validator("validators/max_len.py", tmp.path(), &c)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.level, ValidationLevel::Warning);
         assert!(result.message.as_deref().unwrap_or("").contains("chars"));
+    }
+
+    #[test]
+    fn violation_without_message_key_returns_warning_no_message() {
+        let tmp = TempDir::new().unwrap();
+        // Item with no message key — still a valid violation
+        write(
+            tmp.path(),
+            "validators/check.py",
+            "def validate(ctx):\n    return [{}]\n",
+        );
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.level, ValidationLevel::Warning);
+        assert!(result.message.is_none());
     }
 
     // ── file loading errors ───────────────────────────────────────────────────
@@ -565,17 +684,19 @@ def validate(ctx):
     }
 
     #[test]
-    fn result_missing_is_valid_key_gives_clear_message() {
+    fn result_with_only_message_key_is_a_valid_violation() {
+        // New contract: no is_valid key needed — every item is a violation.
         let tmp = TempDir::new().unwrap();
         write(
             tmp.path(),
             "validators/check.py",
             "def validate(ctx):\n    return [{'message': 'x'}]\n",
         );
-        let err =
-            run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("is_valid"), "got: {}", msg);
+        let result = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.level, ValidationLevel::Warning);
+        assert_eq!(result.message.as_deref(), Some("x"));
     }
 
     // ── runtime exceptions ────────────────────────────────────────────────────

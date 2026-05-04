@@ -12,6 +12,8 @@ use anyhow::Context;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 
+pub const VALIDATION_RESULTS_TABLE: &str = "validation_results_v1";
+
 // ---------------------------------------------------------------------------
 // Public interfaces
 // ---------------------------------------------------------------------------
@@ -25,10 +27,54 @@ pub struct FieldValidationContext {
     pub args: serde_json::Value,
 }
 
+/// Context passed to record-scoped validators (no `field`/`fields` key in config).
+pub struct RecordValidationContext {
+    pub table: String,
+    pub filename: String,
+    pub record: serde_json::Value,
+    /// Master-branch version of the record; `None` for new records (no baseline to compare).
+    pub master_record: Option<serde_json::Value>,
+    /// Parsed `schema.json` root for this folder; `None` when no schema file exists.
+    pub schema: serde_json::Value,
+    pub args: serde_json::Value,
+}
+
+/// One violation emitted by a record-scoped validator.
+/// Only failures are returned; clean fields produce no entry.
+pub struct RecordValidationResult {
+    pub field_path: String,
+    pub level: ValidationLevel,
+    pub message: Option<String>,
+    pub description: Option<String>,
+    pub fixable: bool,
+}
+
+/// Severity level for a validation failure.
+/// Only failures are stored; passing records produce no rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationLevel {
+    /// The value violates a hard constraint (e.g. required field missing).
+    Error,
+    /// The value violates a soft constraint (e.g. readonly changed, length exceeded).
+    Warning,
+}
+
+impl ValidationLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ValidationLevel::Error => "error",
+            ValidationLevel::Warning => "warning",
+        }
+    }
+}
+
+/// A validation failure. Only produced when a check fails; passes produce `None`.
 #[derive(Debug)]
 pub struct ValidationResult {
-    pub is_valid: bool,
+    pub level: ValidationLevel,
     pub message: Option<String>,
+    pub description: Option<String>,
+    pub fixable: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +86,7 @@ pub struct ValidationResult {
 /// Example:
 /// ```json
 /// [
-///   { "validator": "max_length", "params": { "max": 100 }, "field": "title" },
+///   { "validator": "length", "params": { "min": 1, "max": 100 }, "field": "title" },
 ///   { "validator": "required", "field": "id" }
 /// ]
 /// ```
@@ -66,20 +112,84 @@ pub struct ValidatorEntry {
 // ensure_schema helper (called from record_index::open_db)
 // ---------------------------------------------------------------------------
 
-pub fn ensure_validation_schema(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS validation_results (
+pub fn create_validation_schema(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {VALIDATION_RESULTS_TABLE} (
             folder_path     TEXT NOT NULL,
             file_name       TEXT NOT NULL,
             field_path      TEXT NOT NULL,
             validator_kind  TEXT NOT NULL,
-            is_valid        INTEGER NOT NULL,
+            level           TEXT NOT NULL,
             message         TEXT,
+            description     TEXT,
+            fixable         INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (folder_path, file_name, field_path, validator_kind)
-        );",
-    )
+        );"
+    ))
     .map_err(|e| anyhow::anyhow!("failed to ensure validation_results schema: {e}"))?;
     Ok(())
+}
+
+pub fn drop_validation_schema(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(&format!("DROP TABLE IF EXISTS {VALIDATION_RESULTS_TABLE};"))
+        .map_err(|e| anyhow::anyhow!("failed to drop validation_results schema: {e}"))?;
+    Ok(())
+}
+
+pub fn validation_schema_exists(conn: &Connection) -> anyhow::Result<bool> {
+    table_has_columns(
+        conn,
+        VALIDATION_RESULTS_TABLE,
+        &[
+            "folder_path",
+            "file_name",
+            "field_path",
+            "validator_kind",
+            "level",
+            "message",
+            "description",
+            "fixable",
+        ],
+    )
+}
+
+pub fn ensure_validation_schema(conn: &Connection) -> anyhow::Result<()> {
+    if !validation_schema_exists(conn)? {
+        drop_validation_schema(conn)?;
+        create_validation_schema(conn)?;
+    }
+    Ok(())
+}
+
+fn table_has_columns(
+    conn: &Connection,
+    table_name: &str,
+    required: &[&str],
+) -> anyhow::Result<bool> {
+    let table_exists = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            [table_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if !table_exists {
+        return Ok(false);
+    }
+
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table_name})"))
+        .map_err(|e| anyhow::anyhow!("failed to inspect {table_name} schema: {e}"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| anyhow::anyhow!("failed to query {table_name} schema: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    Ok(required
+        .iter()
+        .all(|required_column| columns.iter().any(|column| column == required_column)))
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +210,7 @@ pub fn run_validations(
     scratch_dir: &Path,
     dirty_dir: &Path,
     workspace_dir: &Path,
+    master_dir: &Path,
     db_path: &Path,
     is_full_rebuild: bool,
     selected_paths: Option<&std::collections::HashSet<String>>,
@@ -116,7 +227,15 @@ pub fn run_validations(
     }
 
     // Walk every record file and apply configured validators.
-    validate_records(dirty_dir, workspace_dir, &configs, &conn, selected_paths)?;
+    validate_records(
+        dirty_dir,
+        workspace_dir,
+        scratch_dir,
+        master_dir,
+        &configs,
+        &conn,
+        selected_paths,
+    )?;
 
     // Stale cleanup — only on full refresh to avoid deleting results for
     // records not included in this partial run.
@@ -136,7 +255,7 @@ fn reset_validation_results(
             for rel_path in paths {
                 let (folder_path, file_name) = split_record_path(rel_path)?;
                 conn.execute(
-                    "DELETE FROM validation_results WHERE folder_path = ?1 AND file_name = ?2",
+                    &format!("DELETE FROM {VALIDATION_RESULTS_TABLE} WHERE folder_path = ?1 AND file_name = ?2"),
                     params![folder_path, file_name],
                 )
                 .map_err(|e| {
@@ -145,7 +264,7 @@ fn reset_validation_results(
             }
         }
         None => {
-            conn.execute("DELETE FROM validation_results", [])
+            conn.execute(&format!("DELETE FROM {VALIDATION_RESULTS_TABLE}"), [])
                 .map_err(|e| anyhow::anyhow!("failed to clear validation results: {e}"))?;
         }
     }
@@ -260,7 +379,7 @@ fn collect_configs_recursive(
                 .with_context(|| format!("failed to read {}", path.display()))?;
             let parsed: Vec<ValidatorEntry> = serde_json::from_slice(&bytes).with_context(|| {
                 format!(
-                    "{} is invalid JSON\n  Syntax: [{{ \"validator\": \"max_length\", \"field\": \"title\", \"params\": {{ \"max\": 100 }} }}, ...]\n  Valid validators: max_length",
+                    "{} is invalid JSON\n  Syntax: [{{ \"validator\": \"length\", \"field\": \"title\", \"params\": {{ \"min\": 1, \"max\": 100 }} }}, ...]\n  Valid validators: length",
                     path.display()
                 )
             })?;
@@ -273,9 +392,13 @@ fn collect_configs_recursive(
 
 /// Apply all validators to all records under `dirty_dir`.
 /// `workspace_dir` is used to resolve `python:` script paths.
+/// `scratch_dir` is used to load `schema.json` for record-scoped validators.
+/// `master_dir` is used to load the master-branch version of each record.
 fn validate_records(
     dirty_dir: &Path,
     workspace_dir: &Path,
+    scratch_dir: &Path,
+    master_dir: &Path,
     configs: &HashMap<String, Vec<ValidatorEntry>>,
     conn: &Connection,
     selected_paths: Option<&std::collections::HashSet<String>>,
@@ -286,6 +409,9 @@ fn validate_records(
         } else {
             dirty_dir.join(folder_path)
         };
+
+        // Load schema.json once per folder (absence is silently tolerated).
+        let schema = load_schema_for_folder(scratch_dir, folder_path);
 
         // Collect record files in this folder.
         let record_files = collect_record_files_in_folder(&folder_dir)?;
@@ -318,10 +444,86 @@ fn validate_records(
             let record: serde_json::Value = serde_json::from_slice(&bytes)
                 .with_context(|| format!("failed to parse JSON in {}", record_path.display()))?;
 
-            apply_validators_to_record(conn, folder_path, file_name, &record, entries, workspace_dir)?;
+            // Load master record for readonly checks (absent file = new record = None).
+            let master_record = load_master_record(master_dir, folder_path, file_name);
+
+            apply_validators_to_record(
+                conn,
+                folder_path,
+                file_name,
+                &record,
+                master_record.as_ref(),
+                schema.as_ref(),
+                entries,
+                workspace_dir,
+            )?;
         }
     }
     Ok(())
+}
+
+/// Load `schema.json` from `scratch_dir/<folder_path>/schema.json`.
+/// Returns `None` if absent or unparseable (with a warning to stderr).
+fn load_schema_for_folder(scratch_dir: &Path, folder_path: &str) -> Option<serde_json::Value> {
+    let schema_path = if folder_path.is_empty() {
+        scratch_dir.join("schema.json")
+    } else {
+        scratch_dir.join(folder_path).join("schema.json")
+    };
+    match std::fs::read(&schema_path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!(
+                    "[validation] failed to parse {}: {e} — record-scoped validators will be skipped",
+                    schema_path.display()
+                );
+                None
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!(
+                "[validation] failed to read {}: {e} — record-scoped validators will be skipped",
+                schema_path.display()
+            );
+            None
+        }
+    }
+}
+
+/// Load the master-branch version of a record file.
+/// Returns `None` if the file doesn't exist (new record) or can't be parsed (warns to stderr).
+fn load_master_record(
+    master_dir: &Path,
+    folder_path: &str,
+    file_name: &str,
+) -> Option<serde_json::Value> {
+    let path = if folder_path.is_empty() {
+        master_dir.join(file_name)
+    } else {
+        master_dir.join(folder_path).join(file_name)
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!(
+                    "[validation] failed to parse master record {}: {e} — readonly checks skipped",
+                    path.display()
+                );
+                None
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!(
+                "[validation] failed to read master record {}: {e} — readonly checks skipped",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 /// Apply the validator entries for one record file and persist results.
@@ -330,6 +532,8 @@ fn apply_validators_to_record(
     folder_path: &str,
     file_name: &str,
     record: &serde_json::Value,
+    master_record: Option<&serde_json::Value>,
+    schema: Option<&serde_json::Value>,
     entries: &[ValidatorEntry],
     workspace_dir: &Path,
 ) -> anyhow::Result<()> {
@@ -371,15 +575,19 @@ fn apply_validators_to_record(
                     record: record.clone(),
                     args: entry.params.clone(),
                 };
-                let result = dispatch_validator(&entry.validator, &ctx, workspace_dir)?;
-                upsert_result(
-                    conn,
-                    folder_path,
-                    file_name,
-                    field_path,
-                    &entry.validator,
-                    &result,
-                )?;
+                if let Some(result) = dispatch_validator(&entry.validator, &ctx, workspace_dir)? {
+                    upsert_result(
+                        conn,
+                        folder_path,
+                        file_name,
+                        field_path,
+                        &entry.validator,
+                        result.level.as_str(),
+                        result.message.as_deref(),
+                        result.description.as_deref(),
+                        result.fixable,
+                    )?;
+                }
             }
             (_, Some(_fields)) => {
                 // Multi-field validators deferred to a future slice.
@@ -390,11 +598,30 @@ fn apply_validators_to_record(
                 );
             }
             (None, None) => {
-                // Record-scoped validators deferred to a future slice.
-                eprintln!(
-                    "[validation] record-scoped validators (no field/fields) are not yet implemented; skipping '{}' in {folder_path}/validation.json",
-                    entry.validator
-                );
+                // Record-scoped validator. `enforce_schema` reads schema + master.
+                // Absence of rows for a record means no violations (violations-only model).
+                let record_ctx = RecordValidationContext {
+                    table: folder_path.to_string(),
+                    filename: file_name.to_string(),
+                    record: record.clone(),
+                    master_record: master_record.cloned(),
+                    schema: schema.cloned().unwrap_or(serde_json::Value::Null),
+                    args: entry.params.clone(),
+                };
+                let violations = dispatch_record_validator(&entry.validator, &record_ctx)?;
+                for v in violations {
+                    upsert_result(
+                        conn,
+                        folder_path,
+                        file_name,
+                        &v.field_path,
+                        &entry.validator,
+                        v.level.as_str(),
+                        v.message.as_deref(),
+                        v.description.as_deref(),
+                        v.fixable,
+                    )?;
+                }
             }
         }
     }
@@ -404,21 +631,36 @@ fn apply_validators_to_record(
 
 /// Dispatch to a validator by kind string.
 ///
-/// Built-in validators use plain names (e.g. `"max_length"`).
+/// Built-in validators use plain names (e.g. `"length"`).
 /// Python validators use the `python:` prefix followed by a path relative to
 /// `workspace_dir` (e.g. `"python:validators/check_name.py"`).
 fn dispatch_validator(
     kind: &str,
     ctx: &FieldValidationContext,
     workspace_dir: &Path,
-) -> anyhow::Result<ValidationResult> {
+) -> anyhow::Result<Option<ValidationResult>> {
     if let Some(rel_path) = kind.strip_prefix("python:") {
         return python::run_python_validator(rel_path, workspace_dir, ctx);
     }
     match kind {
-        "max_length" => Ok(builtin::max_length(ctx)),
+        "length" => Ok(builtin::length(ctx)),
+        "max_length" => Ok(builtin::length(ctx)),
         other => anyhow::bail!(
-            "unknown validator '{}' — valid validators: max_length, python:<path>",
+            "unknown validator '{}' — valid validators: length, python:<path>",
+            other
+        ),
+    }
+}
+
+/// Dispatch to a record-scoped validator by kind string.
+fn dispatch_record_validator(
+    kind: &str,
+    ctx: &RecordValidationContext,
+) -> anyhow::Result<Vec<RecordValidationResult>> {
+    match kind {
+        "enforce_schema" => Ok(builtin::enforce_schema(ctx)),
+        other => anyhow::bail!(
+            "unknown record-scoped validator '{}' — valid: enforce_schema",
             other
         ),
     }
@@ -430,19 +672,26 @@ fn upsert_result(
     file_name: &str,
     field_path: &str,
     validator_kind: &str,
-    result: &ValidationResult,
+    level: &str,
+    message: Option<&str>,
+    description: Option<&str>,
+    fixable: bool,
 ) -> anyhow::Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO validation_results \
-         (folder_path, file_name, field_path, validator_kind, is_valid, message) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        &format!(
+            "INSERT OR REPLACE INTO {VALIDATION_RESULTS_TABLE} \
+         (folder_path, file_name, field_path, validator_kind, level, message, description, fixable) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+        ),
         params![
             folder_path,
             file_name,
             field_path,
             validator_kind,
-            result.is_valid as i64,
-            result.message.as_deref(),
+            level,
+            message,
+            description,
+            fixable
         ],
     )
     .map_err(|e| anyhow::anyhow!("failed to write validation result: {e}"))?;
@@ -453,9 +702,12 @@ fn upsert_result(
 /// longer present in record_index (i.e. the record file was deleted).
 fn cleanup_stale_results(conn: &Connection) -> anyhow::Result<()> {
     conn.execute(
-        "DELETE FROM validation_results \
+        &format!(
+            "DELETE FROM {VALIDATION_RESULTS_TABLE} \
          WHERE (folder_path, file_name) NOT IN \
-               (SELECT folder_path, file_name FROM record_index)",
+               (SELECT folder_path, file_name FROM {})",
+            crate::shared::record_index::RECORD_INDEX_TABLE
+        ),
         [],
     )
     .map_err(|e| anyhow::anyhow!("failed to clean stale validation results: {e}"))?;
@@ -509,7 +761,7 @@ fn open_validation_db(db_path: &Path) -> anyhow::Result<Connection> {
 
 #[cfg(test)]
 mod tests {
-    use super::run_validations;
+    use super::{ensure_validation_schema, run_validations, VALIDATION_RESULTS_TABLE};
     use rusqlite::Connection;
     use std::collections::HashSet;
     use std::fs;
@@ -525,6 +777,34 @@ mod tests {
     }
 
     #[test]
+    fn ensure_validation_schema_recreates_table_when_columns_are_missing() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE validation_results (
+                folder_path     TEXT NOT NULL,
+                file_name       TEXT NOT NULL,
+                field_path      TEXT NOT NULL,
+                validator_kind  TEXT NOT NULL,
+                level           TEXT NOT NULL,
+                message         TEXT,
+                PRIMARY KEY (folder_path, file_name, field_path, validator_kind)
+            );",
+        )
+        .unwrap();
+
+        ensure_validation_schema(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{VALIDATION_RESULTS_TABLE}') WHERE name IN ('description', 'fixable')"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
     fn selected_validation_refresh_replaces_existing_record_results() {
         let tmp = TempDir::new().unwrap();
         let scratch_dir = tmp.path().join("scratch");
@@ -534,30 +814,51 @@ mod tests {
         write_file(
             &scratch_dir,
             "posts/validation.json",
-            r#"[{"field":"title","validator":"max_length","params":{"max":5}}]"#,
+            r#"[{"field":"title","validator":"length","params":{"max":5}}]"#,
         );
         write_file(&dirty_dir, "posts/one.json", r#"{"title":"too long"}"#);
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
-        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(
+            &scratch_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &db_path,
+            false,
+            Some(&selected),
+        )
+        .unwrap();
 
         write_file(&dirty_dir, "posts/one.json", r#"{"title":"ok"}"#);
-        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(
+            &scratch_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &db_path,
+            false,
+            Some(&selected),
+        )
+        .unwrap();
 
         let conn = Connection::open(&db_path).unwrap();
-        let rows: Vec<(i64, Option<String>)> = conn
-            .prepare(
-                "SELECT is_valid, message FROM validation_results \
+        let rows: Vec<(String, Option<String>)> = conn
+            .prepare(&format!(
+                "SELECT level, message FROM {VALIDATION_RESULTS_TABLE} \
                  WHERE folder_path = 'posts' AND file_name = 'one.json'",
-            )
+            ))
             .unwrap()
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(rows, vec![(1, None)]);
+        assert!(
+            rows.is_empty(),
+            "no violations after fix — expected no rows, got: {rows:?}"
+        );
     }
 
     #[test]
@@ -570,22 +871,42 @@ mod tests {
         write_file(
             &scratch_dir,
             "posts/validation.json",
-            r#"[{"field":"title","validator":"max_length","params":{"max":5}}]"#,
+            r#"[{"field":"title","validator":"length","params":{"max":5}}]"#,
         );
         write_file(&dirty_dir, "posts/one.json", r#"{"title":"too long"}"#);
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
-        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(
+            &scratch_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &db_path,
+            false,
+            Some(&selected),
+        )
+        .unwrap();
 
         fs::remove_file(dirty_dir.join("posts/one.json")).unwrap();
-        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(
+            &scratch_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &db_path,
+            false,
+            Some(&selected),
+        )
+        .unwrap();
 
         let conn = Connection::open(&db_path).unwrap();
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM validation_results", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {VALIDATION_RESULTS_TABLE}"),
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -600,22 +921,42 @@ mod tests {
         write_file(
             &scratch_dir,
             "posts/validation.json",
-            r#"[{"field":"title","validator":"max_length","params":{"max":5}}]"#,
+            r#"[{"field":"title","validator":"length","params":{"max":5}}]"#,
         );
         write_file(&dirty_dir, "posts/one.json", r#"{"title":"too long"}"#);
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
-        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(
+            &scratch_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &db_path,
+            false,
+            Some(&selected),
+        )
+        .unwrap();
 
         fs::remove_file(scratch_dir.join("posts/validation.json")).unwrap();
-        run_validations(&scratch_dir, &dirty_dir, &dirty_dir, &db_path, false, Some(&selected)).unwrap();
+        run_validations(
+            &scratch_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &dirty_dir,
+            &db_path,
+            false,
+            Some(&selected),
+        )
+        .unwrap();
 
         let conn = Connection::open(&db_path).unwrap();
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM validation_results", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {VALIDATION_RESULTS_TABLE}"),
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, 0);
     }

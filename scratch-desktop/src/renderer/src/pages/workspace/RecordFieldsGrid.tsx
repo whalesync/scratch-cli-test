@@ -1,5 +1,5 @@
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
+import { Box, Button, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
 import { ChevronDown, TriangleAlertIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
@@ -32,11 +32,20 @@ export interface RecordFieldRow {
   onUndo?: () => void;
 }
 
+export type ValidationEntry = {
+  level: 'error' | 'warning';
+  message: string | null;
+  description: string | null;
+  fixable: boolean;
+  validatorKind: string;
+  fieldPath?: string;
+};
+
 interface RecordFieldsGridProps {
   rows: RecordFieldRow[];
   footer?: React.ReactNode;
-  /** Maps field name → list of validation warning messages to show. */
-  validationWarnings?: Map<string, string[]>;
+  /** Maps field name → list of validation violations to show. */
+  validationWarnings?: Map<string, ValidationEntry[]>;
   /**
    * When set, the grid focuses on this field. Updates to this prop re-engage
    * focus mode (e.g. when a different field is requested by the parent).
@@ -46,6 +55,160 @@ interface RecordFieldsGridProps {
 
 const FLOATING_PANEL_GAP = 5;
 const LABEL_COLUMN_WIDTH = 280;
+
+function validationLevelColor(level: ValidationEntry['level']): string {
+  return level === 'error' ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)';
+}
+
+function validationLevelSurface(level: ValidationEntry['level']): string {
+  return level === 'error' ? 'var(--mantine-color-red-0)' : 'var(--mantine-color-yellow-0)';
+}
+
+function formatValidatorName(validatorKind: string): string {
+  return validatorKind.replace(/[_-]+/g, ' ');
+}
+
+export function ValidationTooltipContent({
+  violations,
+  fullWidth,
+  showFieldColumn,
+}: {
+  violations: ValidationEntry[];
+  fullWidth?: boolean;
+  showFieldColumn?: boolean;
+}) {
+  return (
+    <Box
+      style={fullWidth ? { width: '100%', maxWidth: 800, padding: 2 } : { minWidth: 420, maxWidth: 560, padding: 2 }}
+    >
+      <Table
+        fz="xs"
+        withRowBorders={false}
+        horizontalSpacing={10}
+        verticalSpacing={7}
+        styles={{
+          table: { tableLayout: 'fixed' },
+          th: {
+            borderBottom: '1px solid rgba(15, 23, 42, 0.10)',
+            color: 'rgba(15, 23, 42, 0.48)',
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            paddingBottom: 8,
+            textTransform: 'uppercase',
+          },
+          td: {
+            borderBottom: '1px solid rgba(15, 23, 42, 0.06)',
+            color: 'rgba(15, 23, 42, 0.88)',
+            lineHeight: 1.35,
+          },
+        }}
+      >
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th style={{ width: 82 }}>Level</Table.Th>
+            {showFieldColumn && <Table.Th style={{ width: 150 }}>Field</Table.Th>}
+            <Table.Th>Message</Table.Th>
+            <Table.Th style={{ width: 150 }}>Validator</Table.Th>
+            <Table.Th style={{ width: 120 }}>Actions</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {violations.map((violation, index) => (
+            <Table.Tr key={`${violation.level}-${violation.validatorKind}-${index}`}>
+              <Table.Td>
+                <Box
+                  component="span"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    borderRadius: 999,
+                    background: validationLevelSurface(violation.level),
+                    color: validationLevelColor(violation.level),
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: '0.04em',
+                    padding: '3px 7px',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {violation.level}
+                </Box>
+              </Table.Td>
+              {showFieldColumn && (
+                <Table.Td>
+                  <Text12Medium c="var(--fg-primary)" style={{ wordBreak: 'break-all' }}>
+                    {violation.fieldPath ?? '-'}
+                  </Text12Medium>
+                </Table.Td>
+              )}
+              <Table.Td style={{ wordBreak: 'break-word' }}>
+                <Stack gap={3}>
+                  <Text12Medium c="rgba(15, 23, 42, 0.92)">{violation.message ?? 'No message'}</Text12Medium>
+                  {violation.description && (
+                    <Text12Regular c="rgba(15, 23, 42, 0.62)" style={{ lineHeight: 1.35 }}>
+                      {violation.description}
+                    </Text12Regular>
+                  )}
+                </Stack>
+              </Table.Td>
+              <Table.Td
+                style={{
+                  color: 'rgba(15, 23, 42, 0.58)',
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                {formatValidatorName(violation.validatorKind)}
+              </Table.Td>
+              <Table.Td>
+                <Group gap={4} wrap="nowrap">
+                  {violation.fixable && (
+                    <Button size="compact-xs" variant="light" color="gray">
+                      Fix
+                    </Button>
+                  )}
+                  <Button size="compact-xs" variant="light" color="gray">
+                    Ignore
+                  </Button>
+                </Group>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Box>
+  );
+}
+
+function ValidationTooltip({ violations, children }: { violations: ValidationEntry[]; children: React.ReactNode }) {
+  return (
+    <Tooltip
+      label={<ValidationTooltipContent violations={violations} />}
+      position="top-end"
+      withArrow
+      multiline
+      offset={10}
+      zIndex={10020}
+      styles={{
+        tooltip: {
+          background: '#fff',
+          border: '1px solid rgba(15, 23, 42, 0.12)',
+          borderRadius: 12,
+          boxShadow: '0 18px 44px rgba(15, 23, 42, 0.18)',
+          padding: 12,
+        },
+        arrow: {
+          background: '#fff',
+          border: '1px solid rgba(15, 23, 42, 0.12)',
+        },
+      }}
+    >
+      {children}
+    </Tooltip>
+  );
+}
 
 const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -107,11 +270,13 @@ function FieldLabel({
   onFocus,
 }: {
   row: RecordFieldRow;
-  validationWarnings?: Map<string, string[]>;
+  validationWarnings?: Map<string, ValidationEntry[]>;
   onFocus?: () => void;
 }) {
   const label = row.displayLabel ?? row.fieldName;
-  const warnings = validationWarnings?.get(row.fieldName);
+  const violations = validationWarnings?.get(row.fieldName);
+  const hasError = violations?.some((v) => v.level === 'error');
+
   const content = (
     <Box style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
       <Text12Medium
@@ -120,12 +285,16 @@ function FieldLabel({
       >
         {label}
       </Text12Medium>
-      {warnings && (
-        <Tooltip label={warnings.join('\n')} position="top-end" withArrow zIndex={10020} multiline>
+      {violations && violations.length > 0 && (
+        <ValidationTooltip violations={violations}>
           <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default', flexShrink: 0 }}>
-            <StyledLucideIcon Icon={TriangleAlertIcon} size={16} c="var(--mantine-color-orange-6)" />
+            <StyledLucideIcon
+              Icon={TriangleAlertIcon}
+              size={16}
+              c={hasError ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
+            />
           </Box>
-        </Tooltip>
+        </ValidationTooltip>
       )}
     </Box>
   );
@@ -349,19 +518,23 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                         <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
                       )}
                   </Stack>
-                  {validationWarnings?.has(row.fieldName) && (
-                    <Tooltip
-                      label={validationWarnings.get(row.fieldName)!.join('\n')}
-                      position="top-end"
-                      withArrow
-                      zIndex={10020}
-                      multiline
-                    >
-                      <Box w={16} h={16} c="var(--mantine-color-orange-6)">
-                        <TriangleAlertIcon size={16} />
-                      </Box>
-                    </Tooltip>
-                  )}
+                  {validationWarnings?.has(row.fieldName) &&
+                    (() => {
+                      const vs = validationWarnings.get(row.fieldName)!;
+                      const hasErr = vs.some((v) => v.level === 'error');
+                      if (vs.length === 0) return null;
+                      return (
+                        <ValidationTooltip violations={vs}>
+                          <Box
+                            w={16}
+                            h={16}
+                            c={hasErr ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
+                          >
+                            <TriangleAlertIcon size={16} />
+                          </Box>
+                        </ValidationTooltip>
+                      );
+                    })()}
                 </Group>
               </Table.Td>
               <Table.Td>

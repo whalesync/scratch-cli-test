@@ -18,6 +18,7 @@ import '@glideapps/glide-data-grid/dist/index.css';
 import {
   ActionIcon,
   Box,
+  Button,
   Divider,
   Group,
   Loader,
@@ -25,6 +26,7 @@ import {
   Popover,
   Portal,
   Stack,
+  Table,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
@@ -85,6 +87,16 @@ interface DiffGridResult {
   invalidJsonFiles: InvalidJsonFileListEntry[];
 }
 
+type GridValidationEntry = {
+  file_name?: string;
+  field_path: string;
+  validator_kind: string;
+  level: 'error' | 'warning';
+  message: string | null;
+  description: string | null;
+  fixable: boolean;
+};
+
 type FilterKind = 'unreviewed' | 'unpublished';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
 
@@ -113,6 +125,13 @@ interface CellPopoverState {
   bounds: { x: number; y: number; width: number; height: number };
   recordLevel?: boolean;
   recordAction?: 'added' | 'deleted';
+}
+
+interface ValidationHoverState {
+  col: number;
+  row: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  entries: GridValidationEntry[];
 }
 
 interface FolderDataGridProps {
@@ -155,6 +174,10 @@ const GRID_THEME = {
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function validationCellKey(filename: string, fieldPath: string): string {
+  return `${filename}\u0000${fieldPath}`;
 }
 
 const DIFF_WORKING_BG = () => getCssVar('--modified-needs-review-bg');
@@ -204,6 +227,42 @@ function drawStatusIcon(ctx: CanvasRenderingContext2D, x: number, y: number, siz
     ctx.stroke();
   }
 
+  ctx.restore();
+}
+
+function drawValidationIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  level: 'error' | 'warning',
+): void {
+  ctx.save();
+  ctx.fillStyle =
+    level === 'error'
+      ? getCssVar('--mantine-color-red-6') || '#e03131'
+      : getCssVar('--mantine-color-orange-6') || '#f08c00';
+  ctx.strokeStyle = ctx.fillStyle;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(x + size / 2, y + 1.5);
+  ctx.lineTo(x + size - 1.5, y + size - 1.5);
+  ctx.lineTo(x + 1.5, y + size - 1.5);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x + size / 2, y + 5);
+  ctx.lineTo(x + size / 2, y + size - 6);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size - 3.5, 0.9, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
   ctx.restore();
 }
 
@@ -619,6 +678,7 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
   const { selectedFolderPath, workspacePath, dataRefreshKey } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
+  const [validationByCell, setValidationByCell] = useState<Map<string, GridValidationEntry[]>>(new Map());
   const [loadingMode, setLoadingMode] = useState<GridLoadMode>('idle');
   const [error, setError] = useState<string | null>(null);
   const [errorQueryKey, setErrorQueryKey] = useState<string | null>(null);
@@ -638,6 +698,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [activeEditorDiffKind, setActiveEditorDiffKind] = useState<EditorOverlayDiffKind | null>(null);
   const [editingCell, setEditingCell] = useState<Item | null>(null);
   const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
+  const [validationHover, setValidationHover] = useState<ValidationHoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [visibleColumnIds, setVisibleColumnIds] = useState<string[] | null>(null);
 
@@ -652,6 +713,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | 'discard' | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const loadGenerationRef = useRef(0);
+  const validationLoadGenerationRef = useRef(0);
   const didMountDataRefreshRef = useRef(false);
   const hasCurrentQueryDataRef = useRef(false);
   const currentQueryRef = useRef<GridQueryState | null>(null);
@@ -778,6 +840,41 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   useEffect(() => {
     void loadDiffData('blocking', currentQuery);
   }, [currentQuery, loadDiffData, reloadKey]);
+
+  useEffect(() => {
+    if (!selectedFolderPath || !workspacePath || !diffData) {
+      validationLoadGenerationRef.current += 1;
+      setValidationByCell(new Map());
+      return;
+    }
+
+    const generation = ++validationLoadGenerationRef.current;
+    void window.scratchFiles
+      .getFolderValidationResults(workspacePath, selectedFolderPath)
+      .then((results) => {
+        if (generation !== validationLoadGenerationRef.current) {
+          return;
+        }
+        const next = new Map<string, GridValidationEntry[]>();
+        for (const result of results as GridValidationEntry[]) {
+          if (!result.file_name) {
+            continue;
+          }
+          const key = validationCellKey(result.file_name, result.field_path);
+          const entries = next.get(key) ?? [];
+          entries.push(result);
+          next.set(key, entries);
+        }
+        setValidationByCell(next);
+      })
+      .catch((error: unknown) => {
+        if (generation !== validationLoadGenerationRef.current) {
+          return;
+        }
+        console.debug('[FolderDataGrid] failed to load validation results:', error);
+        setValidationByCell(new Map());
+      });
+  }, [diffData, selectedFolderPath, workspacePath]);
 
   // Keep the current rows painted during passive background refreshes (e.g. app focus).
   // currentQuery is intentionally NOT in the dep array — we read it via ref so this effect
@@ -1046,6 +1143,24 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return allColumnIds.filter((c) => set.has(c));
   }, [allColumnIds, diffData]);
 
+  const buildValidationHoverState = useCallback(
+    (col: number, row: number): ValidationHoverState | null => {
+      if (col === 0) return null;
+      const record = pagedRows[row] as DiffRow | undefined;
+      const columnId = columns[col]?.id;
+      if (!record || !columnId) return null;
+
+      const entries = validationByCell.get(validationCellKey(record.__filename, columnId));
+      if (!entries || entries.length === 0) return null;
+
+      const bounds = gridRef.current?.getBounds(col, row);
+      if (!bounds) return null;
+
+      return { col, row, bounds, entries };
+    },
+    [columns, pagedRows, validationByCell],
+  );
+
   const buildCellPopoverState = useCallback(
     (col: number, row: number): CellPopoverState | null => {
       const record = pagedRows[row] as DiffRow | undefined;
@@ -1131,6 +1246,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       setActiveEditorDiffKind(null);
     }
   }, [editingCell, gridSelection]);
+
+  useEffect(() => {
+    setValidationHover(null);
+  }, [selectedFolderPath, validationByCell, workspacePath]);
 
   const filterCounts = diffData?.filterCounts;
 
@@ -1662,6 +1781,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         args.ctx.restore();
       }
 
+      const validationEntries = validationByCell.get(validationCellKey(row.__filename, colId));
+      if (validationEntries && validationEntries.length > 0) {
+        const level = validationEntries.some((entry) => entry.level === 'error') ? 'error' : 'warning';
+        const iconSize = 14;
+        drawValidationIcon(
+          args.ctx,
+          args.rect.x + args.rect.width - iconSize - 8,
+          args.rect.y + (args.rect.height - iconSize) / 2,
+          iconSize,
+          level,
+        );
+      }
+
       // Strikethrough for deleted rows
       if (row.__rowStatus === 'deleted' || row.__rowStatus === 'deletedUnpublished') {
         const cell = args.cell;
@@ -1683,7 +1815,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         }
       }
     },
-    [columnDefsMap, columns, page, pagedRows],
+    [columnDefsMap, columns, page, pagedRows, validationByCell],
   );
 
   const onCellClicked = useCallback(
@@ -1727,18 +1859,35 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const nextRow = args.kind === 'cell' ? args.location[1] : null;
       setHoveredRowIdx((prev) => (prev === nextRow ? prev : nextRow));
       recomputeInspectRect(nextRow);
+
+      const nextValidationHover =
+        args.kind === 'cell' ? buildValidationHoverState(args.location[0], args.location[1]) : null;
+      setValidationHover((current) => {
+        if (
+          current &&
+          nextValidationHover &&
+          current.col === nextValidationHover.col &&
+          current.row === nextValidationHover.row &&
+          current.entries === nextValidationHover.entries
+        ) {
+          return current;
+        }
+        return nextValidationHover;
+      });
     },
-    [recomputeInspectRect],
+    [buildValidationHoverState, recomputeInspectRect],
   );
 
   const onGridMouseLeave = useCallback(() => {
     setHoveredRowIdx(null);
     setInspectButtonRect(null);
+    setValidationHover(null);
   }, []);
 
   const onVisibleRegionChanged = useCallback(() => {
     // Reposition the inspect button as the user scrolls.
     recomputeInspectRect(hoveredRowIdx);
+    setValidationHover(null);
   }, [recomputeInspectRect, hoveredRowIdx]);
 
   const onCellActivated = useCallback(
@@ -2375,6 +2524,137 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           </ButtonSecondaryGhost>
         </Group>
       </Modal>
+
+      {validationHover &&
+        (() => {
+          const tooltipWidth = 520;
+          const left = Math.max(
+            12,
+            Math.min(
+              validationHover.bounds.x + validationHover.bounds.width - tooltipWidth,
+              window.innerWidth - tooltipWidth - 12,
+            ),
+          );
+          const belowTop = validationHover.bounds.y + validationHover.bounds.height + 8;
+          const estimatedHeight = Math.min(260, 54 + validationHover.entries.length * 42);
+          const top =
+            belowTop + estimatedHeight < window.innerHeight - 12
+              ? belowTop
+              : Math.max(12, validationHover.bounds.y - estimatedHeight - 8);
+
+          return (
+            <Portal target="#portal">
+              <Box
+                style={{
+                  position: 'fixed',
+                  left,
+                  top,
+                  zIndex: 10020,
+                  width: tooltipWidth,
+                  maxWidth: Math.max(280, window.innerWidth - 24),
+                  maxHeight: 260,
+                  overflow: 'auto',
+                  pointerEvents: 'none',
+                  background: '#fff',
+                  border: '1px solid rgba(15, 23, 42, 0.12)',
+                  borderRadius: 12,
+                  boxShadow: '0 18px 44px rgba(15, 23, 42, 0.18)',
+                  padding: 10,
+                }}
+              >
+                <Table
+                  fz="xs"
+                  withRowBorders={false}
+                  horizontalSpacing={8}
+                  verticalSpacing={6}
+                  styles={{
+                    th: {
+                      color: 'rgba(15, 23, 42, 0.48)',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      letterSpacing: '0.08em',
+                      paddingBottom: 7,
+                      textTransform: 'uppercase',
+                    },
+                    td: {
+                      color: 'rgba(15, 23, 42, 0.88)',
+                      lineHeight: 1.35,
+                      verticalAlign: 'top',
+                    },
+                  }}
+                >
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th style={{ width: 76 }}>Level</Table.Th>
+                      <Table.Th>Message</Table.Th>
+                      <Table.Th style={{ width: 132 }}>Validator</Table.Th>
+                      <Table.Th style={{ width: 120 }}>Actions</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {validationHover.entries.map((entry, index) => {
+                      const isError = entry.level === 'error';
+                      return (
+                        <Table.Tr key={`${entry.validator_kind}-${entry.field_path}-${index}`}>
+                          <Table.Td>
+                            <Box
+                              component="span"
+                              style={{
+                                display: 'inline-flex',
+                                borderRadius: 999,
+                                background: isError ? 'var(--mantine-color-red-0)' : 'var(--mantine-color-yellow-0)',
+                                color: isError ? 'var(--mantine-color-red-7)' : 'var(--mantine-color-orange-7)',
+                                fontSize: 10,
+                                fontWeight: 800,
+                                letterSpacing: '0.04em',
+                                padding: '3px 7px',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              {entry.level}
+                            </Box>
+                          </Table.Td>
+                          <Table.Td style={{ wordBreak: 'break-word' }}>
+                            <Stack gap={3}>
+                              <Text12Medium c="rgba(15, 23, 42, 0.92)">{entry.message ?? 'No message'}</Text12Medium>
+                              {entry.description && (
+                                <Text12Regular c="rgba(15, 23, 42, 0.62)" style={{ lineHeight: 1.35 }}>
+                                  {entry.description}
+                                </Text12Regular>
+                              )}
+                            </Stack>
+                          </Table.Td>
+                          <Table.Td
+                            style={{
+                              color: 'rgba(15, 23, 42, 0.58)',
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {entry.validator_kind.replace(/[_-]+/g, ' ')}
+                          </Table.Td>
+                          <Table.Td>
+                            <Group gap={4} wrap="nowrap">
+                              {entry.fixable && (
+                                <Button size="compact-xs" variant="light" color="gray">
+                                  Fix
+                                </Button>
+                              )}
+                              <Button size="compact-xs" variant="light" color="gray">
+                                Ignore
+                              </Button>
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Box>
+            </Portal>
+          );
+        })()}
 
       {cellPopover &&
         selectedFolderPath &&

@@ -29,6 +29,16 @@ type DiffGridFilter =
   | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
+type ValidationResultRow = {
+  file_name?: string;
+  field_path: string;
+  validator_kind: string;
+  level: 'error' | 'warning';
+  message: string | null;
+  description: string | null;
+  fixable: boolean;
+};
+
 const scratchDeepLink = {
   onDeepLink: (callback: (route: string, query: string) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, route: string, query: string): void => {
@@ -70,6 +80,8 @@ const scratchDesktop = {
     opts?: { force?: boolean },
   ): Promise<{ stdout: string; stderr: string }> => invoke('scratch:init-workspace', workbookId, cwd, opts),
   removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
+  prepareWorkspaceIndex: (workspacePath: string): Promise<void> =>
+    invoke('scratch:prepare-workspace-index', workspacePath),
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,
@@ -366,12 +378,10 @@ const scratchFiles = {
     masterData: Record<string, unknown> | null;
     displayData: Record<string, unknown> | null;
   } | null> => invoke('files:read-diff-record-data', folderPath, workspacePath, filename),
-  getValidationResults: (
-    workspacePath: string,
-    folderPath: string,
-    filename: string,
-  ): Promise<Array<{ field_path: string; validator_kind: string; is_valid: boolean; message: string | null }>> =>
+  getValidationResults: (workspacePath: string, folderPath: string, filename: string): Promise<ValidationResultRow[]> =>
     invoke('files:get-validation-results', workspacePath, folderPath, filename),
+  getFolderValidationResults: (workspacePath: string, folderPath: string): Promise<ValidationResultRow[]> =>
+    invoke('files:get-folder-validation-results', workspacePath, folderPath),
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

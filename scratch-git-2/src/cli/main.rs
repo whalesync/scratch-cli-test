@@ -165,6 +165,23 @@ enum Commands {
         #[arg(long)]
         record: String,
     },
+    /// Get validation results for all records in a folder as JSON
+    #[command(name = "get-folder-validation-results")]
+    GetFolderValidationResults {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+    },
+    /// Assert derived index tables exist for all workspace connections
+    #[command(name = "assert-index-tables")]
+    AssertIndexTables {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
     /// Print validation config loaded from validation.json files in the workspace
     #[command(name = "dump-validations")]
     DumpValidations {
@@ -290,6 +307,10 @@ async fn main() {
         Commands::GetValidationResults { workspace, record } => {
             index::get_validation_results_command(&workspace, &record)
         }
+        Commands::GetFolderValidationResults { workspace, folder } => {
+            index::get_folder_validation_results_command(&workspace, &folder)
+        }
+        Commands::AssertIndexTables { workspace } => index::assert_index_tables_command(&workspace),
         Commands::DumpValidations {
             workspace,
             connection,

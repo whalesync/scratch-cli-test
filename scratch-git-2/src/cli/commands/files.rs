@@ -255,6 +255,7 @@ fn refresh_record_index_for_ctx(
         &ctx.scratch_dir,
         &ctx.dirty_dir,
         &ctx.workspace_dir,
+        &ctx.master_dir,
         &ctx.db_path,
         rebuild,
         selected_paths.as_ref(),

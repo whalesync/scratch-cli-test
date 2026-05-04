@@ -151,6 +151,10 @@ export async function refreshRecordIndex(
   return runScratchmd(args, workspacePath);
 }
 
+export async function assertIndexTables(workspacePath: string): Promise<{ stdout: string; stderr: string }> {
+  return runScratchmd(['assert-index-tables'], workspacePath);
+}
+
 // ── Streaming helpers ──
 
 export function startScratchmdLiveCommand(
@@ -473,10 +477,13 @@ export async function restoreDeletedRecord(workspacePath: string, recordPath: st
 }
 
 export interface RecordValidationResult {
+  file_name?: string;
   field_path: string;
   validator_kind: string;
-  is_valid: boolean;
+  level: 'error' | 'warning';
   message: string | null;
+  description: string | null;
+  fixable: boolean;
 }
 
 export async function getValidationResults(
@@ -489,6 +496,21 @@ export async function getValidationResults(
   try {
     return await runScratchmdJson<RecordValidationResult[]>(
       ['get-validation-results', '--record', recordPath],
+      workspacePath,
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function getFolderValidationResults(
+  workspacePath: string,
+  folderPath: string,
+): Promise<RecordValidationResult[]> {
+  const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
+  try {
+    return await runScratchmdJson<RecordValidationResult[]>(
+      ['get-folder-validation-results', '--folder', relFolder],
       workspacePath,
     );
   } catch {

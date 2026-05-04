@@ -11,6 +11,7 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  TriangleAlertIcon,
   Wrench,
   X,
 } from 'lucide-react';
@@ -22,7 +23,7 @@ import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
-import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
+import { RecordFieldsGrid, ValidationTooltipContent, type RecordFieldRow } from './RecordFieldsGrid';
 
 interface DiffRecordColumn {
   id: string;
@@ -235,13 +236,21 @@ export const RecordDetailView = memo(function RecordDetailView({
   initialFocusedFieldName,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
+  const [viewErrors, setViewErrors] = useState(false);
   const [rawEditorOpen, setRawEditorOpen] = useState(false);
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
   const [validationReloadKey, setValidationReloadKey] = useState(0);
   const [validationResults, setValidationResults] = useState<
-    Array<{ field_path: string; is_valid: boolean; message: string | null }>
+    Array<{
+      field_path: string;
+      validator_kind: string;
+      level: 'error' | 'warning';
+      message: string | null;
+      description: string | null;
+      fixable: boolean;
+    }>
   >([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
@@ -580,14 +589,38 @@ export const RecordDetailView = memo(function RecordDetailView({
     [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged, schema],
   );
 
+  const allViolations = useMemo(() => {
+    return validationResults.map((r) => ({
+      level: r.level,
+      message: r.message,
+      description: r.description,
+      fixable: r.fixable,
+      validatorKind: r.validator_kind,
+      fieldPath: r.field_path,
+    }));
+  }, [validationResults]);
+
   const validationWarnings = useMemo(() => {
-    const map = new Map<string, string[]>();
+    const map = new Map<
+      string,
+      Array<{
+        level: 'error' | 'warning';
+        message: string | null;
+        description: string | null;
+        fixable: boolean;
+        validatorKind: string;
+      }>
+    >();
     for (const r of validationResults) {
-      if (!r.is_valid && r.message) {
-        const msgs = map.get(r.field_path) ?? [];
-        msgs.push(r.message);
-        map.set(r.field_path, msgs);
-      }
+      const entries = map.get(r.field_path) ?? [];
+      entries.push({
+        level: r.level,
+        message: r.message,
+        description: r.description,
+        fixable: r.fixable,
+        validatorKind: r.validator_kind,
+      });
+      map.set(r.field_path, entries);
     }
     return map;
   }, [validationResults]);
@@ -928,6 +961,30 @@ export const RecordDetailView = memo(function RecordDetailView({
                     Publish
                   </ButtonSecondaryGhost>
                 )}
+                {allViolations.length > 0 && (
+                  <IconButtonGhost
+                    size="compact-xs"
+                    onClick={() => setViewErrors((v) => !v)}
+                    style={
+                      viewErrors
+                        ? {
+                            backgroundColor: 'var(--mantine-color-red-0)',
+                            outline: '1px solid var(--mantine-color-red-3)',
+                          }
+                        : undefined
+                    }
+                  >
+                    <StyledLucideIcon
+                      Icon={TriangleAlertIcon}
+                      size="sm"
+                      c={
+                        allViolations.some((v) => v.level === 'error')
+                          ? 'var(--mantine-color-red-6)'
+                          : 'var(--mantine-color-orange-6)'
+                      }
+                    />
+                  </IconButtonGhost>
+                )}
                 <IconButtonGhost
                   size="compact-xs"
                   onClick={() => setViewRaw((v) => !v)}
@@ -1161,6 +1218,29 @@ export const RecordDetailView = memo(function RecordDetailView({
           {!loading && !displayData && (
             <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Text12Regular c="dimmed">No data available</Text12Regular>
+            </Box>
+          )}
+
+          {viewErrors && allViolations.length > 0 && (
+            <Box
+              style={{
+                borderTop: '1px solid var(--fg-divider)',
+                backgroundColor: '#fff',
+                maxHeight: '40%',
+                overflow: 'auto',
+                flexShrink: 0,
+              }}
+            >
+              <Box
+                style={{
+                  padding: '8px 12px',
+                  borderBottom: '1px solid var(--fg-divider)',
+                  backgroundColor: 'var(--bg-panel)',
+                }}
+              >
+                <Text12Regular c="var(--fg-secondary)">Problems</Text12Regular>
+              </Box>
+              <ValidationTooltipContent violations={allViolations} fullWidth showFieldColumn />
             </Box>
           )}
         </Stack>

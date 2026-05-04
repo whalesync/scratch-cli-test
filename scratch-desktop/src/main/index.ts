@@ -29,8 +29,10 @@ import {
 } from './local-files';
 import {
   acceptFieldChanges,
+  assertIndexTables,
   deleteLocalPublishPlans,
   discardCreatedRecord as discardCreatedRecordViaCli,
+  getFolderValidationResults,
   getValidationResults,
   listLocalPublishPlans,
   listUnpushedChanges,
@@ -408,6 +410,11 @@ async function refreshRecordIndexForWorkspace(
   await refreshRecordIndex(workspacePath, opts);
 }
 
+async function prepareWorkspaceIndex(workspacePath: string): Promise<void> {
+  await assertIndexTables(workspacePath);
+  await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+}
+
 async function refreshRecordIndexForFilePath(filePath: string): Promise<void> {
   const workspacePath = await findWorkspaceRootForPath(filePath);
   if (!workspacePath) {
@@ -529,6 +536,9 @@ ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
   const result = await runScratchmd(['workspaces', 'unsync', workbookId, '--yes']);
   await workspaceFileWatchService.clearWorkspaceFileWatch();
   return result;
+});
+ipcMain.handle('scratch:prepare-workspace-index', async (_, workspacePath: string) => {
+  await prepareWorkspaceIndex(workspacePath);
 });
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'accept-all'];
@@ -847,6 +857,9 @@ ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, work
 );
 ipcMain.handle('files:get-validation-results', async (_, workspacePath: string, folderPath: string, filename: string) =>
   getValidationResults(workspacePath, folderPath, filename),
+);
+ipcMain.handle('files:get-folder-validation-results', async (_, workspacePath: string, folderPath: string) =>
+  getFolderValidationResults(workspacePath, folderPath),
 );
 ipcMain.handle(
   'files:accept-cell-input-text',

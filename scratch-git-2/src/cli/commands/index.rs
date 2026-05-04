@@ -12,6 +12,7 @@ use crate::shared::record_index::{
     self, RefreshOptions, RefreshSummary, StaleRecord, StatusCandidate,
 };
 use crate::shared::validators;
+use crate::shared::validators::VALIDATION_RESULTS_TABLE;
 use serde::Serialize;
 
 pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
@@ -337,6 +338,7 @@ pub fn refresh_record_index_command(
                     &scratch_dir,
                     &dirty_dir,
                     &layout.workbook_materialization_path(),
+                    &layout.master_worktree_path(&connection.dir_name),
                     &db_path,
                     rebuild,
                     selected_paths,
@@ -436,6 +438,26 @@ pub fn dump_validations_command(
                 workspace_dir.display()
             );
         }
+    }
+
+    Ok(())
+}
+
+pub fn assert_index_tables_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    if workspace_marker.connections.is_empty() {
+        anyhow::bail!(
+            "No connections found in {}. Run 'scratchmd workspaces init' first.",
+            workspace_dir.display()
+        );
+    }
+
+    for connection in &workspace_marker.connections {
+        let db_path = layout.index_db_path(&connection.repo_path);
+        record_index::assert_index_tables_exist(&db_path)?;
     }
 
     Ok(())
@@ -889,10 +911,72 @@ connections:
 
 #[derive(Serialize)]
 struct ValidationResultRow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
     field_path: String,
     validator_kind: String,
-    is_valid: bool,
+    level: String,
     message: Option<String>,
+    description: Option<String>,
+    fixable: bool,
+}
+
+pub fn get_folder_validation_results_command(
+    workspace_start: &std::path::Path,
+    folder_path_arg: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    let slash = folder_path_arg.find('/').ok_or_else(|| {
+        anyhow::anyhow!("folder path must be '<connection>/<folder>', got: {folder_path_arg}")
+    })?;
+    let connection_name = &folder_path_arg[..slash];
+    let folder_path = &folder_path_arg[slash + 1..];
+
+    let connection = workspace_marker
+        .connections
+        .iter()
+        .find(|c| c.dir_name == connection_name)
+        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
+
+    let db_path = layout.index_db_path(&connection.repo_path);
+    if !db_path.exists() {
+        println!("[]");
+        return Ok(());
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    validators::ensure_validation_schema(&conn)?;
+
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT file_name, field_path, validator_kind, level, message, description, fixable \
+             FROM {VALIDATION_RESULTS_TABLE} \
+             WHERE folder_path = ?1"
+        ))
+        .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
+
+    let rows: Vec<ValidationResultRow> = stmt
+        .query_map(rusqlite::params![folder_path], |row| {
+            Ok(ValidationResultRow {
+                file_name: Some(row.get(0)?),
+                field_path: row.get(1)?,
+                validator_kind: row.get(2)?,
+                level: row.get(3)?,
+                message: row.get(4)?,
+                description: row.get(5)?,
+                fixable: row.get(6)?,
+            })
+        })
+        .map_err(|e| anyhow::anyhow!("query failed: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("row read failed: {e}"))?;
+
+    println!("{}", serde_json::to_string(&rows)?);
+    Ok(())
 }
 
 /// Return all validation results for a single record as a JSON array.
@@ -934,22 +1018,26 @@ pub fn get_validation_results_command(
 
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    validators::ensure_validation_schema(&conn)?;
 
     let mut stmt = conn
-        .prepare(
-            "SELECT field_path, validator_kind, is_valid, message \
-             FROM validation_results \
-             WHERE folder_path = ?1 AND file_name = ?2",
-        )
+        .prepare(&format!(
+            "SELECT field_path, validator_kind, level, message, description, fixable \
+             FROM {VALIDATION_RESULTS_TABLE} \
+             WHERE folder_path = ?1 AND file_name = ?2"
+        ))
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let rows: Vec<ValidationResultRow> = stmt
         .query_map(rusqlite::params![folder_path, file_name], |row| {
             Ok(ValidationResultRow {
+                file_name: None,
                 field_path: row.get(0)?,
                 validator_kind: row.get(1)?,
-                is_valid: row.get::<_, i64>(2)? != 0,
+                level: row.get(2)?,
                 message: row.get(3)?,
+                description: row.get(4)?,
+                fixable: row.get(5)?,
             })
         })
         .map_err(|e| anyhow::anyhow!("query failed: {e}"))?

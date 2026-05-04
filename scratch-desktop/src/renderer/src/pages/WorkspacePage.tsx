@@ -68,6 +68,7 @@ export function WorkspacePage() {
   const lastFocusSyncAtRef = useRef(0);
   const previousFolderCountRef = useRef<number | null>(null);
   const previousConnectionCountRef = useRef<number | null>(null);
+  const preparedIndexPathRef = useRef<string | null>(null);
   const isWorkspaceWatcherEnabled = user?.isAdmin === true && isWorkspaceFileWatcherExperimentEnabled();
 
   const fetchWorkspace = useCallback(
@@ -324,6 +325,21 @@ export function WorkspacePage() {
       console.debug('[workspace] failed to reconcile workspace file watch roots:', error);
     });
   }, [dataRefreshKey, isWorkspaceWatcherEnabled, localPath]);
+
+  useEffect(() => {
+    if (!localPath || preparedIndexPathRef.current === localPath) {
+      return;
+    }
+
+    preparedIndexPathRef.current = localPath;
+    void window.scratchDesktop
+      .prepareWorkspaceIndex(localPath)
+      .then(handleDataRefresh)
+      .catch((error: unknown) => {
+        preparedIndexPathRef.current = null;
+        console.warn('[workspace] failed to prepare workspace index:', error);
+      });
+  }, [handleDataRefresh, localPath]);
 
   if (loading) {
     return (

@@ -22,6 +22,16 @@ type DiffGridFilter =
   | { scope: 'column'; kind: 'unreviewed' | 'unpublished'; columnId: string; columnTitle: string }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
+type ValidationResultRow = {
+  file_name?: string;
+  field_path: string;
+  validator_kind: string;
+  level: 'error' | 'warning';
+  message: string | null;
+  description: string | null;
+  fixable: boolean;
+};
+
 interface ScratchDeepLinkAPI {
   onDeepLink: (callback: (route: string, query: string) => void) => () => void;
 }
@@ -54,6 +64,7 @@ interface ScratchDesktopAPI {
     opts?: { force?: boolean },
   ) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
+  prepareWorkspaceIndex: (workspacePath: string) => Promise<void>;
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,
@@ -292,11 +303,8 @@ interface ScratchFilesAPI {
     masterData: Record<string, unknown> | null;
     displayData: Record<string, unknown> | null;
   } | null>;
-  getValidationResults: (
-    workspacePath: string,
-    folderPath: string,
-    filename: string,
-  ) => Promise<Array<{ field_path: string; validator_kind: string; is_valid: boolean; message: string | null }>>;
+  getValidationResults: (workspacePath: string, folderPath: string, filename: string) => Promise<ValidationResultRow[]>;
+  getFolderValidationResults: (workspacePath: string, folderPath: string) => Promise<ValidationResultRow[]>;
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,
