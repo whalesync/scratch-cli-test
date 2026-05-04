@@ -40,7 +40,8 @@ chrono = { version = "0.4", default-features = false, features = ["now", "serde"
 urlencoding = "2"
 rayon = "1.11.0"
 rhai = { version = "1", features = ["sync"] }
-rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler"] }
+# rustpython-vm temporarily disabled — python: validators return a clear error until build fix lands
+# rustpython-vm = { version = "0.5.0", default-features = false, features = ["compiler"] }
 flate2 = "1.1.9"
 jsonschema = { version = "0.46", default-features = false }
 sha2 = "0.10"
