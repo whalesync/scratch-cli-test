@@ -36,6 +36,13 @@ if [ -z "$UPDATE_CHANNEL" ]; then
 fi
 export UPDATE_CHANNEL
 
+# Test builds get a distinct app name so users can tell them apart from production.
+if [ "$UPDATE_CHANNEL" = "desktop-test" ]; then
+  PRODUCT_NAME_OVERRIDE=(-c.productName="Scratch (Test)")
+else
+  PRODUCT_NAME_OVERRIDE=()
+fi
+
 # Bootstrap ran on a different job/runner, so this workspace's package.json
 # still has whatever version was committed. Sync it to the release version so
 # electron-builder stamps artifacts with the correct filename.
@@ -59,16 +66,16 @@ if [ "$PLATFORM" = "mac" ]; then
   MAC_TARGETS="${MAC_TARGETS:-dmg zip}"
   echo "Packaging macOS targets ($MAC_TARGETS)..."
   # shellcheck disable=SC2086  # intentional word splitting for multiple targets
-  yarn electron-builder --mac $MAC_TARGETS --publish never
+  yarn electron-builder --mac $MAC_TARGETS "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
 elif [ "$PLATFORM" = "windows" ]; then
   # Unsigned NSIS installer (Setup.exe) for x64. Requires wine in the build
   # environment because electron-builder invokes the NSIS compiler under wine
   # when cross-building from Linux. Signing is not configured yet.
   echo "Packaging Windows x64 targets..."
-  yarn electron-builder --win --x64 --publish never
+  yarn electron-builder --win --x64 "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
 else
   echo "Packaging Linux x64 targets..."
-  yarn electron-builder --linux --x64 --publish never
+  yarn electron-builder --linux --x64 "${PRODUCT_NAME_OVERRIDE[@]}" --publish never
 fi
 
 # Collect release-ready files into dist-release/ so the downstream upload job
