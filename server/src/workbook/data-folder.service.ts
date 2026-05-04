@@ -244,8 +244,8 @@ export class DataFolderService {
       parentFolder?.path ?? undefined,
     );
 
-    // Ensure path is unique within the workbook
-    folderPath = await this.ensureUniquePath(workbookId, folderPath, dataFolderId);
+    // Ensure path is unique within this connector account in the workbook
+    folderPath = await this.ensureUniquePath(workbookId, connectorAccountId, folderPath, dataFolderId);
 
     // Create the DataFolder
     const isAssetTable = Boolean(tableSpec.schema[ASSET_TABLE]);
@@ -480,17 +480,23 @@ export class DataFolderService {
   }
 
   /**
-   * Checks whether `path` is already used by another DataFolder in the same workbook.
+   * Checks whether `path` is already used by another DataFolder for the same connector account in the workbook.
    * If it is, appends `-{last 5 chars of dataFolderId}` to make the path unique.
-   * This is to prevent conflicts when creating data folders with the same name in the same workbook.
+   * Paths may repeat across different connector accounts; git content is scoped per connector repo.
    * @param workbookId - The ID of the workbook
+   * @param connectorAccountId - The connector account this folder belongs to
    * @param path - The path to check
    * @param dataFolderId - The ID of the data folder
    * @returns The unique path to use for the new data folder
    */
-  private async ensureUniquePath(workbookId: WorkbookId, path: string, dataFolderId: DataFolderId): Promise<string> {
+  private async ensureUniquePath(
+    workbookId: WorkbookId,
+    connectorAccountId: string,
+    path: string,
+    dataFolderId: DataFolderId,
+  ): Promise<string> {
     const existing = await this.db.client.dataFolder.findFirst({
-      where: { workbookId, path },
+      where: { workbookId, connectorAccountId, path },
       select: { id: true },
     });
 

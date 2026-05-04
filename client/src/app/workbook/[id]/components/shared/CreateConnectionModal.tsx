@@ -39,6 +39,18 @@ export type CreateConnectionModalProps = ModalProps & {
   onConnectionCreated?: (account: ConnectorAccount) => void;
 };
 
+const MAX_DISPLAY_NAME_SUFFIX = 99;
+
+const suggestUniqueDisplayName = (baseName: string, existing: ConnectorAccount[] | undefined): string => {
+  const existingNames = new Set((existing ?? []).map((a) => a.displayName));
+  if (!existingNames.has(baseName)) return baseName;
+  for (let i = 1; i <= MAX_DISPLAY_NAME_SUFFIX; i++) {
+    const candidate = `${baseName} ${i}`;
+    if (!existingNames.has(candidate)) return candidate;
+  }
+  return baseName;
+};
+
 export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const { workbookId, returnUrl, onConnectionCreated, ...modalProps } = props;
   const [error, setError] = useState<string | null>(null);
@@ -55,11 +67,15 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const [showOAuthCustom, setShowOAuthCustom] = useState(false);
   const { metadata } = useConnectorsMetadata();
   const { canCreateDataSource } = useSubscription();
-  const { createConnectorAccount } = useConnectorAccounts(workbookId);
+  const { connectorAccounts, createConnectorAccount } = useConnectorAccounts(workbookId);
   const { getDefaultAuthMethod, getSupportedAuthMethods, availableServices } = useConnectors();
 
   const currentFields: ConnectorSettingDefinition[] =
     (newService ? metadata?.[newService]?.credentialFields?.[authMethod] : undefined) ?? [];
+
+  const trimmedDisplayName = (newDisplayName ?? '').trim();
+  const isDisplayNameTaken =
+    trimmedDisplayName.length > 0 && (connectorAccounts ?? []).some((a) => a.displayName === trimmedDisplayName);
 
   const setFieldValue = (key: string, value: string | boolean) => {
     setFieldValues((prev) => ({ ...prev, [key]: value }));
@@ -67,7 +83,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
 
   const handleSelectNewService = (service: string) => {
     setNewService(service);
-    setNewDisplayName(getServiceName(metadata, service));
+    setNewDisplayName(suggestUniqueDisplayName(getServiceName(metadata, service), connectorAccounts));
     setAuthMethod(getDefaultAuthMethod(service));
     setCustomClientId('');
     setCustomClientSecret('');
@@ -240,7 +256,11 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
         footer: (
           <>
             <ButtonSecondaryOutline onClick={props.onClose}>Cancel</ButtonSecondaryOutline>
-            <ButtonPrimaryLight onClick={handleCreate} loading={isOAuthLoading || isCreating}>
+            <ButtonPrimaryLight
+              onClick={handleCreate}
+              loading={isOAuthLoading || isCreating}
+              disabled={isDisplayNameTaken}
+            >
               {authMethod === 'oauth' && newService ? 'Connect with ' + getServiceName(metadata, newService) : 'Create'}
             </ButtonPrimaryLight>
           </>
@@ -289,6 +309,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
           placeholder="Enter a name for your connection"
           value={newDisplayName ?? ''}
           required
+          error={isDisplayNameTaken ? 'A connection with this name already exists in this workbook.' : undefined}
           onChange={(e) => setNewDisplayName(e.currentTarget.value)}
         />
 

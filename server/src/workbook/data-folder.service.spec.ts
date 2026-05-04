@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import type { TSchema } from '@sinclair/typebox';
 import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import type { AuditLogService } from 'src/audit/audit-log.service';
@@ -137,6 +138,102 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
   });
 });
 
+type EnsureUniquePathFn = (
+  workbookId: WorkbookId,
+  connectorAccountId: string,
+  path: string,
+  dataFolderId: DataFolderId,
+) => Promise<string>;
+
+describe('DataFolderService.ensureUniquePath', () => {
+  const WORKBOOK_ID = 'wkb_test' as WorkbookId;
+  const CONNECTOR_A = 'coa_airtable';
+  const CONNECTOR_B = 'coa_webflow';
+  const PATH_PAGES = '/Pages';
+  const NEW_FOLDER_ID = 'df_abcdefghijklmnopqrstuvwxyz' as DataFolderId;
+
+  let service: DataFolderService;
+  let mockDb: jest.Mocked<DbService>;
+
+  beforeEach(() => {
+    mockDb = {
+      client: {
+        dataFolder: {
+          findFirst: jest.fn(),
+        },
+      },
+    } as unknown as jest.Mocked<DbService>;
+
+    const stub = {} as unknown;
+    service = new DataFolderService(
+      stub as WorkbookService,
+      mockDb,
+      stub as ConnectorAccountService,
+      stub as ConnectorsService,
+      stub as ScratchConfigService,
+      stub as BullEnqueuerService,
+      stub as AuditLogService,
+      stub as PostHogService,
+      stub as ScratchGitService,
+      stub as FilesService,
+      stub as WorkbookEventService,
+      stub as FileIndexService,
+      stub as FileReferenceService,
+    );
+  });
+
+  const callEnsureUniquePath = (args: {
+    workbookId?: WorkbookId;
+    connectorAccountId?: string;
+    path?: string;
+    dataFolderId?: DataFolderId;
+  }) => {
+    const fn = (service as unknown as { ensureUniquePath: EnsureUniquePathFn }).ensureUniquePath.bind(service);
+    return fn(
+      args.workbookId ?? WORKBOOK_ID,
+      args.connectorAccountId ?? CONNECTOR_A,
+      args.path ?? PATH_PAGES,
+      args.dataFolderId ?? NEW_FOLDER_ID,
+    );
+  };
+
+  it('returns the path unchanged when no folder exists for the same workbook, connector, and path', async () => {
+    (mockDb.client.dataFolder.findFirst as jest.Mock).mockResolvedValue(null);
+
+    const result = await callEnsureUniquePath({});
+
+    expect(result).toBe(PATH_PAGES);
+    expect(mockDb.client.dataFolder.findFirst).toHaveBeenCalledWith({
+      where: { workbookId: WORKBOOK_ID, connectorAccountId: CONNECTOR_A, path: PATH_PAGES },
+      select: { id: true },
+    });
+  });
+
+  it('appends a suffix when the path is already taken for the same workbook and connector', async () => {
+    (mockDb.client.dataFolder.findFirst as jest.Mock).mockResolvedValue({ id: 'df_existing' });
+
+    const result = await callEnsureUniquePath({});
+
+    expect(result).toBe(`${PATH_PAGES}-vwxyz`);
+    expect(mockDb.client.dataFolder.findFirst).toHaveBeenCalledWith({
+      where: { workbookId: WORKBOOK_ID, connectorAccountId: CONNECTOR_A, path: PATH_PAGES },
+      select: { id: true },
+    });
+  });
+
+  it('scopes the lookup to connectorAccountId so another connector does not force a suffix', async () => {
+    (mockDb.client.dataFolder.findFirst as jest.Mock).mockResolvedValue(null);
+
+    const result = await callEnsureUniquePath({ connectorAccountId: CONNECTOR_B });
+
+    expect(result).toBe(PATH_PAGES);
+    expect(mockDb.client.dataFolder.findFirst).toHaveBeenCalledWith({
+      where: { workbookId: WORKBOOK_ID, connectorAccountId: CONNECTOR_B, path: PATH_PAGES },
+      select: { id: true },
+    });
+  });
+});
+
 describe('DataFolderService dotfile filtering', () => {
   const WORKBOOK_ID = 'wkb_test' as WorkbookId;
   const FOLDER_ID = 'df_test' as DataFolderId;
@@ -206,7 +303,7 @@ describe('DataFolderService dotfile filtering', () => {
 
   describe('getAllFileContentsByFolderId', () => {
     it('should exclude dotfiles like .schema.json', async () => {
-      (mockScratchGitService.getRepoFilesPaginated as jest.Mock).mockResolvedValue({
+      mockScratchGitService.getRepoFilesPaginated.mockResolvedValue({
         files: [
           { name: 'record-1.json', content: '{"id":"1"}' },
           { name: '.schema.json', content: '{"type":"object"}' },
@@ -222,7 +319,7 @@ describe('DataFolderService dotfile filtering', () => {
     });
 
     it('should exclude all dotfiles, not just .schema.json', async () => {
-      (mockScratchGitService.getRepoFilesPaginated as jest.Mock).mockResolvedValue({
+      mockScratchGitService.getRepoFilesPaginated.mockResolvedValue({
         files: [
           { name: 'record-1.json', content: '{"id":"1"}' },
           { name: '.hidden-config', content: '{}' },
@@ -240,7 +337,7 @@ describe('DataFolderService dotfile filtering', () => {
 
   describe('getFileContentsByFolderIdPaginated', () => {
     it('should exclude dotfiles like .schema.json', async () => {
-      (mockScratchGitService.getRepoFilesPaginated as jest.Mock).mockResolvedValue({
+      mockScratchGitService.getRepoFilesPaginated.mockResolvedValue({
         files: [
           { name: 'record-1.json', content: '{"id":"1"}' },
           { name: '.schema.json', content: '{"type":"object"}' },

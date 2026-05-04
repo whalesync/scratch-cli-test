@@ -53,6 +53,37 @@ export class ConnectorAccountService {
     private readonly workbookEventService: WorkbookEventService,
   ) {}
 
+  /**
+   * Find a unique display name for a connector account within a workbook.
+   * Display names are used as folder names, so they must be unique per workbook.
+   * If the base name is taken, appends an incrementing suffix (e.g. "Postgres 1", "Postgres 2").
+   * Throws if no unique name is found within MAX_DISPLAY_NAME_ATTEMPTS suffix attempts.
+   */
+  private async findUniqueDisplayName(workbookId: WorkbookId, baseDisplayName: string): Promise<string> {
+    const MAX_DISPLAY_NAME_ATTEMPTS = 20;
+
+    const existing = await this.db.client.connectorAccount.findMany({
+      where: { workbookId, displayName: { startsWith: baseDisplayName } },
+      select: { displayName: true },
+    });
+    const existingNames = new Set(existing.map((a) => a.displayName));
+
+    if (!existingNames.has(baseDisplayName)) {
+      return baseDisplayName;
+    }
+
+    for (let i = 1; i <= MAX_DISPLAY_NAME_ATTEMPTS; i++) {
+      const candidate = `${baseDisplayName} ${i}`;
+      if (!existingNames.has(candidate)) {
+        return candidate;
+      }
+    }
+
+    throw new BadRequestException(
+      `Could not find a unique display name for "${baseDisplayName}" within the workbook after ${MAX_DISPLAY_NAME_ATTEMPTS} attempts`,
+    );
+  }
+
   private async loadWorkbook(workbookId: WorkbookId) {
     const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
     if (!workbook) {
@@ -107,13 +138,16 @@ export class ConnectorAccountService {
     const accountId = createConnectorAccountId();
     const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
+    const baseDisplayName = createDto.displayName ?? `${_.startCase(createDto.service.toLowerCase())}`;
+    const displayName = await this.findUniqueDisplayName(workbookId, baseDisplayName);
+
     const connectorAccount = await this.db.client.connectorAccount.create({
       data: {
         id: accountId,
         userId: actor.userId,
         workbookId: workbookId,
         service: createDto.service,
-        displayName: createDto.displayName ?? `${_.startCase(createDto.service.toLowerCase())}`,
+        displayName,
         authType: createDto.authType || AuthType.USER_PROVIDED_PARAMS,
         repoPath,
         encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue,
