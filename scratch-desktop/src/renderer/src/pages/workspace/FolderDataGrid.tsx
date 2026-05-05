@@ -2321,6 +2321,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   // when returning to the grid — require a fresh click.
                   setGridSelection(undefined);
                 }}
+                dataRefreshKey={dataRefreshKey}
                 onRecordChanged={refreshGridDataInBackground}
                 onRecordFieldChanged={(filename, fieldName, nextValue) =>
                   setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev))

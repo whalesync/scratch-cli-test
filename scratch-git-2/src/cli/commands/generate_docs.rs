@@ -13,6 +13,7 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::write(docs_dir.join("schema.md"), SCHEMA_DOC)?;
     std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
     std::fs::write(docs_dir.join("editing-data.md"), EDITING_DATA_DOC)?;
+    std::fs::write(docs_dir.join("validations.md"), VALIDATIONS_DOC)?;
 
     Ok(())
 }
@@ -39,6 +40,7 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 - [How files are organised](.scratch/docs/structure.md)
 - [Schema files (field definitions)](.scratch/docs/schema.md)
 - [Editing data (creating, updating, deleting records)](.scratch/docs/editing-data.md)
+- [Validation (checking records before publish)](.scratch/docs/validations.md)
 - [CLI command reference](.scratch/docs/commands.md)
 "#,
         workbook_name = workbook_name,
@@ -339,4 +341,250 @@ You can compare your edits against the published snapshot in
   service.
 - **Check `linked show <folder-id>`** to see pending changes for a specific
   table before publishing.
+"#;
+
+// ---------------------------------------------------------------------------
+// .scratch/docs/validations.md
+// ---------------------------------------------------------------------------
+
+const VALIDATIONS_DOC: &str = r#"# Validation
+
+Scratch can check records for problems before they are published. Validators run
+automatically whenever the record index is refreshed. Results appear in the
+Scratch desktop app as error and warning badges on individual records and fields.
+
+## How it works
+
+1. The CLI reads `validation.json` from the metadata folder for each table
+   (`.scratch/connections/scratch/<connection>/<table>/validation.json`).
+2. On every `scratchmd refresh-record-index` run, each record in the working copy
+   is checked against the configured rules.
+3. Violations are stored in a SQLite table (`validation_results_v1`) inside the
+   connection's `.db` index file.
+4. The desktop app reads those results and highlights affected fields inline.
+   Passing records produce no rows — only violations are stored.
+
+## Where `validation.json` lives
+
+`validation.json` sits next to `schema.json` in the **metadata** folder, not in
+the editable working copy:
+
+```
+.scratch/connections/scratch/
+  WEBFLOW - My Site/
+    Blog Posts/
+      schema.json
+      validation.json    <- add your rules here
+```
+
+The working copy folders (e.g. `WEBFLOW - My Site/Blog Posts/*.json`) are not
+affected — only the config and schema live in `.scratch/`.
+
+## `validation.json` format
+
+`validation.json` is a JSON array of validator entries:
+
+```json
+[
+  {
+    "validator": "enforce_schema"
+  },
+  {
+    "validator": "length",
+    "field": "fieldData.name",
+    "params": { "min": 1, "max": 256 }
+  },
+  {
+    "validator": "python:validators/check-slug.py",
+    "field": "fieldData.slug",
+    "note": "Enforce lowercase slug format"
+  }
+]
+```
+
+### Entry fields
+
+| Field       | Type       | Required | Description |
+|-------------|------------|----------|-------------|
+| `validator` | `string`   | yes      | Built-in name (`enforce_schema`, `length`) or `python:<path>`. |
+| `field`     | `string`   | no       | Dot-path to a single field. Omit for record-scoped validators (`enforce_schema`). |
+| `params`    | `object`   | no       | Arguments passed to the validator. Defaults to `{}`. |
+| `order`     | `number`   | no       | Run order (ascending). Ties keep file order. |
+| `note`      | `string`   | no       | Free-text annotation; ignored at runtime. |
+
+---
+
+## Built-in validators
+
+### `enforce_schema`
+
+**Record-scoped** (no `field` needed). Reads the table's `schema.json` and runs
+two checks:
+
+1. **Required fields** — every field listed in `schema.required` must be present,
+   non-null, and non-empty-string. Emits an **error** for each violation.
+   - Exception: the remote-ID column (`idColumnRemoteId`) is skipped for new
+     records that have not yet been published (the remote service assigns the ID
+     on first publish).
+
+2. **Read-only fields** — fields marked `"x-scratch-readonly": true` in
+   `schema.properties` must not differ from the last-published (master-branch)
+   value. Emits a **warning** for each changed read-only field.
+   - For new records: warns if a read-only field is set at all (the value will
+     be silently dropped when publishing).
+   - For existing records: warns if the working-copy value differs from the
+     master-branch value, and shows both values in the description.
+
+```json
+{ "validator": "enforce_schema" }
+```
+
+No `params`. Good default to add to every table.
+
+**Violations produced:**
+
+| Situation | Level | Message |
+|-----------|-------|---------|
+| Required field absent, null, or empty | `error` | `field 'slug' is required but missing or null` |
+| Read-only field changed on existing record | `warning` | `Updated read-only field` (description includes old → new values) |
+| Read-only field set on new record | `warning` | `Updated read-only field` (description: value will be ignored) |
+
+---
+
+### `length` (alias: `max_length`)
+
+**Field-scoped.** Checks that a field's string value is within an optional
+minimum and/or maximum character count. Non-string values are coerced to their
+JSON representation before measuring. `null` counts as 0 characters.
+
+```json
+{ "validator": "length", "field": "fieldData.name", "params": { "max": 256 } }
+```
+
+**Params:**
+
+| Param | Type     | Description |
+|-------|----------|-------------|
+| `min` | `number` | Minimum character count (inclusive). |
+| `max` | `number` | Maximum character count (inclusive). |
+
+At least one of `min` / `max` must be present. Emits a **warning** on failure.
+
+---
+
+## Python validators (custom rules)
+
+Use the `python:` prefix to run a `.py` file. No system Python is needed — the
+CLI embeds a sandboxed Python interpreter (RustPython).
+
+```json
+{
+  "validator": "python:validators/check-slug.py",
+  "field": "fieldData.slug",
+  "params": { "pattern": "^[a-z0-9-]+$" }
+}
+```
+
+### Where Python scripts live
+
+Paths are relative to the **workspace directory** (`.scratch/workspace`):
+
+```
+.scratch/workspace/
+  validators/
+    check-slug.py
+    title-case.py
+```
+
+So `"python:validators/check-slug.py"` resolves to
+`.scratch/workspace/validators/check-slug.py`.
+
+### The `validate(ctx)` contract
+
+Every Python validator must define a top-level `validate(ctx)` function:
+
+```python
+def validate(ctx):
+    """
+    ctx keys:
+      table      (str)  -- folder path of the table
+      filename   (str)  -- record filename, e.g. "post-1.json"
+      field_path (str)  -- field being validated, e.g. "fieldData.slug"
+      value             -- field value (str, int, float, bool, None, list, dict)
+      record     (dict) -- full record (read-only)
+      args       (dict) -- params from validation.json
+
+    Returns list[dict], each with:
+      is_valid (bool)       -- True = pass, False = violation
+      message  (str | None) -- short message shown in the UI
+    """
+    value = ctx["value"] or ""
+    import re
+    pattern = ctx["args"].get("pattern", r"^[a-z0-9-]+$")
+    if not re.match(pattern, str(value)):
+        return [{"is_valid": False, "message": f"slug '{value}' does not match {pattern}"}]
+    return [{"is_valid": True, "message": None}]
+```
+
+Returning an empty list or all `{"is_valid": True}` entries means the field
+passes. The sandbox excludes `subprocess`, `socket`, and `os.system`. C
+extensions (numpy, pandas) are not supported.
+
+---
+
+## Examples
+
+### Webflow Blog Posts — common rule set
+
+```json
+[
+  { "validator": "enforce_schema" },
+  {
+    "validator": "length",
+    "field": "fieldData.name",
+    "params": { "min": 1, "max": 256 },
+    "note": "Webflow Name field hard limit"
+  },
+  {
+    "validator": "length",
+    "field": "fieldData.slug",
+    "params": { "min": 1, "max": 200 }
+  }
+]
+```
+
+### Custom slug format check
+
+```json
+[
+  { "validator": "enforce_schema" },
+  {
+    "validator": "python:validators/check-slug.py",
+    "field": "fieldData.slug",
+    "params": { "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "note": "Webflow requires lowercase alphanumeric slugs with hyphens only"
+  }
+]
+```
+
+---
+
+## CLI commands
+
+```bash
+# Run validation for all records (runs automatically with refresh-record-index)
+scratchmd refresh-record-index
+
+# Run validation for specific files only
+scratchmd refresh-record-index --path "Blog Posts/post-1.json"
+
+# Read results for one record
+scratchmd get-validation-results --record "Blog Posts/post-1.json"
+
+# Read results for an entire folder
+scratchmd get-folder-validation-results --folder "Blog Posts"
+
+# Print the active validation config (no DB needed)
+scratchmd dump-validation-config
+```
 "#;

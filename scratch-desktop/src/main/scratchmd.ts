@@ -140,7 +140,7 @@ export async function runScratchmd(args: string[], cwd?: string): Promise<{ stdo
 
 export async function refreshRecordIndex(
   workspacePath: string,
-  opts?: { rebuild?: boolean; paths?: string[] },
+  opts?: { rebuild?: boolean; paths?: string[]; folders?: string[] },
 ): Promise<{ stdout: string; stderr: string }> {
   const args = ['refresh-record-index'];
   if (opts?.rebuild) {
@@ -148,6 +148,9 @@ export async function refreshRecordIndex(
   }
   for (const path of opts?.paths ?? []) {
     args.push('--path', path);
+  }
+  for (const folder of opts?.folders ?? []) {
+    args.push('--folder', folder);
   }
   return runScratchmd(args, workspacePath);
 }

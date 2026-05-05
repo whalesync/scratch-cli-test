@@ -265,18 +265,26 @@ pub fn refresh_record_index_command(
     workspace_start: &std::path::Path,
     connection_filter: Option<&str>,
     input_paths: &[String],
+    input_folders: &[String],
     rebuild: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
-    let path_filters = selected_paths_by_connection(
+    let mut path_filters = selected_paths_by_connection(
         &workspace_dir,
         &workspace_marker,
         connection_filter,
         input_paths,
     )?;
+    // Expand --folder args: enumerate .json files in each folder and merge into path_filters.
+    if !input_folders.is_empty() {
+        let folder_paths = expand_folders_to_paths(&workspace_dir, &workspace_marker, connection_filter, input_folders, &layout)?;
+        for (conn, paths) in folder_paths {
+            path_filters.entry(conn).or_default().extend(paths);
+        }
+    }
 
     if workspace_marker.connections.is_empty() {
         anyhow::bail!(
@@ -601,6 +609,70 @@ fn selected_paths_by_connection(
     Ok(by_connection)
 }
 
+/// Expand `--folder` absolute paths into per-connection sets of relative file paths,
+/// by enumerating `.json` files in the corresponding dirty-checkout folder.
+fn expand_folders_to_paths(
+    workspace_dir: &std::path::Path,
+    workspace_marker: &markers::WorkspaceMarker,
+    connection_filter: Option<&str>,
+    input_folders: &[String],
+    layout: &WorkspaceLayout,
+) -> anyhow::Result<HashMap<String, HashSet<String>>> {
+    let eligible_connections = workspace_marker
+        .connections
+        .iter()
+        .filter(|c| connection_filter.map(|f| c.dir_name == f).unwrap_or(true))
+        .collect::<Vec<_>>();
+
+    let mut by_connection: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for input_folder in input_folders {
+        let abs = normalize_input_path(workspace_dir, input_folder)?;
+
+        // Identify which connection owns this folder path.
+        let (conn_name, folder_rel) = if let Some(filter) = connection_filter {
+            let rest = abs.strip_prefix(&format!("{filter}/")).unwrap_or(&abs);
+            (filter.to_string(), rest.to_string())
+        } else {
+            let mut found = None;
+            for c in &eligible_connections {
+                let prefix = format!("{}/", c.dir_name);
+                if let Some(rest) = abs.strip_prefix(&prefix) {
+                    found = Some((c.dir_name.clone(), rest.to_string()));
+                    break;
+                }
+            }
+            match found {
+                Some(pair) => pair,
+                None if eligible_connections.len() == 1 => {
+                    (eligible_connections[0].dir_name.clone(), abs.clone())
+                }
+                None => anyhow::bail!(
+                    "Folder '{}' does not identify a connection. Use '<connection-name>/<folder>' or pass --connection.",
+                    input_folder
+                ),
+            }
+        };
+
+        let dirty_folder = layout.dirty_checkout_path(&conn_name).join(&folder_rel);
+        let entries = match std::fs::read_dir(&dirty_folder) {
+            Ok(e) => e,
+            Err(_) => continue, // folder may not exist yet — skip silently
+        };
+
+        let conn_paths = by_connection.entry(conn_name).or_default();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) && name_str.ends_with(".json") {
+                conn_paths.insert(format!("{folder_rel}/{name_str}"));
+            }
+        }
+    }
+
+    Ok(by_connection)
+}
+
 fn resolve_selected_path(
     workspace_dir: &std::path::Path,
     eligible_connections: &[&markers::ConnectionEntry],
@@ -791,7 +863,7 @@ connections:
             ],
         );
 
-        refresh_record_index_command(workspace, None, &[], false, false).unwrap();
+        refresh_record_index_command(workspace, None, &[], &[], false, false).unwrap();
 
         let marker = read_workspace_marker(workspace).unwrap();
         let repo_path = &marker.connections[0].repo_path;
@@ -844,7 +916,7 @@ connections:
             ],
         );
 
-        refresh_record_index_command(workspace, None, &[], false, false).unwrap();
+        refresh_record_index_command(workspace, None, &[], &[], false, false).unwrap();
         write_file(
             &dirty_dir.join("posts/one.json"),
             "{\"id\":1,\"name\":\"updated\"}",

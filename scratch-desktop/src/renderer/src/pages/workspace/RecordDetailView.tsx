@@ -81,6 +81,8 @@ interface RecordDetailViewProps {
   onPublishFile?: (relativePath: string) => void;
   /** When set, the field grid mounts focused on this field. */
   initialFocusedFieldName?: string;
+  /** Incremented by the parent when external file changes are detected, triggering a reload. */
+  dataRefreshKey?: number;
 }
 
 function rowHasUnreviewedChanges(
@@ -235,6 +237,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   onRecordFieldChanged,
   onPublishFile,
   initialFocusedFieldName,
+  dataRefreshKey,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
   const [viewErrors, setViewErrors] = useState(false);
@@ -329,7 +332,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     return () => {
       cancelled = true;
     };
-  }, [selectedFilename, folderPath, workspacePath, recordReloadKey]);
+  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, dataRefreshKey]);
 
   useEffect(() => {
     if (!selectedFilename) {
@@ -348,7 +351,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     return () => {
       cancelled = true;
     };
-  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, validationReloadKey]);
+  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, validationReloadKey, dataRefreshKey]);
 
   // Escape key closes overlay (capture phase so it fires before the grid handles it)
   useEffect(() => {

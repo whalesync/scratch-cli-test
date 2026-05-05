@@ -73,8 +73,8 @@ const scratchDesktop = {
   removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
   prepareWorkspaceIndex: (workspacePath: string): Promise<void> =>
     invoke('scratch:prepare-workspace-index', workspacePath),
-  refreshPaths: (workspacePath: string, paths: string[]): Promise<void> =>
-    invoke('scratch:refresh-paths', workspacePath, paths),
+  refreshPaths: (workspacePath: string, paths: string[], singleFile?: string): Promise<void> =>
+    invoke('scratch:refresh-paths', workspacePath, paths, singleFile),
   acceptAllChanges: (
     workspacePath: string,
     folderPath?: string,

@@ -127,6 +127,10 @@ enum Commands {
         /// '<connection>/<path>' values, or plain relative paths when the workspace has one connection.
         #[arg(long = "path")]
         paths: Vec<String>,
+        /// Refresh all records in this folder. Accepts absolute paths or workspace-relative
+        /// '<connection>/<folder>' values. May be repeated. Mutually exclusive with --path.
+        #[arg(long = "folder")]
+        folders: Vec<String>,
         /// Reconcile every record in the connection, not just changed candidates
         #[arg(long)]
         rebuild: bool,
@@ -284,11 +288,13 @@ async fn main() {
             workspace,
             connection,
             paths,
+            folders,
             rebuild,
         } => index::refresh_record_index_command(
             &workspace,
             connection.as_deref(),
             &paths,
+            &folders,
             rebuild,
             cli.json,
         ),

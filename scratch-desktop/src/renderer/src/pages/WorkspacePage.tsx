@@ -280,17 +280,18 @@ export function WorkspacePage() {
         const currentFolder = selectedFolderPathRef.current;
         // Update the index for all affected folders first, then refresh the grid.
         // Refreshing before the index is updated would reload stale validation results.
-        void Promise.all(
-          event.changedFolderPaths.map((folderPath) =>
-            window.scratchDesktop.refreshPaths(event.workspacePath, [folderPath]).catch((error: unknown) => {
-              console.debug('[workspace] failed to refresh paths after external change:', error);
-            }),
-          ),
-        ).then(() => {
-          if (currentFolder && event.changedFolderPaths.some((f) => f === currentFolder)) {
-            handleDataRefresh();
-          }
-        });
+        void window.scratchDesktop
+          .refreshPaths(event.workspacePath, event.changedFolderPaths, event.singleFile)
+          .catch((error: unknown) => {
+            console.debug('[workspace] failed to refresh paths after external change:', error);
+          })
+          .then(() => {
+            const affectedFolder = event.singleFile ? parentDirectoryPath(event.singleFile) : null;
+            const changedFolders = affectedFolder ? [affectedFolder] : event.changedFolderPaths;
+            if (currentFolder && changedFolders.some((f) => f === currentFolder)) {
+              handleDataRefresh();
+            }
+          });
       }
     });
 
