@@ -6,10 +6,13 @@ import { CloudDownload, CloudUpload, Download, HardDriveDownload as DownloadIcon
 import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
+import { useCurrentUser } from '../../hooks/use-current-user';
 import { Workspace } from '../../types/workspace';
+import { ValidationStatsDrawer } from './ValidationStatsDrawer';
 
 interface WorkspaceHeaderProps {
   workspace: Workspace;
+  localPath: string | null;
   isDownloaded: boolean;
   downloading: boolean;
   reDownloading: boolean;
@@ -27,6 +30,7 @@ const PUBLISH_ALL_TOOLTIP = 'Publish all pending local changes to connected serv
 
 export function WorkspaceHeader({
   workspace,
+  localPath,
   isDownloaded,
   downloading,
   reDownloading,
@@ -38,6 +42,7 @@ export function WorkspaceHeader({
   onPullAll,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
   const { width } = useViewportSize();
   const compact = width > 0 && width < 800;
 
@@ -59,6 +64,7 @@ export function WorkspaceHeader({
           <img src={logoColor} alt="Scratch" width={32} height={32} />
         </IconButtonGhost>
         <WorkspaceSwitcher currentWorkspaceId={workspace.id} currentWorkspaceName={workspace.name} />
+        {user?.isAdmin && localPath && <ValidationStatsDrawer workspacePath={localPath} />}
       </Group>
 
       {/* Action buttons */}

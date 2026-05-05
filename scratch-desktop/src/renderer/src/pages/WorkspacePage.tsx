@@ -402,6 +402,7 @@ export function WorkspacePage() {
       )}
       <WorkspaceHeader
         workspace={workspace}
+        localPath={localPath}
         isDownloaded={localPath !== null}
         downloading={downloading}
         reDownloading={reDownloading}

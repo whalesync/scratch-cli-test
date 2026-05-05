@@ -33,7 +33,9 @@ import {
   deleteLocalPublishPlans,
   discardCreatedRecord as discardCreatedRecordViaCli,
   getFolderValidationResults,
+  getFolderValidationSample,
   getValidationResults,
+  getValidationStats,
   listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
@@ -874,6 +876,10 @@ ipcMain.handle('files:get-validation-results', async (_, workspacePath: string, 
 );
 ipcMain.handle('files:get-folder-validation-results', async (_, workspacePath: string, folderPath: string) =>
   getFolderValidationResults(workspacePath, folderPath),
+);
+ipcMain.handle('files:get-validation-stats', async (_, workspacePath: string) => getValidationStats(workspacePath));
+ipcMain.handle('files:get-folder-validation-sample', async (_, workspacePath: string, folder: string) =>
+  getFolderValidationSample(workspacePath, folder),
 );
 ipcMain.handle(
   'files:accept-cell-input-text',

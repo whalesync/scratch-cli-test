@@ -17,7 +17,7 @@ import { randomUUID } from 'crypto';
 import { app } from 'electron';
 import { readdir, readFile, rm } from 'fs/promises';
 import { join, relative, resolve } from 'path';
-import type { ValidationResultRow } from '../shared/validation-types';
+import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 
 // ── Types ──
 
@@ -480,7 +480,7 @@ export async function restoreDeletedRecord(workspacePath: string, recordPath: st
   await runScratchmd(['files', 'restore-deleted-record', recordPath], workspacePath);
 }
 
-export type { ValidationResultRow } from '../shared/validation-types';
+export type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 
 export async function getValidationResults(
   workspacePath: string,
@@ -507,6 +507,25 @@ export async function getFolderValidationResults(
   try {
     return await runScratchmdJson<ValidationResultRow[]>(
       ['get-folder-validation-results', '--folder', relFolder],
+      workspacePath,
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function getValidationStats(workspacePath: string): Promise<ValidationStat[]> {
+  try {
+    return await runScratchmdJson<ValidationStat[]>(['get-validation-stats'], workspacePath);
+  } catch {
+    return [];
+  }
+}
+
+export async function getFolderValidationSample(workspacePath: string, folder: string): Promise<ValidationResultRow[]> {
+  try {
+    return await runScratchmdJson<ValidationResultRow[]>(
+      ['get-folder-validation-sample', '--folder', folder],
       workspacePath,
     );
   } catch {

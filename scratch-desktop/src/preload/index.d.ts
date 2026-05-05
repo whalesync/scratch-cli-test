@@ -1,7 +1,7 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
-import type { ValidationResultRow } from '../shared/validation-types';
+import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 import type { WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 type ScratchCommandEvent =
@@ -297,6 +297,8 @@ interface ScratchFilesAPI {
   } | null>;
   getValidationResults: (workspacePath: string, folderPath: string, filename: string) => Promise<ValidationResultRow[]>;
   getFolderValidationResults: (workspacePath: string, folderPath: string) => Promise<ValidationResultRow[]>;
+  getValidationStats: (workspacePath: string) => Promise<ValidationStat[]>;
+  getFolderValidationSample: (workspacePath: string, folder: string) => Promise<ValidationResultRow[]>;
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

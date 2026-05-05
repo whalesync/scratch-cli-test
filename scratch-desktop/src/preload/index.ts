@@ -2,7 +2,7 @@ import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
-import type { ValidationResultRow } from '../shared/validation-types';
+import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 import { WORKSPACE_FILE_WATCH_EVENT_CHANNEL, type WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -375,6 +375,10 @@ const scratchFiles = {
     invoke('files:get-validation-results', workspacePath, folderPath, filename),
   getFolderValidationResults: (workspacePath: string, folderPath: string): Promise<ValidationResultRow[]> =>
     invoke('files:get-folder-validation-results', workspacePath, folderPath),
+  getValidationStats: (workspacePath: string): Promise<ValidationStat[]> =>
+    invoke('files:get-validation-stats', workspacePath),
+  getFolderValidationSample: (workspacePath: string, folder: string): Promise<ValidationResultRow[]> =>
+    invoke('files:get-folder-validation-sample', workspacePath, folder),
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

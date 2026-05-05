@@ -30,7 +30,7 @@ type PythonValidationItem = (ValidationLevel, Option<String>, Option<String>, bo
 ///
 /// ```python
 /// def validate(ctx):
-///     # ctx keys: table, filename, field_path, value, record, args
+///     # ctx keys: filename, field_path, value, record, args
 ///     if len(ctx["value"] or "") > ctx["args"]["max"]:
 ///         return [{"level": "warning", "message": "too long"}]
 ///     return []   # empty list = pass
@@ -64,7 +64,6 @@ pub fn run_python_validator(
     })?;
 
     // Clone context fields so the thread closure can own them.
-    let table = ctx.table.clone();
     let filename = ctx.filename.clone();
     let field_path = ctx.field_path.clone();
     let value = ctx.value.clone();
@@ -78,7 +77,6 @@ pub fn run_python_validator(
         let result = exec_in_vm(
             &source,
             &script_name,
-            &table,
             &filename,
             &field_path,
             &value,
@@ -123,7 +121,6 @@ pub fn run_python_validator(
 fn exec_in_vm(
     source: &str,
     script_name: &str,
-    table: &str,
     filename: &str,
     field_path: &str,
     value: &serde_json::Value,
@@ -171,7 +168,6 @@ fn exec_in_vm(
 
         // ── build ctx dict ────────────────────────────────────────────────────
         let ctx_dict = vm.ctx.new_dict();
-        dict_set_str(&ctx_dict, "table", table, vm, script_name)?;
         dict_set_str(&ctx_dict, "filename", filename, vm, script_name)?;
         dict_set_str(&ctx_dict, "field_path", field_path, vm, script_name)?;
         dict_set_json(&ctx_dict, "value", value, vm, script_name)?;
@@ -404,7 +400,6 @@ mod tests {
 
     fn ctx(value: serde_json::Value) -> FieldValidationContext {
         FieldValidationContext {
-            table: "posts".to_string(),
             filename: "one.json".to_string(),
             field_path: "title".to_string(),
             value,
@@ -525,7 +520,6 @@ mod tests {
             r#"
 def validate(ctx):
     ok = (
-        ctx['table'] == 'posts' and
         ctx['filename'] == 'one.json' and
         ctx['field_path'] == 'title' and
         ctx['value'] == 'hello' and

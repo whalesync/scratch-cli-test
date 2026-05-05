@@ -179,6 +179,26 @@ enum Commands {
         #[arg(long)]
         folder: String,
     },
+    /// Get validation error/warning counts grouped by connection and folder as JSON.
+    /// Returns an array of { connection, folder_path, errors, warnings }.
+    /// Example: scratchmd get-validation-stats --workspace .
+    #[command(name = "get-validation-stats")]
+    GetValidationStats {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
+    /// Get up to 20 validation results for a folder as JSON (for UI previews).
+    /// Example: scratchmd get-folder-validation-sample --folder my-conn/posts --workspace .
+    #[command(name = "get-folder-validation-sample")]
+    GetFolderValidationSample {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+    },
     /// Assert derived index tables exist for all workspace connections
     #[command(name = "assert-index-tables")]
     AssertIndexTables {
@@ -195,6 +215,35 @@ enum Commands {
         /// Only inspect the named connection (case-sensitive)
         #[arg(long)]
         connection: Option<String>,
+    },
+    /// Run validation against a record without writing to the index.
+    /// Designed for agent dry-runs. Accepts inline JSON overrides for the record,
+    /// master record, validation.json, and schema.json — any combination.
+    #[command(name = "validate-record")]
+    ValidateRecord {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Folder path: <connection>/<folder> (e.g. "WEBFLOW - My Site/Blog Posts").
+        /// Required when reading any source from disk.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Record filename(s) to read from the working copy. Repeatable.
+        /// Mutually exclusive with --record.
+        #[arg(long = "file")]
+        files: Vec<String>,
+        /// Inline record JSON. Mutually exclusive with --file.
+        #[arg(long)]
+        record: Option<String>,
+        /// Inline master record JSON (overrides disk lookup for readonly checks).
+        #[arg(long)]
+        master: Option<String>,
+        /// Inline validation.json content (JSON array, overrides disk).
+        #[arg(long)]
+        validation: Option<String>,
+        /// Inline schema.json content (overrides disk).
+        #[arg(long)]
+        schema: Option<String>,
     },
 }
 
@@ -316,11 +365,34 @@ async fn main() {
         Commands::GetFolderValidationResults { workspace, folder } => {
             index::get_folder_validation_results_command(&workspace, &folder)
         }
+        Commands::GetValidationStats { workspace } => {
+            index::get_validation_stats_command(&workspace)
+        }
+        Commands::GetFolderValidationSample { workspace, folder } => {
+            index::get_folder_validation_sample_command(&workspace, &folder)
+        }
         Commands::AssertIndexTables { workspace } => index::assert_index_tables_command(&workspace),
         Commands::DumpValidations {
             workspace,
             connection,
         } => index::dump_validations_command(&workspace, connection.as_deref()),
+        Commands::ValidateRecord {
+            workspace,
+            folder,
+            files,
+            record,
+            master,
+            validation,
+            schema,
+        } => index::validate_record_command(
+            &workspace,
+            folder.as_deref(),
+            &files,
+            record.as_deref(),
+            master.as_deref(),
+            validation.as_deref(),
+            schema.as_deref(),
+        ),
         Commands::GenerateDocs { workspace } => (|| -> anyhow::Result<()> {
             let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;
             let name = wb_dir

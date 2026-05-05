@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ValidationStat } from '../../../../shared/validation-types';
 import { LiveCommandOutput } from '../../components/LiveCommandOutput';
 import { jobApi, type JobStatus } from '../../lib/job-api';
 
@@ -296,6 +297,11 @@ export function PublishChangesModal({
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [publishErrorDetails, setPublishErrorDetails] = useState<string[]>([]);
+  const [validationCounts, setValidationCounts] = useState<{
+    errors: number;
+    warnings: number;
+    records: number;
+  } | null>(null);
 
   const refreshPlans = useCallback(async (): Promise<LocalPublishPlan[]> => {
     if (!localPath) {
@@ -435,6 +441,52 @@ export function PublishChangesModal({
     }
     void loadInitialState();
   }, [loadInitialState, opened]);
+
+  useEffect(() => {
+    if (!opened || !localPath) {
+      setValidationCounts(null);
+      return;
+    }
+    setValidationCounts(null);
+    void (async () => {
+      try {
+        const stats: ValidationStat[] = await window.scratchFiles.getValidationStats(localPath);
+        if (!filterPath) {
+          // Publish all: total across workspace.
+          const errors = stats.reduce((s, r) => s + r.errors, 0);
+          const warnings = stats.reduce((s, r) => s + r.warnings, 0);
+          const records = stats.reduce((s, r) => s + r.records, 0);
+          setValidationCounts({ errors, warnings, records });
+        } else {
+          const parts = filterPath.split('/');
+          const connectionName = parts[0];
+          const rest = parts.slice(1);
+          const lastPart = rest[rest.length - 1];
+          const isFile = lastPart?.includes('.');
+          if (isFile) {
+            // Single record: fetch per-record results.
+            const filename = lastPart;
+            const folderRel = rest.slice(0, -1).join('/');
+            const folderAbsPath = `${localPath}/${connectionName}/${folderRel}`;
+            const rows = await window.scratchFiles.getValidationResults(localPath, folderAbsPath, filename);
+            const errors = rows.filter((r) => r.level === 'error').length;
+            const warnings = rows.filter((r) => r.level === 'warning').length;
+            setValidationCounts({ errors, warnings, records: errors + warnings > 0 ? 1 : 0 });
+          } else {
+            // Single table: filter workspace stats to this folder.
+            const folderPath = rest.join('/');
+            const folderStats = stats.filter((s) => s.connection === connectionName && s.folder_path === folderPath);
+            const errors = folderStats.reduce((s, r) => s + r.errors, 0);
+            const warnings = folderStats.reduce((s, r) => s + r.warnings, 0);
+            const records = folderStats.reduce((s, r) => s + r.records, 0);
+            setValidationCounts({ errors, warnings, records });
+          }
+        }
+      } catch {
+        // Non-fatal — don't show the sentence.
+      }
+    })();
+  }, [filterPath, localPath, opened]);
 
   useEffect(() => {
     const unsubscribe = window.scratchDesktop.onCommandEvent((event) => {
@@ -595,6 +647,12 @@ export function PublishChangesModal({
           <>
             {mode === 'approval' && (
               <>
+                {validationCounts && validationCounts.records > 0 && (
+                  <Text size="sm" c={validationCounts.errors > 0 ? 'red' : 'orange'}>
+                    {validationCounts.records} record{validationCounts.records === 1 ? '' : 's'} contain validation
+                    problems that may prevent them from publishing.
+                  </Text>
+                )}
                 <Text size="sm">
                   {unreviewedEntries.length} records contain unreviewed changes that will not be published.
                 </Text>

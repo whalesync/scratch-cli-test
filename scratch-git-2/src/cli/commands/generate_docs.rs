@@ -234,6 +234,21 @@ Run `scratchmd <command> --help` for full flag details.
 |---|---|
 | `build-index` | Rebuild the SQLite file index for the current workspace |
 | `dump-index [--connection <name>]` | Print file index contents (debugging) |
+| `refresh-record-index [--path <file>] [--folder <folder>]` | Re-index changed records and re-run validation; accepts specific files or folders |
+| `list-stale-records` | Show which records are out of date without re-indexing |
+
+## validation
+
+| Command | Description |
+|---|---|
+| `validate-record --folder <conn>/<folder> --file <name>` | Dry-run validation on saved file(s) without touching the index |
+| `validate-record --folder <conn>/<folder> --record <json>` | Dry-run validation on inline JSON against saved rules |
+| `validate-record --record <json> --validation <json> --schema <json>` | Fully standalone dry-run with all sources inline |
+| `get-validation-results --record <connection>/<folder>/<file>` | Show stored validation results for a single record |
+| `get-folder-validation-results --folder <connection>/<folder>` | Show all stored validation results for a folder |
+| `get-folder-validation-sample --folder <connection>/<folder>` | Show up to 20 validation issues for a folder (UI preview) |
+| `get-validation-stats` | Show error/warning counts grouped by connection and folder |
+| `dump-validation-config [--connection <name>]` | Print the active validation config (no DB required) |
 
 ## docs
 
@@ -406,7 +421,7 @@ affected — only the config and schema live in `.scratch/`.
 
 | Field       | Type       | Required | Description |
 |-------------|------------|----------|-------------|
-| `validator` | `string`   | yes      | Built-in name (`enforce_schema`, `length`) or `python:<path>`. |
+| `validator` | `string`   | yes      | Built-in name (`enforce_schema`, `required`, `length`) or `python:<path>`. |
 | `field`     | `string`   | no       | Dot-path to a single field. Omit for record-scoped validators (`enforce_schema`). |
 | `params`    | `object`   | no       | Arguments passed to the validator. Defaults to `{}`. |
 | `order`     | `number`   | no       | Run order (ascending). Ties keep file order. |
@@ -448,6 +463,20 @@ No `params`. Good default to add to every table.
 | Required field absent, null, or empty | `error` | `field 'slug' is required but missing or null` |
 | Read-only field changed on existing record | `warning` | `Updated read-only field` (description includes old → new values) |
 | Read-only field set on new record | `warning` | `Updated read-only field` (description: value will be ignored) |
+
+---
+
+### `required`
+
+**Field-scoped.** Emits an **error** when a field is absent from the record,
+`null`, or an empty string `""`. Use this to enforce values on fields that the
+schema marks as optional but your workflow needs filled in before publishing.
+
+```json
+{ "validator": "required", "field": "fields.Name" }
+```
+
+No `params`. Use one entry per field.
 
 ---
 
@@ -501,34 +530,113 @@ So `"python:validators/check-slug.py"` resolves to
 
 ### The `validate(ctx)` contract
 
-Every Python validator must define a top-level `validate(ctx)` function:
+Every Python validator must define a top-level `validate(ctx)` function.
+Return a **list of violations** — an empty list means the value passes.
 
 ```python
 def validate(ctx):
     """
     ctx keys:
-      table      (str)  -- folder path of the table
       filename   (str)  -- record filename, e.g. "post-1.json"
       field_path (str)  -- field being validated, e.g. "fieldData.slug"
       value             -- field value (str, int, float, bool, None, list, dict)
       record     (dict) -- full record (read-only)
       args       (dict) -- params from validation.json
 
-    Returns list[dict], each with:
-      is_valid (bool)       -- True = pass, False = violation
-      message  (str | None) -- short message shown in the UI
+    Returns list[dict] — each item is a violation:
+      level       ("warning"|"error")  -- defaults to "warning" if absent
+      message     (str | None)         -- short message shown in the UI
+      description (str | None)         -- longer explanation (optional)
+      fixable     (bool)               -- defaults to False
     """
     value = ctx["value"] or ""
     import re
     pattern = ctx["args"].get("pattern", r"^[a-z0-9-]+$")
     if not re.match(pattern, str(value)):
-        return [{"is_valid": False, "message": f"slug '{value}' does not match {pattern}"}]
-    return [{"is_valid": True, "message": None}]
+        return [{"message": f"slug '{value}' does not match {pattern}"}]
+    return []
 ```
 
-Returning an empty list or all `{"is_valid": True}` entries means the field
-passes. The sandbox excludes `subprocess`, `socket`, and `os.system`. C
-extensions (numpy, pandas) are not supported.
+The sandbox excludes `subprocess`, `socket`, and `os.system`. C extensions
+(numpy, pandas) are not supported.
+
+---
+
+## Dry-run validation for agents
+
+Use `scratchmd validate-record` to run validation without touching the index.
+This is the primary way for an AI agent to check records before or after
+editing them — no side effects, immediate JSON output.
+
+### Why dry-run?
+
+- **Before saving**: validate a proposed JSON value before writing it to disk.
+- **Try a new rule**: test a custom `validation.json` against existing records
+  without deploying it yet.
+- **Debug a validator**: supply all four inputs inline so no workspace is needed.
+
+### Sources
+
+Each of the four inputs (record, master record, `validation.json`, `schema.json`)
+can come from disk or be supplied as an inline JSON string. Any combination works.
+
+| Flag | Meaning |
+|------|---------|
+| `--folder <conn>/<folder>` | Locates disk sources; required when any source is read from disk |
+| `--file <name>` | Read record(s) from working copy; repeatable; mutually exclusive with `--record` |
+| `--record <json>` | Inline record JSON; mutually exclusive with `--file` |
+| `--master <json>` | Inline master record (omit to treat record as new) |
+| `--validation <json>` | Inline `validation.json` array (overrides disk) |
+| `--schema <json>` | Inline `schema.json` (overrides disk) |
+
+### Output
+
+JSON array of violations (empty array = all checks pass):
+
+```json
+[
+  {
+    "file": "post-1.json",
+    "field_path": "fieldData.slug",
+    "validator_kind": "length",
+    "level": "warning",
+    "message": "value is 256 characters (max 200)",
+    "fixable": false
+  }
+]
+```
+
+### Examples
+
+```bash
+# Check a saved record against saved rules
+scratchmd validate-record \
+  --folder "WEBFLOW - My Site/Blog Posts" \
+  --file post-1.json
+
+# Check multiple records at once
+scratchmd validate-record \
+  --folder "WEBFLOW - My Site/Blog Posts" \
+  --file post-1.json --file post-2.json
+
+# Test a proposed edit before saving it
+scratchmd validate-record \
+  --folder "WEBFLOW - My Site/Blog Posts" \
+  --record '{"fieldData":{"name":"New Title","slug":"new-title"}}'
+
+# Test a new validation rule against an existing record
+scratchmd validate-record \
+  --folder "WEBFLOW - My Site/Blog Posts" \
+  --file post-1.json \
+  --validation '[{"validator":"length","field":"fieldData.name","params":{"max":60}}]'
+
+# Fully standalone — no workspace needed
+scratchmd validate-record \
+  --record '{"fieldData":{"slug":"BAD SLUG"}}' \
+  --master '{"fieldData":{"slug":"good-slug"}}' \
+  --validation '[{"validator":"python:validators/check-slug.py","field":"fieldData.slug"}]' \
+  --schema '{}'
+```
 
 ---
 

@@ -69,6 +69,38 @@ pub fn length(ctx: &FieldValidationContext) -> Option<ValidationResult> {
     None
 }
 
+/// Checks that a field value is present, non-null, and non-empty string.
+///
+/// Emits an **error** when:
+/// - the field is absent from the record
+/// - the field is `null`
+/// - the field is an empty string (`""`)
+///
+/// Use this to enforce required values on fields that the schema does not
+/// already list in `required` (e.g. optional fields that your workflow
+/// still needs to have filled in before publishing).
+///
+/// ```json
+/// { "validator": "required", "field": "fields.Name" }
+/// ```
+pub fn required(ctx: &FieldValidationContext) -> Option<ValidationResult> {
+    let is_missing = match &ctx.value {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(s) if s.is_empty() => true,
+        _ => false,
+    };
+    if is_missing {
+        Some(ValidationResult {
+            level: ValidationLevel::Error,
+            message: Some(format!("field '{}' is required", ctx.field_path)),
+            description: None,
+            fixable: false,
+        })
+    } else {
+        None
+    }
+}
+
 fn invalid_length_params() -> Option<ValidationResult> {
     Some(ValidationResult {
         level: ValidationLevel::Warning,
@@ -239,7 +271,6 @@ mod tests {
         schema: serde_json::Value,
     ) -> RecordValidationContext {
         RecordValidationContext {
-            table: "posts".to_string(),
             filename: "rec-001.json".to_string(),
             record,
             master_record: master,
@@ -403,7 +434,6 @@ mod tests {
 
     fn ctx(value: serde_json::Value, args: serde_json::Value) -> FieldValidationContext {
         FieldValidationContext {
-            table: "Products".to_string(),
             filename: "rec-001.json".to_string(),
             field_path: "title".to_string(),
             value,
@@ -449,7 +479,6 @@ mod tests {
     #[test]
     fn missing_min_and_max_param_fails_as_warning() {
         let ctx_bad = FieldValidationContext {
-            table: "T".to_string(),
             filename: "f.json".to_string(),
             field_path: "x".to_string(),
             value: json!("hello"),

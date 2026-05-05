@@ -31,6 +31,18 @@ export type ValidationResultRow = {
 };
 
 /**
+ * Per-folder validation issue counts returned by `get-validation-stats`.
+ */
+export type ValidationStat = {
+  connection: string;
+  folder_path: string;
+  errors: number;
+  warnings: number;
+  /** Number of distinct records (files) that have at least one violation. */
+  records: number;
+};
+
+/**
  * Validation entry mapped to camelCase for use in UI components.
  * Produced by mapping a `ValidationResultRow` after the CLI call returns.
  */

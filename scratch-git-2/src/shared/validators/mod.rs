@@ -19,7 +19,6 @@ pub const VALIDATION_RESULTS_TABLE: &str = "validation_results_v1";
 // ---------------------------------------------------------------------------
 
 pub struct FieldValidationContext {
-    pub table: String,
     pub filename: String,
     pub field_path: String,
     pub value: serde_json::Value,
@@ -29,7 +28,6 @@ pub struct FieldValidationContext {
 
 /// Context passed to record-scoped validators (no `field`/`fields` key in config).
 pub struct RecordValidationContext {
-    pub table: String,
     pub filename: String,
     pub record: serde_json::Value,
     /// Master-branch version of the record; `None` for new records (no baseline to compare).
@@ -326,6 +324,107 @@ pub fn dump_validation_config(dirty_dir: &Path) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Dry-run API (no DB writes — designed for agent use via validate-record)
+// ---------------------------------------------------------------------------
+
+/// One violation produced by a dry-run validation pass.
+#[derive(serde::Serialize)]
+pub struct DryRunViolation {
+    pub file: String,
+    pub field_path: String,
+    pub validator_kind: String,
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub fixable: bool,
+}
+
+/// Run all validators from `entries` against a single record and return
+/// violations without writing to any database.
+///
+/// Designed for agent dry-runs via the `validate-record` CLI command:
+/// test a record before saving it, try a custom validation rule, or validate
+/// inline JSON without touching the index at all.
+pub fn run_validators_dry(
+    file_name: &str,
+    record: &serde_json::Value,
+    master_record: Option<&serde_json::Value>,
+    schema: Option<&serde_json::Value>,
+    entries: &[ValidatorEntry],
+    workspace_dir: &Path,
+) -> anyhow::Result<Vec<DryRunViolation>> {
+    let mut out = Vec::new();
+
+    let mut sorted: Vec<&ValidatorEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.order.unwrap_or(0));
+
+    for entry in &sorted {
+        if entry.field.is_some() && entry.fields.is_some() {
+            anyhow::bail!(
+                "validator '{}' specifies both 'field' and 'fields'; use one or the other",
+                entry.validator
+            );
+        }
+
+        match (&entry.field, &entry.fields) {
+            (Some(field_path), _) => {
+                let field_value = get_by_dot_path(record, field_path);
+                if field_value.is_none() && entry.validator != "required" {
+                    continue;
+                }
+                let value = field_value.cloned().unwrap_or(serde_json::Value::Null);
+                let ctx = FieldValidationContext {
+                    filename: file_name.to_string(),
+                    field_path: field_path.clone(),
+                    value,
+                    record: record.clone(),
+                    args: entry.params.clone(),
+                };
+                if let Some(result) = dispatch_validator(&entry.validator, &ctx, workspace_dir)? {
+                    out.push(DryRunViolation {
+                        file: file_name.to_string(),
+                        field_path: field_path.clone(),
+                        validator_kind: entry.validator.clone(),
+                        level: result.level.as_str().to_string(),
+                        message: result.message,
+                        description: result.description,
+                        fixable: result.fixable,
+                    });
+                }
+            }
+            (_, Some(_)) => {
+                // multi-field validators not yet implemented — skip silently
+            }
+            (None, None) => {
+                let record_ctx = RecordValidationContext {
+                    filename: file_name.to_string(),
+                    record: record.clone(),
+                    master_record: master_record.cloned(),
+                    schema: schema.cloned().unwrap_or(serde_json::Value::Null),
+                    args: entry.params.clone(),
+                };
+                let violations = dispatch_record_validator(&entry.validator, &record_ctx)?;
+                for v in violations {
+                    out.push(DryRunViolation {
+                        file: file_name.to_string(),
+                        field_path: v.field_path,
+                        validator_kind: entry.validator.clone(),
+                        level: v.level.as_str().to_string(),
+                        message: v.message,
+                        description: v.description,
+                        fixable: v.fixable,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -553,22 +652,19 @@ fn apply_validators_to_record(
         match (&entry.field, &entry.fields) {
             (Some(field_path), _) => {
                 // Field-scoped validator.
-                let value = record.get(field_path.as_str()).cloned().unwrap_or_else(|| {
+                let field_value = get_by_dot_path(record, field_path);
+                // `required` must fire even when the field is absent (receives Null).
+                // All other validators skip absent fields to avoid spurious failures.
+                if field_value.is_none() && entry.validator != "required" {
                     eprintln!(
                         "[validation] field '{}' not found in {folder_path}/{file_name}\n  Fix: check field names in the record or remove '{0}' from {folder_path}/validation.json",
                         field_path
                     );
-                    serde_json::Value::Null
-                });
-
-                // If field was missing we warned above; skip writing a result
-                // (null value would produce spurious failures).
-                if record.get(field_path.as_str()).is_none() {
                     continue;
                 }
+                let value = field_value.cloned().unwrap_or(serde_json::Value::Null);
 
                 let ctx = FieldValidationContext {
-                    table: folder_path.to_string(),
                     filename: file_name.to_string(),
                     field_path: field_path.clone(),
                     value,
@@ -601,7 +697,6 @@ fn apply_validators_to_record(
                 // Record-scoped validator. `enforce_schema` reads schema + master.
                 // Absence of rows for a record means no violations (violations-only model).
                 let record_ctx = RecordValidationContext {
-                    table: folder_path.to_string(),
                     filename: file_name.to_string(),
                     record: record.clone(),
                     master_record: master_record.cloned(),
@@ -643,10 +738,11 @@ fn dispatch_validator(
         return python::run_python_validator(rel_path, workspace_dir, ctx);
     }
     match kind {
+        "required" => Ok(builtin::required(ctx)),
         "length" => Ok(builtin::length(ctx)),
         "max_length" => Ok(builtin::length(ctx)),
         other => anyhow::bail!(
-            "unknown validator '{}' — valid validators: length, python:<path>",
+            "unknown validator '{}' — valid validators: required, length, python:<path>",
             other
         ),
     }
@@ -746,6 +842,17 @@ fn collect_record_files_in_folder(folder_dir: &Path) -> anyhow::Result<Vec<Strin
     }
     files.sort();
     Ok(files)
+}
+
+/// Traverse a dot-separated path into a JSON value.
+/// `"fieldData.name"` → `value["fieldData"]["name"]`.
+/// Returns `None` if any segment is missing or the value is not an object.
+fn get_by_dot_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
 }
 
 fn open_validation_db(db_path: &Path) -> anyhow::Result<Connection> {

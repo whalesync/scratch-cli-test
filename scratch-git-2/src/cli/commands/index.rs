@@ -1051,6 +1051,149 @@ pub fn get_folder_validation_results_command(
     Ok(())
 }
 
+// ── Validation stats ──────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct FolderValidationStat {
+    connection: String,
+    folder_path: String,
+    errors: i64,
+    warnings: i64,
+    /// Number of distinct records (files) that have at least one violation.
+    records: i64,
+}
+
+/// Return error/warning counts grouped by connection and folder across all connections.
+///
+/// Output: JSON array of `{ connection, folder_path, errors, warnings }`.
+/// Folders with zero violations are omitted.
+pub fn get_validation_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    let mut stats: Vec<FolderValidationStat> = Vec::new();
+
+    for connection in &workspace_marker.connections {
+        if connection.repo_path.is_empty() || connection.dir_name.is_empty() {
+            continue;
+        }
+        let db_path = layout.index_db_path(&connection.repo_path);
+        if !db_path.exists() {
+            continue;
+        }
+        let conn = match rusqlite::Connection::open(&db_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if validators::ensure_validation_schema(&conn).is_err() {
+            continue;
+        }
+
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT folder_path, \
+                        SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END), \
+                        SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END), \
+                        COUNT(DISTINCT file_name) \
+                 FROM {VALIDATION_RESULTS_TABLE} \
+                 GROUP BY folder_path \
+                 ORDER BY folder_path"
+            ))
+            .map_err(|e| anyhow::anyhow!("failed to prepare stats query: {e}"))?;
+
+        let folder_rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| anyhow::anyhow!("stats query failed: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("stats row read failed: {e}"))?;
+
+        for (folder_path, errors, warnings, records) in folder_rows {
+            stats.push(FolderValidationStat {
+                connection: connection.dir_name.clone(),
+                folder_path,
+                errors,
+                warnings,
+                records,
+            });
+        }
+    }
+
+    println!("{}", serde_json::to_string(&stats)?);
+    Ok(())
+}
+
+/// Return up to 20 validation results for a folder — same shape as
+/// `get-folder-validation-results` but capped for UI preview use.
+/// Errors are returned before warnings; within each level results are ordered
+/// by file name then field path.
+pub fn get_folder_validation_sample_command(
+    workspace_start: &std::path::Path,
+    folder_path_arg: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    let slash = folder_path_arg.find('/').ok_or_else(|| {
+        anyhow::anyhow!("folder path must be '<connection>/<folder>', got: {folder_path_arg}")
+    })?;
+    let connection_name = &folder_path_arg[..slash];
+    let folder_path = &folder_path_arg[slash + 1..];
+
+    let connection = workspace_marker
+        .connections
+        .iter()
+        .find(|c| c.dir_name == connection_name)
+        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
+
+    let db_path = layout.index_db_path(&connection.repo_path);
+    if !db_path.exists() {
+        println!("[]");
+        return Ok(());
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    validators::ensure_validation_schema(&conn)?;
+
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT file_name, field_path, validator_kind, level, message, description, fixable \
+             FROM {VALIDATION_RESULTS_TABLE} \
+             WHERE folder_path = ?1 \
+             ORDER BY level DESC, file_name, field_path \
+             LIMIT 20"
+        ))
+        .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
+
+    let sample_rows: Vec<ValidationResultRow> = stmt
+        .query_map(rusqlite::params![folder_path], |row| {
+            Ok(ValidationResultRow {
+                file_name: Some(row.get(0)?),
+                field_path: row.get(1)?,
+                validator_kind: row.get(2)?,
+                level: row.get(3)?,
+                message: row.get(4)?,
+                description: row.get(5)?,
+                fixable: row.get(6)?,
+            })
+        })
+        .map_err(|e| anyhow::anyhow!("query failed: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("row read failed: {e}"))?;
+
+    println!("{}", serde_json::to_string(&sample_rows)?);
+    Ok(())
+}
+
 /// Return all validation results for a single record as a JSON array.
 ///
 /// `record_path` is workspace-relative: `<connection>/<folder>/<filename>`.
@@ -1117,5 +1260,181 @@ pub fn get_validation_results_command(
         .map_err(|e| anyhow::anyhow!("row read failed: {e}"))?;
 
     println!("{}", serde_json::to_string(&rows)?);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// validate-record command
+// ---------------------------------------------------------------------------
+
+/// Run validation against one or more records without writing to the index.
+///
+/// Designed for agent dry-runs: test a record before saving it, try a new
+/// validation rule, or validate inline JSON without touching the index at all.
+///
+/// Sources can come from disk (`--folder` / `--file`) or inline JSON strings.
+/// Any combination is supported:
+///   - `--file` reads record files from the working copy; requires `--folder`.
+///   - `--record` accepts inline record JSON; mutually exclusive with `--file`.
+///   - `--master` overrides the master-record lookup (for readonly checks).
+///   - `--validation` overrides the `validation.json` content.
+///   - `--schema` overrides the `schema.json` content.
+///
+/// When all four JSON overrides are provided, `--folder` is not required.
+pub fn validate_record_command(
+    workspace_start: &std::path::Path,
+    folder: Option<&str>,
+    files: &[String],
+    record_json: Option<&str>,
+    master_json: Option<&str>,
+    validation_json: Option<&str>,
+    schema_json: Option<&str>,
+) -> anyhow::Result<()> {
+    if !files.is_empty() && record_json.is_some() {
+        anyhow::bail!("--file and --record are mutually exclusive");
+    }
+    if files.is_empty() && record_json.is_none() {
+        anyhow::bail!("provide either --file <filename> (repeatable) or --record <json>");
+    }
+
+    let workspace = resolve_workspace(workspace_start)?;
+    let layout = WorkspaceLayout::for_cli(&workspace);
+    let workspace_dir = layout.workbook_materialization_path();
+
+    // Split folder into connection name + subfolder path.
+    let (connection_name, subfolder): (Option<String>, Option<String>) =
+        if let Some(f) = folder {
+            let slash = f.find('/');
+            let conn = match slash {
+                Some(i) => f[..i].to_string(),
+                None => f.to_string(),
+            };
+            let sub = match slash {
+                Some(i) => f[i + 1..].to_string(),
+                None => String::new(),
+            };
+            (Some(conn), Some(sub))
+        } else {
+            (None, None)
+        };
+
+    // Load validation config: inline > disk > empty.
+    let entries: Vec<validators::ValidatorEntry> = if let Some(json) = validation_json {
+        serde_json::from_str(json)
+            .map_err(|e| anyhow::anyhow!("invalid --validation JSON: {e}"))?
+    } else if let (Some(conn), Some(sub)) = (&connection_name, &subfolder) {
+        let scratch_dir = layout.connection_scratch_path(conn);
+        let val_path = if sub.is_empty() {
+            scratch_dir.join("validation.json")
+        } else {
+            scratch_dir.join(sub).join("validation.json")
+        };
+        match std::fs::read(&val_path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", val_path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => anyhow::bail!("failed to read {}: {e}", val_path.display()),
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Load schema: inline > disk > None.
+    let schema: Option<serde_json::Value> = if let Some(json) = schema_json {
+        Some(
+            serde_json::from_str(json)
+                .map_err(|e| anyhow::anyhow!("invalid --schema JSON: {e}"))?,
+        )
+    } else if let (Some(conn), Some(sub)) = (&connection_name, &subfolder) {
+        let scratch_dir = layout.connection_scratch_path(conn);
+        let schema_path = if sub.is_empty() {
+            scratch_dir.join("schema.json")
+        } else {
+            scratch_dir.join(sub).join("schema.json")
+        };
+        match std::fs::read(&schema_path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).ok(),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // Parse inline master once (reused for all files when --master is given).
+    let inline_master: Option<serde_json::Value> = master_json
+        .map(|j| {
+            serde_json::from_str(j).map_err(|e| anyhow::anyhow!("invalid --master JSON: {e}"))
+        })
+        .transpose()?;
+
+    let mut all_violations: Vec<validators::DryRunViolation> = Vec::new();
+
+    if let Some(json) = record_json {
+        // Inline record mode.
+        let record: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| anyhow::anyhow!("invalid --record JSON: {e}"))?;
+        let violations = validators::run_validators_dry(
+            "<inline>",
+            &record,
+            inline_master.as_ref(),
+            schema.as_ref(),
+            &entries,
+            &workspace_dir,
+        )?;
+        all_violations.extend(violations);
+    } else {
+        // Disk file mode.
+        let (conn, sub) = match (&connection_name, &subfolder) {
+            (Some(c), Some(s)) => (c.as_str(), s.as_str()),
+            _ => anyhow::bail!("--folder is required when using --file"),
+        };
+        let dirty_dir = layout.dirty_checkout_path(conn);
+        let master_dir = layout.master_worktree_path(conn);
+
+        for file_name in files {
+            let record_path = if sub.is_empty() {
+                dirty_dir.join(file_name)
+            } else {
+                dirty_dir.join(sub).join(file_name)
+            };
+            let bytes = std::fs::read(&record_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", record_path.display()))?;
+            let record: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                anyhow::anyhow!("invalid JSON in {}: {e}", record_path.display())
+            })?;
+
+            // Master: inline override takes priority; otherwise try disk.
+            let disk_master: Option<serde_json::Value> = if master_json.is_none() {
+                let master_path = if sub.is_empty() {
+                    master_dir.join(file_name)
+                } else {
+                    master_dir.join(sub).join(file_name)
+                };
+                match std::fs::read(&master_path) {
+                    Ok(bytes) => serde_json::from_slice(&bytes).ok(),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+            let file_master = if master_json.is_some() {
+                inline_master.as_ref()
+            } else {
+                disk_master.as_ref()
+            };
+
+            let violations = validators::run_validators_dry(
+                file_name,
+                &record,
+                file_master,
+                schema.as_ref(),
+                &entries,
+                &workspace_dir,
+            )?;
+            all_violations.extend(violations);
+        }
+    }
+
+    println!("{}", serde_json::to_string(&all_violations)?);
     Ok(())
 }
