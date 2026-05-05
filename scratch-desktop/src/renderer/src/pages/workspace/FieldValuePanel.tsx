@@ -1,6 +1,6 @@
 import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
 import { diffWordsWithSpace } from 'diff';
-import { Check, Columns2, Eye, Maximize2, Minimize2, RotateCcw, WrapText } from 'lucide-react';
+import { Check, Columns2, Eye, Maximize2, RotateCcw, WrapText } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
@@ -20,8 +20,6 @@ interface FieldValuePanelProps {
   onView?: () => void;
   /** When set, render an "Expand" action below Approve/Reject (used to focus this field). */
   onExpand?: () => void;
-  /** When set, render a "Minimize" action below Approve/Reject (used to exit focus mode). */
-  onMinimize?: () => void;
   /** When true, before/after values render on a single line, truncated to TRUNCATED_MAX_CHARS. */
   truncate?: boolean;
   /** When true, the panel fills its parent's available vertical space instead of capping at MAX_CONTENT_HEIGHT. */
@@ -292,15 +290,13 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   onUndo,
   onView,
   onExpand,
-  onMinimize,
   truncate = false,
   expanded = false,
   richDiff = false,
 }: FieldValuePanelProps) {
   const [diffViewMode, setDiffViewMode] = useDiffViewMode();
-  const hasActions = Boolean(onApprove || onUndo || onView || onExpand || onMinimize);
-  const actionCount =
-    (onApprove ? 1 : 0) + (onUndo ? 1 : 0) + (onView ? 1 : 0) + (onExpand ? 1 : 0) + (onMinimize ? 1 : 0);
+  const hasActions = Boolean(onApprove || onUndo || onView || onExpand);
+  const actionCount = (onApprove ? 1 : 0) + (onUndo ? 1 : 0) + (onView ? 1 : 0) + (onExpand ? 1 : 0);
   const renderedFromValue = truncate ? truncateOneLine(fromValue) : fromValue;
   const renderedValue = truncate ? truncateOneLine(value) : value;
   const lineWrapStyle: React.CSSProperties = truncate
@@ -451,7 +447,6 @@ export const FieldValuePanel = memo(function FieldValuePanel({
           {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
           {onUndo && <IconActionButton label="Reject" onClick={onUndo} tone="undo" icon={RotateCcw} />}
           {onExpand && <IconActionButton label="Expand" onClick={onExpand} tone="secondary" icon={Maximize2} />}
-          {onMinimize && <IconActionButton label="Minimize" onClick={onMinimize} tone="secondary" icon={Minimize2} />}
           {onView && <IconActionButton label="View change" onClick={onView} tone="secondary" icon={Eye} />}
         </Stack>
       )}

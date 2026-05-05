@@ -353,17 +353,24 @@ export const RecordDetailView = memo(function RecordDetailView({
     };
   }, [selectedFilename, folderPath, workspacePath, recordReloadKey, validationReloadKey, dataRefreshKey]);
 
-  // Escape key closes overlay (capture phase so it fires before the grid handles it)
+  // Escape key minimizes the focused field if one is open, otherwise closes the overlay.
+  // Capture phase so it fires before the grid handles it.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        console.log('Escape key pressed');
         e.stopPropagation();
-        onClose();
+        if (focusedFieldName) {
+          setFocusedFieldName(null);
+          console.log('Focused field minimized');
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [onClose]);
+  }, [onClose, focusedFieldName]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -383,6 +390,27 @@ export const RecordDetailView = memo(function RecordDetailView({
   const handleNext = useCallback(() => {
     if (selectedIndex < rows.length - 1) onSelectIndex(selectedIndex + 1);
   }, [selectedIndex, rows.length, onSelectIndex]);
+
+  // Up/Down arrow keys navigate records, mirroring the Prev/Next buttons.
+  // Skipped when focus is in an editable element (inputs, textareas, CodeMirror)
+  // so they don't hijack cursor movement or Select dropdown navigation.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable) return;
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'ArrowUp') handlePrev();
+      else handleNext();
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [handlePrev, handleNext]);
 
   const reloadRecordAndValidations = useCallback(() => {
     setRecordReloadKey((k) => k + 1);

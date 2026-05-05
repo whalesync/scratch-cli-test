@@ -1,9 +1,10 @@
-import { Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
-import { TriangleAlertIcon } from 'lucide-react';
+import { ActionIcon, Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
+import { Minimize2, TriangleAlertIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
 import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
+import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
 
@@ -50,6 +51,7 @@ interface RecordFieldsGridProps {
 
 const FLOATING_PANEL_GAP = 5;
 const LABEL_COLUMN_WIDTH = 280;
+const VIEW_ALL_VALUE = '__view_all_fields__';
 
 function validationLevelColor(level: ValidationEntry['level']): string {
   return level === 'error' ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)';
@@ -262,9 +264,9 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     onFocusedFieldChange?.(next);
   };
 
-  // Re-engage focus mode whenever the parent requests a (possibly different) field.
+  // Sync internal focus state with the parent's requested field, including clearing it.
   useEffect(() => {
-    if (initialFocusedFieldName) setFocusedFieldNameInternal(initialFocusedFieldName);
+    setFocusedFieldNameInternal(initialFocusedFieldName ?? null);
   }, [initialFocusedFieldName]);
 
   const editingRow = useMemo(() => rows.find((row) => row.editing) ?? null, [rows]);
@@ -335,10 +337,13 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     ) : null;
 
   if (focusedRow) {
-    const fieldOptions = rows.map((row) => ({
-      value: row.fieldName,
-      label: row.displayLabel ?? row.fieldName,
-    }));
+    const fieldOptions = [
+      ...rows.map((row) => ({
+        value: row.fieldName,
+        label: row.displayLabel ?? row.fieldName,
+      })),
+      { value: VIEW_ALL_VALUE, label: `All fields (${rows.length})` },
+    ];
     const focusedViolations = validationWarnings?.get(focusedRow.fieldName);
     const focusedHasError = focusedViolations?.some((v) => v.level === 'error');
     return (
@@ -350,20 +355,40 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
             gap: 8,
             backgroundColor: 'var(--bg-panel)',
             borderBottom: '1px solid var(--fg-divider)',
-            padding: '4px 12px',
+            padding: '4px 16px 4px 12px',
           }}
         >
           <Select
             data={fieldOptions}
             value={focusedRow.fieldName}
             onChange={(next) => {
-              if (next) setFocusedFieldName(next);
+              if (next === VIEW_ALL_VALUE) {
+                setFocusedFieldName(null);
+              } else if (next) {
+                setFocusedFieldName(next);
+              }
             }}
             allowDeselect={false}
             searchable={fieldOptions.length > 8}
             variant="unstyled"
             comboboxProps={{ withinPortal: true, zIndex: 10020, width: 'target' }}
             aria-label="Focused field"
+            renderOption={({ option }) => (
+              <Box
+                style={{
+                  width: '100%',
+                  ...(option.value === VIEW_ALL_VALUE
+                    ? {
+                        paddingTop: 6,
+                        marginTop: 2,
+                        borderTop: '1px solid var(--fg-divider)',
+                      }
+                    : {}),
+                }}
+              >
+                {option.label}
+              </Box>
+            )}
             styles={{
               input: {
                 fontSize: 12,
@@ -383,6 +408,19 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
               </Box>
             </ValidationTooltip>
           )}
+          <Box style={{ marginLeft: 'auto', width: 28, display: 'flex', justifyContent: 'center' }}>
+            <Tooltip label="Minimize" position="left" withArrow zIndex={10020}>
+              <ActionIcon
+                variant="subtle"
+                size={24}
+                radius={3}
+                aria-label="Minimize"
+                onClick={() => setFocusedFieldName(null)}
+              >
+                <StyledLucideIcon Icon={Minimize2} size={14} strokeWidth={2.25} />
+              </ActionIcon>
+            </Tooltip>
+          </Box>
         </Box>
 
         <Box
@@ -408,7 +446,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
               onClick={focusedRow.onClick}
               onApprove={focusedRow.displayMode === 'diff' ? focusedRow.onApprove : undefined}
               onUndo={focusedRow.displayMode === 'diff' ? focusedRow.onUndo : undefined}
-              onMinimize={() => setFocusedFieldName(null)}
               expanded
             />
           )}
