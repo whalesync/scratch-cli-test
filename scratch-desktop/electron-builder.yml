@@ -92,5 +92,5 @@ linux:
 publish:
   provider: github
   owner: whalesync
-  repo: scratch-cli
+  repo: scratch-desktop
   channel: ${env.UPDATE_CHANNEL}

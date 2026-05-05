@@ -31,7 +31,7 @@ if ! command -v jq &>/dev/null; then
   exit 0
 fi
 
-GITHUB_REPO="whalesync/scratch-cli"
+GITHUB_REPO="whalesync/scratch-desktop"
 
 echo "Checking release $NEW_VERSION (id=$RELEASE_ID)..."
 

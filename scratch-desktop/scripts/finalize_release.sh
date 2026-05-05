@@ -29,7 +29,7 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-GITHUB_REPO="whalesync/scratch-cli"
+GITHUB_REPO="whalesync/scratch-desktop"
 UPLOAD_URL_BASE="${RELEASE_UPLOAD_URL%%\{*}"
 
 echo "Fetching assets on draft release $NEW_VERSION..."

@@ -8,12 +8,12 @@ cd "$(dirname "$0")/.."
 # Prod-only. Runs after finalize_release.sh has flipped the GitHub release to
 # public. Computes sha256 for the macOS arm64 and x64 .zip assets (the cask
 # formula currently points at .zip, not .dmg — see plan), rewrites the cask
-# formulae in whalesync/homebrew-scratch-cli, and pushes.
+# formulae in whalesync/homebrew-scratch-desktop, and pushes.
 #
 # Required env (normally from bootstrap dotenv):
 #   SEMVER, NEW_VERSION
 # Required secret:
-#   GITHUB_TOKEN (must have push access to whalesync/homebrew-scratch-cli)
+#   GITHUB_TOKEN (must have push access to whalesync/homebrew-scratch-desktop)
 
 if [ -z "$SEMVER" ] || [ -z "$NEW_VERSION" ]; then
   echo "ERROR: SEMVER and NEW_VERSION must be set (see bootstrap release.env)."
@@ -24,7 +24,8 @@ if [ -z "$GITHUB_TOKEN" ]; then
   exit 1
 fi
 
-GITHUB_REPO="whalesync/scratch-cli"
+GITHUB_REPO="whalesync/scratch-desktop"
+TAP_REPO="whalesync/homebrew-scratch-desktop"
 BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${NEW_VERSION}"
 IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
 
@@ -34,7 +35,7 @@ X64_ZIP_NAME="Scratch-${SEMVER}-x64.zip"
 # Release is public at this point, so we can check/download with plain curl.
 WORK_DIR=$(mktemp -d)
 TAP_PARENT=$(mktemp -d)
-TAP_DIR="$TAP_PARENT/homebrew-scratch-cli"
+TAP_DIR="$TAP_PARENT/homebrew-scratch-desktop"
 trap 'rm -rf "$WORK_DIR" "$TAP_PARENT"' EXIT
 
 # The mac Package/Upload jobs are optional in the pipeline — if the user
@@ -62,8 +63,8 @@ SHA_DARWIN_AMD64=$(shasum -a 256 "$WORK_DIR/x64.zip"   | awk '{print $1}')
 echo "  arm64: $SHA_DARWIN_ARM64"
 echo "  x64:   $SHA_DARWIN_AMD64"
 
-echo "Cloning homebrew-scratch-cli..."
-git clone "https://${GITHUB_TOKEN}@github.com/whalesync/homebrew-scratch-cli.git" "$TAP_DIR"
+echo "Cloning ${TAP_REPO}..."
+git clone "https://${GITHUB_TOKEN}@github.com/${TAP_REPO}.git" "$TAP_DIR"
 
 git -C "$TAP_DIR" config user.email "ci@whalesync.com"
 git -C "$TAP_DIR" config user.name "GitLab CI"

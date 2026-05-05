@@ -31,7 +31,7 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-GITHUB_REPO="whalesync/scratch-cli"
+GITHUB_REPO="whalesync/scratch-desktop"
 DIST_DIR="./dist-release"
 
 if [ ! -d "$DIST_DIR" ]; then

@@ -27,14 +27,21 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-GITHUB_REPO="whalesync/scratch-cli"
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "WARN: GITHUB_TOKEN is not set — falling back to the unauthenticated GitHub API." >&2
+  echo "      Drafts will be invisible and private repos will 404. Rate limit is 60 req/hr per IP." >&2
+fi
+
+GITHUB_REPO="whalesync/scratch-desktop"
 
 if [ "$VARIANT" = "prod" ]; then
-  TAG_SUFFIX="-desktop"
-  FALLBACK_TAG="v0.1.0-desktop"
+  TAG_SUFFIX=""
+  TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
+  FALLBACK_TAG="v0.1.0"
 else
-  TAG_SUFFIX="-desktop-test"
-  FALLBACK_TAG="v0.0.0-desktop-test"
+  TAG_SUFFIX="-test"
+  TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
+  FALLBACK_TAG="v0.0.0-test"
 fi
 
 curl_releases_page() {
@@ -49,14 +56,14 @@ curl_releases_page() {
 }
 
 # Same as bootstrap_release.sh, but scans GitHub's first 5 pages (bootstrap uses 1).
-# Latest tag_name ending in TAG_SUFFIX, version-sorted descending; drafts included.
+# Latest tag_name matching TAG_PATTERN (regex), version-sorted descending; drafts included.
 LATEST_TAG=$(
   {
     for page in 1 2 3 4 5; do
       curl_releases_page "$page"
       printf '\n'
     done
-  } | jq -s 'add | .[] | select(.tag_name | endswith($suf)) | .tag_name' --arg suf "$TAG_SUFFIX" -r \
+  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$TAG_PATTERN" -r \
   | sort -V -r \
   | head -n1)
 if [ -z "$LATEST_TAG" ]; then

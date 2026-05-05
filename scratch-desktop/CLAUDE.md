@@ -116,7 +116,7 @@ Always use native Electron context menus â€” never Mantine `<Menu>` dropdowns â€
 
 ## Auto-Update (`electron-updater`)
 
-The app pulls updates from the `desktop` (stable) or `desktop-test` (test) channels on `whalesync/scratch-cli` GitHub releases. The channel is baked in at packaging time via the `UPDATE_CHANNEL` env var read by `electron-builder.yml`'s `publish.channel`.
+The app pulls updates from the `desktop` (stable) or `desktop-test` (test) channels on `whalesync/scratch-desktop` GitHub releases. The channel is baked in at packaging time via the `UPDATE_CHANNEL` env var read by `electron-builder.yml`'s `publish.channel`.
 
 - **Main**: [src/main/updater.ts](src/main/updater.ts) wires `autoUpdater` and forwards events to the renderer.
 - **Renderer**: [src/renderer/src/providers/UpdaterProvider.tsx](src/renderer/src/providers/UpdaterProvider.tsx) shows a persistent "Restart & install" toast when an update finishes downloading.

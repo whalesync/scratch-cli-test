@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 # Usage: ./scripts/bootstrap_release.sh <prod|test> <patch|minor|major>
 #
 # Computes the next desktop-release version, creates a DRAFT GitHub release on
-# whalesync/scratch-cli, updates scratch-desktop/package.json with the new
+# whalesync/scratch-desktop, updates scratch-desktop/package.json with the new
 # semver, and writes scratch-desktop/release.env. The .env is consumed by
 # downstream GitLab jobs via `artifacts.reports.dotenv`.
 
@@ -27,21 +27,25 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-GITHUB_REPO="whalesync/scratch-cli"
+GITHUB_REPO="whalesync/scratch-desktop"
 
+# Tags on the dedicated desktop repo are bare semver (prod) or semver-test (test).
+# TAG_PATTERN is a regex passed to jq's test() so we can require an exact shape;
+# `endswith` is too loose now that prod has no suffix at all.
 if [ "$VARIANT" = "prod" ]; then
-  TAG_SUFFIX="-desktop"
+  TAG_SUFFIX=""
+  TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
   IS_PRERELEASE=false
-  RELEASE_NAME_PREFIX="Scratch Desktop"
-  FALLBACK_TAG="v0.1.0-desktop"
+  FALLBACK_TAG="v0.1.0"
   RELEASE_BODY=""
 else
-  TAG_SUFFIX="-desktop-test"
+  TAG_SUFFIX="-test"
+  TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
   IS_PRERELEASE=true
-  RELEASE_NAME_PREFIX="Scratch"
-  FALLBACK_TAG="v0.0.0-desktop-test"
+  FALLBACK_TAG="v0.0.0-test"
   RELEASE_BODY="Test release pointing at test-api.scratch.md. Not for end users."
 fi
+RELEASE_NAME_PREFIX="Scratch Desktop"
 
 echo "Bootstrapping desktop ${VARIANT} release (${RELEASE_TYPE})..."
 
@@ -70,7 +74,7 @@ LATEST_TAG=$(
       curl_releases_page "$page"
       printf '\n'
     done
-  } | jq -s 'add | .[] | select(.tag_name | endswith($suf)) | .tag_name' --arg suf "$TAG_SUFFIX" -r \
+  } | jq -s 'add | .[] | select(.tag_name | test($pat)) | .tag_name' --arg pat "$TAG_PATTERN" -r \
   | sort -V -r \
   | head -n1)
 if [ -z "$LATEST_TAG" ]; then

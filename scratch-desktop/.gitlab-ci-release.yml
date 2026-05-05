@@ -447,7 +447,7 @@ Finalize test release:
   allow_failure: true
   script:
     - |
-      RELEASE_URL="https://github.com/whalesync/scratch-cli/releases/tag/${NEW_VERSION}"
+      RELEASE_URL="https://github.com/whalesync/scratch-desktop/releases/tag/${NEW_VERSION}"
       curl -X POST -H 'Content-type: application/json' \
       --data "{\"text\":\"${SLACK_DESKTOP_RELEASE_SLACK_PREFIX} Scratch Desktop ${SLACK_DESKTOP_RELEASE_LABEL} release published\n>${CI_COMMIT_TITLE}\n<${RELEASE_URL}|GitHub Release> | <${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
       "${SLACK_DESKTOP_RELEASE_WEBHOOK_URL}"
