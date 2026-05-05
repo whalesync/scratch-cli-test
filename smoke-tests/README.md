@@ -53,13 +53,14 @@ Ports are offset from the defaults so they don't conflict with local dev service
 
 ## Environment Variables
 
-| Variable                   | Default                            | Description                   |
-| -------------------------- | ---------------------------------- | ----------------------------- |
-| `CLERK_SECRET_KEY`         | (required)                         | Clerk test environment secret |
-| `CLERK_PUBLISHABLE_KEY`    | (defaults to dev key)              | Clerk publishable key         |
-| `INTEGRATION_TEST_USER_ID` | `user_31KEiMetcHKOtODOxcYSHeaRgDC` | Clerk user ID for test auth   |
-| `SMOKE_TEST_SERVER_URL`    | `http://localhost:3020`            | Server URL for test client    |
-| `FAKE_AIRTABLE_URL`        | `http://localhost:4656`            | Fake Airtable URL for seeding |
+| Variable                     | Default                            | Description                                           |
+| ---------------------------- | ---------------------------------- | ----------------------------------------------------- |
+| `CLERK_SECRET_KEY`           | (required)                         | Clerk test environment secret                         |
+| `CLERK_PUBLISHABLE_KEY`      | (defaults to dev key)              | Clerk publishable key                                 |
+| `INTEGRATION_TEST_USER_ID`   | `user_31KEiMetcHKOtODOxcYSHeaRgDC` | Clerk user ID for test auth                           |
+| `SMOKE_TEST_SERVER_URL`      | `http://localhost:3020`            | Server URL for test client                            |
+| `SMOKE_TEST_SCRATCH_GIT_URL` | `http://localhost:3110`            | scratch-git REST API (used by CLI publish smoke test) |
+| `FAKE_AIRTABLE_URL`          | `http://localhost:4656`            | Fake Airtable URL for seeding                         |
 
 ## Troubleshooting
 

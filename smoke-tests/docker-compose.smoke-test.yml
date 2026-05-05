@@ -187,6 +187,7 @@ services:
       dockerfile: smoke-tests/Dockerfile.ci
     environment:
       SMOKE_TEST_SERVER_URL: http://server:8080
+      SMOKE_TEST_SCRATCH_GIT_URL: http://scratch-git-2:3100
       FAKE_AIRTABLE_URL: http://fake-airtable:4646
       FAKE_MEMBERSTACK_URL: http://fake-memberstack:4652
       FAKE_HUBSPOT_URL: http://fake-hubspot:4653
