@@ -1,6 +1,5 @@
-import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, Group, Portal, ScrollArea, Stack, Table, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
-import { ChevronDown, TriangleAlertIcon } from 'lucide-react';
+import { Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
+import { TriangleAlertIcon } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
@@ -45,6 +44,8 @@ interface RecordFieldsGridProps {
    * focus mode (e.g. when a different field is requested by the parent).
    */
   initialFocusedFieldName?: string;
+  /** Notifies parent when the focused field changes. Lets the parent persist focus across remounts. */
+  onFocusedFieldChange?: (fieldName: string | null) => void;
 }
 
 const FLOATING_PANEL_GAP = 5;
@@ -245,67 +246,25 @@ function diffBorderColor(diffKind: FieldValueDiffKind): string {
   return 'transparent';
 }
 
-function FieldLabel({
-  row,
-  validationWarnings,
-  onFocus,
-}: {
-  row: RecordFieldRow;
-  validationWarnings?: Map<string, ValidationEntry[]>;
-  onFocus?: () => void;
-}) {
-  const label = row.displayLabel ?? row.fieldName;
-  const violations = validationWarnings?.get(row.fieldName);
-  const hasError = violations?.some((v) => v.level === 'error');
-
-  const content = (
-    <Box style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
-      <Text12Medium
-        c="var(--fg-primary)"
-        style={{ flex: 1, wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5, textAlign: 'left' }}
-      >
-        {label}
-      </Text12Medium>
-      {violations && violations.length > 0 && (
-        <ValidationTooltip violations={violations}>
-          <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default', flexShrink: 0 }}>
-            <StyledLucideIcon
-              Icon={TriangleAlertIcon}
-              size={16}
-              c={hasError ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
-            />
-          </Box>
-        </ValidationTooltip>
-      )}
-    </Box>
-  );
-
-  if (!onFocus) return content;
-
-  return (
-    <UnstyledButton
-      onClick={onFocus}
-      aria-label={`Focus on ${label}`}
-      style={{ width: '100%', padding: 0, borderRadius: 2 }}
-    >
-      {content}
-    </UnstyledButton>
-  );
-}
-
 export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   rows,
   footer,
   validationWarnings,
   initialFocusedFieldName,
+  onFocusedFieldChange,
 }: RecordFieldsGridProps) {
   const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
   const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
-  const [focusedFieldName, setFocusedFieldName] = useState<string | null>(initialFocusedFieldName ?? null);
+  const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
+
+  const setFocusedFieldName = (next: string | null) => {
+    setFocusedFieldNameInternal(next);
+    onFocusedFieldChange?.(next);
+  };
 
   // Re-engage focus mode whenever the parent requests a (possibly different) field.
   useEffect(() => {
-    if (initialFocusedFieldName) setFocusedFieldName(initialFocusedFieldName);
+    if (initialFocusedFieldName) setFocusedFieldNameInternal(initialFocusedFieldName);
   }, [initialFocusedFieldName]);
 
   const editingRow = useMemo(() => rows.find((row) => row.editing) ?? null, [rows]);
@@ -314,10 +273,15 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     [rows, focusedFieldName],
   );
 
-  // If the focused field disappears (e.g. record reload), exit focus mode.
+  // If the focused field is missing from a populated record (e.g. switched to a record
+  // that doesn't have this field), exit focus mode. Skip while rows is empty — that
+  // happens transiently between records, and clearing then would lose persistence.
   useEffect(() => {
-    if (focusedFieldName && !focusedRow) setFocusedFieldName(null);
-  }, [focusedFieldName, focusedRow]);
+    if (focusedFieldName && rows.length > 0 && !focusedRow) {
+      setFocusedFieldNameInternal(null);
+      onFocusedFieldChange?.(null);
+    }
+  }, [focusedFieldName, focusedRow, rows.length, onFocusedFieldChange]);
 
   useEffect(() => {
     if (!editingAnchorEl || editingRow?.referenceValue == null || !editingRow.onUndo) {
@@ -371,85 +335,84 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     ) : null;
 
   if (focusedRow) {
-    const additionalCount = rows.length - 1;
+    const fieldOptions = rows.map((row) => ({
+      value: row.fieldName,
+      label: row.displayLabel ?? row.fieldName,
+    }));
+    const focusedViolations = validationWarnings?.get(focusedRow.fieldName);
+    const focusedHasError = focusedViolations?.some((v) => v.level === 'error');
     return (
       <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <Box
           style={{
-            display: 'grid',
-            gridTemplateColumns: `${LABEL_COLUMN_WIDTH}px 1fr`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
             backgroundColor: 'var(--bg-panel)',
             borderBottom: '1px solid var(--fg-divider)',
-            padding: '8px 16px',
-            gap: 16,
+            padding: '4px 12px',
           }}
         >
-          <Text12Medium c="var(--fg-muted)">Field</Text12Medium>
-          <Text12Medium c="var(--fg-muted)">Value</Text12Medium>
+          <Select
+            data={fieldOptions}
+            value={focusedRow.fieldName}
+            onChange={(next) => {
+              if (next) setFocusedFieldName(next);
+            }}
+            allowDeselect={false}
+            searchable={fieldOptions.length > 8}
+            variant="unstyled"
+            comboboxProps={{ withinPortal: true, zIndex: 10020, width: 'target' }}
+            aria-label="Focused field"
+            styles={{
+              input: {
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--fg-primary)',
+                paddingLeft: 4,
+              },
+            }}
+          />
+          {focusedViolations && focusedViolations.length > 0 && (
+            <ValidationTooltip violations={focusedViolations}>
+              <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default' }}>
+                <TriangleAlertIcon
+                  size={16}
+                  color={focusedHasError ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
+                />
+              </Box>
+            </ValidationTooltip>
+          )}
         </Box>
 
         <Box
           style={{
             flex: 1,
-            display: 'grid',
-            gridTemplateColumns: `${LABEL_COLUMN_WIDTH}px 1fr`,
-            minHeight: 0,
-            gap: 16,
-            padding: '4px 16px',
-          }}
-        >
-          <Box style={{ paddingTop: 4 }}>
-            <FieldLabel row={focusedRow} validationWarnings={validationWarnings} />
-          </Box>
-          <Box
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              borderLeft: `4px solid ${diffBorderColor(focusedRow.diffKind)}`,
-              paddingLeft: 4,
-            }}
-          >
-            {focusedRow.editing ? (
-              <Box ref={setEditingAnchorEl} style={{ display: 'grid', gap: 6 }}>
-                <FieldEditor row={focusedRow} />
-              </Box>
-            ) : (
-              <FieldValuePanel
-                value={focusedRow.value}
-                fromValue={focusedRow.fromValue}
-                diffKind={focusedRow.diffKind}
-                displayMode={focusedRow.displayMode}
-                onClick={focusedRow.onClick}
-                onApprove={focusedRow.displayMode === 'diff' ? focusedRow.onApprove : undefined}
-                onUndo={focusedRow.displayMode === 'diff' ? focusedRow.onUndo : undefined}
-                onMinimize={() => setFocusedFieldName(null)}
-                expanded
-              />
-            )}
-          </Box>
-        </Box>
-
-        <UnstyledButton
-          onClick={() => setFocusedFieldName(null)}
-          aria-label="Show additional fields"
-          style={{
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            padding: '12px 16px',
-            borderTop: '1px solid var(--fg-divider)',
-            backgroundColor: 'var(--bg-panel)',
-            cursor: 'pointer',
+            flexDirection: 'column',
+            minHeight: 0,
+            padding: '4px 16px',
+            borderLeft: `4px solid ${diffBorderColor(focusedRow.diffKind)}`,
           }}
         >
-          <Text12Medium c="var(--fg-secondary)">
-            Additional Fields
-            {additionalCount > 0 ? ` (${additionalCount})` : ''}
-          </Text12Medium>
-          <StyledLucideIcon Icon={ChevronDown} size={14} c="var(--fg-muted)" />
-        </UnstyledButton>
+          {focusedRow.editing ? (
+            <Box ref={setEditingAnchorEl} style={{ display: 'grid', gap: 6 }}>
+              <FieldEditor row={focusedRow} />
+            </Box>
+          ) : (
+            <FieldValuePanel
+              value={focusedRow.value}
+              fromValue={focusedRow.fromValue}
+              diffKind={focusedRow.diffKind}
+              displayMode={focusedRow.displayMode}
+              onClick={focusedRow.onClick}
+              onApprove={focusedRow.displayMode === 'diff' ? focusedRow.onApprove : undefined}
+              onUndo={focusedRow.displayMode === 'diff' ? focusedRow.onUndo : undefined}
+              onMinimize={() => setFocusedFieldName(null)}
+              expanded
+            />
+          )}
+        </Box>
 
         {editingAnchorOverlay}
       </Box>

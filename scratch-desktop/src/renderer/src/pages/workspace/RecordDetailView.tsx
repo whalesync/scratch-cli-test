@@ -246,6 +246,11 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [validationResults, setValidationResults] = useState<ValidationResultRow[]>([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
+  const [focusedFieldName, setFocusedFieldName] = useState<string | null>(initialFocusedFieldName ?? null);
+
+  useEffect(() => {
+    if (initialFocusedFieldName) setFocusedFieldName(initialFocusedFieldName);
+  }, [initialFocusedFieldName]);
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
   const loadedRecordKeyRef = useRef<string | null>(null);
@@ -1136,7 +1141,8 @@ export const RecordDetailView = memo(function RecordDetailView({
                   <RecordFieldsGrid
                     rows={fieldRows}
                     validationWarnings={validationWarnings}
-                    initialFocusedFieldName={initialFocusedFieldName}
+                    initialFocusedFieldName={focusedFieldName ?? undefined}
+                    onFocusedFieldChange={setFocusedFieldName}
                     footer={
                       hiddenCount > 0 ? (
                         <Box style={{ padding: '8px 12px' }}>
