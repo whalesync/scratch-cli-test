@@ -4,14 +4,18 @@ import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WSLogger } from 'src/logger';
 
-const GITHUB_REPO = 'whalesync/scratch-cli';
 const RELEASES_PER_PAGE = 30;
 const MAX_RELEASE_PAGES = 5;
 
-function releasesListUrl(page: number): string {
-  return `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
+const GITHUB_REPO_BY_KIND: Record<ReleaseKind, string> = {
+  desktop: 'whalesync/scratch-desktop',
+  cli: 'whalesync/scratch-cli',
+};
+
+function releasesListUrl(kind: ReleaseKind, page: number): string {
+  return `https://api.github.com/repos/${GITHUB_REPO_BY_KIND[kind]}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`;
 }
-const CACHE_KEY_PREFIX = 'desktop-release:latest:v3:';
+const CACHE_KEY_PREFIX = 'desktop-release:latest:v4:';
 const CACHE_TTL_SECONDS = 5 * 60;
 const FETCH_TIMEOUT_MS = 5000;
 
@@ -42,16 +46,20 @@ interface ReleaseLookup {
 
 function lookupFor(kind: ReleaseKind, channel: Channel): ReleaseLookup {
   if (kind === 'desktop') {
-    const suffix = channel === 'production' ? '-desktop' : '-desktop-test';
+    const matchTag =
+      channel === 'production'
+        ? (t: string) => /^v\d+\.\d+\.\d+$/.test(t)
+        : (t: string) => /^v\d+\.\d+\.\d+-test$/.test(t);
     return {
       kind,
       channel,
-      matchTag: (t) => t.endsWith(suffix),
-      notFoundMessage: `No desktop release found matching tag suffix "${suffix}"`,
+      matchTag,
+      notFoundMessage: `No desktop release found for channel "${channel}"`,
     };
   }
-  // kind === 'cli' — prod tags have no suffix (vX.Y.Z); test tags end in -test
-  // but must NOT also end in -desktop-test (those are desktop builds).
+  // kind === 'cli' — prod tags have no suffix (vX.Y.Z); test tags end in -test.
+  // Legacy desktop tags (-desktop, -desktop-test) may still exist on the CLI repo
+  // and must be excluded from the test predicate.
   const matchTag =
     channel === 'production'
       ? (t: string) => /^v\d+\.\d+\.\d+$/.test(t)
@@ -100,7 +108,7 @@ export class DesktopReleaseService implements OnModuleDestroy {
     const cached = await this.readFromCache(kind, channel);
     if (cached) return cached;
 
-    const release = await this.fetchLatestRelease(lookup.matchTag);
+    const release = await this.fetchLatestRelease(kind, lookup.matchTag);
     if (!release) {
       throw new NotFoundException(lookup.notFoundMessage);
     }
@@ -159,10 +167,13 @@ export class DesktopReleaseService implements OnModuleDestroy {
     }
   }
 
-  private async fetchLatestRelease(matchTag: (tag: string) => boolean): Promise<GitHubRelease | null> {
+  private async fetchLatestRelease(
+    kind: ReleaseKind,
+    matchTag: (tag: string) => boolean,
+  ): Promise<GitHubRelease | null> {
     try {
       for (let page = 1; page <= MAX_RELEASE_PAGES; page++) {
-        const res = await fetch(releasesListUrl(page), {
+        const res = await fetch(releasesListUrl(kind, page), {
           headers: { Accept: 'application/vnd.github+json' },
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });

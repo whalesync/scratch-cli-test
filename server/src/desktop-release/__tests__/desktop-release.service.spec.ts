@@ -24,16 +24,20 @@ interface FakeRelease {
   assets?: { name: string; browser_download_url: string; size: number }[];
 }
 
-function makeRelease(tag: string, overrides: Partial<FakeRelease> = {}): FakeRelease {
+function makeRelease(tag: string, overrides: Partial<FakeRelease> = {}, repo = 'whalesync/scratch-cli'): FakeRelease {
   return {
     tag_name: tag,
     name: tag,
-    html_url: `https://github.com/whalesync/scratch-cli/releases/tag/${tag}`,
+    html_url: `https://github.com/${repo}/releases/tag/${tag}`,
     draft: false,
     published_at: '2026-05-01T00:00:00Z',
     assets: [],
     ...overrides,
   };
+}
+
+function makeDesktopRelease(tag: string, overrides: Partial<FakeRelease> = {}): FakeRelease {
+  return makeRelease(tag, overrides, 'whalesync/scratch-desktop');
 }
 
 function mockFetchOnce(releases: FakeRelease[]): void {
@@ -116,23 +120,43 @@ describe('DesktopReleaseService', () => {
   });
 
   describe('getLatestDesktopRelease', () => {
-    it('still works for production (suffix -desktop)', async () => {
-      mockFetchOnce([makeRelease('v0.5.0-desktop-test'), makeRelease('v0.4.1'), makeRelease('v0.4.0-desktop')]);
+    it('returns the latest tag matching ^v\\d+\\.\\d+\\.\\d+$ for production', async () => {
+      mockFetchOnce([
+        makeDesktopRelease('v1.5.0-test'),
+        makeDesktopRelease('v1.4.8', {
+          assets: [
+            {
+              name: 'Scratch-1.4.8-arm64.dmg',
+              browser_download_url: 'https://example/Scratch-1.4.8-arm64.dmg',
+              size: 9999,
+            },
+          ],
+        }),
+        makeDesktopRelease('v1.4.7'),
+      ]);
 
       const service = makeService(true);
       const result = await service.getLatestDesktopRelease();
 
-      expect(result.tagName).toBe('v0.4.0-desktop');
+      expect(result.tagName).toBe('v1.4.8');
+      expect(result.version).toBe('1.4.8');
       expect(result.channel).toBe('production');
+      expect(result.assets).toHaveLength(1);
+      expect(result.assets[0].name).toBe('Scratch-1.4.8-arm64.dmg');
     });
 
-    it('still works for test (suffix -desktop-test)', async () => {
-      mockFetchOnce([makeRelease('v0.4.2-test'), makeRelease('v0.4.0-desktop-test'), makeRelease('v0.4.0-desktop')]);
+    it('returns the latest -test tag for test channel', async () => {
+      mockFetchOnce([
+        makeDesktopRelease('v1.4.8'),
+        makeDesktopRelease('v0.5.1-test'),
+        makeDesktopRelease('v0.5.0-test'),
+      ]);
 
       const service = makeService(false);
       const result = await service.getLatestDesktopRelease();
 
-      expect(result.tagName).toBe('v0.4.0-desktop-test');
+      expect(result.tagName).toBe('v0.5.1-test');
+      expect(result.version).toBe('0.5.1');
       expect(result.channel).toBe('test');
     });
   });
@@ -161,9 +185,9 @@ describe('DesktopReleaseService', () => {
 
     it('uses kind-specific cache keys (CLI cache miss does not return desktop entry)', async () => {
       const desktopCached = {
-        name: 'v0.4.0-desktop',
-        tagName: 'v0.4.0-desktop',
-        version: '0.4.0',
+        name: 'v1.4.8',
+        tagName: 'v1.4.8',
+        version: '1.4.8',
         htmlUrl: 'https://example',
         publishedAt: '2026-05-01T00:00:00Z',
         channel: 'production' as const,
@@ -186,7 +210,7 @@ describe('DesktopReleaseService', () => {
       const desktop = await service.getLatestDesktopRelease();
 
       expect(cli.tagName).toBe('v0.4.1');
-      expect(desktop.tagName).toBe('v0.4.0-desktop');
+      expect(desktop.tagName).toBe('v1.4.8');
     });
   });
 

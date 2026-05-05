@@ -12,8 +12,7 @@ import { Anchor, Box, Card, Center, Divider, Group, Image, Stack } from '@mantin
 import { DesktopReleaseAsset, DesktopReleaseResponse } from '@spinner/shared-types';
 import { Download, ExternalLink } from 'lucide-react';
 
-const GITHUB_REPO = 'whalesync/scratch-cli';
-const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases`;
+const RELEASES_URL = 'https://github.com/whalesync/scratch-desktop/releases';
 
 const OS_ICON_BASE_URL = 'https://static.scratch.md/os-icons';
 
