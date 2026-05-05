@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
 import { JobType, RunId, TransformerTypes } from '@spinner/shared-types';
+import { UserCluster } from 'src/db/cluster-types';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
@@ -10,7 +11,7 @@ import { WSLogger } from '../../../logger';
 import { ScratchGitService } from '../../../scratch-git/scratch-git.service';
 import { SyncService } from '../../../sync/sync.service';
 import { findTransformerConfigs } from '../../../sync/transformers';
-import { Actor } from '../../../users/types';
+import { Actor, userToActor } from '../../../users/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 import { createRunContext } from '../base-types';
@@ -136,11 +137,18 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       tableMappingCount: tableMappings.length,
     });
 
-    // Build actor for sync service calls
-    const actor: Actor = {
-      userId: data.userId,
-      organizationId: data.organizationId,
-    };
+    // Reload the user to populate workspacePermissions on the actor — the queue
+    // payload only carries userId/organizationId, but downstream calls into
+    // dataFolderService.findOne hit assertReadableWorkbook, which requires the
+    // permissions list.
+    const user = await this.prisma.user.findUnique({
+      where: { id: data.userId },
+      include: UserCluster._validator.include,
+    });
+    if (!user) {
+      throw new Error(`User ${data.userId} not found`);
+    }
+    const actor: Actor = userToActor(user);
 
     // Build mapping of data tables
     const dataTables = new Map(

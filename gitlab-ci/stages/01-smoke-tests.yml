@@ -11,9 +11,16 @@ include:
 # =============================================================================
 
 .changes:
+  # Markdown files under smoke-tests/ are intentionally omitted so doc-only
+  # edits don't trigger the (slow) local smoke-test job. Keep this list in
+  # sync with the file types that actually live under smoke-tests/.
   smoke-tests:
     - gitlab-ci/stages/01-smoke-tests.yml
-    - smoke-tests/**/*
+    - smoke-tests/**/*.ts
+    - smoke-tests/**/*.json
+    - smoke-tests/**/*.yml
+    - smoke-tests/**/*.sh
+    - smoke-tests/Dockerfile*
 
 .smoke-tests:
   stage: build and test
