@@ -130,6 +130,11 @@ Bootstrap test desktop release:
     CARGO_HOME: '${CI_PROJECT_DIR}/.cargo'
   cache:
     - !reference [.caches, cargo_cross]
+  # Restore source-file mtimes from git so cargo's fingerprint check trusts
+  # the cached target/ artifacts instead of recompiling every dep.
+  before_script:
+    - apt-get update -qq && apt-get install -y git-restore-mtime || pip install git-restore-mtime
+    - git restore-mtime
   artifacts:
     paths:
       - scratch-git-2/cli-binaries/

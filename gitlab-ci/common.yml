@@ -226,6 +226,7 @@ include:
     paths:
       - .cargo/registry/cache
       - .cargo/registry/index
+      - .cargo/git
       - scratch-git-2/target/debug
       - scratch-git-2/target/release
       - scratch-git-2/target/.rustc_info.json
@@ -242,6 +243,7 @@ include:
     paths:
       - .cargo/registry/cache
       - .cargo/registry/index
+      - .cargo/git
       - scratch-git-2/target/debug
       - scratch-git-2/target/release
       - scratch-git-2/target/.rustc_info.json
@@ -258,6 +260,7 @@ include:
     paths:
       - .cargo/registry/cache
       - .cargo/registry/index
+      - .cargo/git
       - scratch-git-2/target/aarch64-apple-darwin
       - scratch-git-2/target/x86_64-unknown-linux-gnu
       - scratch-git-2/target/x86_64-pc-windows-gnu
