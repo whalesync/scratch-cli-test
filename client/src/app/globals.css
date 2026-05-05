@@ -20,6 +20,20 @@
     'calt' 1; /* fix for Chrome */
 }
 
+/* Disable ligatures in monospace contexts — fixed-width fonts shouldn't
+   collapse glyphs like "fi" into a single character. */
+code,
+pre,
+kbd,
+samp,
+.cm-editor,
+.cm-content {
+  font-variant-ligatures: none;
+  font-feature-settings:
+    'liga' 0,
+    'calt' 0;
+}
+
 /* Suggestions and changes - set in theme-specific sections below */
 [data-mantine-color-scheme='light'] {
   --fg-accept: var(--mantine-color-teal-9);
