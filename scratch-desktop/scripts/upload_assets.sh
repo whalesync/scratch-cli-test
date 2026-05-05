@@ -64,12 +64,16 @@ upload_with_retry() {
   local attempt=1
   local max_attempts=3
   local http_code
+  local encoded_fname
+  # Test builds use product name "Scratch (Test)", so artifact filenames contain
+  # a space and parens that must be percent-encoded for the upload URL.
+  encoded_fname=$(jq -rn --arg n "$fname" '$n|@uri')
 
   while [ $attempt -le $max_attempts ]; do
     http_code=$(curl -sS -o /tmp/upload_body -w "%{http_code}" -X POST \
       -H "Authorization: token $GITHUB_TOKEN" \
       -H "Content-Type: application/octet-stream" \
-      "${UPLOAD_URL_BASE}?name=${fname}" \
+      "${UPLOAD_URL_BASE}?name=${encoded_fname}" \
       --data-binary "@$file") || http_code="000"
 
     if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
