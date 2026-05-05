@@ -53,7 +53,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     tables: 'objects',
     record: 'record',
     records: 'records',
-    logo: 'https://static.scratch.md/connector-icons/attio.svg',
+    logo: 'https://static.scratch.md/connector-icons/attio-2.svg',
     supportedAuthMethods: ['user_provided_params'],
     defaultAuthMethod: 'user_provided_params',
     credentialFields: {
