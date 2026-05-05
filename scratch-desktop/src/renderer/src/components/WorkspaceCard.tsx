@@ -187,10 +187,13 @@ export function PendingWorkspaceCard({
   workspace,
   label,
   color = 'yellow',
+  inGroup,
 }: {
   workspace: Workspace;
   label: string;
   color?: 'yellow' | 'gray';
+  /** When true, drop the card's own border, bottom margin, and rounded corners — assumes a wrapper supplies the chrome. */
+  inGroup?: boolean;
 }) {
   const tint = color === 'yellow' ? 'var(--highlight-fill)' : 'var(--mantine-color-gray-1)';
   const border = color === 'yellow' ? 'var(--highlight-border)' : 'var(--mantine-color-gray-4)';
@@ -200,7 +203,9 @@ export function PendingWorkspaceCard({
       style={{
         ...cardBaseStyle,
         background: tint,
-        border: `1px solid ${border}`,
+        border: inGroup ? 'none' : `1px solid ${border}`,
+        borderRadius: inGroup ? 0 : cardBaseStyle.borderRadius,
+        marginBottom: inGroup ? 0 : cardBaseStyle.marginBottom,
         cursor: 'default',
       }}
     >
@@ -220,6 +225,6 @@ export function PendingWorkspaceCard({
 }
 
 /** Backwards-compatible alias used by the cloud download flow. */
-export function DownloadingWorkspaceCard({ workspace }: { workspace: Workspace }) {
-  return <PendingWorkspaceCard workspace={workspace} label="Downloading…" color="yellow" />;
+export function DownloadingWorkspaceCard({ workspace, inGroup }: { workspace: Workspace; inGroup?: boolean }) {
+  return <PendingWorkspaceCard workspace={workspace} label="Downloading…" color="yellow" inGroup={inGroup} />;
 }

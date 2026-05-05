@@ -334,7 +334,7 @@ export function HomePage() {
               >
                 {visibleCloud.map((ws, i) =>
                   downloadingIds.has(ws.id) ? (
-                    <DownloadingWorkspaceCard key={ws.id} workspace={ws} />
+                    <DownloadingWorkspaceCard key={ws.id} workspace={ws} inGroup />
                   ) : (
                     <CloudWorkspaceCard
                       key={ws.id}
