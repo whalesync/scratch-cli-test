@@ -3,6 +3,7 @@
 
 import './affinity/affinity-connector';
 import './airtable/airtable-connector';
+import './attio/attio-connector';
 import './audienceful/audienceful-connector';
 import './brevo/brevo-connector';
 import './hubspot/hubspot-connector';

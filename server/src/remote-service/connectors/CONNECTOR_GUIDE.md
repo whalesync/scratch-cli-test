@@ -727,6 +727,40 @@ If you've added a fake API, wire it into the smoke test infrastructure so your c
 
 See `smoke-tests/helpers/connector-fixtures/airtable.fixture.ts` for a complete reference implementation.
 
+### Live-API Integration Tests (Recommended for Connectors That Write)
+
+Smoke tests + fakes catch shape regressions in our own code, but they only test what the fake models — and a fake is just our guess at the real API. Live-API integration tests catch the bugs the fake can't: write-shape mismatches, undocumented required fields, asymmetries between read and write payloads, and silent server-side coercion (the kind that lets a wrong write succeed but store the wrong value — see commit `d0bdbc9` for an example where the WordPress connector was sending `rendered` instead of `raw` and the API silently accepted it).
+
+These tests live in `server/test/integration/<service>-connector.spec.ts`, use a separate Jest config (`server/test/integration/jest-integration.json`), and read credentials from `server/.env.integration`. They are **gated on the credential being present** (`describeIfKey = API_KEY ? describe : describe.skip`) so CI stays green when the key isn't configured.
+
+- [ ] Add `<SERVICE>_API_KEY` (or equivalent) to `.env.integration`
+- [ ] Create `server/test/integration/<service>-connector.spec.ts`
+- [ ] Run with `cd server && yarn test:integration -- <service>-connector`
+
+**Test coverage targets**
+
+For connectors that write, the integration spec should round-trip every expected object × every CRUD action — and every test record should carry one value of each writable field type, so the field-type coverage falls out of the same handful of tests instead of multiplying combinatorially.
+
+- [ ] **Object × CRUD**: one test per (object, action) — e.g. `companies × {create, read, update, delete}`. Each test creates a hermetic scratch record, exercises the action, then deletes it on teardown.
+- [ ] **Field-type coverage**: each test record sets one value of each universal field type the connector exposes (text, number, checkbox, select, date, currency, etc.). Object-specific types (e.g. a status pipeline only on deals, a personal-name only on people) are tested via the system built-ins where they naturally live.
+- [ ] **Round-trip assertions**: write a value → read it back → assert the read deserializes to the same value. Many APIs accept terse write shapes (`{ option: "Lead" }`) and return expanded read shapes (`{ option: { id, title: "Lead", ... } }`); a per-type matcher that strips metadata and normalizes references is what makes the assertion meaningful.
+- [ ] **List / sub-resource CRUD** (where applicable): exercise list-entry or sub-resource writes separately if they go through different endpoints.
+
+The unit of testing is _object × action_, not _object × action × field type_ — the field-type dimension is absorbed into each test record. This keeps the test count linear (~3 objects × 4 actions = 12 tests) instead of combinatorial (3 × 4 × ~15 types = 180 tests).
+
+**Bootstrap script**
+
+Live-API tests need real workspace state — sample records, custom attributes covering every field type, lists or sub-resources. Provision that state with an **idempotent bootstrap script** at `server/scripts/bootstrap-<service>-test-data.ts`.
+
+- [ ] Reads credentials from `.env.integration`
+- [ ] Every step checks for existing state first and only creates what's missing — re-running is safe and a no-op when the workspace is already bootstrapped
+- [ ] Names everything with a clear `Spinner Test ` / `spinner_test_` prefix so leftovers from failed test runs are easy to find and bulk-delete in the upstream UI
+- [ ] Documents how to clean up (UI delete, or curl invocation) in a header comment
+
+The bootstrap script doubles as living reference for the connector's write semantics — it exercises every required-attribute, every option-creation subresource, every shape gotcha the connector also has to handle. The right discoveries to encode here: required attributes you have to satisfy on creation, sub-resources that look declarative but actually require sequential calls (e.g. `select` options usually have to be added after the attribute exists, even if the attribute-creation payload accepts an `options` array), and any read-shape vs. write-shape asymmetries.
+
+See `server/test/integration/attio-connector.spec.ts` and `server/scripts/bootstrap-attio-test-data.ts` for a complete reference implementation.
+
 ### Connector Metadata Example
 
 The `connectorMetadata()` helper (from `@spinner/shared-types`) merges your overrides with sensible defaults (`table: 'table'`, `record: 'record'`, `base: null`, `bases: null`, `visible: true`, `pushOperationName: 'Publish'`, `pullOperationName: 'Download'`, `defaultAuthMethod: 'oauth'`). You must provide `displayName` and `logo`.
@@ -892,18 +926,20 @@ HubSpot is "fixed + custom" because standard CRM object types use the fixed-stri
 
 ### Partial Field Updates (`changedFields`)
 
+> **Default behavior:** New connectors should use `changedFields` for updates and only fall back to the full file as a last resort (when `changedFields[i]` is `undefined`). Sending the full record on every update causes spurious writes, masks bugs in unrelated fields, and risks API rejections on unchanged read-only fields.
+
 `updateRecords` receives an optional third parameter: `changedFields?: (Record<string, unknown> | undefined)[]`. This is a parallel array where `changedFields[i]` is a deep sparse object containing only the fields that changed for `files[i]`, with properly transformed values (FK resolution, transformers, etc. already applied).
 
 **How it works:**
 
-- When `changedFields` is provided, connectors can use it directly as a partial payload — it contains only the changed paths with correct values
-- When `changedFields` is `undefined` (legacy plans, non-V2 publish paths), connectors fall back to sending full file content
+- When `changedFields` is provided, connectors **should** use it directly as a partial payload — it contains only the changed paths with correct values
+- When `changedFields` is `undefined` (legacy plans, non-V2 publish paths), connectors fall back to sending the full file content as a last resort
 - The sparse object preserves nested structure: e.g., `{ properties: { email: "new@ex.com" } }` for a HubSpot record where only `email` changed within `properties`
 - `files` always contains the full resolved record content — the source of truth for git commits and any fields not in `changedFields`
 
 **Removed keys are not tracked:** Keys present in the main branch but absent in the dirty branch are intentionally not included in `changedFields`. Users should set fields to `null` or `""` to clear them, not delete JSON keys. Key removal typically indicates schema changes or reference cleaning.
 
-**Example — opting in a connector:**
+**Canonical pattern:**
 
 ```typescript
 async updateRecords(
@@ -912,6 +948,8 @@ async updateRecords(
   changedFields?: (Record<string, unknown> | undefined)[],
 ): Promise<void> {
   for (let i = 0; i < files.length; i++) {
+    // Prefer the sparse partial; only fall back to the full record when
+    // `changedFields` isn't available (legacy publish paths).
     const payload = changedFields?.[i] ?? files[i];
     await this.client.update(files[i].id, payload);
   }

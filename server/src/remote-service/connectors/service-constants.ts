@@ -28,4 +28,5 @@ export const Service = {
   INTERCOM: 'INTERCOM',
   STRIPE: 'STRIPE',
   AFFINITY: 'AFFINITY',
+  ATTIO: 'ATTIO',
 } as const;
