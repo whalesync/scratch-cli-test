@@ -212,7 +212,11 @@ include:
   # one warms dep downloads for the other.
   #
   #   cargo         — native host builds       (scratch-git-2/target/{debug,release,...})
-  #   cargo_cross   — cargo-zigbuild targets   (scratch-git-2/target/<triple>/...)
+  #   cargo_cross   — zigbuild: per-triple dirs under target/<triple>/… **plus**
+  #                   target/release — with `--target`, Cargo still puts host-only
+  #                   artifacts (proc-macros, build-script outputs) in
+  #                   target/release/, not under the host triple folder; omitting
+  #                   that path makes every job recompile the full dependency graph.
   #
   # Use *_pull variants for readers that must not evict the writer's snapshot.
   cargo:
@@ -261,6 +265,7 @@ include:
       - .cargo/registry/cache
       - .cargo/registry/index
       - .cargo/git
+      - scratch-git-2/target/release
       - scratch-git-2/target/aarch64-apple-darwin
       - scratch-git-2/target/x86_64-unknown-linux-gnu
       - scratch-git-2/target/x86_64-pc-windows-gnu
