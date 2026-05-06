@@ -16,7 +16,7 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
   getServiceDisplayName: (service: string) => service,
 }));
 
-import { X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { READONLY_FLAG } from 'src/remote-service/connectors/json-schema';
 import { StripeConnector } from 'src/remote-service/connectors/library/stripe/stripe-connector';
 import { StripeEntityType } from 'src/remote-service/connectors/library/stripe/stripe-types';
 import { BaseJsonTableSpec, ConnectorFile, EntityId } from 'src/remote-service/connectors/types';
@@ -180,8 +180,8 @@ describeIfKey('StripeConnector — live API', () => {
       expect(props).toHaveProperty('name');
       expect(props).toHaveProperty('email');
       expect(props).toHaveProperty('metadata');
-      expect(props.id[X_SCRATCH_READONLY]).toBe(true);
-      expect(props.created[X_SCRATCH_READONLY]).toBe(true);
+      expect(props.id[READONLY_FLAG]).toBe(true);
+      expect(props.created[READONLY_FLAG]).toBe(true);
     });
 
     it('pulls customers from the live API', async () => {

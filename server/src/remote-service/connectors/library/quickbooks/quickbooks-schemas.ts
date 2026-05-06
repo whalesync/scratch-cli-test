@@ -13,11 +13,7 @@
  * All schemas have additionalProperties: true to handle undocumented fields.
  */
 import { type TSchema, Type } from '@sinclair/typebox';
-import {
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_READONLY,
-} from '@spinner/shared-types';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
 import { QuickBooksEntityType } from './quickbooks-types';
 
 const AccountSchema = Type.Object(
@@ -39,21 +35,15 @@ const AccountSchema = Type.Object(
     CurrentBalance: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     CurrentBalanceWithSubAccounts: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     FullyQualifiedName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -68,7 +58,7 @@ const AccountSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     SubAccount: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -90,7 +80,7 @@ const BillSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     Balance: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -113,11 +103,9 @@ const BillSchema = Type.Object(
       ]),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    DueDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    DueDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -135,7 +123,7 @@ const BillSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
                       ),
                     ),
                     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -157,7 +145,7 @@ const BillSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
                       ),
                     ),
                     TaxCodeRef: Type.Optional(
@@ -168,7 +156,7 @@ const BillSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                   }),
@@ -178,7 +166,7 @@ const BillSchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               ItemBasedExpenseLineDetail: Type.Optional(
                 Type.Union([
                   Type.Object({
@@ -192,7 +180,7 @@ const BillSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -204,7 +192,7 @@ const BillSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -238,16 +226,10 @@ const BillSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -263,14 +245,12 @@ const BillSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
       ),
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     VendorRef: Type.Optional(
       Type.Union(
         [
@@ -280,7 +260,7 @@ const BillSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
       ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -301,7 +281,7 @@ const BillPaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     CheckPayment: Type.Optional(
@@ -316,7 +296,7 @@ const BillPaymentSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
             ),
           ),
           PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -336,7 +316,7 @@ const BillPaymentSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
             ),
           ),
         }),
@@ -363,7 +343,7 @@ const BillPaymentSchema = Type.Object(
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -395,16 +375,10 @@ const BillPaymentSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -413,9 +387,7 @@ const BillPaymentSchema = Type.Object(
     PayType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     VendorRef: Type.Optional(
       Type.Union(
         [
@@ -425,7 +397,7 @@ const BillPaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
       ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -436,22 +408,16 @@ const BillPaymentSchema = Type.Object(
 
 const CompanyInfoSchema = Type.Object(
   {
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -464,7 +430,7 @@ const CompanyInfoSchema = Type.Object(
     LegalAddr: Type.Optional(Type.Object({})),
     PrimaryPhone: Type.Optional(Type.Object({})),
     CompanyStartDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
+      Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
     ),
     FiscalYearStartMonth: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -485,7 +451,7 @@ const CreditMemoSchema = Type.Object(
     BillAddr: Type.Optional(
       Type.Union([
         Type.Object({
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -554,14 +520,14 @@ const CreditMemoSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     HomeTotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -570,7 +536,7 @@ const CreditMemoSchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               LineNum: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
               SalesItemLineDetail: Type.Optional(
                 Type.Union([
@@ -584,7 +550,7 @@ const CreditMemoSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -596,7 +562,7 @@ const CreditMemoSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -616,16 +582,10 @@ const CreditMemoSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -642,7 +602,7 @@ const CreditMemoSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -650,7 +610,7 @@ const CreditMemoSchema = Type.Object(
         Type.Object({
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -661,9 +621,7 @@ const CreditMemoSchema = Type.Object(
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(
       Type.Union([
         Type.Object({
@@ -690,7 +648,7 @@ const CustomerSchema = Type.Object(
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -719,7 +677,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
       ),
     ),
     DisplayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -734,23 +692,17 @@ const CustomerSchema = Type.Object(
     ),
     FullyQualifiedName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     GivenName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Job: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     Level: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -773,7 +725,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     PaymentMethodRef: Type.Optional(
@@ -785,7 +737,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
       ),
     ),
     PreferredDeliveryMethod: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -816,7 +768,7 @@ const CustomerSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -825,7 +777,7 @@ const CustomerSchema = Type.Object(
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -867,7 +819,7 @@ const DepositSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
             ),
           ),
           Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -903,11 +855,11 @@ const DepositSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -926,7 +878,7 @@ const DepositSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
                       ),
                     ),
                     CheckNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -948,7 +900,7 @@ const DepositSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
                       ),
                     ),
                   }),
@@ -956,7 +908,7 @@ const DepositSchema = Type.Object(
                 ]),
               ),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               LineNum: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
               LinkedTxn: Type.Optional(
                 Type.Union([
@@ -984,16 +936,10 @@ const DepositSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -1002,9 +948,7 @@ const DepositSchema = Type.Object(
     PrivateNote: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     TxnTaxDetail: Type.Optional(Type.Union([Type.Object({}), Type.Null()])),
@@ -1018,31 +962,23 @@ const EmployeeSchema = Type.Object(
     BillRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     BillableTime: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     BirthDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
+      Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
     ),
     DisplayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EmployeeNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     FamilyName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Gender: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     GivenName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    HiredDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    HiredDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -1063,7 +999,7 @@ const EmployeeSchema = Type.Object(
     ),
     PrintOnCheckName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ReleasedDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
+      Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
     ),
     Suffix: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1081,7 +1017,7 @@ const EstimateSchema = Type.Object(
     BillAddr: Type.Optional(
       Type.Union([
         Type.Object({
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1141,7 +1077,7 @@ const EstimateSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     DeliveryInfo: Type.Optional(
@@ -1156,7 +1092,7 @@ const EstimateSchema = Type.Object(
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     HomeTotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -1165,7 +1101,7 @@ const EstimateSchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               LineNum: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
               SalesItemLineDetail: Type.Optional(
                 Type.Union([
@@ -1179,7 +1115,7 @@ const EstimateSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -1191,7 +1127,7 @@ const EstimateSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -1225,16 +1161,10 @@ const EstimateSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -1246,7 +1176,7 @@ const EstimateSchema = Type.Object(
         Type.Object({
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1257,9 +1187,7 @@ const EstimateSchema = Type.Object(
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TxnTaxDetail: Type.Optional(
       Type.Union([
@@ -1285,7 +1213,7 @@ const EstimateSchema = Type.Object(
                                 }),
                                 Type.Null(),
                               ],
-                              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
                             ),
                           ),
                         }),
@@ -1308,7 +1236,7 @@ const EstimateSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
             ),
           ),
         }),
@@ -1335,7 +1263,7 @@ const InvoiceSchema = Type.Object(
         Type.Object({
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1397,7 +1325,7 @@ const InvoiceSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     DeliveryInfo: Type.Optional(
@@ -1409,13 +1337,11 @@ const InvoiceSchema = Type.Object(
       ]),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    DueDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    DueDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     HomeTotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -1436,7 +1362,7 @@ const InvoiceSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
                       ),
                     ),
                     DiscountPercent: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -1445,7 +1371,7 @@ const InvoiceSchema = Type.Object(
                   Type.Null(),
                 ]),
               ),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               LineNum: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
               LinkedTxn: Type.Optional(
                 Type.Union([
@@ -1482,15 +1408,12 @@ const InvoiceSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
                     ServiceDate: Type.Optional(
-                      Type.Union([
-                        Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }),
-                        Type.Null(),
-                      ]),
+                      Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
                     ),
                     TaxCodeRef: Type.Optional(
                       Type.Union(
@@ -1500,7 +1423,7 @@ const InvoiceSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -1534,16 +1457,10 @@ const InvoiceSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -1560,7 +1477,7 @@ const InvoiceSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
       ),
     ),
     ShipAddr: Type.Optional(
@@ -1568,7 +1485,7 @@ const InvoiceSchema = Type.Object(
         Type.Object({
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1579,9 +1496,7 @@ const InvoiceSchema = Type.Object(
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(
       Type.Union([
         Type.Object({
@@ -1606,7 +1521,7 @@ const InvoiceSchema = Type.Object(
                                 }),
                                 Type.Null(),
                               ],
-                              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
                             ),
                           ),
                         }),
@@ -1629,7 +1544,7 @@ const InvoiceSchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
             ),
           ),
         }),
@@ -1656,7 +1571,7 @@ const ItemSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -1669,11 +1584,11 @@ const ItemSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     FullyQualifiedName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     IncomeAccountRef: Type.Optional(
       Type.Union(
         [
@@ -1683,26 +1598,20 @@ const ItemSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     InvStartDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
+      Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
     ),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -1737,7 +1646,7 @@ const JournalEntrySchema = Type.Object(
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -1746,7 +1655,7 @@ const JournalEntrySchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               JournalEntryLineDetail: Type.Optional(
                 Type.Union([
                   Type.Object({
@@ -1759,7 +1668,7 @@ const JournalEntrySchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
                       ),
                     ),
                     ClassRef: Type.Optional(
@@ -1804,16 +1713,10 @@ const JournalEntrySchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -1830,12 +1733,10 @@ const JournalEntrySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
       ),
     ),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(
       Type.Union([
         Type.Object({
@@ -1863,7 +1764,7 @@ const JournalEntrySchema = Type.Object(
                                 }),
                                 Type.Null(),
                               ],
-                              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
                             ),
                           ),
                         }),
@@ -1887,7 +1788,7 @@ const JournalEntrySchema = Type.Object(
                 }),
                 Type.Null(),
               ],
-              { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+              { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
             ),
           ),
         }),
@@ -1930,7 +1831,7 @@ const PaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     DepositToAccountRef: Type.Optional(
@@ -1941,11 +1842,11 @@ const PaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -2025,16 +1926,10 @@ const PaymentSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -2048,7 +1943,7 @@ const PaymentSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
       ),
     ),
     PaymentRefNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2056,9 +1951,7 @@ const PaymentSchema = Type.Object(
     ProcessPayment: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     UnappliedAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -2069,21 +1962,15 @@ const PaymentSchema = Type.Object(
 const PaymentMethodSchema = Type.Object(
   {
     Active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -2109,7 +1996,7 @@ const PurchaseSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     Credit: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -2134,7 +2021,7 @@ const PurchaseSchema = Type.Object(
       ]),
     ),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -2152,7 +2039,7 @@ const PurchaseSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
                       ),
                     ),
                     BillableStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2174,7 +2061,7 @@ const PurchaseSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
                       ),
                     ),
                     TaxCodeRef: Type.Optional(
@@ -2185,7 +2072,7 @@ const PurchaseSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                   }),
@@ -2195,7 +2082,7 @@ const PurchaseSchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               ItemBasedExpenseLineDetail: Type.Optional(
                 Type.Union([
                   Type.Object({
@@ -2209,7 +2096,7 @@ const PurchaseSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -2221,7 +2108,7 @@ const PurchaseSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2240,16 +2127,10 @@ const PurchaseSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -2297,7 +2178,7 @@ const PurchaseSchema = Type.Object(
         Type.Object({
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2308,9 +2189,7 @@ const PurchaseSchema = Type.Object(
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
   },
@@ -2328,7 +2207,7 @@ const PurchaseOrderSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     ClassRef: Type.Optional(
@@ -2374,12 +2253,10 @@ const PurchaseOrderSchema = Type.Object(
       ]),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    DueDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    DueDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -2388,7 +2265,7 @@ const PurchaseOrderSchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               ItemBasedExpenseLineDetail: Type.Optional(
                 Type.Union([
                   Type.Object({
@@ -2411,7 +2288,7 @@ const PurchaseOrderSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
                       ),
                     ),
                     ItemRef: Type.Optional(
@@ -2423,7 +2300,7 @@ const PurchaseOrderSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -2435,7 +2312,7 @@ const PurchaseOrderSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2470,16 +2347,10 @@ const PurchaseOrderSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -2496,13 +2367,13 @@ const PurchaseOrderSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'term' } },
       ),
     ),
     ShipAddr: Type.Optional(
       Type.Union([
         Type.Object({
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2523,16 +2394,14 @@ const PurchaseOrderSchema = Type.Object(
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(Type.Union([Type.Object({}), Type.Null()])),
     VendorAddr: Type.Optional(
       Type.Union([
         Type.Object({
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2552,7 +2421,7 @@ const PurchaseOrderSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'vendor' } },
       ),
     ),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2568,7 +2437,7 @@ const RefundReceiptSchema = Type.Object(
     BillAddr: Type.Optional(
       Type.Union([
         Type.Object({
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2628,7 +2497,7 @@ const RefundReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     DepositToAccountRef: Type.Optional(
@@ -2640,13 +2509,13 @@ const RefundReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     HomeTotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -2655,7 +2524,7 @@ const RefundReceiptSchema = Type.Object(
               Amount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
               Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
               DetailType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               LineNum: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
               SalesItemLineDetail: Type.Optional(
                 Type.Union([
@@ -2669,7 +2538,7 @@ const RefundReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2681,7 +2550,7 @@ const RefundReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2701,16 +2570,10 @@ const RefundReceiptSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -2725,15 +2588,13 @@ const RefundReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
       ),
     ),
     PrintStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(
       Type.Union([
         Type.Object({
@@ -2756,7 +2617,7 @@ const SalesReceiptSchema = Type.Object(
     BillAddr: Type.Optional(
       Type.Union([
         Type.Object({
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line2: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2816,7 +2677,7 @@ const SalesReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     DepositToAccountRef: Type.Optional(
@@ -2828,14 +2689,14 @@ const SalesReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
       ),
     ),
     DocNumber: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EmailStatus: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     ExchangeRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     HomeTotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     Line: Type.Optional(
       Type.Union([
         Type.Array(
@@ -2856,7 +2717,7 @@ const SalesReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'account' } },
                       ),
                     ),
                     DiscountPercent: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
@@ -2865,7 +2726,7 @@ const SalesReceiptSchema = Type.Object(
                   Type.Null(),
                 ]),
               ),
-              Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              Id: Type.String({ [READONLY_FLAG]: true }),
               LineNum: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
               SalesItemLineDetail: Type.Optional(
                 Type.Union([
@@ -2879,7 +2740,7 @@ const SalesReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
                       ),
                     ),
                     Qty: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2891,7 +2752,7 @@ const SalesReceiptSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxcode' } },
                       ),
                     ),
                     UnitPrice: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -2925,16 +2786,10 @@ const SalesReceiptSchema = Type.Object(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -2949,7 +2804,7 @@ const SalesReceiptSchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'paymentmethod' } },
       ),
     ),
     PaymentRefNum: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2960,7 +2815,7 @@ const SalesReceiptSchema = Type.Object(
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -2971,9 +2826,7 @@ const SalesReceiptSchema = Type.Object(
     ),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     TotalAmt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     TxnTaxDetail: Type.Optional(
       Type.Union([
         Type.Object({
@@ -2995,21 +2848,15 @@ const TaxCodeSchema = Type.Object(
     Active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Hidden: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -3035,7 +2882,7 @@ const TaxCodeSchema = Type.Object(
                           }),
                           Type.Null(),
                         ],
-                        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
+                        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'taxrate' } },
                       ),
                     ),
                     TaxTypeApplicable: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -3074,21 +2921,15 @@ const TaxRateSchema = Type.Object(
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     DisplayType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     EffectiveTaxRate: Type.Optional(Type.String()),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -3113,21 +2954,15 @@ const TermSchema = Type.Object(
     DiscountPercent: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     DueDays: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
     DueNextMonthDays: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -3154,7 +2989,7 @@ const TimeActivitySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customer' } },
       ),
     ),
     Description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -3167,12 +3002,12 @@ const TimeActivitySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'employee' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'employee' } },
       ),
     ),
     HourlyRate: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
     Hours: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     ItemRef: Type.Optional(
       Type.Union(
         [
@@ -3182,23 +3017,17 @@ const TimeActivitySchema = Type.Object(
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
+        { [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'item' } },
       ),
     ),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),
@@ -3208,9 +3037,7 @@ const TimeActivitySchema = Type.Object(
     NameOf: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     SyncToken: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     Taxable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-    TxnDate: Type.Optional(
-      Type.Union([Type.String({ format: 'date', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()]),
-    ),
+    TxnDate: Type.Optional(Type.Union([Type.String({ format: 'date', [CONNECTOR_DATA_TYPE]: 'date' }), Type.Null()])),
     domain: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     sparse: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     CostRate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -3231,7 +3058,7 @@ const VendorSchema = Type.Object(
           City: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           CountrySubDivisionCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          Id: Type.String({ [READONLY_FLAG]: true }),
           Lat: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Line1: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           Long: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -3261,21 +3088,15 @@ const VendorSchema = Type.Object(
       ]),
     ),
     GivenName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    Id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    Id: Type.String({ [READONLY_FLAG]: true }),
     MetaData: Type.Optional(
       Type.Union([
         Type.Object({
           CreateTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
           LastUpdatedTime: Type.Optional(
-            Type.Union([
-              Type.String({ format: 'date-time', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'datetime' }),
-              Type.Null(),
-            ]),
+            Type.Union([Type.String({ format: 'date-time', [CONNECTOR_DATA_TYPE]: 'datetime' }), Type.Null()]),
           ),
         }),
         Type.Null(),

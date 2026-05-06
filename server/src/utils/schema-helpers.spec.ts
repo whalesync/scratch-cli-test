@@ -1,12 +1,12 @@
 import { Type } from '@sinclair/typebox';
+import { TransformerTypes } from '@spinner/shared-types';
 import {
-  TransformerTypes,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
-  X_SCRATCH_SUGGESTED_TRANSFORMER,
-  X_SCRATCH_VIRTUAL_FIELDS,
-} from '@spinner/shared-types';
+  FOREIGN_KEY_OPTIONS,
+  READONLY_FLAG,
+  REMOTE_FIELD_ID,
+  SUGGESTED_TRANSFORMER,
+  VIRTUAL_FIELDS,
+} from '../remote-service/connectors/json-schema';
 import { extractSchemaFields, extractSchemaPaths } from './schema-helpers';
 
 describe('schema-helpers', () => {
@@ -141,7 +141,7 @@ describe('schema-helpers', () => {
 
       it('should extract remoteFieldId', () => {
         const schema = Type.Object({
-          title: Type.String({ [X_SCRATCH_REMOTE_FIELD_ID]: 'fld123abc' }),
+          title: Type.String({ [REMOTE_FIELD_ID]: 'fld123abc' }),
         });
 
         const fields = extractSchemaFields(schema);
@@ -152,7 +152,7 @@ describe('schema-helpers', () => {
 
       it('should extract readonly flag', () => {
         const schema = Type.Object({
-          id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          id: Type.String({ [READONLY_FLAG]: true }),
           name: Type.String(),
         });
 
@@ -166,7 +166,7 @@ describe('schema-helpers', () => {
 
       it('should extract foreignKey options', () => {
         const schema = Type.Object({
-          authorId: Type.String({ [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'table_authors' } }),
+          authorId: Type.String({ [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'table_authors' } }),
         });
 
         const fields = extractSchemaFields(schema);
@@ -178,7 +178,7 @@ describe('schema-helpers', () => {
       it('should extract suggestedTransformer', () => {
         const transformer = { type: TransformerTypes.Slugify };
         const schema = Type.Object({
-          slug: Type.String({ [X_SCRATCH_SUGGESTED_TRANSFORMER]: transformer }),
+          slug: Type.String({ [SUGGESTED_TRANSFORMER]: transformer }),
         });
 
         const fields = extractSchemaFields(schema);
@@ -192,10 +192,10 @@ describe('schema-helpers', () => {
         const schema = Type.Object({
           field: Type.String({
             description: 'A field',
-            [X_SCRATCH_REMOTE_FIELD_ID]: 'remote_1',
-            [X_SCRATCH_SUGGESTED_TRANSFORMER]: transformer,
-            [X_SCRATCH_READONLY]: true,
-            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'tbl_1' },
+            [REMOTE_FIELD_ID]: 'remote_1',
+            [SUGGESTED_TRANSFORMER]: transformer,
+            [READONLY_FLAG]: true,
+            [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'tbl_1' },
           }),
         });
 
@@ -228,7 +228,7 @@ describe('schema-helpers', () => {
             }),
             {
               description: 'Page Title',
-              [X_SCRATCH_VIRTUAL_FIELDS]: [
+              [VIRTUAL_FIELDS]: [
                 {
                   displayLabel: 'Page Title',
                   type: 'string',
@@ -251,7 +251,7 @@ describe('schema-helpers', () => {
       it('should override the original type with the virtual field type', () => {
         const schema = Type.Object({
           data: Type.Array(Type.Object({ value: Type.String() }), {
-            [X_SCRATCH_VIRTUAL_FIELDS]: [
+            [VIRTUAL_FIELDS]: [
               {
                 displayLabel: 'Data Value',
                 type: 'string',
@@ -275,7 +275,7 @@ describe('schema-helpers', () => {
         const schema = Type.Object({
           title: Type.Array(Type.String(), {
             description: 'Original description',
-            [X_SCRATCH_VIRTUAL_FIELDS]: [
+            [VIRTUAL_FIELDS]: [
               {
                 displayLabel: 'Title',
                 type: 'string',
@@ -304,8 +304,8 @@ describe('schema-helpers', () => {
 
         const schema = Type.Object({
           field: Type.Array(Type.String(), {
-            [X_SCRATCH_SUGGESTED_TRANSFORMER]: originalTransformer,
-            [X_SCRATCH_VIRTUAL_FIELDS]: [
+            [SUGGESTED_TRANSFORMER]: originalTransformer,
+            [VIRTUAL_FIELDS]: [
               {
                 displayLabel: 'Field',
                 type: 'string',
@@ -335,7 +335,7 @@ describe('schema-helpers', () => {
 
       it('should handle empty virtual fields array', () => {
         const schema = Type.Object({
-          name: Type.String({ [X_SCRATCH_VIRTUAL_FIELDS]: [] }),
+          name: Type.String({ [VIRTUAL_FIELDS]: [] }),
         });
 
         const fields = extractSchemaFields(schema);
@@ -348,7 +348,7 @@ describe('schema-helpers', () => {
       it('should use the first virtual field when multiple are defined', () => {
         const schema = Type.Object({
           field: Type.Array(Type.String(), {
-            [X_SCRATCH_VIRTUAL_FIELDS]: [
+            [VIRTUAL_FIELDS]: [
               {
                 displayLabel: 'First',
                 type: 'string',

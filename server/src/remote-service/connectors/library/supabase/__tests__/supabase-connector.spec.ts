@@ -1,9 +1,4 @@
-import {
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_MAX_LENGTH,
-  X_SCRATCH_READONLY,
-} from '@spinner/shared-types';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, MAX_LENGTH, READONLY_FLAG } from '../../../json-schema';
 import { EntityId } from '../../../types';
 import { type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
 import { SupabaseConnector } from '../supabase-connector';
@@ -90,9 +85,9 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     ]);
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.short_code[X_SCRATCH_MAX_LENGTH]).toBe(11);
-    expect(properties.fixed_code[X_SCRATCH_MAX_LENGTH]).toBe(5);
-    expect(properties.id[X_SCRATCH_MAX_LENGTH]).toBeUndefined();
+    expect(properties.short_code[MAX_LENGTH]).toBe(11);
+    expect(properties.fixed_code[MAX_LENGTH]).toBe(5);
+    expect(properties.id[MAX_LENGTH]).toBeUndefined();
   });
 
   it('omits x-scratch-max-length for unbounded text columns', async () => {
@@ -102,7 +97,7 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     ]);
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.body[X_SCRATCH_MAX_LENGTH]).toBeUndefined();
+    expect(properties.body[MAX_LENGTH]).toBeUndefined();
   });
 
   it('preserves max length on nullable columns (Optional wrapper)', async () => {
@@ -118,7 +113,7 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     ]);
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.nickname[X_SCRATCH_MAX_LENGTH]).toBe(30);
+    expect(properties.nickname[MAX_LENGTH]).toBe(30);
     expect(spec.schema.required).not.toContain('nickname');
   });
 
@@ -135,8 +130,8 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     ]);
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.id[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('numeric');
-    expect(properties.title[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('text');
+    expect(properties.id[CONNECTOR_DATA_TYPE]).toBe('numeric');
+    expect(properties.title[CONNECTOR_DATA_TYPE]).toBe('text');
     expect(spec.idColumnRemoteId).toBe('id');
     expect(spec.schema.required).toEqual(['title']);
     expect(spec.schema.$id).toBe('supabase/public.records');
@@ -162,9 +157,9 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     ]);
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.id[X_SCRATCH_READONLY]).toBe(true);
-    expect(properties.computed[X_SCRATCH_READONLY]).toBe(true);
-    expect(properties.name[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(properties.id[READONLY_FLAG]).toBe(true);
+    expect(properties.computed[READONLY_FLAG]).toBe(true);
+    expect(properties.name[READONLY_FLAG]).toBeUndefined();
   });
 
   it('annotates foreign keys with the linked table id', async () => {
@@ -197,9 +192,9 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     );
 
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
-    expect(properties.author_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'authors' });
-    expect(properties.category_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'taxonomy.categories' });
-    expect(properties.id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
+    expect(properties.author_id[FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'authors' });
+    expect(properties.category_id[FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'taxonomy.categories' });
+    expect(properties.id[FOREIGN_KEY_OPTIONS]).toBeUndefined();
   });
 
   it('falls back to "id" when no primary key candidates are returned', async () => {
@@ -247,8 +242,8 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     ]);
 
     const tag = (spec.schema.properties as Record<string, Record<string | symbol, unknown>>).tag;
-    expect(tag[X_SCRATCH_MAX_LENGTH]).toBe(8);
-    expect(tag[X_SCRATCH_READONLY]).toBe(true);
+    expect(tag[MAX_LENGTH]).toBe(8);
+    expect(tag[READONLY_FLAG]).toBe(true);
     expect(spec.schema.required).not.toContain('tag');
   });
 });

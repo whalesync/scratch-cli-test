@@ -1,17 +1,17 @@
 import { DatabaseObjectResponse } from '@notionhq/client';
 import { Type, type TSchema } from '@sinclair/typebox';
-import {
-  AssetFieldOptions,
-  TransformerTypes,
-  X_SCRATCH_ASSET_FIELD,
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
-  X_SCRATCH_SUGGESTED_TRANSFORMER,
-  X_SCRATCH_VIRTUAL_FIELDS,
-} from '@spinner/shared-types';
+import { TransformerTypes } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
+import {
+  ASSET_FIELD,
+  AssetFieldOptions,
+  CONNECTOR_DATA_TYPE,
+  FOREIGN_KEY_OPTIONS,
+  READONLY_FLAG,
+  REMOTE_FIELD_ID,
+  SUGGESTED_TRANSFORMER,
+  VIRTUAL_FIELDS,
+} from '../../json-schema';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
@@ -77,7 +77,7 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
             }),
             Type.Null(),
           ],
-          { [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
+          { [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
         ),
       ),
       icon: Type.Optional(
@@ -97,7 +97,7 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
             }),
             Type.Null(),
           ],
-          { [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
+          { [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
         ),
       ),
       parent: Type.Object(
@@ -112,8 +112,8 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
       page_content: Type.Optional(
         Type.Array(Type.Unknown(), {
           description: 'Page body content (Notion blocks)',
-          [X_SCRATCH_SUGGESTED_TRANSFORMER]: { type: TransformerTypes.NotionToHtml },
-          [X_SCRATCH_READONLY]: true,
+          [SUGGESTED_TRANSFORMER]: { type: TransformerTypes.NotionToHtml },
+          [READONLY_FLAG]: true,
         }),
       ),
       properties: Type.Object(propertySchemas, { description: 'Page properties' }),
@@ -155,7 +155,7 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
         }),
         {
           description,
-          [X_SCRATCH_VIRTUAL_FIELDS]: [
+          [VIRTUAL_FIELDS]: [
             {
               displayLabel: description,
               type: 'string',
@@ -268,8 +268,8 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
         ]),
         {
           description,
-          [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions,
-          [X_SCRATCH_VIRTUAL_FIELDS]: [
+          [ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions,
+          [VIRTUAL_FIELDS]: [
             {
               displayLabel: description,
               type: 'string',
@@ -319,7 +319,7 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
         {
           id: Type.String(),
           relation: Type.Array(Type.Object({ id: Type.String() }), {
-            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: property.relation.database_id
+            [FOREIGN_KEY_OPTIONS]: property.relation.database_id
               ? { linkedTableId: property.relation.database_id, map: 'id' }
               : undefined,
           }),
@@ -378,8 +378,8 @@ export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['pro
       break;
   }
 
-  schema[X_SCRATCH_CONNECTOR_DATA_TYPE] = property.type;
-  schema[X_SCRATCH_READONLY] = NOTION_READ_ONLY_PROPERTY_TYPES.has(property.type) ? true : undefined;
-  schema[X_SCRATCH_REMOTE_FIELD_ID] = property.id;
+  schema[CONNECTOR_DATA_TYPE] = property.type;
+  schema[READONLY_FLAG] = NOTION_READ_ONLY_PROPERTY_TYPES.has(property.type) ? true : undefined;
+  schema[REMOTE_FIELD_ID] = property.id;
   return schema;
 }

@@ -101,7 +101,6 @@ include:
     - gitlab-ci/stages/03-push-images.yml
   scratch-desktop:
     - scratch-desktop/**/*
-    - packages/**/*
   dummy:
     - terraform/**/*
     - .cursor/**/*

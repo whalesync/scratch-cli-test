@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { NestFactory } from '@nestjs/core';
-import { WorkbookId, X_SCRATCH_FOREIGN_KEY_OPTIONS } from '@spinner/shared-types';
+import { WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import 'dotenv/config';
 import { AppModule } from '../src/app.module';
@@ -71,7 +71,7 @@ async function bootstrap() {
     const schemaContentForDf = {
       type: 'object',
       properties: {
-        ref: { type: 'string', [X_SCRATCH_FOREIGN_KEY_OPTIONS]: 'folder' },
+        ref: { type: 'string', 'x-scratch-foreign-key': 'folder' },
       },
     };
 

@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
+import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AttioApiClient } from './attio-api-client';
 import { AttioAttribute, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
@@ -20,9 +20,9 @@ function valueArraySchemaForAttribute(attr: AttioAttribute): TSchema {
   const valueSchema = Type.Object({}, { additionalProperties: true });
   return Type.Array(valueSchema, {
     description: attr.description ?? attr.title,
-    [X_SCRATCH_REMOTE_FIELD_ID]: attr.api_slug,
-    [X_SCRATCH_CONNECTOR_DATA_TYPE]: attr.type,
-    ...(attr.is_archived || attr.is_system_attribute ? { [X_SCRATCH_READONLY]: true } : {}),
+    [REMOTE_FIELD_ID]: attr.api_slug,
+    [CONNECTOR_DATA_TYPE]: attr.type,
+    ...(attr.is_archived || attr.is_system_attribute ? { [READONLY_FLAG]: true } : {}),
   });
 }
 
@@ -61,10 +61,10 @@ export async function buildAttioObjectTableSpec(
           object_id: Type.String(),
           record_id: Type.String(),
         },
-        { [X_SCRATCH_READONLY]: true, description: 'Attio record id triple' },
+        { [READONLY_FLAG]: true, description: 'Attio record id triple' },
       ),
-      created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
-      web_url: Type.Optional(Type.String({ [X_SCRATCH_READONLY]: true })),
+      created_at: Type.String({ format: 'date-time', [READONLY_FLAG]: true }),
+      web_url: Type.Optional(Type.String({ [READONLY_FLAG]: true })),
       values: valuesSchema,
     },
     { $id: `attio/${objectSlug}`, title: display.plural },
@@ -112,11 +112,11 @@ export async function buildAttioListTableSpec(
           list_id: Type.String(),
           entry_id: Type.String(),
         },
-        { [X_SCRATCH_READONLY]: true, description: 'Attio list-entry id triple' },
+        { [READONLY_FLAG]: true, description: 'Attio list-entry id triple' },
       ),
-      parent_record_id: Type.String({ [X_SCRATCH_READONLY]: true }),
-      parent_object: Type.String({ [X_SCRATCH_READONLY]: true }),
-      created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
+      parent_record_id: Type.String({ [READONLY_FLAG]: true }),
+      parent_object: Type.String({ [READONLY_FLAG]: true }),
+      created_at: Type.String({ format: 'date-time', [READONLY_FLAG]: true }),
       entry_values: entryValuesSchema,
     },
     { $id: `attio/list-${listSlug}`, title: listName },

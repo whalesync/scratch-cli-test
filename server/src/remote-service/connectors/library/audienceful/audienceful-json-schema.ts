@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import { ForeignKeyOptionSchema, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AudiencefulField } from './audienceful-types';
 
@@ -30,8 +30,8 @@ export function buildAudiencefulJsonTableSpec(id: EntityId, customFields: Audien
 function buildPeopleSchema(customFields: AudiencefulField[]): TSchema {
   // Standard fields
   const properties: Record<string, TSchema> = {
-    id: Type.Integer({ description: 'Numeric database ID for the person', [X_SCRATCH_READONLY]: true }),
-    uid: Type.String({ description: 'Unique identifier for the person', [X_SCRATCH_READONLY]: true }),
+    id: Type.Integer({ description: 'Numeric database ID for the person', [READONLY_FLAG]: true }),
+    uid: Type.String({ description: 'Unique identifier for the person', [READONLY_FLAG]: true }),
     email: Type.String({ description: 'Email address', format: 'email' }),
     tags: Type.Array(
       Type.Object(
@@ -53,51 +53,51 @@ function buildPeopleSchema(customFields: AudiencefulField[]): TSchema {
     extra_data: Type.Object({}, { description: 'Additional custom field data stored for this person' }),
     status: Type.Union(
       [Type.Literal('active'), Type.Literal('unconfirmed'), Type.Literal('bounced'), Type.Literal('unsubscribed')],
-      { description: 'Subscription status', [X_SCRATCH_READONLY]: true },
+      { description: 'Subscription status', [READONLY_FLAG]: true },
     ),
     source: Type.Optional(
       Type.Union([Type.String(), Type.Null()], {
         description: 'How the person was added (import, manual, api, form, etc.)',
-        [X_SCRATCH_READONLY]: true,
+        [READONLY_FLAG]: true,
       }),
     ),
     created_at: Type.String({
       description: 'When the person was created',
       format: 'date-time',
-      [X_SCRATCH_READONLY]: true,
+      [READONLY_FLAG]: true,
     }),
     updated_at: Type.String({
       description: 'When the person was last updated',
       format: 'date-time',
-      [X_SCRATCH_READONLY]: true,
+      [READONLY_FLAG]: true,
     }),
     last_activity: Type.String({
       description: 'When the person was last active',
       format: 'date-time',
-      [X_SCRATCH_READONLY]: true,
+      [READONLY_FLAG]: true,
     }),
     unsubscribed: Type.Optional(
       Type.Union([Type.String({ format: 'date-time' }), Type.Null()], {
         description: 'When the person unsubscribed, or null if still subscribed',
-        [X_SCRATCH_READONLY]: true,
+        [READONLY_FLAG]: true,
       }),
     ),
     country: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Country of the person' })),
     double_opt_in: Type.Union([Type.Literal('not_required'), Type.Literal('required'), Type.Literal('complete')], {
       description: 'Email confirmation status',
-      [X_SCRATCH_READONLY]: true,
+      [READONLY_FLAG]: true,
     }),
-    bounced: Type.Boolean({ description: 'Whether the email address has bounced', [X_SCRATCH_READONLY]: true }),
+    bounced: Type.Boolean({ description: 'Whether the email address has bounced', [READONLY_FLAG]: true }),
     open_rate: Type.Optional(
       Type.Union([Type.Number(), Type.Null()], {
         description: 'Email open rate for this person',
-        [X_SCRATCH_READONLY]: true,
+        [READONLY_FLAG]: true,
       }),
     ),
     click_rate: Type.Optional(
       Type.Union([Type.Number(), Type.Null()], {
         description: 'Email click rate for this person',
-        [X_SCRATCH_READONLY]: true,
+        [READONLY_FLAG]: true,
       }),
     ),
   };
@@ -109,7 +109,7 @@ function buildPeopleSchema(customFields: AudiencefulField[]): TSchema {
     if (builtInFields.includes(field.data_name)) continue;
     const fieldSchema = fieldTypeToSchema(field);
     if (!field.editable) {
-      fieldSchema[X_SCRATCH_READONLY] = true;
+      fieldSchema[READONLY_FLAG] = true;
     }
     extraDataProperties[field.data_name] = field.required ? fieldSchema : Type.Optional(fieldSchema);
   }
@@ -162,7 +162,7 @@ function fieldTypeToSchema(field: AudiencefulField): TSchema {
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${X_SCRATCH_READONLY}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${READONLY_FLAG}`) === true;
 }
 
 /**
@@ -172,7 +172,7 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  * @returns True if the field is a foreign key, false otherwise.
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Has(tableSpec.schema, `/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined;
+  return ValuePointer.Has(tableSpec.schema, `/properties/${field}/${FOREIGN_KEY_OPTIONS}`) !== undefined;
 }
 
 /**
@@ -182,7 +182,7 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
  * @returns The foreign key options, or undefined if the field is not a foreign key.
  */
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
-  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
+  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${FOREIGN_KEY_OPTIONS}`) as
     | ForeignKeyOptionSchema
     | undefined;
 }

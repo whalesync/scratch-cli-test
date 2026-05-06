@@ -6,17 +6,13 @@
  * API, project routing) stripped out.
  */
 import { Type, type TSchema } from '@sinclair/typebox';
-import {
-  connectorMetadata,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_MAX_LENGTH,
-  type ConnectorPullOptions,
-} from '@spinner/shared-types';
+import { connectorMetadata, type ConnectorPullOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
+import { FOREIGN_KEY_OPTIONS, MAX_LENGTH } from '../../json-schema';
 import { Service } from '../../service-constants';
 import {
   idPath,
@@ -204,7 +200,7 @@ export class PostgresConnector extends Connector {
         const annotated = { ...colSchema, [CONNECTOR_DATA_TYPE]: pgType } as TSchema;
 
         if (col.character_maximum_length !== null) {
-          (annotated as Record<string, unknown>)[X_SCRATCH_MAX_LENGTH] = col.character_maximum_length;
+          (annotated as Record<string, unknown>)[MAX_LENGTH] = col.character_maximum_length;
         }
 
         if (isGeneratedColumn(col) || col.is_updatable === 'NO') {
@@ -213,7 +209,7 @@ export class PostgresConnector extends Connector {
 
         const linkedTableId = fkMap.get(col.column_name);
         if (linkedTableId) {
-          (annotated as Record<string, unknown>)[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId };
+          (annotated as Record<string, unknown>)[FOREIGN_KEY_OPTIONS] = { linkedTableId };
         }
 
         schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(annotated) : annotated;

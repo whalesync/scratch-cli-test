@@ -1,41 +1,38 @@
-import { TransformerConfig } from '../sync-mapping';
+import { TransformerConfig } from '@spinner/shared-types';
 
 /**
  * Field metadata keys for connector JSON schemas
  */
 
-// All fields must start with this prefix.
-export const X_SCRATCH_PREFIX = 'x-scratch-';
-
 // A field is readonly if the value of this key is true.
-export const X_SCRATCH_READONLY = 'x-scratch-readonly';
+export const READONLY_FLAG = 'x-scratch-readonly';
 
 // The native, connector-specific data type of the field.
-export const X_SCRATCH_CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
+export const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 
 // An object describing a foreign key configuration for a field.
-export const X_SCRATCH_FOREIGN_KEY_OPTIONS = 'x-scratch-foreign-key';
+export const FOREIGN_KEY_OPTIONS = 'x-scratch-foreign-key';
 
 // The remote field ID from the external service (e.g. Airtable fldXXX, Webflow hex hash, Notion property ID).
-export const X_SCRATCH_REMOTE_FIELD_ID = 'x-scratch-remote-field-id';
+export const REMOTE_FIELD_ID = 'x-scratch-remote-field-id';
 
 // The suggested transformer to auto-apply when this field is selected as a source in the sync editor.
-export const X_SCRATCH_SUGGESTED_TRANSFORMER = 'x-scratch-suggested-transformer';
+export const SUGGESTED_TRANSFORMER = 'x-scratch-suggested-transformer';
 
 // The suggested transformer to auto-apply when this field is selected as a destination in the sync editor.
-export const X_SCRATCH_SUGGESTED_IN_TRANSFORMER = 'x-scratch-suggested-in-transformer';
+export const SUGGESTED_IN_TRANSFORMER = 'x-scratch-suggested-in-transformer';
 
 // An array of virtual field definitions that provide human-readable shortcuts for complex nested fields.
-export const X_SCRATCH_VIRTUAL_FIELDS = 'x-scratch-virtual-fields';
+export const VIRTUAL_FIELDS = 'x-scratch-virtual-fields';
 
 // The maximum length of a string field as enforced by the external service (e.g. PostgreSQL VARCHAR(n)).
-export const X_SCRATCH_MAX_LENGTH = 'x-scratch-max-length';
+export const MAX_LENGTH = 'x-scratch-max-length';
 
 // Marks a field as containing file/media assets that should be indexed.
-export const X_SCRATCH_ASSET_FIELD = 'x-scratch-asset-field';
+export const ASSET_FIELD = 'x-scratch-asset-field';
 
 // Marks a table whose records ARE assets (e.g. WordPress media, Webflow Assets).
-export const X_SCRATCH_ASSET_TABLE = 'x-scratch-asset-table';
+export const ASSET_TABLE = 'x-scratch-asset-table';
 
 /**
  * Options for an asset field annotation.

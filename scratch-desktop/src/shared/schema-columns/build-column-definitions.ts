@@ -1,11 +1,7 @@
-import {
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_PREFIX,
-  X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
-} from '@spinner/shared-types';
 import type { ColumnAttributes, ColumnDataType, ColumnDefinition } from './types';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG, REMOTE_FIELD_ID } from './x-scratch-keys';
+
+const X_SCRATCH_PREFIX = 'x-scratch-';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -145,11 +141,11 @@ function walkProperties(schema: Record<string, unknown>, prefix: string): Column
     }
 
     const attributes: ColumnAttributes = {
-      readOnly: rawProp[X_SCRATCH_READONLY] === true,
+      readOnly: rawProp[READONLY_FLAG] === true,
       required: requiredSet.has(key),
-      connectorDataType: getString(rawProp[X_SCRATCH_CONNECTOR_DATA_TYPE]),
-      remoteFieldId: parseRemoteFieldId(rawProp[X_SCRATCH_REMOTE_FIELD_ID]),
-      foreignKey: parseForeignKey(rawProp[X_SCRATCH_FOREIGN_KEY_OPTIONS]),
+      connectorDataType: getString(rawProp[CONNECTOR_DATA_TYPE]),
+      remoteFieldId: parseRemoteFieldId(rawProp[REMOTE_FIELD_ID]),
+      foreignKey: parseForeignKey(rawProp[FOREIGN_KEY_OPTIONS]),
       nested: prefix.length > 0,
     };
 

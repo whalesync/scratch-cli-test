@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { X_SCRATCH_FOREIGN_KEY_OPTIONS } from '@spinner/shared-types';
 
 import { ParsedContent, Schema } from 'src/utils/objects';
 
@@ -90,7 +89,7 @@ export class RefCleanerService {
       if (!schemaNode || typeof schemaNode !== 'object') return;
 
       // Check for x-scratch-foreign-key
-      const foreignKey = schemaNode[X_SCRATCH_FOREIGN_KEY_OPTIONS];
+      const foreignKey = schemaNode['x-scratch-foreign-key'];
 
       if (foreignKey) {
         let linkedTableId: string | undefined;

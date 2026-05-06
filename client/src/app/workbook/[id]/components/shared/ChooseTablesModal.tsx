@@ -47,7 +47,7 @@ import type {
   DataFolderId,
   WorkbookId,
 } from '@spinner/shared-types';
-import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
+import { TableDiscoveryMode } from '@spinner/shared-types';
 import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
@@ -74,7 +74,7 @@ function flattenSchemaFields(schema: unknown): SchemaField[] {
       const path = [...prefix, name];
 
       // Resolve the effective type, unwrapping nullable unions.
-      let type = (prop?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string) ?? (prop?.type as string);
+      let type = (prop?.['x-scratch-connector-data-type'] as string) ?? (prop?.type as string);
       let effective: Record<string, unknown> = prop;
       if (!type) {
         const variants = (prop?.anyOf ?? prop?.oneOf) as Array<Record<string, unknown>> | undefined;
@@ -686,7 +686,8 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
           );
           createdFolderIds.push(created.id as DataFolderId);
         } catch (tableError) {
-          const message = tableError instanceof ScratchpadApiError ? tableError.message : 'Failed to add table.';
+          const message =
+            tableError instanceof ScratchpadApiError ? tableError.message : 'Failed to add table.';
           tableFailures.push({ displayName: table.displayName, error: message });
         }
       }
@@ -1145,21 +1146,16 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         {partialResult ? (
           <>
             <Alert icon={<AlertTriangleIcon size={16} />} color="red" variant="light" mt="sm">
-              <Text size="sm" fw={500} mb={4}>
-                Some tables could not be added:
-              </Text>
+              <Text size="sm" fw={500} mb={4}>Some tables could not be added:</Text>
               {partialResult.errors.map((e) => (
-                <Text key={e.displayName} size="sm">
-                  • {e.displayName}: {e.error}
-                </Text>
+                <Text key={e.displayName} size="sm">• {e.displayName}: {e.error}</Text>
               ))}
             </Alert>
             <Group justify="flex-end" gap="sm" mt="md">
               <ButtonSecondaryOutline onClick={handleSkipPull}>Close without pulling</ButtonSecondaryOutline>
               {partialResult.createdIds.length > 0 && (
                 <ButtonPrimaryLight onClick={handlePullPartial}>
-                  Pull {partialResult.createdIds.length} succeeded{' '}
-                  {partialResult.createdIds.length === 1 ? 'table' : 'tables'}
+                  Pull {partialResult.createdIds.length} succeeded {partialResult.createdIds.length === 1 ? 'table' : 'tables'}
                 </ButtonPrimaryLight>
               )}
             </Group>

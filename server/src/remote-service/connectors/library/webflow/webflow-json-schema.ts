@@ -1,21 +1,21 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import {
-  AssetFieldOptions,
-  AssetTableOptions,
-  ForeignKeyOptionSchema,
-  TransformerTypes,
-  X_SCRATCH_ASSET_FIELD,
-  X_SCRATCH_ASSET_TABLE,
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
-  X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
-  X_SCRATCH_SUGGESTED_TRANSFORMER,
-} from '@spinner/shared-types';
+import { TransformerTypes } from '@spinner/shared-types';
 import _ from 'lodash';
 import { Webflow } from 'webflow-api';
+import {
+  ASSET_FIELD,
+  ASSET_TABLE,
+  AssetFieldOptions,
+  AssetTableOptions,
+  CONNECTOR_DATA_TYPE,
+  FOREIGN_KEY_OPTIONS,
+  ForeignKeyOptionSchema,
+  READONLY_FLAG,
+  REMOTE_FIELD_ID,
+  SUGGESTED_IN_TRANSFORMER,
+  SUGGESTED_TRANSFORMER,
+} from '../../json-schema';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
@@ -35,7 +35,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       const refCollectionId = _.get(field.validations, 'collectionId') as string | undefined;
       schema = Type.String({
         description,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: refCollectionId ? { linkedTableId: refCollectionId } : undefined,
+        [FOREIGN_KEY_OPTIONS]: refCollectionId ? { linkedTableId: refCollectionId } : undefined,
       });
       break;
     }
@@ -87,10 +87,10 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
           options.map((opt) => Type.Literal(opt.id, { title: opt.name })),
           {
             description,
-            [X_SCRATCH_SUGGESTED_TRANSFORMER]: {
+            [SUGGESTED_TRANSFORMER]: {
               type: TransformerTypes.WebflowOptionIdToValue,
             },
-            [X_SCRATCH_SUGGESTED_IN_TRANSFORMER]: {
+            [SUGGESTED_IN_TRANSFORMER]: {
               type: TransformerTypes.WebflowOption,
             },
           },
@@ -111,7 +111,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
         },
         {
           description,
-          [X_SCRATCH_ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } satisfies AssetFieldOptions,
+          [ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } satisfies AssetFieldOptions,
         },
       );
       break;
@@ -125,7 +125,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
         }),
         {
           description,
-          [X_SCRATCH_ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } satisfies AssetFieldOptions,
+          [ASSET_FIELD]: { idPath: 'fileId', urlExpires: false } satisfies AssetFieldOptions,
         },
       );
       break;
@@ -134,7 +134,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       const multiRefCollectionId = _.get(field.validations, 'collectionId') as string | undefined;
       schema = Type.Array(Type.String(), {
         description,
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: multiRefCollectionId ? { linkedTableId: multiRefCollectionId } : undefined,
+        [FOREIGN_KEY_OPTIONS]: multiRefCollectionId ? { linkedTableId: multiRefCollectionId } : undefined,
       });
       break;
     }
@@ -145,9 +145,9 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       break;
   }
 
-  schema[X_SCRATCH_CONNECTOR_DATA_TYPE] = field.type;
-  schema[X_SCRATCH_READONLY] = field.isEditable === false ? true : undefined;
-  schema[X_SCRATCH_REMOTE_FIELD_ID] = field.id;
+  schema[CONNECTOR_DATA_TYPE] = field.type;
+  schema[READONLY_FLAG] = field.isEditable === false ? true : undefined;
+  schema[REMOTE_FIELD_ID] = field.id;
   return schema;
 }
 
@@ -173,21 +173,21 @@ export function buildWebflowJsonTableSpec(
   properties['lastPublished'] = Type.Optional(
     Type.Union([Type.String({ format: 'date-time' }), Type.Null()], {
       description: 'When the item was last published (read-only)',
-      [X_SCRATCH_REMOTE_FIELD_ID]: 'published-on',
+      [REMOTE_FIELD_ID]: 'published-on',
     }),
   );
   properties['lastUpdated'] = Type.Optional(
     Type.String({
       format: 'date-time',
       description: 'When the item was last updated (read-only)',
-      [X_SCRATCH_REMOTE_FIELD_ID]: 'updated-on',
+      [REMOTE_FIELD_ID]: 'updated-on',
     }),
   );
   properties['createdOn'] = Type.Optional(
     Type.String({
       format: 'date-time',
       description: 'When the item was created (read-only)',
-      [X_SCRATCH_REMOTE_FIELD_ID]: 'created-on',
+      [REMOTE_FIELD_ID]: 'created-on',
     }),
   );
   properties['isArchived'] = Type.Optional(
@@ -263,35 +263,31 @@ export const WEBFLOW_ASSETS_TABLE_ID_PREFIX = '__assets__';
 export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Webflow.Site): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      id: Type.String({ description: 'Unique asset identifier', [X_SCRATCH_READONLY]: true }),
+      id: Type.String({ description: 'Unique asset identifier', [READONLY_FLAG]: true }),
       displayName: Type.String({ description: 'Display name of the asset' }),
       hostedUrl: Type.Optional(
         Type.String({
           description: 'Permanent CDN URL for the asset',
           format: 'uri',
-          [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+          [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
         }),
       ),
       originalFileName: Type.Optional(Type.String({ description: 'Original file name at upload' })),
       contentType: Type.Optional(Type.String({ description: 'MIME content type' })),
       size: Type.Optional(Type.Number({ description: 'File size in bytes' })),
       altText: Type.Optional(Type.String({ description: 'Visual description of the asset' })),
-      siteId: Type.Optional(Type.String({ description: 'Site that hosts this asset', [X_SCRATCH_READONLY]: true })),
+      siteId: Type.Optional(Type.String({ description: 'Site that hosts this asset', [READONLY_FLAG]: true })),
       createdOn: Type.Optional(
-        Type.String({ description: 'When the asset was created', format: 'date-time', [X_SCRATCH_READONLY]: true }),
+        Type.String({ description: 'When the asset was created', format: 'date-time', [READONLY_FLAG]: true }),
       ),
       lastUpdated: Type.Optional(
-        Type.String({
-          description: 'When the asset was last updated',
-          format: 'date-time',
-          [X_SCRATCH_READONLY]: true,
-        }),
+        Type.String({ description: 'When the asset was last updated', format: 'date-time', [READONLY_FLAG]: true }),
       ),
     },
     {
       $id: `webflow-assets/${site.id}`,
       title: 'Assets',
-      [X_SCRATCH_ASSET_TABLE]: {
+      [ASSET_TABLE]: {
         urlPath: 'hostedUrl',
         filenamePath: 'originalFileName',
         mimeTypePath: 'contentType',
@@ -325,7 +321,7 @@ const FIELD_DATA_PATH = '/properties/fieldData/properties';
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${X_SCRATCH_READONLY}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${READONLY_FLAG}`) === true;
 }
 
 /**
@@ -335,9 +331,7 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  * @returns True if the field is a foreign key, false otherwise.
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return (
-    ValuePointer.Has(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined
-  );
+  return ValuePointer.Has(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${FOREIGN_KEY_OPTIONS}`) !== undefined;
 }
 
 /**
@@ -347,7 +341,7 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
  * @returns The foreign key options, or undefined if the field is not a foreign key.
  */
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
-  return ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
+  return ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${FOREIGN_KEY_OPTIONS}`) as
     | ForeignKeyOptionSchema
     | undefined;
 }

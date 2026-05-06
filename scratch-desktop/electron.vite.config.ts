@@ -20,11 +20,6 @@ export default defineConfig({
       },
     },
     plugins: [react()],
-    build: {
-      commonjsOptions: {
-        include: [/node_modules/, /packages\/shared-types/],
-      },
-    },
     css: {
       modules: {
         localsConvention: 'camelCaseOnly',

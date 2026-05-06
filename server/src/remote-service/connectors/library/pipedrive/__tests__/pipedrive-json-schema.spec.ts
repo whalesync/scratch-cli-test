@@ -1,9 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
-import {
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_READONLY,
-} from '@spinner/shared-types';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../../json-schema';
 import { PipedriveApiClient } from '../pipedrive-api-client';
 import { buildPipedriveJsonTableSpec, pipedriveFieldToJsonSchema } from '../pipedrive-json-schema';
 import { PipedriveField } from '../pipedrive-types';
@@ -54,21 +50,21 @@ describe('pipedriveFieldToJsonSchema', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'phone' }));
     expect(schema).toBeDefined();
     expect(schema!.type).toBe('array');
-    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('phone');
+    expect(schema![CONNECTOR_DATA_TYPE]).toBe('phone');
   });
 
   it('maps monetary to object with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'monetary' }));
     expect(schema).toBeDefined();
     expect(schema!.type).toBe('object');
-    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('monetary');
+    expect(schema![CONNECTOR_DATA_TYPE]).toBe('monetary');
   });
 
   it('maps address to object with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'address' }));
     expect(schema).toBeDefined();
     expect(schema!.type).toBe('object');
-    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('address');
+    expect(schema![CONNECTOR_DATA_TYPE]).toBe('address');
   });
 
   it('maps enum with options to Union of Literals', () => {
@@ -103,31 +99,31 @@ describe('pipedriveFieldToJsonSchema', () => {
   it('maps org to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'org' }));
     expect(schema).toBeDefined();
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'organizations' });
+    expect(schema![FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'organizations' });
   });
 
   it('maps people to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'people' }));
     expect(schema).toBeDefined();
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'persons' });
+    expect(schema![FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'persons' });
   });
 
   it('maps deal to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'deal' }));
     expect(schema).toBeDefined();
-    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'deals' });
+    expect(schema![FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'deals' });
   });
 
   it('maps user to Number | Null with READONLY_FLAG', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'user' }));
     expect(schema).toBeDefined();
-    expect(schema![X_SCRATCH_READONLY]).toBe(true);
+    expect(schema![READONLY_FLAG]).toBe(true);
   });
 
   it('maps varchar_auto to String | Null with READONLY_FLAG', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'varchar_auto' }));
     expect(schema).toBeDefined();
-    expect(schema![X_SCRATCH_READONLY]).toBe(true);
+    expect(schema![READONLY_FLAG]).toBe(true);
   });
 });
 
@@ -175,9 +171,9 @@ describe('buildPipedriveJsonTableSpec', () => {
     const entityId = { wsId: 'persons', remoteId: ['persons'] };
     const spec = await buildPipedriveJsonTableSpec(entityId, 'persons', mockClient as unknown as PipedriveApiClient);
 
-    expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
-    expect(spec.schema.properties.add_time[X_SCRATCH_READONLY]).toBe(true);
-    expect(spec.schema.properties.update_time[X_SCRATCH_READONLY]).toBe(true);
+    expect(spec.schema.properties.id[READONLY_FLAG]).toBe(true);
+    expect(spec.schema.properties.add_time[READONLY_FLAG]).toBe(true);
+    expect(spec.schema.properties.update_time[READONLY_FLAG]).toBe(true);
   });
 
   it('omits custom_fields property when there are no custom fields', async () => {

@@ -1,10 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import {
-  X_SCRATCH_CONNECTOR_DATA_TYPE,
-  X_SCRATCH_FOREIGN_KEY_OPTIONS,
-  X_SCRATCH_READONLY,
-  X_SCRATCH_REMOTE_FIELD_ID,
-} from '@spinner/shared-types';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { PipedriveApiClient } from './pipedrive-api-client';
 import { ENTITY_CONFIG, ENTITY_DISPLAY_NAMES, PipedriveEntityType, PipedriveField } from './pipedrive-types';
@@ -26,7 +21,7 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
       return Type.Union([Type.String(), Type.Null()]);
 
     case 'varchar_auto':
-      return Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true });
+      return Type.Union([Type.String(), Type.Null()], { [READONLY_FLAG]: true });
 
     case 'int':
       return Type.Union([Type.Number(), Type.Null()]);
@@ -62,7 +57,7 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
           primary: Type.Optional(Type.Boolean()),
           label: Type.Optional(Type.String()),
         }),
-        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'phone' },
+        { [CONNECTOR_DATA_TYPE]: 'phone' },
       );
 
     case 'monetary':
@@ -71,7 +66,7 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
           value: Type.Union([Type.Number(), Type.Null()]),
           currency: Type.Union([Type.String(), Type.Null()]),
         },
-        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'monetary' },
+        { [CONNECTOR_DATA_TYPE]: 'monetary' },
       );
 
     case 'address':
@@ -88,7 +83,7 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
           postal_code: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           formatted_address: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         },
-        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'address' },
+        { [CONNECTOR_DATA_TYPE]: 'address' },
       );
 
     case 'enum': {
@@ -117,21 +112,21 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
 
     case 'org':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'organizations' },
+        [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'organizations' },
       });
 
     case 'people':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons' },
+        [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'persons' },
       });
 
     case 'deal':
       return Type.Union([Type.Number(), Type.Null()], {
-        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'deals' },
+        [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'deals' },
       });
 
     case 'user':
-      return Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true });
+      return Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true });
 
     case 'stage':
       return Type.Union([Type.Number(), Type.Null()]);
@@ -153,7 +148,7 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
           }),
           Type.Null(),
         ],
-        { [X_SCRATCH_READONLY]: true },
+        { [READONLY_FLAG]: true },
       );
 
     case 'json':
@@ -187,12 +182,12 @@ export async function buildPipedriveJsonTableSpec(
     // Build annotations object
     const annotations: Record<string, unknown> = {
       description: field.field_name,
-      [X_SCRATCH_REMOTE_FIELD_ID]: field.field_code,
+      [REMOTE_FIELD_ID]: field.field_code,
     };
 
     // Mark system read-only fields
     if (READONLY_SYSTEM_FIELDS.has(field.field_code)) {
-      annotations[X_SCRATCH_READONLY] = true;
+      annotations[READONLY_FLAG] = true;
     }
 
     // Merge annotations into the schema
