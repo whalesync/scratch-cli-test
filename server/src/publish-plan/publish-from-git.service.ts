@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
+import { cloneDeep, get, set, unset } from 'lodash';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject, ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
@@ -10,6 +11,7 @@ import { exceptionForConnectorError } from '../remote-service/connectors/error';
 import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
 import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { assertUnreachable } from '../utils/asserts';
 import { EncryptedData } from '../utils/encryption';
 import { formatJsonWithPrettier } from '../utils/json-formatter';
 import { pickByShape } from './diff-utils';
@@ -42,15 +44,47 @@ interface DeletePhaseFile {
 
 type PlanPhase = 'edit' | 'create' | 'delete' | 'backfill' | 'rename';
 
-type PhaseOperation = {
+interface BasePhaseOperation {
   /** Relative path within the connection dir, e.g. "public/posts/rec1.json" */
   relPath: string;
-  /** Full git path to the plan file, e.g. "{planPath}/public/posts/edit/rec1.json" */
-  gitPath: string;
-  content: ParsedContent | null;
-  remoteRecordId: string | null;
-  changedFields: Record<string, unknown> | null;
-};
+}
+
+interface EditPhaseOperation extends BasePhaseOperation {
+  phase: 'edit';
+  content: ParsedContent;
+  changedFields: Record<string, unknown>;
+  remoteId: string;
+}
+
+interface BackfillPhaseOperation extends BasePhaseOperation {
+  phase: 'backfill';
+  content: ParsedContent;
+  changedFields: Record<string, unknown>;
+  remoteId: string;
+}
+
+interface CreatePhaseOperation extends BasePhaseOperation {
+  phase: 'create';
+  content: ParsedContent;
+}
+
+interface DeletePhaseOperation extends BasePhaseOperation {
+  phase: 'delete';
+  remoteId: string;
+}
+
+interface RenamePhaseOperation extends BasePhaseOperation {
+  phase: 'rename';
+}
+
+type PhaseOperation =
+  | EditPhaseOperation
+  | BackfillPhaseOperation
+  | CreatePhaseOperation
+  | DeletePhaseOperation
+  | RenamePhaseOperation;
+
+type UpdatePhaseOperation = EditPhaseOperation | BackfillPhaseOperation;
 
 export interface PublishFromGitResult {
   planId: string;
@@ -204,7 +238,8 @@ export class PublishFromGitService {
               const page = await this.readPhaseFilesPage(repoId, phaseDir, 100, cursor);
               const folderOps = [...page.files]
                 .sort((a, b) => a.name.localeCompare(b.name))
-                .map((file) => this.parsePhaseOperation(tablePath, phaseDir, phase, file.name, file.content));
+                .map((file) => this.parsePhaseOperation(tablePath, phaseDir, phase, file.name, file.content))
+                .filter((op): op is RenamePhaseOperation => op?.phase === 'rename');
               if (folderOps.length === 0) {
                 cursor = page.nextCursor;
                 continue;
@@ -251,10 +286,7 @@ export class PublishFromGitService {
 
             do {
               const page = await this.readPhaseFilesPage(repoId, phaseDir, batchSize, cursor);
-              const folderOps = [...page.files]
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((file) => this.parsePhaseOperation(tablePath, phaseDir, phase, file.name, file.content));
-              if (folderOps.length === 0) {
+              if (page.files.length === 0) {
                 cursor = page.nextCursor;
                 continue;
               }
@@ -265,35 +297,63 @@ export class PublishFromGitService {
                   message: `No tableSpec for folder ${tablePath}, skipping ${phase}`,
                   workbookId,
                 });
-                failedCount += folderOps.length;
+                failedCount += page.files.length;
                 await emitProgress();
                 throw new Error(`No table spec found for ${describeTablePath(tablePath)} during ${phase} publish`);
               }
 
+              const sortedFiles = [...page.files].sort((a, b) => a.name.localeCompare(b.name));
+              let count = 0;
               try {
                 if (phase === 'delete') {
-                  await this.dispatchDeleteBatch(folderOps, connector, tableSpec, workbookId, repoId);
+                  const deletes = sortedFiles
+                    .map((f) => this.parsePhaseOperation(tablePath, phaseDir, 'delete', f.name, f.content))
+                    .filter((op): op is DeletePhaseOperation => op !== null);
+                  count = deletes.length;
+                  if (count > 0) {
+                    await this.dispatchDeleteBatch(deletes, connector, tableSpec, workbookId, repoId);
+                  }
                 } else if (phase === 'create') {
-                  await this.dispatchCreateBatch(folderOps, connector, tableSpec, workbookId, repoId, hasLaterPhase);
+                  const creates = sortedFiles
+                    .map((f) => this.parsePhaseOperation(tablePath, phaseDir, 'create', f.name, f.content))
+                    .filter((op): op is CreatePhaseOperation => op !== null);
+                  count = creates.length;
+                  if (count > 0) {
+                    await this.dispatchCreateBatch(creates, connector, tableSpec, workbookId, repoId, hasLaterPhase);
+                  }
                 } else {
-                  await this.dispatchUpdateBatch(
-                    phase,
-                    folderOps,
-                    connector,
-                    tableSpec,
-                    workbookId,
+                  const idField = tableSpec.idColumnRemoteId || 'id';
+                  const updates = await this.parseAndResolveUpdatePhaseOps(
                     repoId,
-                    hasLaterPhase,
+                    tablePath,
+                    phaseDir,
+                    phase,
+                    sortedFiles,
+                    idField,
                   );
+                  count = updates.length;
+                  if (count > 0) {
+                    await this.dispatchUpdateBatch(
+                      phase,
+                      updates,
+                      connector,
+                      tableSpec,
+                      workbookId,
+                      repoId,
+                      hasLaterPhase,
+                    );
+                  }
                 }
-                successCount += folderOps.length;
-                processedCount += folderOps.length;
-                await emitProgress();
+                if (count > 0) {
+                  successCount += count;
+                  processedCount += count;
+                  await emitProgress();
+                }
               } catch (err) {
-                failedCount += folderOps.length;
+                failedCount += count > 0 ? count : page.files.length;
                 WSLogger.error({
                   source: 'PublishFromGitService.runFromGit',
-                  message: `${phase} batch failed (folder=${tablePath}, size=${folderOps.length})`,
+                  message: `${phase} batch failed (folder=${tablePath}, size=${count})`,
                   error: err,
                   workbookId,
                   data: { planId: plan.planId },
@@ -389,17 +449,13 @@ export class PublishFromGitService {
   }
 
   /**
-   * Lists all { relPath, gitPath } pairs for a given phase.
+   * Lists all relPaths of files in a given phase.
    *
    * Used by the "has later phase" pre-scan. This stays metadata-only and
    * paginated so we avoid one file-read request per plan entry.
    */
-  private async listPhaseFiles(
-    repoId: string,
-    tablePaths: string[],
-    phase: PlanPhase,
-  ): Promise<{ relPath: string; gitPath: string }[]> {
-    const results: { relPath: string; gitPath: string }[] = [];
+  private async listPhaseFiles(repoId: string, tablePaths: string[], phase: PlanPhase): Promise<string[]> {
+    const results: string[] = [];
     const phaseFolders = await this.listPhaseFolders(repoId, tablePaths, phase);
 
     for (const { tablePath, phaseDir } of phaseFolders) {
@@ -407,10 +463,7 @@ export class PublishFromGitService {
       do {
         const page = await this.listPhaseFilesPage(repoId, phaseDir, 500, cursor);
         for (const file of page.files) {
-          results.push({
-            relPath: `${tablePath}/${file.name}`,
-            gitPath: `${phaseDir}/${file.name}`,
-          });
+          results.push(`${tablePath}/${file.name}`);
         }
         cursor = page.nextCursor;
       } while (cursor);
@@ -425,7 +478,7 @@ export class PublishFromGitService {
       this.listPhaseFiles(repoId, tablePaths, 'backfill'),
       this.listPhaseFiles(repoId, tablePaths, 'delete'),
     ]);
-    return new Set([...backfill.map((f) => f.relPath), ...del.map((f) => f.relPath)]);
+    return new Set([...backfill, ...del]);
   }
 
   private async listPhaseFilesPage(
@@ -460,39 +513,130 @@ export class PublishFromGitService {
     }
   }
 
-  private parsePhaseOperation(
+  private parsePhaseOperation<P extends 'create' | 'delete' | 'rename'>(
     tablePath: string,
     phaseDir: string,
-    phase: PlanPhase,
+    phase: P,
     fileName: string,
     fileContent: string,
-  ): PhaseOperation {
+  ): Extract<PhaseOperation, { phase: P }> | null {
     const relPath = `${tablePath}/${fileName}`;
     const gitPath = `${phaseDir}/${fileName}`;
 
-    let content: ParsedContent | null = null;
-    let remoteRecordId: string | null = null;
-    let changedFields: Record<string, unknown> | null = null;
-
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(fileContent) as unknown;
-      if (phase === 'edit' || phase === 'backfill') {
-        const envelope = parsed as PhaseFileEnvelope;
-        content = envelope.content;
-        changedFields = envelope.changedFields;
-      } else if (phase === 'delete') {
-        remoteRecordId = (parsed as DeletePhaseFile).remoteId ?? null;
-      } else {
-        content = parsed as ParsedContent;
-      }
+      parsed = JSON.parse(fileContent);
     } catch {
       WSLogger.warn({
         source: 'PublishFromGitService.parsePhaseOperation',
         message: `Failed to parse ${gitPath}`,
       });
+      return null;
     }
 
-    return { relPath, gitPath, content, remoteRecordId, changedFields };
+    switch (phase) {
+      case 'create':
+        return { phase, relPath, content: parsed as ParsedContent } as Extract<PhaseOperation, { phase: P }>;
+      case 'delete': {
+        const remoteId = (parsed as DeletePhaseFile).remoteId;
+        if (!remoteId) {
+          WSLogger.warn({
+            source: 'PublishFromGitService.parsePhaseOperation',
+            message: `Delete phase file is missing remoteId: ${gitPath}`,
+          });
+          return null;
+        }
+        return { phase, relPath, remoteId } as Extract<PhaseOperation, { phase: P }>;
+      }
+      case 'rename':
+        return { phase, relPath } as Extract<PhaseOperation, { phase: P }>;
+      default:
+        assertUnreachable(phase);
+    }
+  }
+
+  /**
+   * Parse a page of edit/backfill phase files and resolve each entry's `remoteId`.
+   *
+   * For most entries, `remoteId` is read directly from `content[idField]`. Entries
+   * whose content lacks the id (e.g. user removed it from the JSON) are resolved in
+   * one batched `lookupFilenamesByFolder` call against the file index, and the
+   * looked-up string id is also injected into the entry's `content` so the
+   * connector and git see a consistent value.
+   *
+   * Throws if any entry's id cannot be resolved.
+   */
+  private async parseAndResolveUpdatePhaseOps(
+    repoId: string,
+    tablePath: string,
+    phaseDir: string,
+    phase: 'edit' | 'backfill',
+    files: { name: string; content: string }[],
+    idField: string,
+  ): Promise<UpdatePhaseOperation[]> {
+    type Pending = {
+      filename: string;
+      relPath: string;
+      content: ParsedContent;
+      changedFields: Record<string, unknown>;
+      remoteId: string | null;
+    };
+
+    const pending: Pending[] = [];
+    for (const file of files) {
+      const relPath = `${tablePath}/${file.name}`;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(file.content);
+      } catch {
+        WSLogger.warn({
+          source: 'PublishFromGitService.parseAndResolveUpdatePhaseOps',
+          message: `Failed to parse ${phaseDir}/${file.name}`,
+        });
+        continue;
+      }
+      const envelope = parsed as PhaseFileEnvelope;
+      const idVal = get(envelope.content, idField);
+      const remoteId = typeof idVal === 'string' || typeof idVal === 'number' ? String(idVal) : null;
+      pending.push({
+        filename: file.name,
+        relPath,
+        content: envelope.content,
+        changedFields: envelope.changedFields,
+        remoteId,
+      });
+    }
+
+    const needsLookup = pending.filter((p) => p.remoteId === null);
+    if (needsLookup.length > 0) {
+      const filenameMap = await this.scratchGitService.lookupFilenamesByFolder(
+        repoId,
+        tablePath,
+        needsLookup.map((p) => p.filename),
+      );
+      for (const p of needsLookup) {
+        const looked = filenameMap.get(p.filename);
+        if (!looked) {
+          throw new Error(`Could not resolve remote ID for entry: ${p.relPath}`);
+        }
+        p.remoteId = looked;
+        // id was absent from content — inject the looked-up string id so the
+        // connector and git both see a consistent value. When content already
+        // had an id we leave it untouched so its native type (e.g. numeric
+        // Postgres id) is preserved in git.
+        const cloned = cloneDeep(p.content) as Record<string, unknown>;
+        set(cloned, idField, looked);
+        p.content = cloned as ParsedContent;
+      }
+    }
+
+    return pending.map((p) => ({
+      phase,
+      relPath: p.relPath,
+      content: p.content,
+      changedFields: p.changedFields,
+      remoteId: p.remoteId as string,
+    }));
   }
 
   // ---------------------------------------------------------------------------
@@ -500,8 +644,8 @@ export class PublishFromGitService {
   // ---------------------------------------------------------------------------
 
   private async dispatchUpdateBatch(
-    phase: string,
-    entries: PhaseOperation[],
+    phase: 'edit' | 'backfill',
+    entries: UpdatePhaseOperation[],
     connector: Connector<string, JsonSafeObject>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -509,53 +653,33 @@ export class PublishFromGitService {
     hasLaterPhase: Set<string>,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
-    const rawContents = entries.map((e) => e.content).filter(Boolean) as ParsedContent[];
-    const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents, (asset) =>
-      connector.resolveAssetReference(asset),
+    const rawRecordContents = entries.map((e) => e.content);
+    const resolvedRecordContents = await this.refResolverService.resolveBatchPseudoRefs(
+      workbookId,
+      rawRecordContents,
+      (asset) => connector.resolveAssetReference(asset),
     );
 
-    const contents: ParsedContent[] = [];
-    const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
-    const entriesWithOps: { entry: PhaseOperation; resolvedContent: ParsedContent }[] = [];
+    const recordContents: ParsedContent[] = [];
+    const changedFieldsArray: Record<string, unknown>[] = [];
+    const entriesWithOps: { entry: UpdatePhaseOperation; resolvedContent: ParsedContent }[] = [];
 
-    let opIndex = 0;
-    for (const entry of entries) {
-      if (!entry.content) continue;
-      let resolvedContent = resolvedContents[opIndex++] as ParsedContent;
+    for (let opIndex = 0; opIndex < entries.length; opIndex++) {
+      const entry = entries[opIndex];
+      const resolvedContent = resolvedRecordContents[opIndex] as ParsedContent;
 
-      // Resolve remote ID: try content `id` field, then file index
-      const contentId = (entry.content as Record<string, unknown>)[idField];
-      let remoteId = typeof contentId === 'string' || typeof contentId === 'number' ? String(contentId) : null;
-      if (!remoteId) {
-        const { folderPath, filename } = parsePath(entry.relPath);
-        const filenameMap = await this.scratchGitService.lookupFilenamesByFolder(repoId, folderPath, [filename]);
-        remoteId = filenameMap.get(filename) ?? null;
-        if (!remoteId) {
-          throw new Error(`Could not resolve remote ID for entry: ${entry.relPath}`);
-        }
-        // id was absent from content — inject the looked-up string id so the
-        // connector and git both see a consistent value
-        resolvedContent = { ...resolvedContent, [idField]: remoteId } as ParsedContent;
-      }
-      // When contentId was already present we leave resolvedContent[idField]
-      // untouched so its native type (e.g. numeric Postgres id) is preserved
-      // in git. remoteId (string) is kept for internal lookup only.
+      if (Object.keys(entry.changedFields).length === 0) continue;
 
-      if (entry.changedFields && Object.keys(entry.changedFields).length === 0) continue;
+      const resolvedChangedFields = pickByShape(resolvedContent as Record<string, unknown>, entry.changedFields);
 
-      const resolvedChangedFields = entry.changedFields
-        ? pickByShape(resolvedContent as Record<string, unknown>, entry.changedFields)
-        : undefined;
-
-      contents.push(resolvedContent);
+      recordContents.push(resolvedContent);
       changedFieldsArray.push(resolvedChangedFields);
       entriesWithOps.push({ entry, resolvedContent });
     }
 
-    if (contents.length === 0) return;
+    if (recordContents.length === 0) return;
 
-    const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
-    await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
+    await connector.updateRecords(tableSpec, recordContents, changedFieldsArray);
 
     const committedEntries = await this.refreshUpdatedEntries(
       connector,
@@ -597,22 +721,33 @@ export class PublishFromGitService {
     }
   }
 
+  /**
+   * After an edit/backfill batch is sent to the connector, re-pull the rows by id
+   * so git is committed with the source of truth (not just our local resolved
+   * content). This matters because the connector may set fields the client did
+   * not — server-side timestamps, computed columns, formula results, normalized
+   * field values, etc. — and we want those reflected in the next pull and in any
+   * `fileReference` updates that depend on the committed shape.
+   *
+   * Returns one `{ entry, content }` pair per input entry, in the same order.
+   * For each entry, `content` is the freshly-pulled row when available; otherwise
+   * we fall back to the local `resolvedContent` so the publish can still commit
+   * something coherent. The whole pull failing or individual rows missing both
+   * log a warning but never throw — refresh is best-effort.
+   */
   private async refreshUpdatedEntries(
     connector: Connector<string, JsonSafeObject>,
     tableSpec: BaseJsonTableSpec,
     idField: string,
-    entriesWithOps: { entry: PhaseOperation; resolvedContent: ParsedContent }[],
+    entriesWithOps: { entry: UpdatePhaseOperation; resolvedContent: ParsedContent }[],
     workbookId: string,
-    phase: string,
-  ): Promise<Array<{ entry: PhaseOperation; content: ParsedContent }>> {
+    phase: 'edit' | 'backfill',
+  ): Promise<Array<{ entry: UpdatePhaseOperation; content: ParsedContent }>> {
     const fallback = entriesWithOps.map(({ entry, resolvedContent }) => ({
       entry,
       content: resolvedContent,
     }));
-    const ids = entriesWithOps
-      .map(({ resolvedContent }) => resolvedContent[idField])
-      .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
-      .map(String);
+    const ids = entriesWithOps.map(({ entry }) => entry.remoteId);
 
     if (ids.length === 0) {
       return fallback;
@@ -623,9 +758,9 @@ export class PublishFromGitService {
     try {
       await connector.pullRecordFilesByIds(tableSpec, [...new Set(ids)], ({ files }) => {
         for (const file of files) {
-          const fileId = file[idField];
-          if (typeof fileId === 'string' || typeof fileId === 'number') {
-            refreshedById.set(String(fileId), file as ParsedContent);
+          const remoteId = get(file, idField);
+          if (typeof remoteId === 'string' || typeof remoteId === 'number') {
+            refreshedById.set(String(remoteId), file as ParsedContent);
           }
         }
         return Promise.resolve();
@@ -642,14 +777,9 @@ export class PublishFromGitService {
 
     const missingIds: string[] = [];
     const refreshedEntries = entriesWithOps.map(({ entry, resolvedContent }) => {
-      const fileId = resolvedContent[idField];
-      if (typeof fileId !== 'string' && typeof fileId !== 'number') {
-        return { entry, content: resolvedContent };
-      }
-
-      const refreshed = refreshedById.get(String(fileId));
+      const refreshed = refreshedById.get(entry.remoteId);
       if (!refreshed) {
-        missingIds.push(String(fileId));
+        missingIds.push(entry.remoteId);
         return { entry, content: resolvedContent };
       }
 
@@ -673,7 +803,7 @@ export class PublishFromGitService {
   // ---------------------------------------------------------------------------
 
   private async dispatchCreateBatch(
-    entries: PhaseOperation[],
+    entries: CreatePhaseOperation[],
     connector: Connector<string, JsonSafeObject>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -682,29 +812,25 @@ export class PublishFromGitService {
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId || 'id';
 
-    const rawOps = entries
-      .map((e) => {
-        if (!e.content) return null;
-        const entryContent = { ...(e.content as Record<string, unknown>) };
-        const idValue = entryContent[idField];
-        if (isScratchPendingPublishId(idValue)) {
-          delete entryContent[idField];
-        }
-        return entryContent;
-      })
-      .filter(Boolean) as ParsedContent[];
+    const rawOps = entries.map((e) => {
+      const entryContent = cloneDeep(e.content as Record<string, unknown>);
+      const idValue = get(entryContent, idField);
+      if (isScratchPendingPublishId(idValue)) {
+        unset(entryContent, idField);
+      }
+      return entryContent as ParsedContent;
+    });
 
     const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps, (asset) =>
       connector.resolveAssetReference(asset),
     );
 
     const operations: ParsedContent[] = [];
-    const entriesWithOps: { entry: PhaseOperation; resolvedOp: ParsedContent }[] = [];
+    const entriesWithOps: { entry: CreatePhaseOperation; resolvedOp: ParsedContent }[] = [];
 
-    let opIndex = 0;
-    for (const entry of entries) {
-      if (!entry.content) continue;
-      const resolvedOp = resolvedOps[opIndex++] as ParsedContent;
+    for (let opIndex = 0; opIndex < entries.length; opIndex++) {
+      const entry = entries[opIndex];
+      const resolvedOp = resolvedOps[opIndex] as ParsedContent;
       operations.push(resolvedOp);
       entriesWithOps.push({ entry, resolvedOp });
     }
@@ -721,7 +847,7 @@ export class PublishFromGitService {
       const { entry, resolvedOp } = entriesWithOps[i];
       const returned = (returnedRecords[i] ?? resolvedOp) as Record<string, unknown>;
 
-      const realId = returned[idField];
+      const realId = get(returned, idField);
       if (realId && (typeof realId === 'string' || typeof realId === 'number')) {
         const { folderPath, filename } = parsePath(entry.relPath);
         fileIndexUpdates.push({ workbookId, folderPath, filename, recordId: String(realId) });
@@ -768,34 +894,26 @@ export class PublishFromGitService {
   // ---------------------------------------------------------------------------
 
   private async dispatchDeleteBatch(
-    entries: PhaseOperation[],
+    entries: DeletePhaseOperation[],
     connector: Connector<string, JsonSafeObject>,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
     repoId: string,
   ): Promise<void> {
+    if (entries.length === 0) return;
+
     const idField = tableSpec.idColumnRemoteId || 'id';
-    const filters: Record<string, string>[] = [];
-    const validEntries: PhaseOperation[] = [];
-
-    for (const entry of entries) {
-      if (entry.remoteRecordId) {
-        filters.push({ [idField]: entry.remoteRecordId });
-        validEntries.push(entry);
-      }
-    }
-
-    if (filters.length === 0) return;
+    const filters = entries.map((e) => set({}, idField, e.remoteId) as ConnectorFile);
 
     await connector.deleteRecords(tableSpec, filters);
 
-    const filesToDelete = validEntries.map((e) => e.relPath);
+    const filesToDelete = entries.map((e) => e.relPath);
 
     await this.db.client.fileReference.deleteMany({
       where: { workbookId, sourceFilePath: { in: filesToDelete } },
     });
 
-    const fileIndexDeletes = validEntries.map((e) => {
+    const fileIndexDeletes = entries.map((e) => {
       const { folderPath, filename } = parsePath(e.relPath);
       return { folder: folderPath, filename };
     });
@@ -823,7 +941,7 @@ export class PublishFromGitService {
 
   private async dispatchRenameBatch(
     folderPath: string,
-    entries: PhaseOperation[],
+    entries: RenamePhaseOperation[],
     workbookId: string,
     repoId: string,
   ): Promise<void> {
@@ -920,6 +1038,6 @@ function getPlannedCountForPhase(
     case 'rename':
       return renameFilesPlanned;
     default:
-      return 0;
+      assertUnreachable(phase);
   }
 }
