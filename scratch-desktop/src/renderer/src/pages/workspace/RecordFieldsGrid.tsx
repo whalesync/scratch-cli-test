@@ -170,22 +170,18 @@ function ValidationTooltip({ violations, children }: { violations: ValidationEnt
   return (
     <Tooltip
       label={<ValidationTooltipContent violations={violations} />}
-      position="top-end"
-      withArrow
+      position="top"
       multiline
       offset={10}
       zIndex={10020}
+      withArrow={false}
       styles={{
         tooltip: {
-          background: '#fff',
-          border: '1px solid rgba(15, 23, 42, 0.12)',
-          borderRadius: 12,
-          boxShadow: '0 18px 44px rgba(15, 23, 42, 0.18)',
+          backgroundColor: 'var(--bg-base)',
+          border: '1px solid var(--fg-divider)',
+          borderRadius: 0,
+          boxShadow: 'none',
           padding: 12,
-        },
-        arrow: {
-          background: '#fff',
-          border: '1px solid rgba(15, 23, 42, 0.12)',
         },
       }}
     >
