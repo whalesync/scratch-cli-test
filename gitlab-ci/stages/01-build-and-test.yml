@@ -317,6 +317,7 @@ build scratch-git docker image:
   stage: build and test
   interruptible: true
   script:
+    - !reference [.build_shared_types, script]
     - cd scratch-desktop
     - !reference [.use_nvm, script]
     - yarn lint-strict

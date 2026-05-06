@@ -1,7 +1,12 @@
+import {
+  AssetFieldOptions,
+  AssetTableOptions,
+  X_SCRATCH_ASSET_FIELD,
+  X_SCRATCH_ASSET_TABLE,
+} from '@spinner/shared-types';
 import { createHash } from 'crypto';
 import { get } from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
-import { ASSET_FIELD, ASSET_TABLE, AssetFieldOptions, AssetTableOptions } from './json-schema';
 
 /**
  * Shared helpers for connector asset extraction.
@@ -79,7 +84,7 @@ export function inferMediaType(
  * Used when the schema has `x-scratch-asset-table` — the entire record IS an asset.
  */
 export function extractStandaloneEntity(input: ConnectorAssetExtractionInput): ConnectorAssetResult | null {
-  const opts = input.schema[ASSET_TABLE] as AssetTableOptions | undefined;
+  const opts = input.schema[X_SCRATCH_ASSET_TABLE] as AssetTableOptions | undefined;
   if (!opts) return null;
 
   const url = get(input.recordContent, opts.urlPath) as string | undefined;
@@ -250,16 +255,16 @@ function getSchemaProperties(schema: Record<string, unknown>): {
 }
 
 function findAssetFieldOptions(schema: Record<string, unknown>): AssetFieldOptions | null {
-  if (schema[ASSET_FIELD]) return schema[ASSET_FIELD] as AssetFieldOptions;
+  if (schema[X_SCRATCH_ASSET_FIELD]) return schema[X_SCRATCH_ASSET_FIELD] as AssetFieldOptions;
 
   const items = schema['items'] as Record<string, unknown> | undefined;
-  if (items?.[ASSET_FIELD]) return items[ASSET_FIELD] as AssetFieldOptions;
+  if (items?.[X_SCRATCH_ASSET_FIELD]) return items[X_SCRATCH_ASSET_FIELD] as AssetFieldOptions;
 
   for (const key of ['anyOf', 'oneOf']) {
     const variants = schema[key] as Record<string, unknown>[] | undefined;
     if (variants) {
       for (const v of variants) {
-        if (v[ASSET_FIELD]) return v[ASSET_FIELD] as AssetFieldOptions;
+        if (v[X_SCRATCH_ASSET_FIELD]) return v[X_SCRATCH_ASSET_FIELD] as AssetFieldOptions;
       }
     }
   }

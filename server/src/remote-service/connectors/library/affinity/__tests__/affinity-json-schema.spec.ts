@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any */
-import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../../json-schema';
+import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
 import {
   buildAffinityCompaniesTableSpec,
   buildAffinityEntityFilesTableSpec,
@@ -117,11 +117,11 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
     expect(props).toHaveProperty('entity');
 
     // Entry-level fields are all read-only (Affinity manages them).
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.type[READONLY_FLAG]).toBe(true);
-    expect(props.listId[READONLY_FLAG]).toBe(true);
-    expect(props.createdAt[READONLY_FLAG]).toBe(true);
-    expect(props.creatorId[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.type[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.listId[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.createdAt[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.creatorId[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('mounts entity properties under entity for company lists', async () => {
@@ -137,8 +137,8 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
     expect(entityProps).toHaveProperty('isGlobal');
     expect(entityProps).toHaveProperty('fields');
     // Affinity-assigned ids are read-only.
-    expect(entityProps.id[READONLY_FLAG]).toBe(true);
-    expect(entityProps.isGlobal[READONLY_FLAG]).toBe(true);
+    expect(entityProps.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(entityProps.isGlobal[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('mounts entity properties under entity for person lists', async () => {
@@ -163,7 +163,7 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
     expect(entityProps).toHaveProperty('name');
     expect(entityProps).toHaveProperty('listId');
     expect(entityProps).toHaveProperty('fields');
-    expect(entityProps.listId[READONLY_FLAG]).toBe(true);
+    expect(entityProps.listId[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('keys field metadata under entity.fields by remote field id', async () => {
@@ -186,8 +186,8 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500 }), mockClient);
     const field = (spec.schema as any).properties.entity.properties.fields.properties['field-stage'];
 
-    expect(field[REMOTE_FIELD_ID]).toBe('field-stage');
-    expect(field[CONNECTOR_DATA_TYPE]).toBe('dropdown');
+    expect(field[X_SCRATCH_REMOTE_FIELD_ID]).toBe('field-stage');
+    expect(field[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('dropdown');
     // The TypeBox object's `description` carries the human-readable name.
     expect(field.description).toBe('Stage');
   });
@@ -310,8 +310,8 @@ describe('buildAffinityCompaniesTableSpec', () => {
     expect(props).toHaveProperty('fields');
     expect(props).not.toHaveProperty('entity');
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.isGlobal[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.isGlobal[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('keys tenant-company fields by remote field id', async () => {
@@ -371,8 +371,8 @@ describe('buildAffinityOpportunitiesTableSpec', () => {
     const spec = buildAffinityOpportunitiesTableSpec(entityId);
     const props = (spec.schema as any).properties;
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.listId[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.listId[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('uses the affinity/opportunities $id', () => {
@@ -458,10 +458,10 @@ describe('buildAffinityEntityFilesTableSpec', () => {
     const spec = buildAffinityEntityFilesTableSpec(entityId);
     const props = (spec.schema as any).properties;
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.size[READONLY_FLAG]).toBe(true);
-    expect(props.uploader_id[READONLY_FLAG]).toBe(true);
-    expect(props.created_at[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.size[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.uploader_id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.created_at[X_SCRATCH_READONLY]).toBe(true);
   });
 });
 
@@ -513,6 +513,6 @@ describe('valueSchemaForType coverage (via list-entry field schemas)', () => {
     expect(valueShape.anyOf).toBeDefined();
     // The annotated CONNECTOR_DATA_TYPE on the field carries the original
     // valueType so downstream tooling can map it back to a transformer.
-    expect(fieldSchema[CONNECTOR_DATA_TYPE]).toBe(valueType);
+    expect(fieldSchema[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe(valueType);
   });
 });

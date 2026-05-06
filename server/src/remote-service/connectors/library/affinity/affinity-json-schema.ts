@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
+import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
@@ -102,8 +102,8 @@ function fieldEntrySchema(metadata: AffinityFieldMetadata): TSchema {
     },
     {
       description: metadata.name,
-      [REMOTE_FIELD_ID]: metadata.id,
-      [CONNECTOR_DATA_TYPE]: metadata.valueType,
+      [X_SCRATCH_REMOTE_FIELD_ID]: metadata.id,
+      [X_SCRATCH_CONNECTOR_DATA_TYPE]: metadata.valueType,
     },
   );
 }
@@ -123,17 +123,17 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
   switch (entityType) {
     case 'company':
       return Type.Object({
-        id: Type.Number({ [READONLY_FLAG]: true }),
+        id: Type.Number({ [X_SCRATCH_READONLY]: true }),
         name: Type.Union([Type.String(), Type.Null()]),
         domain: Type.Union([Type.String(), Type.Null()]),
         domains: Type.Array(Type.String()),
-        isGlobal: Type.Boolean({ [READONLY_FLAG]: true }),
+        isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
         fields: fieldsObject,
       });
 
     case 'person':
       return Type.Object({
-        id: Type.Number({ [READONLY_FLAG]: true }),
+        id: Type.Number({ [X_SCRATCH_READONLY]: true }),
         firstName: Type.Union([Type.String(), Type.Null()]),
         lastName: Type.Union([Type.String(), Type.Null()]),
         primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
@@ -144,9 +144,9 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
 
     case 'opportunity':
       return Type.Object({
-        id: Type.Number({ [READONLY_FLAG]: true }),
+        id: Type.Number({ [X_SCRATCH_READONLY]: true }),
         name: Type.Union([Type.String(), Type.Null()]),
-        listId: Type.Number({ [READONLY_FLAG]: true }),
+        listId: Type.Number({ [X_SCRATCH_READONLY]: true }),
         fields: fieldsObject,
       });
   }
@@ -172,17 +172,17 @@ export async function buildAffinityJsonTableSpec(
 
   const schema = Type.Object(
     {
-      id: Type.Number({ description: 'List entry id', [READONLY_FLAG]: true }),
-      type: Type.Literal(list.type, { description: 'Entity type', [READONLY_FLAG]: true }),
-      listId: Type.Number({ description: 'List id', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'List entry id', [X_SCRATCH_READONLY]: true }),
+      type: Type.Literal(list.type, { description: 'Entity type', [X_SCRATCH_READONLY]: true }),
+      listId: Type.Number({ description: 'List id', [X_SCRATCH_READONLY]: true }),
       createdAt: Type.String({
         format: 'date-time',
         description: 'When the entry was added to the list',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       creatorId: Type.Union([Type.Number(), Type.Null()], {
         description: 'User who added the entry to the list',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       entity: entitySchema,
     },
@@ -239,12 +239,12 @@ export async function buildAffinityPersonsTableSpec(
 
   const schema = Type.Object(
     {
-      id: Type.Number({ description: 'Person id', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Person id', [X_SCRATCH_READONLY]: true }),
       firstName: Type.Union([Type.String(), Type.Null()]),
       lastName: Type.Union([Type.String(), Type.Null()]),
       primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
       emailAddresses: Type.Array(Type.String()),
-      type: Type.Union([Type.String(), Type.Null()], { [READONLY_FLAG]: true }),
+      type: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
       fields: Type.Object(fieldsByKey, {
         description: 'Affinity fields keyed by field id',
         additionalProperties: false,
@@ -284,11 +284,11 @@ export async function buildAffinityCompaniesTableSpec(
 
   const schema = Type.Object(
     {
-      id: Type.Number({ description: 'Company id', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Company id', [X_SCRATCH_READONLY]: true }),
       name: Type.Union([Type.String(), Type.Null()]),
       domain: Type.Union([Type.String(), Type.Null()]),
       domains: Type.Array(Type.String()),
-      isGlobal: Type.Boolean({ [READONLY_FLAG]: true }),
+      isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
       fields: Type.Object(fieldsByKey, {
         description: 'Affinity fields keyed by field id',
         additionalProperties: false,
@@ -319,11 +319,11 @@ export async function buildAffinityCompaniesTableSpec(
 export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      id: Type.Number({ description: 'Opportunity id', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Opportunity id', [X_SCRATCH_READONLY]: true }),
       name: Type.Union([Type.String(), Type.Null()]),
       listId: Type.Number({
         description: 'Id of the list this opportunity belongs to',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     { $id: 'affinity/opportunities', title: 'Opportunities' },
@@ -371,13 +371,13 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
 
   const schema = Type.Object(
     {
-      id: Type.Number({ description: 'Note id', [READONLY_FLAG]: true }),
-      type: Type.String({ description: 'Note type discriminator', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Note id', [X_SCRATCH_READONLY]: true }),
+      type: Type.String({ description: 'Note type discriminator', [X_SCRATCH_READONLY]: true }),
       content: Type.Object({ html: Type.Union([Type.String(), Type.Null()]) }),
-      creator: Type.Union([personDataSchema, Type.Null()], { [READONLY_FLAG]: true }),
-      mentions: Type.Array(mentionSchema, { [READONLY_FLAG]: true }),
-      createdAt: Type.String({ format: 'date-time', [READONLY_FLAG]: true }),
-      updatedAt: Type.Union([Type.String({ format: 'date-time' }), Type.Null()], { [READONLY_FLAG]: true }),
+      creator: Type.Union([personDataSchema, Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      mentions: Type.Array(mentionSchema, { [X_SCRATCH_READONLY]: true }),
+      createdAt: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
+      updatedAt: Type.Union([Type.String({ format: 'date-time' }), Type.Null()], { [X_SCRATCH_READONLY]: true }),
       // Included via `includes` query parameter:
       companiesPreview: Type.Optional(
         Type.Object({ data: Type.Array(companyPreviewSchema), totalCount: Type.Number() }),
@@ -418,14 +418,14 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
 export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      id: Type.Number({ description: 'Entity file id', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Entity file id', [X_SCRATCH_READONLY]: true }),
       name: Type.String({ description: 'File name' }),
-      size: Type.Number({ description: 'File size in bytes', [READONLY_FLAG]: true }),
-      person_id: Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true }),
-      organization_id: Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true }),
-      opportunity_id: Type.Union([Type.Number(), Type.Null()], { [READONLY_FLAG]: true }),
-      uploader_id: Type.Number({ [READONLY_FLAG]: true }),
-      created_at: Type.String({ format: 'date-time', [READONLY_FLAG]: true }),
+      size: Type.Number({ description: 'File size in bytes', [X_SCRATCH_READONLY]: true }),
+      person_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      organization_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      opportunity_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      uploader_id: Type.Number({ [X_SCRATCH_READONLY]: true }),
+      created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'affinity/entity-files', title: 'Entity Files' },
   );

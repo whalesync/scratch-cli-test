@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { READONLY_FLAG } from '../../json-schema';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
@@ -29,7 +29,7 @@ export function buildMemberstackJsonTableSpec(id: EntityId): BaseJsonTableSpec {
 function buildMembersSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique member ID (mem_*)', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique member ID (mem_*)', [X_SCRATCH_READONLY]: true }),
       auth: Type.Object(
         {
           email: Type.String({ description: 'Member email address', format: 'email' }),
@@ -58,24 +58,24 @@ function buildMembersSchema(): TSchema {
           },
           { additionalProperties: true },
         ),
-        { description: 'Connected plans for this member', [READONLY_FLAG]: true },
+        { description: 'Connected plans for this member', [X_SCRATCH_READONLY]: true },
       ),
       loginRedirect: Type.String({ description: 'URL to redirect after login' }),
       permissions: Type.Array(Type.String(), {
         description: 'Permissions granted to this member',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
-      verified: Type.Optional(Type.Boolean({ description: 'Whether email is verified', [READONLY_FLAG]: true })),
+      verified: Type.Optional(Type.Boolean({ description: 'Whether email is verified', [X_SCRATCH_READONLY]: true })),
       createdAt: Type.String({
         description: 'When the member was created',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       lastLogin: Type.Optional(
         Type.String({
           description: 'When the member last logged in',
           format: 'date-time',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
     },

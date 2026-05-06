@@ -2,15 +2,15 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { TransformerConfig, TransformerTypes } from 'src/types/shared-types';
 import {
-  ASSET_FIELD,
+  X_SCRATCH_ASSET_FIELD,
   AssetFieldOptions,
-  CONNECTOR_DATA_TYPE,
-  FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
   ForeignKeyOptionSchema,
-  READONLY_FLAG,
-  REMOTE_FIELD_ID,
-  SUGGESTED_TRANSFORMER,
-} from '../../json-schema';
+  X_SCRATCH_READONLY,
+  X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_SUGGESTED_TRANSFORMER,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId } from '../../types';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
 
@@ -150,7 +150,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
     case AirtableDataType.MULTIPLE_RECORD_LINKS:
       schema = Type.Array(Type.String(), {
         description,
-        [FOREIGN_KEY_OPTIONS]: field.options?.linkedTableId
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: field.options?.linkedTableId
           ? {
               linkedTableId: field.options?.linkedTableId,
             }
@@ -191,7 +191,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
         }),
         {
           description,
-          [ASSET_FIELD]: { idPath: 'id', urlExpires: true } satisfies AssetFieldOptions,
+          [X_SCRATCH_ASSET_FIELD]: { idPath: 'id', urlExpires: true } satisfies AssetFieldOptions,
         },
       );
       break;
@@ -222,10 +222,10 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
   }
 
   const connectorDataType = formulaConnectorDataType(field);
-  schema[CONNECTOR_DATA_TYPE] = connectorDataType;
-  schema[READONLY_FLAG] = isAirtableColumnReadonly(field) ? true : undefined;
-  schema[REMOTE_FIELD_ID] = field.id;
-  schema[SUGGESTED_TRANSFORMER] = formulaSuggestedTransformer(connectorDataType) ?? undefined;
+  schema[X_SCRATCH_CONNECTOR_DATA_TYPE] = connectorDataType;
+  schema[X_SCRATCH_READONLY] = isAirtableColumnReadonly(field) ? true : undefined;
+  schema[X_SCRATCH_REMOTE_FIELD_ID] = field.id;
+  schema[X_SCRATCH_SUGGESTED_TRANSFORMER] = formulaSuggestedTransformer(connectorDataType) ?? undefined;
   return schema;
 }
 
@@ -350,7 +350,7 @@ function isAirtableColumnReadonly(field: AirtableFieldsV2): boolean {
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `/properties/fields/properties/${field}/${READONLY_FLAG}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `/properties/fields/properties/${field}/${X_SCRATCH_READONLY}`) === true;
 }
 
 /**
@@ -361,7 +361,7 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
   return (
-    ValuePointer.Has(tableSpec.schema, `/properties/fields/properties/${field}/${FOREIGN_KEY_OPTIONS}`) !== undefined
+    ValuePointer.Has(tableSpec.schema, `/properties/fields/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined
   );
 }
 
@@ -372,7 +372,7 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
  * @returns
  */
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
-  return ValuePointer.Get(tableSpec.schema, `/properties/fields/properties/${field}/${FOREIGN_KEY_OPTIONS}`) as
+  return ValuePointer.Get(tableSpec.schema, `/properties/fields/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
     | ForeignKeyOptionSchema
     | undefined;
 }

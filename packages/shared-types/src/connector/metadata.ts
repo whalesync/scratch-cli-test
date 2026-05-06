@@ -1,4 +1,52 @@
-// Types related to connector accounts
+import { ConnectorSettingDefinition } from './dtos';
+
+export type AuthMethod = 'oauth' | 'user_provided_params' | 'oauth_custom';
+
+export interface ConnectorMetadata {
+  displayName: string;
+  table: string;
+  tables: string;
+  record: string;
+  records: string;
+  base: string | null;
+  bases: string | null;
+  logo: string;
+  visible: boolean;
+  pushOperationName: string;
+  pullOperationName: string;
+  supportedAuthMethods: AuthMethod[];
+  defaultAuthMethod: AuthMethod;
+  oauth?: {
+    label: string;
+    privateLabel?: string;
+  };
+  credentialFields?: Partial<Record<AuthMethod, ConnectorSettingDefinition[]>>;
+  userProvidedParamsLabel?: string;
+  setupGuide?: {
+    label: string;
+    url: string;
+  };
+}
+
+const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {
+  table: 'table',
+  tables: 'tables',
+  record: 'record',
+  records: 'records',
+  base: null,
+  bases: null,
+  visible: true,
+  pushOperationName: 'Publish',
+  pullOperationName: 'Download',
+  supportedAuthMethods: [],
+  defaultAuthMethod: 'oauth',
+};
+
+export function connectorMetadata(
+  overrides: Pick<ConnectorMetadata, 'displayName' | 'logo'> & Partial<Omit<ConnectorMetadata, 'displayName' | 'logo'>>,
+): ConnectorMetadata {
+  return { ...DEFAULTS, ...overrides };
+}
 
 // ============= Connector Extras =============
 
@@ -45,36 +93,4 @@ export function isQuickBooksConnectorExtras(extras: unknown): extras is QuickBoo
     'realmId' in extras &&
     typeof (extras as Record<string, unknown>).realmId === 'string'
   );
-}
-
-// ============= Credentials =============
-
-export interface SupabaseProjectCredentials {
-  projectRef: string;
-  projectName: string;
-  connectionString: string;
-  dbUsername: string;
-  dbPassword: string;
-}
-
-export interface DecryptedCredentials {
-  apiKey?: string;
-  // WordPress specific
-  username?: string;
-  password?: string;
-  endpoint?: string;
-  // Moco specific
-  domain?: string;
-  // PostgreSQL specific
-  connectionString?: string;
-  // Supabase multi-project (OAuth)
-  supabaseProjects?: SupabaseProjectCredentials[];
-
-  oauthAccessToken?: string;
-  oauthRefreshToken?: string;
-  oauthExpiresAt?: string; // ISO string
-  oauthWorkspaceId?: string;
-  // Optional custom OAuth app credentials (plaintext in memory only, encrypted at rest)
-  customOAuthClientId?: string;
-  customOAuthClientSecret?: string;
 }

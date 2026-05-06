@@ -1,14 +1,14 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import { isArray } from 'lodash';
 import {
-  ASSET_TABLE,
   AssetTableOptions,
-  CONNECTOR_DATA_TYPE,
-  FOREIGN_KEY_OPTIONS,
   ForeignKeyOptionSchema,
-  READONLY_FLAG,
-} from '../../json-schema';
+  X_SCRATCH_ASSET_TABLE,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
+import { isArray } from 'lodash';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
@@ -108,12 +108,12 @@ export function wordpressFieldToJsonSchema(
         raw: Type.String({
           title: fieldId,
           // description: `${fieldId} (raw)`,
-          [READONLY_FLAG]: field.readonly === true ? true : undefined,
+          [X_SCRATCH_READONLY]: field.readonly === true ? true : undefined,
         }),
         rendered: Type.String({
           title: `${fieldId}.rendered`,
           description: 'Display-ready HTML. Edit "raw" to modify this.',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
         protected: Type.Optional(
           Type.Boolean({
@@ -191,12 +191,12 @@ export function wordpressFieldToJsonSchema(
   if (!isAcf) {
     const fkDef = foreignKeyColumnIds.find((fk) => fk.remoteColumnId === fieldId);
     if (fkDef) {
-      schema[FOREIGN_KEY_OPTIONS] = { linkedTableId: fkDef.foreignKeyRemoteTableId };
+      schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: fkDef.foreignKeyRemoteTableId };
     }
   }
 
-  schema[CONNECTOR_DATA_TYPE] = dataType;
-  schema[READONLY_FLAG] = field.readonly === true ? true : undefined;
+  schema[X_SCRATCH_CONNECTOR_DATA_TYPE] = dataType;
+  schema[X_SCRATCH_READONLY] = field.readonly === true ? true : undefined;
   return schema;
 }
 
@@ -254,7 +254,7 @@ export function buildWordPressJsonTableSpec(
       statusField.enum.map((val) => Type.Literal(val)),
       { description: 'Publication status' },
     );
-    statusSchema[CONNECTOR_DATA_TYPE] = WordPressDataType.ENUM;
+    statusSchema[X_SCRATCH_CONNECTOR_DATA_TYPE] = WordPressDataType.ENUM;
     properties[WORDPRESS_STATUS_COLUMN_ID] = Type.Optional(statusSchema);
   }
 
@@ -277,7 +277,7 @@ export function buildWordPressJsonTableSpec(
 
   // Media tables are standalone asset tables — each record IS an asset
   if (tableId === 'media') {
-    schemaOptions[ASSET_TABLE] = {
+    schemaOptions[X_SCRATCH_ASSET_TABLE] = {
       urlPath: 'source_url',
       filenamePath: 'title.raw',
       mimeTypePath: 'mime_type',
@@ -327,7 +327,7 @@ const ACF_FIELD_PATH = '/properties/acf/properties';
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec, isAcf = false): boolean {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return ValuePointer.Get(tableSpec.schema, `${basePath}/${field}/${READONLY_FLAG}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `${basePath}/${field}/${X_SCRATCH_READONLY}`) === true;
 }
 
 /**
@@ -339,7 +339,7 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec, isA
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec, isAcf = false): boolean {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return ValuePointer.Has(tableSpec.schema, `${basePath}/${field}/${FOREIGN_KEY_OPTIONS}`) !== undefined;
+  return ValuePointer.Has(tableSpec.schema, `${basePath}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined;
 }
 
 /**
@@ -355,7 +355,7 @@ export function getForeignKeyOptions(
   isAcf = false,
 ): ForeignKeyOptionSchema | undefined {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return ValuePointer.Get(tableSpec.schema, `${basePath}/${field}/${FOREIGN_KEY_OPTIONS}`) as
+  return ValuePointer.Get(tableSpec.schema, `${basePath}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
     | ForeignKeyOptionSchema
     | undefined;
 }

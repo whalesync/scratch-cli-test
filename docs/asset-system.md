@@ -52,7 +52,7 @@ Some connectors model assets as first-class records rather than embedded fields.
 
 ## Schema Annotations
 
-Connectors declare asset fields in their JSON schemas using two annotations defined in `server/src/remote-service/connectors/json-schema.ts`.
+Connectors declare asset fields in their JSON schemas using two annotations defined in `/packages/shared-types/src/connector/json-schema.ts`.
 
 ### `x-scratch-asset-field` (field-level)
 
@@ -342,7 +342,7 @@ A modal that displays all extracted assets for a data folder. Shows:
 | --------------------- | ---------------------------------------------------------------------------------------- |
 | Prisma model          | `server/prisma/schema.prisma` (Asset model)                                              |
 | Types                 | `server/src/asset/asset.types.ts`                                                        |
-| Schema annotations    | `server/src/remote-service/connectors/json-schema.ts`                                    |
+| Schema annotations    | `packages/shared-types/src/connector/json-schema.ts`                                     |
 | Extraction helpers    | `server/src/remote-service/connectors/asset-extraction-helpers.ts`                       |
 | Connector base        | `server/src/remote-service/connectors/connector.ts`                                      |
 | Extractor service     | `server/src/asset/asset-extractor.service.ts`                                            |

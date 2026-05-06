@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
-import { FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../../json-schema';
+import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { buildStripeJsonTableSpec } from '../stripe-json-schema';
 import { StripeEntityType } from '../stripe-types';
 
@@ -33,7 +33,7 @@ describe('buildStripeJsonTableSpec', () => {
     const spec = buildStripeJsonTableSpec(entityId, entityType);
 
     expect(spec.schema.properties).toHaveProperty('id');
-    expect(spec.schema.properties.id[READONLY_FLAG]).toBe(true);
+    expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it.each(allEntityTypes)('includes created timestamp for %s', (entityType) => {
@@ -41,7 +41,7 @@ describe('buildStripeJsonTableSpec', () => {
     const spec = buildStripeJsonTableSpec(entityId, entityType);
 
     expect(spec.schema.properties).toHaveProperty('created');
-    expect(spec.schema.properties.created[READONLY_FLAG]).toBe(true);
+    expect(spec.schema.properties.created[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it.each(allEntityTypes)('includes livemode flag for %s', (entityType) => {
@@ -49,7 +49,7 @@ describe('buildStripeJsonTableSpec', () => {
     const spec = buildStripeJsonTableSpec(entityId, entityType);
 
     expect(spec.schema.properties).toHaveProperty('livemode');
-    expect(spec.schema.properties.livemode[READONLY_FLAG]).toBe(true);
+    expect(spec.schema.properties.livemode[X_SCRATCH_READONLY]).toBe(true);
   });
 
   // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ describe('buildStripeJsonTableSpec', () => {
 
     it('has updated timestamp', () => {
       expect(props).toHaveProperty('updated');
-      expect(props.updated[READONLY_FLAG]).toBe(true);
+      expect(props.updated[X_SCRATCH_READONLY]).toBe(true);
     });
   });
 
@@ -198,7 +198,7 @@ describe('buildStripeJsonTableSpec', () => {
     });
 
     it('links product to products table', () => {
-      expect(props.product[FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'products' });
+      expect(props.product[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'products' });
     });
   });
 
@@ -220,7 +220,7 @@ describe('buildStripeJsonTableSpec', () => {
     });
 
     it('links customer to customers table', () => {
-      expect(props.customer[FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'customers' });
+      expect(props.customer[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'customers' });
     });
   });
 

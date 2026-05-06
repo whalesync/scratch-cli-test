@@ -1,13 +1,13 @@
 import { TSchema } from '@sinclair/typebox';
-import { TransformerConfig } from '@spinner/shared-types';
-import type { ForeignKeyOptionSchema, VirtualFieldDef } from '../remote-service/connectors/json-schema';
+import type { ForeignKeyOptionSchema, VirtualFieldDef } from '@spinner/shared-types';
 import {
-  FOREIGN_KEY_OPTIONS,
-  READONLY_FLAG,
-  REMOTE_FIELD_ID,
-  SUGGESTED_TRANSFORMER,
-  VIRTUAL_FIELDS,
-} from '../remote-service/connectors/json-schema';
+  TransformerConfig,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_SUGGESTED_TRANSFORMER,
+  X_SCRATCH_VIRTUAL_FIELDS,
+} from '@spinner/shared-types';
 
 /**
  * Extracts all possible dot-notation paths from a JSON Schema.
@@ -82,16 +82,16 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
   if (parentPath) {
     const field: SchemaField = { path: parentPath, type: resolveSchemaType(schema) };
     if (schema.description) field.description = schema.description;
-    const remoteFieldId = schema[REMOTE_FIELD_ID] as string | undefined;
+    const remoteFieldId = schema[X_SCRATCH_REMOTE_FIELD_ID] as string | undefined;
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;
-    const suggested = schema[SUGGESTED_TRANSFORMER] as TransformerConfig | undefined;
+    const suggested = schema[X_SCRATCH_SUGGESTED_TRANSFORMER] as TransformerConfig | undefined;
     if (suggested) field.suggestedTransformer = suggested;
-    if (schema[READONLY_FLAG] === true) field.readonly = true;
-    const fk = schema[FOREIGN_KEY_OPTIONS] as ForeignKeyOptionSchema | undefined;
+    if (schema[X_SCRATCH_READONLY] === true) field.readonly = true;
+    const fk = schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] as ForeignKeyOptionSchema | undefined;
     if (fk?.linkedTableId) field.foreignKey = { linkedTableId: fk.linkedTableId };
 
     // Virtual fields: overwrite the entry with a human-readable label and pre-configured transformer
-    const virtualDefs = schema[VIRTUAL_FIELDS] as VirtualFieldDef[] | undefined;
+    const virtualDefs = schema[X_SCRATCH_VIRTUAL_FIELDS] as VirtualFieldDef[] | undefined;
     if (virtualDefs?.length) {
       const vf = virtualDefs[0];
       field.displayLabel = vf.displayLabel;

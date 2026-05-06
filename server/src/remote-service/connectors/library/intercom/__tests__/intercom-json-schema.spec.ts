@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
-import { READONLY_FLAG } from '../../../json-schema';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
@@ -46,25 +46,25 @@ describe('buildIntercomArticlesJsonTableSpec', () => {
     const spec = buildIntercomArticlesJsonTableSpec(entityId);
     const props = spec.schema.properties;
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.workspace_id[READONLY_FLAG]).toBe(true);
-    expect(props.url[READONLY_FLAG]).toBe(true);
-    expect(props.parent_ids[READONLY_FLAG]).toBe(true);
-    expect(props.default_locale[READONLY_FLAG]).toBe(true);
-    expect(props.statistics[READONLY_FLAG]).toBe(true);
-    expect(props.created_at[READONLY_FLAG]).toBe(true);
-    expect(props.updated_at[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.workspace_id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.url[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.parent_ids[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.default_locale[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.statistics[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.created_at[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.updated_at[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('does not mark title, description, body, author_id, state as readonly', () => {
     const spec = buildIntercomArticlesJsonTableSpec(entityId);
     const props = spec.schema.properties;
 
-    expect(props.title[READONLY_FLAG]).toBeUndefined();
-    expect(props.description[READONLY_FLAG]).toBeUndefined();
-    expect(props.body[READONLY_FLAG]).toBeUndefined();
-    expect(props.author_id[READONLY_FLAG]).toBeUndefined();
-    expect(props.state[READONLY_FLAG]).toBeUndefined();
+    expect(props.title[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.description[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.body[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.author_id[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.state[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
   it('includes generatedAt timestamp', () => {
@@ -110,24 +110,24 @@ describe('buildIntercomCollectionsJsonTableSpec', () => {
     const spec = buildIntercomCollectionsJsonTableSpec(entityId);
     const props = spec.schema.properties;
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.workspace_id[READONLY_FLAG]).toBe(true);
-    expect(props.order[READONLY_FLAG]).toBe(true);
-    expect(props.url[READONLY_FLAG]).toBe(true);
-    expect(props.default_locale[READONLY_FLAG]).toBe(true);
-    expect(props.created_at[READONLY_FLAG]).toBe(true);
-    expect(props.updated_at[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.workspace_id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.order[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.url[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.default_locale[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.created_at[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.updated_at[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('does not mark name, description, icon, parent_id, help_center_id as readonly', () => {
     const spec = buildIntercomCollectionsJsonTableSpec(entityId);
     const props = spec.schema.properties;
 
-    expect(props.name[READONLY_FLAG]).toBeUndefined();
-    expect(props.description[READONLY_FLAG]).toBeUndefined();
-    expect(props.icon[READONLY_FLAG]).toBeUndefined();
-    expect(props.parent_id[READONLY_FLAG]).toBeUndefined();
-    expect(props.help_center_id[READONLY_FLAG]).toBeUndefined();
+    expect(props.name[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.description[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.icon[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.parent_id[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.help_center_id[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
   it('includes generatedAt timestamp', () => {
@@ -180,7 +180,7 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
     const props = spec.schema.properties;
 
     for (const key of Object.keys(props)) {
-      expect(props[key][READONLY_FLAG]).toBe(true);
+      expect(props[key][X_SCRATCH_READONLY]).toBe(true);
     }
   });
 

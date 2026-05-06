@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument */
-import { READONLY_FLAG } from '../../../json-schema';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 import {
   buildBrevoContactsJsonTableSpec,
   buildBrevoMailingListsJsonTableSpec,
@@ -51,18 +51,18 @@ describe('buildBrevoContactsJsonTableSpec', () => {
     const spec = buildBrevoContactsJsonTableSpec(entityId, []);
     const props = spec.schema.properties;
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.listUnsubscribed[READONLY_FLAG]).toBe(true);
-    expect(props.createdAt[READONLY_FLAG]).toBe(true);
-    expect(props.modifiedAt[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.listUnsubscribed[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.createdAt[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.modifiedAt[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('does not mark email or emailBlacklisted as readonly', () => {
     const spec = buildBrevoContactsJsonTableSpec(entityId, []);
     const props = spec.schema.properties;
 
-    expect(props.email[READONLY_FLAG]).toBeUndefined();
-    expect(props.emailBlacklisted[READONLY_FLAG]).toBeUndefined();
+    expect(props.email[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.emailBlacklisted[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
   it('adds text attributes as String | Null', () => {
@@ -110,7 +110,7 @@ describe('buildBrevoContactsJsonTableSpec', () => {
     const attrProps = spec.schema.properties.attributes.properties;
 
     expect(attrProps).toHaveProperty('CONTACT_ID');
-    expect(attrProps.CONTACT_ID[READONLY_FLAG]).toBe(true);
+    expect(attrProps.CONTACT_ID[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('adds multiple-choice attributes as String | Null', () => {
@@ -127,7 +127,7 @@ describe('buildBrevoContactsJsonTableSpec', () => {
     const spec = buildBrevoContactsJsonTableSpec(entityId, attrs);
     const attrProps = spec.schema.properties.attributes.properties;
 
-    expect(attrProps.CALC_FIELD[READONLY_FLAG]).toBe(true);
+    expect(attrProps.CALC_FIELD[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('marks global attributes as readonly', () => {
@@ -135,7 +135,7 @@ describe('buildBrevoContactsJsonTableSpec', () => {
     const spec = buildBrevoContactsJsonTableSpec(entityId, attrs);
     const attrProps = spec.schema.properties.attributes.properties;
 
-    expect(attrProps.GLOBAL_FIELD[READONLY_FLAG]).toBe(true);
+    expect(attrProps.GLOBAL_FIELD[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('handles empty attributes array', () => {
@@ -191,19 +191,19 @@ describe('buildBrevoTemplatesJsonTableSpec', () => {
     const spec = buildBrevoTemplatesJsonTableSpec(entityId);
     const props = spec.schema.properties;
 
-    expect(props.id[READONLY_FLAG]).toBe(true);
-    expect(props.testSent[READONLY_FLAG]).toBe(true);
-    expect(props.createdAt[READONLY_FLAG]).toBe(true);
-    expect(props.modifiedAt[READONLY_FLAG]).toBe(true);
+    expect(props.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.testSent[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.createdAt[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.modifiedAt[X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('does not mark name, subject, htmlContent as readonly', () => {
     const spec = buildBrevoTemplatesJsonTableSpec(entityId);
     const props = spec.schema.properties;
 
-    expect(props.name[READONLY_FLAG]).toBeUndefined();
-    expect(props.subject[READONLY_FLAG]).toBeUndefined();
-    expect(props.htmlContent[READONLY_FLAG]).toBeUndefined();
+    expect(props.name[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.subject[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(props.htmlContent[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
   it('includes sender as an object with name, email, id subfields', () => {
@@ -249,7 +249,7 @@ describe('buildBrevoMailingListsJsonTableSpec', () => {
     const props = spec.schema.properties;
 
     for (const key of Object.keys(props)) {
-      expect(props[key][READONLY_FLAG]).toBe(true);
+      expect(props[key][X_SCRATCH_READONLY]).toBe(true);
     }
   });
 });
