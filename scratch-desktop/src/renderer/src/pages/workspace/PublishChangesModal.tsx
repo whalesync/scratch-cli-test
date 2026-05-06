@@ -53,6 +53,10 @@ interface PublishChangesModalProps {
   onDataRefresh: () => void;
   /** When set, scopes the publish plan to a single file (relative path within workspace). */
   filterPath?: string | null;
+  /** The currently selected folder path in the workspace grid. */
+  currentFolderPath?: string | null;
+  /** Called when the user wants to view problems in the grid. */
+  onViewProblems?: (folderPath: string) => void;
 }
 
 function isTerminalState(state: JobStatus['state']): boolean {
@@ -272,6 +276,46 @@ function PublishingProgress({ jobIds, jobs }: { jobIds: string[]; jobs: JobStatu
   );
 }
 
+async function loadValidationCounts(
+  localPath: string,
+  filterPath: string | null,
+): Promise<{ errors: number; warnings: number; records: number; stats: ValidationStat[] } | null> {
+  try {
+    const stats: ValidationStat[] = await window.scratchFiles.getValidationStats(localPath);
+    if (!filterPath) {
+      return {
+        errors: stats.reduce((s, r) => s + r.errors, 0),
+        warnings: stats.reduce((s, r) => s + r.warnings, 0),
+        records: stats.reduce((s, r) => s + r.records, 0),
+        stats,
+      };
+    }
+    const parts = filterPath.split('/');
+    const connectionName = parts[0];
+    const rest = parts.slice(1);
+    const lastPart = rest[rest.length - 1];
+    if (lastPart?.includes('.')) {
+      // Single record.
+      const folderAbsPath = `${localPath}/${connectionName}/${rest.slice(0, -1).join('/')}`;
+      const rows = await window.scratchFiles.getValidationResults(localPath, folderAbsPath, lastPart);
+      const errors = rows.filter((r) => r.level === 'error').length;
+      const warnings = rows.filter((r) => r.level === 'warning').length;
+      return { errors, warnings, records: errors + warnings > 0 ? 1 : 0, stats };
+    }
+    // Single table.
+    const folderPath = rest.join('/');
+    const folderStats = stats.filter((s) => s.connection === connectionName && s.folder_path === folderPath);
+    return {
+      errors: folderStats.reduce((s, r) => s + r.errors, 0),
+      warnings: folderStats.reduce((s, r) => s + r.warnings, 0),
+      records: folderStats.reduce((s, r) => s + r.records, 0),
+      stats,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function PublishChangesModal({
   opened,
   onClose,
@@ -281,6 +325,8 @@ export function PublishChangesModal({
   assumeUnreviewedApproved = false,
   onDataRefresh,
   filterPath,
+  currentFolderPath,
+  onViewProblems,
 }: PublishChangesModalProps) {
   const planningSessionIdRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<number | null>(null);
@@ -302,6 +348,7 @@ export function PublishChangesModal({
     warnings: number;
     records: number;
   } | null>(null);
+  const [validationStats, setValidationStats] = useState<ValidationStat[]>([]);
 
   const refreshPlans = useCallback(async (): Promise<LocalPublishPlan[]> => {
     if (!localPath) {
@@ -351,19 +398,31 @@ export function PublishChangesModal({
     setJobIds([]);
     setJobs([]);
     setPublishErrorDetails([]);
+    setValidationCounts(null);
+    setValidationStats([]);
     planningSessionIdRef.current = null;
 
     try {
-      const nextUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
+      const [nextUnreviewed, counts] = await Promise.all([
+        window.scratchDesktop.listUnreviewedChanges(localPath),
+        loadValidationCounts(localPath, filterPath ?? null),
+      ]);
 
       setUnreviewedEntries(nextUnreviewed);
+      setValidationCounts(
+        counts ? { errors: counts.errors, warnings: counts.warnings, records: counts.records } : null,
+      );
+      setValidationStats(counts?.stats ?? []);
 
       if (autoStartPlanningOnOpen || filterPath) {
         await startPlanning();
         return;
       }
 
-      if (!assumeUnreviewedApproved && nextUnreviewed.length > 0) {
+      const hasValidationProblems = counts !== null && counts.records > 0;
+      const hasUnreviewed = !assumeUnreviewedApproved && nextUnreviewed.length > 0;
+
+      if (hasUnreviewed || hasValidationProblems) {
         setMode('approval');
         return;
       }
@@ -380,6 +439,32 @@ export function PublishChangesModal({
   const continueAfterApproval = useCallback(() => {
     void startPlanning();
   }, [startPlanning]);
+
+  const handleViewProblems = useCallback(() => {
+    if (!localPath || !onViewProblems) return;
+    const statsWithProblems = validationStats.filter((s) => s.records > 0);
+    if (statsWithProblems.length === 0) return;
+
+    let targetStat = statsWithProblems[0];
+
+    if (currentFolderPath) {
+      // Derive connection name from currentFolderPath relative to localPath
+      const rel = currentFolderPath.startsWith(localPath + '/')
+        ? currentFolderPath.slice(localPath.length + 1)
+        : currentFolderPath;
+      const parts = rel.split('/');
+      const currentConnection = parts[0];
+      const currentFolderRelPath = parts.slice(1).join('/');
+
+      const sameFolder = statsWithProblems.find(
+        (s) => s.connection === currentConnection && s.folder_path === currentFolderRelPath,
+      );
+      const sameConnection = statsWithProblems.find((s) => s.connection === currentConnection);
+      targetStat = sameFolder ?? sameConnection ?? statsWithProblems[0];
+    }
+
+    onViewProblems(`${localPath}/${targetStat.connection}/${targetStat.folder_path}`);
+  }, [currentFolderPath, localPath, onViewProblems, validationStats]);
 
   const handleClose = useCallback(async () => {
     if (closing) {
@@ -441,52 +526,6 @@ export function PublishChangesModal({
     }
     void loadInitialState();
   }, [loadInitialState, opened]);
-
-  useEffect(() => {
-    if (!opened || !localPath) {
-      setValidationCounts(null);
-      return;
-    }
-    setValidationCounts(null);
-    void (async () => {
-      try {
-        const stats: ValidationStat[] = await window.scratchFiles.getValidationStats(localPath);
-        if (!filterPath) {
-          // Publish all: total across workspace.
-          const errors = stats.reduce((s, r) => s + r.errors, 0);
-          const warnings = stats.reduce((s, r) => s + r.warnings, 0);
-          const records = stats.reduce((s, r) => s + r.records, 0);
-          setValidationCounts({ errors, warnings, records });
-        } else {
-          const parts = filterPath.split('/');
-          const connectionName = parts[0];
-          const rest = parts.slice(1);
-          const lastPart = rest[rest.length - 1];
-          const isFile = lastPart?.includes('.');
-          if (isFile) {
-            // Single record: fetch per-record results.
-            const filename = lastPart;
-            const folderRel = rest.slice(0, -1).join('/');
-            const folderAbsPath = `${localPath}/${connectionName}/${folderRel}`;
-            const rows = await window.scratchFiles.getValidationResults(localPath, folderAbsPath, filename);
-            const errors = rows.filter((r) => r.level === 'error').length;
-            const warnings = rows.filter((r) => r.level === 'warning').length;
-            setValidationCounts({ errors, warnings, records: errors + warnings > 0 ? 1 : 0 });
-          } else {
-            // Single table: filter workspace stats to this folder.
-            const folderPath = rest.join('/');
-            const folderStats = stats.filter((s) => s.connection === connectionName && s.folder_path === folderPath);
-            const errors = folderStats.reduce((s, r) => s + r.errors, 0);
-            const warnings = folderStats.reduce((s, r) => s + r.warnings, 0);
-            const records = folderStats.reduce((s, r) => s + r.records, 0);
-            setValidationCounts({ errors, warnings, records });
-          }
-        }
-      } catch {
-        // Non-fatal — don't show the sentence.
-      }
-    })();
-  }, [filterPath, localPath, opened]);
 
   useEffect(() => {
     const unsubscribe = window.scratchDesktop.onCommandEvent((event) => {
@@ -653,19 +692,29 @@ export function PublishChangesModal({
                     problems that may prevent them from publishing.
                   </Text>
                 )}
-                <Text size="sm">
-                  {unreviewedEntries.length} records contain unreviewed changes that will not be published.
-                </Text>
-                <Text size="sm" c="dimmed">
-                  Continue to plan and publish from the reviewed local dirty branch, or cancel and review those edits
-                  first.
-                </Text>
+                {unreviewedEntries.length > 0 && (
+                  <>
+                    <Text size="sm">
+                      {unreviewedEntries.length} record{unreviewedEntries.length === 1 ? '' : 's'} contain unreviewed
+                      changes that will not be published.
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      Continue to plan and publish from the reviewed local dirty branch, or cancel and review those
+                      edits first.
+                    </Text>
+                  </>
+                )}
                 <Group justify="flex-end">
+                  {onViewProblems && validationCounts && validationCounts.records > 0 && (
+                    <Button variant="outline" color="red" onClick={handleViewProblems} disabled={closing}>
+                      View Problems
+                    </Button>
+                  )}
                   <Button variant="default" onClick={() => void handleClose()} loading={closing}>
                     Cancel
                   </Button>
                   <Button onClick={() => continueAfterApproval()} disabled={closing}>
-                    Continue
+                    {validationCounts && validationCounts.records > 0 ? 'Ignore and Continue' : 'Continue'}
                   </Button>
                 </Group>
               </>

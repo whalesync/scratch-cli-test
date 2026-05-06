@@ -179,6 +179,17 @@ enum Commands {
         #[arg(long)]
         folder: String,
     },
+    /// Get filenames that have at least one error-level validation violation in a folder as JSON.
+    /// Example: scratchmd get-filenames-with-errors --folder my-conn/posts --workspace .
+    #[command(name = "get-filenames-with-errors")]
+    GetFilenamesWithErrors {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+    },
     /// Get validation error/warning counts grouped by connection and folder as JSON.
     /// Returns an array of { connection, folder_path, errors, warnings }.
     /// Example: scratchmd get-validation-stats --workspace .
@@ -364,6 +375,9 @@ async fn main() {
         }
         Commands::GetFolderValidationResults { workspace, folder } => {
             index::get_folder_validation_results_command(&workspace, &folder)
+        }
+        Commands::GetFilenamesWithErrors { workspace, folder } => {
+            index::get_filenames_with_errors_command(&workspace, &folder)
         }
         Commands::GetValidationStats { workspace } => {
             index::get_validation_stats_command(&workspace)

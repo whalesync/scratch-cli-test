@@ -514,6 +514,21 @@ export async function getFolderValidationResults(
   }
 }
 
+export async function getFilenamesWithErrors(
+  workspacePath: string,
+  folderPath: string,
+): Promise<{ filenames: string[]; field_paths: string[] }> {
+  const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
+  try {
+    return await runScratchmdJson<{ filenames: string[]; field_paths: string[] }>(
+      ['get-filenames-with-errors', '--folder', relFolder],
+      workspacePath,
+    );
+  } catch {
+    return { filenames: [], field_paths: [] };
+  }
+}
+
 export async function getValidationStats(workspacePath: string): Promise<ValidationStat[]> {
   try {
     return await runScratchmdJson<ValidationStat[]>(['get-validation-stats'], workspacePath);

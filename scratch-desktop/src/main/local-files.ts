@@ -15,7 +15,7 @@ import { parse } from 'yaml';
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { buildColumnDefinitions, projectRecordToNormalizedRow } from '../shared/schema-columns';
-import { listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
+import { getFilenamesWithErrors, listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
 
@@ -351,7 +351,7 @@ export type RowStatus =
   | 'deletedUnpublished'
   | 'unchanged'
   | 'invalidJson';
-export type DiffGridFilterKind = 'unreviewed' | 'unpublished';
+export type DiffGridFilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
 
 export type DiffGridFilter =
   | { scope: 'global'; kind: DiffGridFilterKind }
@@ -389,10 +389,12 @@ export interface DiffGridResult {
   filterCounts: {
     unreviewed: number;
     unpublished: number;
+    errors: number;
   };
   focusColumnIds: {
     unreviewed: string[];
     unpublished: string[];
+    errors: string[];
   };
   invalidJsonFiles: InvalidJsonFileEntry[];
 }
@@ -1138,6 +1140,16 @@ export async function readDiffGridData(folderPath: string, workspacePath: string
   return readDiffGridDataPage(folderPath, workspacePath, {});
 }
 
+/**
+ * Reads all three versions of every record in the folder (working copy, dirty branch, master
+ * branch), computes per-row diff status, applies filters, sorts, and paginates.
+ *
+ * This is the interface we expect to eventually get from the index database: records joined with
+ * their validation errors, filtered and paginated entirely in SQLite. Right now we read raw JSON
+ * files from three on-disk worktrees and call the CLI for validation data separately. Once the
+ * record index stores field values and validation results together, this function should collapse
+ * into a single parameterised database query.
+ */
 export async function readDiffGridDataPage(
   folderPath: string,
   workspacePath: string,
@@ -1155,11 +1167,13 @@ export async function readDiffGridDataPage(
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
   const leafPaths = new Set(schemaColumns.map((c) => c.id));
 
-  const [workingFiles, dirtyFiles, masterFiles] = await Promise.all([
-    readFolderSnapshots(workingPath, leafPaths),
-    readFolderSnapshots(dirtyPath, leafPaths),
-    readFolderSnapshots(masterPath, leafPaths),
-  ]);
+  const [workingFiles, dirtyFiles, masterFiles, { filenames: errorFilenameList, field_paths: errorFieldPaths }] =
+    await Promise.all([
+      readFolderSnapshots(workingPath, leafPaths),
+      readFolderSnapshots(dirtyPath, leafPaths),
+      readFolderSnapshots(masterPath, leafPaths),
+      getFilenamesWithErrors(workspacePath, folderPath),
+    ]);
 
   const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
 
@@ -1197,12 +1211,15 @@ export async function readDiffGridDataPage(
     invalidJson: rows.filter((r) => r.__rowStatus === 'invalidJson').length,
   };
 
+  const errorFilenames = new Set(errorFilenameList);
+
   const filterCounts = {
     unreviewed: rows.filter((row) => rowHasUnreviewedChanges(row)).length,
     unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
+    errors: errorFilenames.size,
   };
   const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, workspacePath, rows);
-  const filteredRows = applyDiffGridFilters(rows, opts.filters ?? []);
+  const filteredRows = applyDiffGridFilters(rows, opts.filters ?? [], errorFilenames);
   const sortedRows = sortDiffRows(filteredRows, opts.sortBy, opts.sortOrder);
   const offset = Math.max(0, opts.offset ?? 0);
   const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
@@ -1235,8 +1252,8 @@ export async function readDiffGridDataPage(
   }
 
   const focusFilters = (opts.filters ?? []).filter((filter) => filter.scope !== 'global');
-  const focusRows = applyDiffGridFilters(rows, focusFilters);
-  const focusColumnIds = collectFocusColumnIds(focusRows, columns);
+  const focusRows = applyDiffGridFilters(rows, focusFilters, errorFilenames);
+  const focusColumnIds = collectFocusColumnIds(focusRows, columns, errorFieldPaths);
 
   return {
     rows: pagedRows,
@@ -1266,8 +1283,9 @@ function rowHasUnpublishedChanges(row: DiffRow): boolean {
   );
 }
 
-function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter): boolean {
+function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter, errorFilenames: ReadonlySet<string>): boolean {
   if (filter.scope === 'global') {
+    if (filter.kind === 'has-problems') return errorFilenames.has(row.__filename);
     return filter.kind === 'unreviewed' ? rowHasUnreviewedChanges(row) : rowHasUnpublishedChanges(row);
   }
 
@@ -1295,15 +1313,23 @@ function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter): boolean {
     : row.__unpublishedFields.includes(filter.columnId);
 }
 
-function applyDiffGridFilters(rows: DiffRow[], filters: DiffGridFilter[]): DiffRow[] {
+function applyDiffGridFilters(
+  rows: DiffRow[],
+  filters: DiffGridFilter[],
+  errorFilenames: ReadonlySet<string>,
+): DiffRow[] {
   if (filters.length === 0) {
     return rows;
   }
 
-  return rows.filter((row) => filters.every((filter) => filterMatchesDiffRow(row, filter)));
+  return rows.filter((row) => filters.every((filter) => filterMatchesDiffRow(row, filter, errorFilenames)));
 }
 
-function collectFocusColumnIds(rows: DiffRow[], columns: ColumnDefinition[]): DiffGridResult['focusColumnIds'] {
+function collectFocusColumnIds(
+  rows: DiffRow[],
+  columns: ColumnDefinition[],
+  errorFieldPaths: string[],
+): DiffGridResult['focusColumnIds'] {
   const unreviewed = new Set<string>();
   const unpublished = new Set<string>();
 
@@ -1317,10 +1343,12 @@ function collectFocusColumnIds(rows: DiffRow[], columns: ColumnDefinition[]): Di
   }
 
   const orderedIds = columns.map((column) => column.id);
+  const errorFieldSet = new Set(errorFieldPaths);
 
   return {
     unreviewed: orderedIds.filter((id) => unreviewed.has(id)),
     unpublished: orderedIds.filter((id) => unpublished.has(id)),
+    errors: orderedIds.filter((id) => errorFieldSet.has(id)),
   };
 }
 

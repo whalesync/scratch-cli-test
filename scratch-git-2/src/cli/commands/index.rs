@@ -1059,6 +1059,72 @@ pub fn get_folder_validation_results_command(
     Ok(())
 }
 
+// ── get-filenames-with-errors ─────────────────────────────────────────────────
+
+/// Return the distinct filenames and field paths in a folder that have at least one
+/// error-level validation violation. Used by the desktop app to power the "has errors"
+/// grid filter and to focus the relevant columns.
+///
+/// Output: `{ "filenames": [...], "field_paths": [...] }`
+/// `folder_path_arg` is workspace-relative: `<connection>/<folder>`.
+pub fn get_filenames_with_errors_command(
+    workspace_start: &std::path::Path,
+    folder_path_arg: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    let slash = folder_path_arg.find('/').ok_or_else(|| {
+        anyhow::anyhow!("folder path must be '<connection>/<folder>', got: {folder_path_arg}")
+    })?;
+    let connection_name = &folder_path_arg[..slash];
+    let folder_path = &folder_path_arg[slash + 1..];
+
+    let connection = workspace_marker
+        .connections
+        .iter()
+        .find(|c| c.dir_name == connection_name)
+        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
+
+    let db_path = layout.index_db_path(&connection.repo_path);
+    if !db_path.exists() {
+        println!("{{\"filenames\":[],\"field_paths\":[]}}");
+        return Ok(());
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
+    validators::ensure_validation_schema(&conn)?;
+
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT DISTINCT file_name, field_path FROM {VALIDATION_RESULTS_TABLE} \
+             WHERE folder_path = ?1"
+        ))
+        .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![folder_path], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| anyhow::anyhow!("query failed: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("row read failed: {e}"))?;
+
+    let mut filenames: Vec<String> = rows.iter().map(|(f, _)| f.clone()).collect();
+    filenames.sort();
+    filenames.dedup();
+
+    let mut field_paths: Vec<String> = rows.iter().map(|(_, p)| p.clone()).collect();
+    field_paths.sort();
+    field_paths.dedup();
+
+    let out = serde_json::json!({ "filenames": filenames, "field_paths": field_paths });
+    println!("{}", serde_json::to_string(&out)?);
+    Ok(())
+}
+
 // ── Validation stats ──────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]

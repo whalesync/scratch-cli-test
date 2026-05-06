@@ -42,6 +42,11 @@ export function WorkspacePage() {
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
+  const [gridFilterActivation, setGridFilterActivation] = useState<{
+    kind: 'has-problems';
+    trigger: number;
+  } | null>(null);
+  const gridFilterTriggerRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
 
@@ -382,6 +387,14 @@ export function WorkspacePage() {
         localPath={localPath}
         onDataRefresh={handleDataRefresh}
         filterPath={publishFilePath}
+        currentFolderPath={selectedFolderPath}
+        onViewProblems={(folderPath) => {
+          setPublishModalOpen(false);
+          setPublishFilePath(null);
+          setSelectedFolderPath(folderPath);
+          gridFilterTriggerRef.current += 1;
+          setGridFilterActivation({ kind: 'has-problems', trigger: gridFilterTriggerRef.current });
+        }}
       />
       <PullAllModal
         opened={pullAllModalOpen}
@@ -424,6 +437,8 @@ export function WorkspacePage() {
           setPublishFilePath(relativePath);
           setPublishModalOpen(true);
         }}
+        activateGlobalFilter={gridFilterActivation}
+        onActivateGlobalFilterConsumed={() => setGridFilterActivation(null)}
       />
     </Box>
   );

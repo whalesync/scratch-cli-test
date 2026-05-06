@@ -82,12 +82,12 @@ interface DiffGridResult {
     deletedApproved: number;
     invalidJson: number;
   };
-  filterCounts: { unreviewed: number; unpublished: number };
-  focusColumnIds: { unreviewed: string[]; unpublished: string[] };
+  filterCounts: { unreviewed: number; unpublished: number; errors: number };
+  focusColumnIds: { unreviewed: string[]; unpublished: string[]; errors: string[] };
   invalidJsonFiles: InvalidJsonFileListEntry[];
 }
 
-type FilterKind = 'unreviewed' | 'unpublished';
+type FilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
 
 interface HeaderMenuState {
@@ -132,6 +132,9 @@ interface FolderDataGridProps {
   dataRefreshKey: number;
   onDataRefresh: () => void;
   onPublishFile?: (relativePath: string) => void;
+  /** When set, activates the given filter once the folder is ready. Increment trigger to re-trigger. */
+  activateGlobalFilter?: { kind: FilterKind; trigger: number } | null;
+  onActivateGlobalFilterConsumed?: () => void;
 }
 
 type GridLoadMode = 'idle' | 'blocking' | 'refreshing';
@@ -402,6 +405,7 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
   const filterCounts = {
     unreviewed: recomputeFilterCount(prevHadUnreviewed, nextHasUnreviewed, result.filterCounts.unreviewed),
     unpublished: recomputeFilterCount(prevHadUnpublished, nextHasUnpublished, result.filterCounts.unpublished),
+    errors: result.filterCounts.errors,
   };
 
   return { ...result, rows: nextRows, summary, filterCounts };
@@ -667,7 +671,14 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
 // ── Component ──
 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
-  const { selectedFolderPath, workspacePath, dataRefreshKey, onDataRefresh } = props;
+  const {
+    selectedFolderPath,
+    workspacePath,
+    dataRefreshKey,
+    onDataRefresh,
+    activateGlobalFilter,
+    onActivateGlobalFilterConsumed,
+  } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
   const [validationByCell, setValidationByCell] = useState<Map<string, ValidationResultRow[]>>(new Map());
   const [validationRefreshKey, setValidationRefreshKey] = useState(0);
@@ -710,6 +721,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const didMountDataRefreshRef = useRef(false);
   const hasCurrentQueryDataRef = useRef(false);
   const currentQueryRef = useRef<GridQueryState | null>(null);
+  // Refs for the activateGlobalFilter prop — allow effects to read the latest value without dep-array churn.
+  const activateGlobalFilterRef = useRef(activateGlobalFilter);
+  activateGlobalFilterRef.current = activateGlobalFilter;
+  // Tracks which trigger value was last consumed so we don't apply the same activation twice.
+  const lastConsumedFilterTriggerRef = useRef(0);
+  // Set when a filter activation arrives before data loads; cleared once column narrowing is applied.
+  const pendingColumnNarrowRef = useRef(false);
 
   const queryKey = useMemo(
     () =>
@@ -890,10 +908,29 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, [dataRefreshKey, loadDiffData, selectedFolderPath, workspacePath]);
 
-  // Reset state when folder changes
+  // Apply pending column narrowing after new data loads (used when folder changed with activateGlobalFilter).
   useEffect(() => {
+    if (!pendingColumnNarrowRef.current) return;
+    pendingColumnNarrowRef.current = false;
+    const ids = errorsColumnIdsRef.current;
+    const locked = titleColumnIdRef.current ? [titleColumnIdRef.current] : [];
+    setVisibleColumnIds([...locked, ...ids.filter((c) => c !== titleColumnIdRef.current)]);
+  }, [resolvedQueryKey]);
+
+  // Reset state when folder changes. If activateGlobalFilter is pending, apply it here and
+  // set pendingColumnNarrowRef so column focusing happens once the new data resolves.
+  useEffect(() => {
+    const pending = activateGlobalFilterRef.current;
+    const shouldApply =
+      pending !== null && pending !== undefined && pending.trigger > lastConsumedFilterTriggerRef.current;
+    if (shouldApply && pending) {
+      lastConsumedFilterTriggerRef.current = pending.trigger;
+      if (pending.kind === 'has-problems') {
+        pendingColumnNarrowRef.current = true;
+      }
+    }
     setSort({ column: null, direction: null });
-    setActiveFilters([]);
+    setActiveFilters(shouldApply && pending ? [{ scope: 'global', kind: pending.kind }] : []);
     setColumnWidths({});
     setDetailRowIndex(null);
     setDetailFocusFieldName(null);
@@ -908,7 +945,31 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setPage(1);
     setReloadKey(0);
     setVisibleColumnIds(null);
-  }, [selectedFolderPath]);
+    if (shouldApply) {
+      onActivateGlobalFilterConsumed?.();
+    }
+  }, [selectedFolderPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Same-folder case: activate filter when prop changes but folder is already current
+  useEffect(() => {
+    if (!activateGlobalFilter) return;
+    if (activateGlobalFilter.trigger <= lastConsumedFilterTriggerRef.current) return;
+    lastConsumedFilterTriggerRef.current = activateGlobalFilter.trigger;
+    setActiveFilters((current) => {
+      const withoutGlobal = current.filter((f) => f.scope !== 'global');
+      return [...withoutGlobal, { scope: 'global', kind: activateGlobalFilter.kind }];
+    });
+    if (activateGlobalFilter.kind === 'has-problems') {
+      const ids = errorsColumnIdsRef.current;
+      const locked = titleColumnIdRef.current ? [titleColumnIdRef.current] : [];
+      if (ids.length > 0) {
+        setVisibleColumnIds([...locked, ...ids.filter((c) => c !== titleColumnIdRef.current)]);
+      } else {
+        pendingColumnNarrowRef.current = true;
+      }
+    }
+    onActivateGlobalFilterConsumed?.();
+  }, [activateGlobalFilter, onActivateGlobalFilterConsumed]);
 
   useEffect(() => {
     const { body } = document;
@@ -1138,6 +1199,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
     return allColumnIds.filter((c) => set.has(c));
   }, [allColumnIds, diffData]);
+
+  /** Column IDs that should be focused for Has errors, across the current non-global query. */
+  const errorsColumnIds: string[] = useMemo(() => {
+    if (!diffData) return [];
+    return allColumnIds.filter((c) => diffData.focusColumnIds.errors.includes(c));
+  }, [allColumnIds, diffData]);
+
+  // Stable refs for column-narrowing values used inside effects that fire on unrelated deps.
+  const errorsColumnIdsRef = useRef(errorsColumnIds);
+  errorsColumnIdsRef.current = errorsColumnIds;
+  const titleColumnIdRef = useRef(titleColumnId);
+  titleColumnIdRef.current = titleColumnId;
 
   const buildValidationHoverState = useCallback(
     (col: number, row: number): ValidationHoverState | null => {
@@ -1857,7 +1930,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       recomputeInspectRect(nextRow);
 
       const nextValidationHover =
-        args.kind === 'cell' ? buildValidationHoverState(args.location[0], args.location[1]) : null;
+        args.kind === 'cell' && args.localEventX > args.bounds.width - args.bounds.height
+          ? buildValidationHoverState(args.location[0], args.location[1])
+          : null;
       setValidationHover((current) => {
         if (
           current &&
@@ -1964,16 +2039,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         setActiveFilters(withoutGlobal);
         setVisibleColumnIds(null);
       } else {
-        // Applying a filter narrows the visible columns to the focus set for
-        // that filter, computed from the current query with only the global
-        // review filter removed.
         setActiveFilters([...withoutGlobal, { scope: 'global', kind }]);
-        const matchingCols = kind === 'unreviewed' ? unreviewedColumnIds : approvedColumnIds;
+        // Applying a filter narrows visible columns to the focus set.
+        const matchingCols =
+          kind === 'unreviewed' ? unreviewedColumnIds : kind === 'unpublished' ? approvedColumnIds : errorsColumnIds;
         const locked = titleColumnId ? [titleColumnId] : [];
         setVisibleColumnIds([...locked, ...matchingCols.filter((c) => c !== titleColumnId)]);
       }
     },
-    [activeFilters, approvedColumnIds, titleColumnId, unreviewedColumnIds],
+    [activeFilters, approvedColumnIds, errorsColumnIds, titleColumnId, unreviewedColumnIds],
   );
 
   const handleAddColumnFilter = useCallback(
@@ -2090,6 +2164,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               disabled={disableGlobalFilterPills}
               onClick={() => handleGlobalFilterToggle('unpublished')}
             />
+            {(filterCounts?.errors ?? 0) > 0 && (
+              <FilterPill
+                label="Problems"
+                count={filterCounts?.errors ?? 0}
+                active={hasGlobalFilter('has-problems')}
+                bulletColor="var(--mantine-color-red-6)"
+                disabled={disableGlobalFilterPills}
+                onClick={() => handleGlobalFilterToggle('has-problems')}
+              />
+            )}
             {activeColumnFilters.map((filter) => (
               <ActiveFilterChip
                 key={filterKey(filter)}
@@ -2540,19 +2624,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       {validationHover &&
         (() => {
           const tooltipWidth = 520;
-          const left = Math.max(
-            12,
-            Math.min(
-              validationHover.bounds.x + validationHover.bounds.width - tooltipWidth,
-              window.innerWidth - tooltipWidth - 12,
-            ),
-          );
-          const belowTop = validationHover.bounds.y + validationHover.bounds.height + 8;
+          const centeredLeft = validationHover.bounds.x + validationHover.bounds.width / 2 - tooltipWidth / 2;
+          const left = Math.max(12, Math.min(centeredLeft, window.innerWidth - tooltipWidth - 12));
+          const belowTop = validationHover.bounds.y + validationHover.bounds.height;
           const estimatedHeight = Math.min(260, 54 + validationHover.entries.length * 42);
           const top =
             belowTop + estimatedHeight < window.innerHeight - 12
               ? belowTop
-              : Math.max(12, validationHover.bounds.y - estimatedHeight - 8);
+              : Math.max(12, validationHover.bounds.y - estimatedHeight);
 
           return (
             <Portal target="#portal">
@@ -2567,10 +2646,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   maxHeight: 260,
                   overflow: 'auto',
                   pointerEvents: 'none',
-                  background: '#fff',
-                  border: '1px solid rgba(15, 23, 42, 0.12)',
-                  borderRadius: 12,
-                  boxShadow: '0 18px 44px rgba(15, 23, 42, 0.18)',
+                  backgroundColor: 'var(--bg-base)',
+                  border: '1px solid var(--fg-divider)',
+                  borderRadius: 0,
+                  boxShadow: 'none',
                   padding: 10,
                 }}
               >

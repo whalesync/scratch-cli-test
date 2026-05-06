@@ -22,6 +22,8 @@ interface WorkspaceContentProps {
   dataRefreshKey: number;
   onDataRefresh: () => void;
   onPublishFile?: (relativePath: string) => void;
+  activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
+  onActivateGlobalFilterConsumed?: () => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
@@ -36,6 +38,8 @@ export function WorkspaceContent({
   dataRefreshKey,
   onDataRefresh,
   onPublishFile,
+  activateGlobalFilter,
+  onActivateGlobalFilterConsumed,
 }: WorkspaceContentProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -155,6 +159,8 @@ export function WorkspaceContent({
         dataRefreshKey={dataRefreshKey}
         onDataRefresh={onDataRefresh}
         onPublishFile={onPublishFile}
+        activateGlobalFilter={activateGlobalFilter}
+        onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}
       />
     </Box>
   );
