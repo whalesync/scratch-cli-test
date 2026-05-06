@@ -43,13 +43,13 @@ export class RouteUrls {
     return `/workbook/${id}/files/${encoded}`;
   };
   static workbookReviewPageUrl = (id: string) => `/workbook/${id}/review`;
-  static workbookReviewFileUrl = (id: string, filePath: string) => {
+  static workbookReviewFileUrl = (id: string, connectorAccountId: string, filePath: string) => {
     const encoded = filePath
       .replace(/^\/+/, '')
       .split('/')
       .map((segment) => encodeURIComponent(segment))
       .join('/');
-    return `/workbook/${id}/review/${encoded}`;
+    return `/workbook/${id}/review/${encodeURIComponent(connectorAccountId)}/${encoded}`;
   };
   static workbookSyncsPageUrl = (id: string) => `/workbook/${id}/syncs`;
   static workbookScheduledRunsPageUrl = (id: string) => `/workbook/${id}/runs/scheduled`;

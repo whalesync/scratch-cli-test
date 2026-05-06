@@ -1,5 +1,4 @@
-import type { DirtyFile } from '@/hooks/use-dirty-files';
-import type { DataFolder, DataFolderGroup, DataFolderId } from '@spinner/shared-types';
+import type { DataFolder, DataFolderGroup, DataFolderId, DirtyFile } from '@spinner/shared-types';
 
 /**
  * Strips a leading slash if present.
@@ -24,25 +23,38 @@ export function fileMatchesFolder(folderPath: string, filePath: string): boolean
 
 /**
  * Given a list of dirty files and data folder groups, returns the IDs of
- * data folders that contain at least one dirty file.
+ * data folders that contain at least one dirty file. Matches on
+ * `connectorAccountId` first so two folders with the same path under
+ * different connections are not conflated.
  */
 export function getDirtyDataFolderIds(dirtyFiles: DirtyFile[], dataFolderGroups: DataFolderGroup[]): DataFolderId[] {
   const dataFolderIds: DataFolderId[] = [];
   dataFolderGroups.forEach((group) => {
     group.dataFolders.forEach((folder) => {
-      if (folder.path && dirtyFiles.some((file) => fileMatchesFolder(folder.path!, file.path))) {
-        dataFolderIds.push(folder.id);
-      }
+      if (!folder.path) return;
+      const hit = dirtyFiles.some(
+        (file) => file.connectorAccountId === folder.connectorAccountId && fileMatchesFolder(folder.path!, file.path),
+      );
+      if (hit) dataFolderIds.push(folder.id);
     });
   });
 
   return dataFolderIds;
 }
 
-/** Finds the most specific DataFolder that a file belongs to (longest matching path). */
-export function findDataFolderForFile(folders: DataFolder[], filePath: string): DataFolder | undefined {
+/**
+ * Finds the most specific DataFolder under the given connection that a file belongs to
+ * (longest matching path). Scopes by `connectorAccountId` to disambiguate folders that
+ * share a path across connections.
+ */
+export function findDataFolderForFile(
+  folders: DataFolder[],
+  filePath: string,
+  connectorAccountId: string,
+): DataFolder | undefined {
   let best: DataFolder | undefined;
   for (const folder of folders) {
+    if (folder.connectorAccountId !== connectorAccountId) continue;
     if (folder.path && fileMatchesFolder(folder.path, filePath)) {
       if (!best || !best.path || folder.path.length > best.path.length) {
         best = folder;

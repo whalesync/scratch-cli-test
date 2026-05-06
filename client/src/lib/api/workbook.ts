@@ -5,6 +5,7 @@ import {
   CreateWorkbookDto,
   DataFolderGroup,
   DeleteWorkbookResponseDto,
+  DirtyFile,
   DirtyFileCountResponse,
   GitGcResponse,
   GitObjectCountsResponse,
@@ -373,10 +374,10 @@ export const workbookApi = {
     }
   },
 
-  getStatus: async (workbookId: WorkbookId): Promise<unknown> => {
+  getStatus: async (workbookId: WorkbookId): Promise<DirtyFile[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get(`/scratch-git/${workbookId}/git-status`);
+      const res = await axios.get<DirtyFile[]>(`/scratch-git/${workbookId}/git-status`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to get git status');

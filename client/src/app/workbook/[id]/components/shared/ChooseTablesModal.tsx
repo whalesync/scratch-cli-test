@@ -639,7 +639,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     // If there are folders to remove, check for dirty files and show confirmation
     if (pendingFoldersToRemove.length > 0 && !showConfirmation) {
       try {
-        const dirtyFiles = (await workbookApi.getStatus(workbookId)) as { path: string }[];
+        const dirtyFiles = await workbookApi.getStatus(workbookId);
 
         const folderPaths = new Set(pendingFoldersToRemove.map((f) => (f.path ?? f.name).replace(/^\//, '')));
         const dirtyInRemovedFolders = dirtyFiles.filter((file) => {

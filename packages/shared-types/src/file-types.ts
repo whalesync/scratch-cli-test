@@ -11,6 +11,24 @@ import { DataFolderId } from './ids';
 export type FileDiffStatus = 'added' | 'modified' | 'deleted';
 
 /**
+ * Sentinel `connectorAccountId` value used for dirty entries that originate
+ * from the workbook's config repo (not tied to any external connector).
+ */
+export const SCRATCH_WORKBOOK_CONFIG_REPO_ID = 'scratch_workbook_config_repo';
+
+/**
+ * A dirty file in a workbook repo, scoped to a specific connector account.
+ * Two connectors with folders sharing the same path (e.g. `/Companies` under
+ * both Affinity and Attio) must be disambiguated by `connectorAccountId`.
+ */
+export interface DirtyFile {
+  path: string;
+  status: FileDiffStatus;
+  /** Source connector account, or SCRATCH_WORKBOOK_CONFIG_REPO_ID for the workbook config repo. */
+  connectorAccountId: string;
+}
+
+/**
  * Response from the fast "has dirty files" check.
  * Compares root tree OIDs — instant regardless of repo size.
  */

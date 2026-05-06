@@ -1,5 +1,4 @@
-import type { DirtyFile } from '@/hooks/use-dirty-files';
-import type { DataFolder, DataFolderGroup, DataFolderId, WorkbookId } from '@spinner/shared-types';
+import type { DataFolder, DataFolderGroup, DataFolderId, DirtyFile, WorkbookId } from '@spinner/shared-types';
 import { fileMatchesFolder, findDataFolderForFile, getDirtyDataFolderIds } from '../data-folder-helpers';
 
 /** Helper to create a minimal DataFolder with just the fields we need. */
@@ -68,9 +67,21 @@ describe('fileMatchesFolder', () => {
 });
 
 describe('getDirtyDataFolderIds', () => {
-  const folder1 = makeFolder({ id: 'dfd_1' as DataFolderId, path: '/Airtable/Base/Table1' });
-  const folder2 = makeFolder({ id: 'dfd_2' as DataFolderId, path: '/Airtable/Base/Table2' });
-  const folder3 = makeFolder({ id: 'dfd_3' as DataFolderId, path: '/Webflow/Site/Collection' });
+  const folder1 = makeFolder({
+    id: 'dfd_1' as DataFolderId,
+    path: '/Airtable/Base/Table1',
+    connectorAccountId: 'cac_airtable',
+  });
+  const folder2 = makeFolder({
+    id: 'dfd_2' as DataFolderId,
+    path: '/Airtable/Base/Table2',
+    connectorAccountId: 'cac_airtable',
+  });
+  const folder3 = makeFolder({
+    id: 'dfd_3' as DataFolderId,
+    path: '/Webflow/Site/Collection',
+    connectorAccountId: 'cac_webflow',
+  });
 
   const groups = [
     {
@@ -87,16 +98,16 @@ describe('getDirtyDataFolderIds', () => {
 
   it('returns folder IDs that have dirty files', () => {
     const dirtyFiles: DirtyFile[] = [
-      { path: 'Airtable/Base/Table1/record1.json', status: 'modified' },
-      { path: 'Airtable/Base/Table1/record2.json', status: 'added' },
+      { path: 'Airtable/Base/Table1/record1.json', status: 'modified', connectorAccountId: 'cac_airtable' },
+      { path: 'Airtable/Base/Table1/record2.json', status: 'added', connectorAccountId: 'cac_airtable' },
     ];
     expect(getDirtyDataFolderIds(dirtyFiles, groups)).toEqual(['dfd_1']);
   });
 
   it('returns multiple folder IDs across groups', () => {
     const dirtyFiles: DirtyFile[] = [
-      { path: 'Airtable/Base/Table2/record.json', status: 'modified' },
-      { path: 'Webflow/Site/Collection/item.json', status: 'deleted' },
+      { path: 'Airtable/Base/Table2/record.json', status: 'modified', connectorAccountId: 'cac_airtable' },
+      { path: 'Webflow/Site/Collection/item.json', status: 'deleted', connectorAccountId: 'cac_webflow' },
     ];
     const ids = getDirtyDataFolderIds(dirtyFiles, groups);
     expect(ids).toContain('dfd_2');
@@ -104,8 +115,32 @@ describe('getDirtyDataFolderIds', () => {
     expect(ids).toHaveLength(2);
   });
 
+  it('does not match folders from a different connection that share a path', () => {
+    // Two connections both have a /Companies folder, but the dirty file belongs to one only
+    const attioCompanies = makeFolder({
+      id: 'dfd_attio' as DataFolderId,
+      path: '/Companies',
+      connectorAccountId: 'cac_attio',
+    });
+    const affinityCompanies = makeFolder({
+      id: 'dfd_affinity' as DataFolderId,
+      path: '/Companies',
+      connectorAccountId: 'cac_affinity',
+    });
+    const collidingGroups = [
+      { name: 'Attio', service: null, dataFolders: [attioCompanies] },
+      { name: 'Affinity', service: null, dataFolders: [affinityCompanies] },
+    ] as DataFolderGroup[];
+    const dirtyFiles: DirtyFile[] = [
+      { path: 'Companies/paypal.json', status: 'modified', connectorAccountId: 'cac_attio' },
+    ];
+    expect(getDirtyDataFolderIds(dirtyFiles, collidingGroups)).toEqual(['dfd_attio']);
+  });
+
   it('returns empty array when no dirty files match', () => {
-    const dirtyFiles: DirtyFile[] = [{ path: 'Unknown/folder/file.json', status: 'added' }];
+    const dirtyFiles: DirtyFile[] = [
+      { path: 'Unknown/folder/file.json', status: 'added', connectorAccountId: 'cac_airtable' },
+    ];
     expect(getDirtyDataFolderIds(dirtyFiles, groups)).toEqual([]);
   });
 
@@ -114,45 +149,97 @@ describe('getDirtyDataFolderIds', () => {
   });
 
   it('skips folders with null path', () => {
-    const nullPathFolder = makeFolder({ id: 'dfd_null' as DataFolderId, path: null });
+    const nullPathFolder = makeFolder({
+      id: 'dfd_null' as DataFolderId,
+      path: null,
+      connectorAccountId: 'cac_airtable',
+    });
     const groupsWithNull: DataFolderGroup[] = [{ name: 'Broken', service: null, dataFolders: [nullPathFolder] }];
-    const dirtyFiles: DirtyFile[] = [{ path: 'anything/file.json', status: 'modified' }];
+    const dirtyFiles: DirtyFile[] = [
+      { path: 'anything/file.json', status: 'modified', connectorAccountId: 'cac_airtable' },
+    ];
     expect(getDirtyDataFolderIds(dirtyFiles, groupsWithNull)).toEqual([]);
   });
 });
 
 describe('findDataFolderForFile', () => {
-  const folder1 = makeFolder({ id: 'dfd_1' as DataFolderId, path: '/Airtable/Base/Table1' });
-  const folder2 = makeFolder({ id: 'dfd_2' as DataFolderId, path: '/Airtable/Base/Table2' });
+  const folder1 = makeFolder({
+    id: 'dfd_1' as DataFolderId,
+    path: '/Airtable/Base/Table1',
+    connectorAccountId: 'cac_airtable',
+  });
+  const folder2 = makeFolder({
+    id: 'dfd_2' as DataFolderId,
+    path: '/Airtable/Base/Table2',
+    connectorAccountId: 'cac_airtable',
+  });
   const folders = [folder1, folder2];
 
   it('finds the correct folder for a file', () => {
-    expect(findDataFolderForFile(folders, 'Airtable/Base/Table1/record.json')).toBe(folder1);
-    expect(findDataFolderForFile(folders, 'Airtable/Base/Table2/record.json')).toBe(folder2);
+    expect(findDataFolderForFile(folders, 'Airtable/Base/Table1/record.json', 'cac_airtable')).toBe(folder1);
+    expect(findDataFolderForFile(folders, 'Airtable/Base/Table2/record.json', 'cac_airtable')).toBe(folder2);
   });
 
   it('finds the correct folder when file path has a leading slash', () => {
-    expect(findDataFolderForFile(folders, '/Airtable/Base/Table1/record.json')).toBe(folder1);
+    expect(findDataFolderForFile(folders, '/Airtable/Base/Table1/record.json', 'cac_airtable')).toBe(folder1);
   });
 
   it('returns undefined when no folder matches', () => {
-    expect(findDataFolderForFile(folders, 'Unknown/folder/file.json')).toBeUndefined();
+    expect(findDataFolderForFile(folders, 'Unknown/folder/file.json', 'cac_airtable')).toBeUndefined();
   });
 
   it('returns undefined for empty folders list', () => {
-    expect(findDataFolderForFile([], 'Airtable/Base/Table1/record.json')).toBeUndefined();
+    expect(findDataFolderForFile([], 'Airtable/Base/Table1/record.json', 'cac_airtable')).toBeUndefined();
   });
 
   it('prefers the most specific (longest path) folder', () => {
-    const parentFolder = makeFolder({ id: 'dfd_parent' as DataFolderId, path: '/Airtable/Base' });
-    const childFolder = makeFolder({ id: 'dfd_child' as DataFolderId, path: '/Airtable/Base/Table1' });
+    const parentFolder = makeFolder({
+      id: 'dfd_parent' as DataFolderId,
+      path: '/Airtable/Base',
+      connectorAccountId: 'cac_airtable',
+    });
+    const childFolder = makeFolder({
+      id: 'dfd_child' as DataFolderId,
+      path: '/Airtable/Base/Table1',
+      connectorAccountId: 'cac_airtable',
+    });
     // Order shouldn't matter — child should win regardless
-    expect(findDataFolderForFile([parentFolder, childFolder], 'Airtable/Base/Table1/record.json')).toBe(childFolder);
-    expect(findDataFolderForFile([childFolder, parentFolder], 'Airtable/Base/Table1/record.json')).toBe(childFolder);
+    expect(
+      findDataFolderForFile([parentFolder, childFolder], 'Airtable/Base/Table1/record.json', 'cac_airtable'),
+    ).toBe(childFolder);
+    expect(
+      findDataFolderForFile([childFolder, parentFolder], 'Airtable/Base/Table1/record.json', 'cac_airtable'),
+    ).toBe(childFolder);
   });
 
   it('skips folders with null path', () => {
-    const nullFolder = makeFolder({ id: 'dfd_null' as DataFolderId, path: null });
-    expect(findDataFolderForFile([nullFolder, folder1], 'Airtable/Base/Table1/record.json')).toBe(folder1);
+    const nullFolder = makeFolder({
+      id: 'dfd_null' as DataFolderId,
+      path: null,
+      connectorAccountId: 'cac_airtable',
+    });
+    expect(findDataFolderForFile([nullFolder, folder1], 'Airtable/Base/Table1/record.json', 'cac_airtable')).toBe(
+      folder1,
+    );
+  });
+
+  it('disambiguates folders that share a path across connections', () => {
+    const attioCompanies = makeFolder({
+      id: 'dfd_attio' as DataFolderId,
+      path: '/Companies',
+      connectorAccountId: 'cac_attio',
+    });
+    const affinityCompanies = makeFolder({
+      id: 'dfd_affinity' as DataFolderId,
+      path: '/Companies',
+      connectorAccountId: 'cac_affinity',
+    });
+    const both = [attioCompanies, affinityCompanies];
+    expect(findDataFolderForFile(both, 'Companies/paypal.json', 'cac_attio')).toBe(attioCompanies);
+    expect(findDataFolderForFile(both, 'Companies/paypal.json', 'cac_affinity')).toBe(affinityCompanies);
+  });
+
+  it('returns undefined when no folder matches the connection', () => {
+    expect(findDataFolderForFile(folders, 'Airtable/Base/Table1/record.json', 'cac_other')).toBeUndefined();
   });
 });

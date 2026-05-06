@@ -3,12 +3,11 @@
 import { Text12Regular } from '@/app/components/base/text';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
-import type { ConnectorAccount, Workbook } from '@spinner/shared-types';
+import type { ConnectorAccount, FileDiffStatus, Workbook } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { ReviewConnectionNode } from './ReviewTreeNode';
@@ -22,9 +21,9 @@ interface FileTreeProps {
   mode?: FileTreeMode;
 }
 
-export type { DirtyFile };
-
 const SCRATCH_GROUP_NAME = 'Scratch';
+
+const EMPTY_DIRTY_PATHS: ReadonlyMap<string, FileDiffStatus> = new Map();
 
 export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   const { dataFolderGroups, isLoading, refresh: refreshDataFolders } = useDataFolders(workbook.id);
@@ -40,9 +39,21 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     refresh: refreshDirtyFiles,
   } = useDirtyFiles(mode === 'review' ? workbook.id : null);
 
-  // Create a map of dirty file paths to their status for quick lookup
-  const dirtyFilePaths = useMemo(() => {
-    return new Map(dirtyFiles.map((f) => [f.path, f.status]));
+  // Bucket dirty files by connectorAccountId so each connection node only sees
+  // its own files. Two connections can have folders with the same path (e.g.
+  // /Companies under both Affinity and Attio) — without this scoping the
+  // sidebar would show the same file as dirty under both connections.
+  const dirtyFilesByConnection = useMemo(() => {
+    const byConnection = new Map<string, Map<string, FileDiffStatus>>();
+    for (const file of dirtyFiles) {
+      let inner = byConnection.get(file.connectorAccountId);
+      if (!inner) {
+        inner = new Map();
+        byConnection.set(file.connectorAccountId, inner);
+      }
+      inner.set(file.path, file.status);
+    }
+    return byConnection;
   }, [dirtyFiles]);
 
   // Sort groups: Scratch first, then alphabetically by name
@@ -166,13 +177,19 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
           const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
 
           if (mode === 'review') {
+            // Scratch group has no connectorAccountId; its dirty files (none today) would
+            // come from the workbook config repo and are not aggregated here.
+            const groupDirtyPaths = connectorAccountId
+              ? (dirtyFilesByConnection.get(connectorAccountId) ?? EMPTY_DIRTY_PATHS)
+              : EMPTY_DIRTY_PATHS;
             return (
               <ReviewConnectionNode
                 key={key}
                 group={group}
                 workbookId={workbook.id}
                 connectorAccount={connectorAccount}
-                dirtyFilePaths={dirtyFilePaths}
+                connectorAccountId={connectorAccountId ?? undefined}
+                dirtyFilePaths={groupDirtyPaths}
               />
             );
           }

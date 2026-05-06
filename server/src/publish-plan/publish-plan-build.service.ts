@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { FileDiffStatus, isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
+import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
 import { AssetIndexService } from 'src/asset/asset-index.service';
@@ -104,9 +104,7 @@ export class PublishPlanBuildService {
   ): Promise<boolean> {
     const wkbId = workbookId as WorkbookId;
     const repoIds = await this.resolveAllRepoIds(wkbId, connectorAccountId);
-    const allStatuses = await Promise.all(
-      repoIds.map((id) => this.scratchGitService.getRepoStatus(id) as Promise<Array<{ path: string; status: string }>>),
-    );
+    const allStatuses = await Promise.all(repoIds.map((id) => this.scratchGitService.getRepoStatus(id)));
     let changes = allStatuses.flat();
     if (changes.length === 0) return false;
 
@@ -194,10 +192,7 @@ export class PublishPlanBuildService {
       await onProgress?.({ ...liveCounts, step });
     };
 
-    let changes = (await this.scratchGitService.getRepoStatus(repoId)) as Array<{
-      path: string;
-      status: FileDiffStatus;
-    }>;
+    let changes = await this.scratchGitService.getRepoStatus(repoId);
 
     await reportProgress(`Diffing branches (${changes.length} changes found)`);
 

@@ -5,6 +5,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
+import { RouteUrls } from '@/utils/route-urls';
 import { Box, Collapse, Group, Stack } from '@mantine/core';
 import type { ConnectorAccount, DataFolder, DataFolderGroup, FileDiffStatus, WorkbookId } from '@spinner/shared-types';
 import { FolderIcon, StickyNoteIcon } from 'lucide-react';
@@ -102,7 +103,8 @@ interface ReviewFolderTreeRendererProps {
   depth: number;
   groupName: string;
   workbookId: WorkbookId;
-  dirtyFilePaths: Map<string, FileDiffStatus>;
+  connectorAccountId: string | undefined;
+  dirtyFilePaths: ReadonlyMap<string, FileDiffStatus>;
   idPrefix: string;
 }
 
@@ -111,6 +113,7 @@ function ReviewFolderTreeRenderer({
   depth,
   groupName,
   workbookId,
+  connectorAccountId,
   dirtyFilePaths,
   idPrefix,
 }: ReviewFolderTreeRendererProps) {
@@ -156,6 +159,7 @@ function ReviewFolderTreeRenderer({
                 depth={depth + 1}
                 groupName={groupName}
                 workbookId={workbookId}
+                connectorAccountId={connectorAccountId}
                 dirtyFilePaths={dirtyFilePaths}
                 idPrefix={childId}
               />
@@ -167,6 +171,7 @@ function ReviewFolderTreeRenderer({
             key={entry.folder.id ?? `folder-${entry.index}`}
             folder={entry.folder}
             workbookId={workbookId}
+            connectorAccountId={connectorAccountId}
             dirtyFilePaths={dirtyFilePaths}
             depth={depth}
           />
@@ -184,10 +189,18 @@ interface ReviewConnectionNodeProps {
   group: DataFolderGroup;
   workbookId: WorkbookId;
   connectorAccount?: ConnectorAccount;
-  dirtyFilePaths: Map<string, FileDiffStatus>;
+  /** Connection that owns this group, or undefined for the Scratch (workbook config repo) group. */
+  connectorAccountId: string | undefined;
+  dirtyFilePaths: ReadonlyMap<string, FileDiffStatus>;
 }
 
-export function ReviewConnectionNode({ group, workbookId, connectorAccount, dirtyFilePaths }: ReviewConnectionNodeProps) {
+export function ReviewConnectionNode({
+  group,
+  workbookId,
+  connectorAccount,
+  connectorAccountId,
+  dirtyFilePaths,
+}: ReviewConnectionNodeProps) {
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
   const toggleNode = useWorkbookUIStore((state) => state.toggleNode);
 
@@ -249,6 +262,7 @@ export function ReviewConnectionNode({ group, workbookId, connectorAccount, dirt
             depth={0}
             groupName={group.name}
             workbookId={workbookId}
+            connectorAccountId={connectorAccountId}
             dirtyFilePaths={dirtyFilePaths}
             idPrefix={connectionId}
           />
@@ -265,12 +279,14 @@ export function ReviewConnectionNode({ group, workbookId, connectorAccount, dirt
 interface ReviewTableNodeProps {
   folder: DataFolder;
   workbookId: WorkbookId;
-  dirtyFilePaths: Map<string, FileDiffStatus>;
+  /** Connection that owns this folder, or undefined for the Scratch group. */
+  connectorAccountId: string | undefined;
+  dirtyFilePaths: ReadonlyMap<string, FileDiffStatus>;
   /** Depth in the tree, controls left indentation. Mirrors `TableNode` in TreeNode.tsx. */
   depth: number;
 }
 
-function ReviewTableNode({ folder, workbookId, dirtyFilePaths, depth }: ReviewTableNodeProps) {
+function ReviewTableNode({ folder, workbookId, connectorAccountId, dirtyFilePaths, depth }: ReviewTableNodeProps) {
   const router = useRouter();
   const pathname = usePathname();
   const expandedNodes = useWorkbookUIStore((state) => state.expandedNodes);
@@ -284,8 +300,10 @@ function ReviewTableNode({ folder, workbookId, dirtyFilePaths, depth }: ReviewTa
     .split('/')
     .map((s) => encodeURIComponent(s))
     .join('/');
-  const urlFolderPath = `/workbook/${workbookId}/review/${encodedFolderPath}`;
-  const isSelected = pathname === urlFolderPath;
+  const urlFolderPath = connectorAccountId
+    ? `/workbook/${workbookId}/review/${encodeURIComponent(connectorAccountId)}/${encodedFolderPath}`
+    : null;
+  const isSelected = urlFolderPath !== null && pathname === urlFolderPath;
 
   // Build file list directly from dirtyFilePaths — no API call
   const dirtyFiles = useMemo(() => {
@@ -315,11 +333,11 @@ function ReviewTableNode({ folder, workbookId, dirtyFilePaths, depth }: ReviewTa
   );
 
   const handleRowClick = useCallback(() => {
-    router.push(`/workbook/${workbookId}/review/${encodedFolderPath}`);
+    if (urlFolderPath) router.push(urlFolderPath);
     if (!isExpanded) {
       toggleNode(nodeId);
     }
-  }, [router, workbookId, encodedFolderPath, isExpanded, toggleNode, nodeId]);
+  }, [router, urlFolderPath, isExpanded, toggleNode, nodeId]);
 
   if (dirtyFiles.length === 0) return null;
 
@@ -342,7 +360,7 @@ function ReviewTableNode({ folder, workbookId, dirtyFilePaths, depth }: ReviewTa
       <Collapse in={isExpanded}>
         <Stack gap={0} pl={INDENT_PX * 2} pr="sm">
           {displayedFiles.map((file) => (
-            <ReviewFileNode key={file.path} file={file} />
+            <ReviewFileNode key={file.path} file={file} connectorAccountId={connectorAccountId} />
           ))}
 
           {hasMore && (
@@ -374,22 +392,22 @@ function ReviewTableNode({ folder, workbookId, dirtyFilePaths, depth }: ReviewTa
 
 interface ReviewFileNodeProps {
   file: { path: string; name: string; status: FileDiffStatus };
+  /** Connection that owns this dirty file. Undefined means we cannot route to a review URL. */
+  connectorAccountId: string | undefined;
 }
 
-function ReviewFileNode({ file }: ReviewFileNodeProps) {
+function ReviewFileNode({ file, connectorAccountId }: ReviewFileNodeProps) {
   const params = useParams<{ id: string }>();
   const pathname = usePathname();
   const router = useRouter();
 
-  const encodedPath = file.path
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-  const href = `/workbook/${params.id}/review/${encodedPath}`;
-  const isSelected = pathname.includes(`/review/${encodedPath}`);
+  const href = connectorAccountId
+    ? RouteUrls.workbookReviewFileUrl(params.id, connectorAccountId, file.path)
+    : null;
+  const isSelected = href !== null && pathname === href;
 
   const handleFileClick = () => {
-    router.push(href);
+    if (href) router.push(href);
   };
 
   return (

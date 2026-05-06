@@ -6,7 +6,6 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import type { DirtyFile } from '@/hooks/use-dirty-files';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useFileByPath } from '@/hooks/use-file-path';
 import { SWR_KEYS } from '@/lib/api/keys';
@@ -18,7 +17,7 @@ import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
 import { EditorView } from '@codemirror/view';
 import { Box, Group, Loader, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
-import type { DataFolder, FileDiffStatus, Service, WorkbookId } from '@spinner/shared-types';
+import type { DataFolder, DirtyFile, FileDiffStatus, Service, WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   CheckCircle2Icon,
@@ -56,8 +55,10 @@ function groupFilesBySource(dirtyFiles: DirtyFile[], folders: DataFolder[]): Sou
   const groupMap = new Map<string, SourceGroup>();
 
   for (const file of dirtyFiles) {
-    const folder = findDataFolderForFile(folders, file.path);
-    const key = folder?.connectorDisplayName ?? '_ungrouped';
+    const folder = findDataFolderForFile(folders, file.path, file.connectorAccountId);
+    // Group by connectorAccountId so two connections with the same display name
+    // (or files that don't resolve to a folder) stay separate.
+    const key = file.connectorAccountId;
     const existing = groupMap.get(key);
     if (existing) {
       existing.files.push(file);
@@ -124,11 +125,10 @@ function computeDiffCounts(original: string | null, modified: string | null): { 
 interface ReviewFileRowProps {
   file: DirtyFile;
   workbookId: WorkbookId;
-  folders: DataFolder[];
   onDiscard: (filePath: string) => void;
 }
 
-const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, onDiscard }: ReviewFileRowProps) {
+const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, onDiscard }: ReviewFileRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
 
@@ -139,7 +139,7 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
   const modifiedContent = fileResponse?.file?.content ?? null;
 
   const { folder, filename } = formatFilePath(file.path);
-  const href = RouteUrls.workbookReviewFileUrl(workbookId, file.path);
+  const href = RouteUrls.workbookReviewFileUrl(workbookId, file.connectorAccountId, file.path);
   const borderColor = STATUS_COLOR[file.status] ?? 'transparent';
 
   const diffCounts = useMemo(() => {
@@ -166,14 +166,9 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
       e.stopPropagation();
       setIsPublishing(true);
       try {
-        const dataFolder = findDataFolderForFile(folders, file.path);
-        if (!dataFolder || !dataFolder.connectorAccountId) {
-          ScratchpadNotifications.error({ message: 'Could not resolve connection for this file' });
-          return;
-        }
         const result = await workbookApi.planPublishV2(
           workbookId,
-          dataFolder.connectorAccountId,
+          file.connectorAccountId,
           true,
           undefined,
           file.path,
@@ -190,7 +185,7 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
         setIsPublishing(false);
       }
     },
-    [workbookId, folders, file.path],
+    [workbookId, file.path, file.connectorAccountId],
   );
 
   const handleDiscard = useCallback(
@@ -314,11 +309,10 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, folders, o
 interface SourceGroupSectionProps {
   group: SourceGroup;
   workbookId: WorkbookId;
-  folders: DataFolder[];
   onDiscard: (filePath: string) => void;
 }
 
-function SourceGroupSection({ group, workbookId, folders, onDiscard }: SourceGroupSectionProps) {
+function SourceGroupSection({ group, workbookId, onDiscard }: SourceGroupSectionProps) {
   const [visibleCount, setVisibleCount] = useState(FILES_PER_PAGE);
   const displayedFiles = group.files.slice(0, visibleCount);
   const hasMore = group.files.length > visibleCount;
@@ -347,7 +341,7 @@ function SourceGroupSection({ group, workbookId, folders, onDiscard }: SourceGro
 
       {/* Files */}
       {displayedFiles.map((file) => (
-        <ReviewFileRow key={file.path} file={file} workbookId={workbookId} folders={folders} onDiscard={onDiscard} />
+        <ReviewFileRow key={`${file.connectorAccountId}:${file.path}`} file={file} workbookId={workbookId} onDiscard={onDiscard} />
       ))}
 
       {/* Load more */}
@@ -454,13 +448,7 @@ export default function ReviewPage() {
       <ScrollArea style={{ flex: 1 }} type="auto">
         <Stack gap={0}>
           {sourceGroups.map((group) => (
-            <SourceGroupSection
-              key={group.key}
-              group={group}
-              workbookId={workbookId}
-              folders={folders}
-              onDiscard={handleDiscard}
-            />
+            <SourceGroupSection key={group.key} group={group} workbookId={workbookId} onDiscard={handleDiscard} />
           ))}
         </Stack>
       </ScrollArea>

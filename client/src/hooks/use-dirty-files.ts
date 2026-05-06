@@ -1,12 +1,7 @@
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
-import { FileDiffStatus, WorkbookId } from '@spinner/shared-types';
+import { DirtyFile, WorkbookId } from '@spinner/shared-types';
 import useSWR from 'swr';
-
-export interface DirtyFile {
-  path: string;
-  status: FileDiffStatus;
-}
 
 export interface UseDirtyFilesReturn {
   dirtyFiles: DirtyFile[];
@@ -18,7 +13,7 @@ export interface UseDirtyFilesReturn {
 export const useDirtyFiles = (workbookId: WorkbookId | null): UseDirtyFilesReturn => {
   const { data, error, isLoading, mutate } = useSWR<DirtyFile[], Error>(
     workbookId ? SWR_KEYS.dirtyFiles.list(workbookId) : null,
-    () => workbookApi.getStatus(workbookId!) as Promise<DirtyFile[]>,
+    () => workbookApi.getStatus(workbookId!),
     {
       revalidateOnFocus: false,
     },

@@ -327,8 +327,10 @@ export class ScratchGitClient {
     >;
   }
 
-  async getStatus(repoId: string): Promise<unknown> {
-    return this.callGitApi(`/api/repo/diff/${this.encodeRepoId(repoId)}/status`, 'GET');
+  async getStatus(repoId: string): Promise<Array<{ path: string; status: FileDiffStatus }>> {
+    return this.callGitApi(`/api/repo/diff/${this.encodeRepoId(repoId)}/status`, 'GET') as Promise<
+      Array<{ path: string; status: FileDiffStatus }>
+    >;
   }
 
   async hasDirtyFiles(repoId: string): Promise<HasDirtyFilesResponse> {

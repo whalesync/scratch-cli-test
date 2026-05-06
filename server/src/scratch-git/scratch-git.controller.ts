@@ -1,6 +1,8 @@
 import { All, Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type {
+  DirtyFile,
   DirtyFileCountResponse,
+  FileDiffStatus,
   GitGcResponse,
   GitObjectCountsResponse,
   HasDirtyFilesResponse,
@@ -28,17 +30,29 @@ export class ScratchGitController {
    * Otherwise returns all per-connection repo IDs for the workbook.
    */
   private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
+    const repos = await this.resolveAllRepos(workbookId, connectorAccountId);
+    return repos.map((r) => r.repoId);
+  }
+
+  /**
+   * Like resolveAllRepoIds, but also returns the source connectorAccountId for each repo.
+   * Used when the response needs to be scoped per connection (e.g. dirty file aggregation).
+   */
+  private async resolveAllRepos(
+    workbookId: WorkbookId,
+    connectorAccountId?: string,
+  ): Promise<Array<{ repoId: string; connectorAccountId: string }>> {
     if (connectorAccountId) {
       const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-      return [repoId];
+      return [{ repoId, connectorAccountId }];
     }
 
     const connAccounts = await this.db.client.connectorAccount.findMany({
       where: { workbookId, repoPath: { not: null } },
-      select: { repoPath: true },
+      select: { id: true, repoPath: true },
     });
 
-    return connAccounts.map((ca) => ca.repoPath as string);
+    return connAccounts.map((ca) => ({ repoId: ca.repoPath as string, connectorAccountId: ca.id }));
   }
 
   @Get(':id/list')
@@ -82,21 +96,24 @@ export class ScratchGitController {
     @Param('id') workbookId: WorkbookId,
     @Query('connectorAccountId') connectorAccountId: string | undefined,
     @Req() req: RequestWithUser,
-  ): Promise<unknown> {
+  ): Promise<DirtyFile[]> {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId);
-    const repoIds = await this.resolveAllRepoIds(workbookId, connectorAccountId);
-    // V2 aggregation: concatenate dirty file lists across all connection repos.
-    // Repos that don't exist yet (not pulled) are skipped — they have no status.
+    const repos = await this.resolveAllRepos(workbookId, connectorAccountId);
+    // Tag each dirty entry with its source connectorAccountId so the client can
+    // attribute it to the right connection — connections that share a folder
+    // path (e.g. /Companies under both Affinity and Attio) cannot otherwise be
+    // disambiguated. Repos that don't exist yet (not pulled) are skipped.
     const results = await Promise.all(
-      repoIds.map((id) =>
-        this.scratchGitService.getRepoStatus(id).catch((err) => {
-          if (err instanceof ScratchGitNotFoundError) return [];
+      repos.map(async ({ repoId, connectorAccountId: sourceId }) => {
+        const entries = await this.scratchGitService.getRepoStatus(repoId).catch((err) => {
+          if (err instanceof ScratchGitNotFoundError) return [] as Array<{ path: string; status: FileDiffStatus }>;
           throw err;
-        }),
-      ),
+        });
+        return entries.map((e): DirtyFile => ({ ...e, connectorAccountId: sourceId }));
+      }),
     );
-    return (results as unknown[][]).flat();
+    return results.flat();
   }
 
   @Get(':id/git-has-dirty')

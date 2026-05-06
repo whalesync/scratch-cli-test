@@ -288,7 +288,7 @@ export class ScratchGitService {
     await this.scratchGitClient.publishFile(repoId, { path, content }, message);
   }
 
-  async getRepoStatus(repoId: string): Promise<unknown> {
+  async getRepoStatus(repoId: string): Promise<Array<{ path: string; status: FileDiffStatus }>> {
     return this.scratchGitClient.getStatus(repoId);
   }
 

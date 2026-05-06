@@ -25,9 +25,14 @@ import { MergeEditor } from '../shared/MergeEditor';
 interface ReviewFileViewerProps {
   workbookId: WorkbookId;
   filePath: string | null;
+  /**
+   * Connector account that owns this file. Required to disambiguate when two
+   * connections share a folder path (e.g. /Companies under both Affinity and Attio).
+   */
+  connectorAccountId: string;
 }
 
-export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps) {
+export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: ReviewFileViewerProps) {
   const router = useRouter();
   const { file: fileResponse, isLoading, updateFile, refreshFile } = useFileByPath(workbookId, filePath);
   const { folders } = useDataFolders(workbookId);
@@ -151,7 +156,7 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
 
     setIsPublishSubmitting(true);
     try {
-      const folder = findDataFolderForFile(folders, filePath);
+      const folder = findDataFolderForFile(folders, filePath, connectorAccountId);
 
       if (!folder || !folder.connectorAccountId) {
         console.debug('Could not find data folder or connector account for file:', filePath);
@@ -176,7 +181,7 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
     } finally {
       setIsPublishSubmitting(false);
     }
-  }, [filePath, workbookId, refreshFile, folders]);
+  }, [filePath, workbookId, refreshFile, folders, connectorAccountId]);
 
   // Keyboard shortcut: Cmd+S / Ctrl+S to save
   useEffect(() => {
@@ -292,7 +297,9 @@ export function ReviewFileViewer({ workbookId, filePath }: ReviewFileViewerProps
             original={originalContent}
             modified={content}
             onModifiedChange={handleContentChange}
-            connectionName={findDataFolderForFile(folders, filePath ?? '')?.connectorDisplayName ?? undefined}
+            connectionName={
+              findDataFolderForFile(folders, filePath ?? '', connectorAccountId)?.connectorDisplayName ?? undefined
+            }
             originalExtensions={originalExtensions}
             modifiedExtensions={showReferences ? [fkReferenceExtension(activeDirtyRefs)] : undefined}
           />
