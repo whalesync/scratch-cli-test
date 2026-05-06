@@ -6,9 +6,13 @@ cd "$(dirname "$0")/.."
 # Usage: ./scripts/update_homebrew_cask.sh
 #
 # Prod-only. Runs after finalize_release.sh has flipped the GitHub release to
-# public. Computes sha256 for the macOS arm64 and x64 .zip assets (the cask
-# formula currently points at .zip, not .dmg — see plan), rewrites the cask
-# formulae in whalesync/homebrew-scratch-desktop, and pushes.
+# public. Computes sha256 for the macOS arm64 .zip asset (the cask formula
+# currently points at .zip, not .dmg — see plan), rewrites the cask formulae
+# in whalesync/homebrew-scratch-desktop, and pushes.
+#
+# Only arm64 is built (see electron-builder.yml mac target); the cask declares
+# `depends_on arch: :arm64` so Intel installs fail cleanly instead of pulling
+# an arm64 binary.
 #
 # Required env (normally from bootstrap dotenv):
 #   SEMVER, NEW_VERSION
@@ -30,7 +34,6 @@ BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${NEW_VERSION}"
 IFS='.' read -r MAJOR MINOR PATCH <<< "$SEMVER"
 
 ARM64_ZIP_NAME="Scratch-${SEMVER}-arm64.zip"
-X64_ZIP_NAME="Scratch-${SEMVER}-x64.zip"
 
 # Release is public at this point, so we can check/download with plain curl.
 WORK_DIR=$(mktemp -d)
@@ -39,29 +42,24 @@ TAP_DIR="$TAP_PARENT/homebrew-scratch-desktop"
 trap 'rm -rf "$WORK_DIR" "$TAP_PARENT"' EXIT
 
 # The mac Package/Upload jobs are optional in the pipeline — if the user
-# who cut this release doesn't have a local-macos runner, the .zip assets
+# who cut this release doesn't have a local-macos runner, the .zip asset
 # won't exist. In that case, skip the cask update rather than failing
 # Finalize: the previous cask version remains pinned to the last release
 # that shipped mac artifacts.
 arm64_status=$(curl -sSI -o /dev/null -w "%{http_code}" -L "${BASE_URL}/${ARM64_ZIP_NAME}")
-x64_status=$(curl -sSI -o /dev/null -w "%{http_code}" -L "${BASE_URL}/${X64_ZIP_NAME}")
-if [ "$arm64_status" != "200" ] || [ "$x64_status" != "200" ]; then
-  echo "macOS zip assets not present on release $NEW_VERSION"
+if [ "$arm64_status" != "200" ]; then
+  echo "macOS arm64 zip not present on release $NEW_VERSION"
   echo "  arm64 ($ARM64_ZIP_NAME): HTTP $arm64_status"
-  echo "  x64   ($X64_ZIP_NAME):   HTTP $x64_status"
-  echo "Skipping Homebrew cask update (no mac artifacts to pin)."
+  echo "Skipping Homebrew cask update (no mac artifact to pin)."
   exit 0
 fi
 
-echo "Downloading macOS zip assets for checksumming..."
+echo "Downloading macOS arm64 zip for checksumming..."
 curl -sSL --fail-with-body "${BASE_URL}/${ARM64_ZIP_NAME}" -o "$WORK_DIR/arm64.zip"
-curl -sSL --fail-with-body "${BASE_URL}/${X64_ZIP_NAME}"   -o "$WORK_DIR/x64.zip"
 
 SHA_DARWIN_ARM64=$(shasum -a 256 "$WORK_DIR/arm64.zip" | awk '{print $1}')
-SHA_DARWIN_AMD64=$(shasum -a 256 "$WORK_DIR/x64.zip"   | awk '{print $1}')
 
 echo "  arm64: $SHA_DARWIN_ARM64"
-echo "  x64:   $SHA_DARWIN_AMD64"
 
 echo "Cloning ${TAP_REPO}..."
 git clone "https://${GITHUB_TOKEN}@github.com/${TAP_REPO}.git" "$TAP_DIR"
@@ -73,18 +71,14 @@ mkdir -p "$TAP_DIR/Casks"
 cat > "$TAP_DIR/Casks/scratch-desktop.rb" <<RUBY
 cask "scratch-desktop" do
   version "$SEMVER"
+  sha256 "${SHA_DARWIN_ARM64}"
 
-  if Hardware::CPU.arm?
-    url "${BASE_URL}/${ARM64_ZIP_NAME}"
-    sha256 "${SHA_DARWIN_ARM64}"
-  else
-    url "${BASE_URL}/${X64_ZIP_NAME}"
-    sha256 "${SHA_DARWIN_AMD64}"
-  end
-
+  url "${BASE_URL}/${ARM64_ZIP_NAME}"
   name "Scratch Desktop"
   desc "Scratch content management desktop app"
   homepage "https://github.com/${GITHUB_REPO}"
+
+  depends_on arch: :arm64
 
   app "Scratch Desktop.app"
 
