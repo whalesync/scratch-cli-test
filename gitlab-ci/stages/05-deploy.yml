@@ -78,19 +78,41 @@ deploy scratch-git to test environment:
   extends:
     - .gcp_eu_test_env
   script:
+    # Ephemeral runners have no ~/.ssh; gcloud would prompt and generate keys mid-job.
+    # Pre-create keys (quiet); retry deploy SSH only — OS Login / IAP can reject the first attempt until the public key propagates.
+    - |
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      if [ ! -f "$HOME/.ssh/google_compute_engine" ]; then
+        ssh-keygen -t rsa -b 3072 -f "$HOME/.ssh/google_compute_engine" -N "" -q
+      fi
     - IMAGE_URL=${GCP_REGISTRY_URL}/spinner-scratch-git:${CI_COMMIT_SHORT_SHA}
     - |
-      gcloud compute ssh scratch-git \
-        --project spv1eu-test \
-        --zone europe-west1-b \
-        --tunnel-through-iap \
-        -- "sudo bash /mnt/disks/data/.deploy/deploy.sh $IMAGE_URL"
+      attempt=1
+      max_attempts=3
+      while [ "$attempt" -le "$max_attempts" ]; do
+        if gcloud compute ssh scratch-git \
+          --project spv1eu-test \
+          --zone europe-west1-b \
+          --tunnel-through-iap \
+          --quiet \
+          -- "sudo bash /mnt/disks/data/.deploy/deploy.sh $IMAGE_URL"; then
+          break
+        fi
+        if [ "$attempt" -eq "$max_attempts" ]; then
+          echo "ERROR: gcloud compute ssh (deploy) failed after $max_attempts attempts"
+          exit 1
+        fi
+        echo "gcloud compute ssh deploy failed (attempt $attempt/$max_attempts), retrying in 15s..."
+        sleep 15
+        attempt=$((attempt + 1))
+      done
     # Verify the deployed version is running through the nginx proxy
     - |
       HEALTH=$(gcloud compute ssh scratch-git \
         --project spv1eu-test \
         --zone europe-west1-b \
         --tunnel-through-iap \
+        --quiet \
         -- "curl -sf http://localhost:3100/health")
       echo "$HEALTH"
       if [ -z "$HEALTH" ]; then echo "ERROR: scratch-git health check failed"; exit 1; fi
@@ -187,19 +209,40 @@ deploy scratch-git to production environment:
   extends:
     - .gcp_eu_production_env
   script:
+    # Same SSH prep as test — ephemeral runners and OS Login propagation (see test job comment above).
+    - |
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      if [ ! -f "$HOME/.ssh/google_compute_engine" ]; then
+        ssh-keygen -t rsa -b 3072 -f "$HOME/.ssh/google_compute_engine" -N "" -q
+      fi
     - IMAGE_URL=${GCP_REGISTRY_URL}/spinner-scratch-git:${CI_COMMIT_SHORT_SHA}
     - |
-      gcloud compute ssh scratch-git \
-        --project spv1eu-production \
-        --zone europe-west1-b \
-        --tunnel-through-iap \
-        -- "sudo bash /mnt/disks/data/.deploy/deploy.sh $IMAGE_URL"
+      attempt=1
+      max_attempts=3
+      while [ "$attempt" -le "$max_attempts" ]; do
+        if gcloud compute ssh scratch-git \
+          --project spv1eu-production \
+          --zone europe-west1-b \
+          --tunnel-through-iap \
+          --quiet \
+          -- "sudo bash /mnt/disks/data/.deploy/deploy.sh $IMAGE_URL"; then
+          break
+        fi
+        if [ "$attempt" -eq "$max_attempts" ]; then
+          echo "ERROR: gcloud compute ssh (deploy) failed after $max_attempts attempts"
+          exit 1
+        fi
+        echo "gcloud compute ssh deploy failed (attempt $attempt/$max_attempts), retrying in 15s..."
+        sleep 15
+        attempt=$((attempt + 1))
+      done
     # Verify the deployed version is running through the nginx proxy
     - |
       HEALTH=$(gcloud compute ssh scratch-git \
         --project spv1eu-production \
         --zone europe-west1-b \
         --tunnel-through-iap \
+        --quiet \
         -- "curl -sf http://localhost:3100/health")
       echo "$HEALTH"
       if [ -z "$HEALTH" ]; then echo "ERROR: scratch-git health check failed"; exit 1; fi
