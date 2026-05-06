@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
  * Build a BaseJsonTableSpec for the Memberstack Members table.
@@ -14,7 +14,7 @@ export function buildMemberstackJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Members',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['auth', 'email'],
     slugFieldPath: 'auth.email',
     basePath: [],

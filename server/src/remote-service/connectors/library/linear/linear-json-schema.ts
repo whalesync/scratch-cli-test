@@ -5,7 +5,7 @@
  */
 
 import { type TSchema } from '@sinclair/typebox';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import {
   CyclesSchema,
   ENTITY_REGISTRY,
@@ -50,7 +50,7 @@ export function buildLinearJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: entityType,
     name: config.displayName,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     generatedAt: new Date().toISOString(),
   };
 

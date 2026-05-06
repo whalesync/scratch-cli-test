@@ -9,7 +9,7 @@ import {
   ForeignKeyOptionSchema,
   READONLY_FLAG,
 } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
@@ -296,7 +296,7 @@ export function buildWordPressJsonTableSpec(
     slug: id.wsId,
     name: formatTableName(tableId),
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId,
     mainContentColumnRemoteId,
     slugFieldPath: 'slug',

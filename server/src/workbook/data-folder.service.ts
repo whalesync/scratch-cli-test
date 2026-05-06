@@ -29,7 +29,7 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { ASSET_TABLE } from '../remote-service/connectors/json-schema';
-import { BaseJsonTableSpec } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
 import { FilesService } from './files.service';
@@ -220,7 +220,7 @@ export class DataFolderService {
         if (!schema?.properties || !(schema.properties as Record<string, unknown>)[idFieldOverride]) {
           throw new BadRequestException(`ID field "${idFieldOverride}" does not exist in the table schema`);
         }
-        tableSpec.idColumnRemoteId = idFieldOverride;
+        tableSpec.idColumnRemoteId = idPath(idFieldOverride);
       }
       if (nameFieldOverride && nameFieldOverride.length > 0) {
         // Validate that the field path exists in the schema. lodash.get takes a path array
@@ -774,7 +774,7 @@ export class DataFolderService {
       const idOverride = 'idFieldOverride' in options ? options.idFieldOverride : undefined;
       const nameOverride = 'nameFieldOverride' in options ? options.nameFieldOverride : undefined;
       if (typeof idOverride === 'string') {
-        tableSpec.idColumnRemoteId = idOverride;
+        tableSpec.idColumnRemoteId = idPath(idOverride);
       }
       if (Array.isArray(nameOverride) && nameOverride.length > 0) {
         tableSpec.titleColumnRemoteId = nameOverride;

@@ -15,6 +15,7 @@ import { sanitizeForTableWsId } from '../../ids';
 import { FOREIGN_KEY_OPTIONS, MAX_LENGTH } from '../../json-schema';
 import { Service } from '../../service-constants';
 import {
+  idPath,
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,
   type ConnectorFile,
@@ -236,7 +237,7 @@ export class PostgresConnector extends Connector {
         slug: tableName,
         name: tableName,
         schema: tableSchema,
-        idColumnRemoteId: primaryKey,
+        idColumnRemoteId: idPath(primaryKey),
         titleColumnRemoteId,
         slugFieldPath,
         basePath: [schema],

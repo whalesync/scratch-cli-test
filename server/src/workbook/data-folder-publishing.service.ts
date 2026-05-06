@@ -83,7 +83,7 @@ export class DataFolderPublishingService {
       diff: diff.map((d) => ({ path: d.path, status: d.status })),
     });
 
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
 
     // Discard dotfile diffs by syncing main's version to dirty
     const dotfileDiffs = diff.filter((f) => f.path.split('/').some((p) => p.startsWith('.')));
@@ -217,7 +217,7 @@ export class DataFolderPublishingService {
     }
 
     const batchSize = connector.getBatchSize('create');
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
 
     const usedFileNames = new Set<string>();
 
@@ -375,7 +375,7 @@ export class DataFolderPublishingService {
     }
 
     const batchSize = connector.getBatchSize('delete');
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
 
     for (let i = 0; i < files.length; i += batchSize) {
       const batch = files.slice(i, i + batchSize);

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
-import { cloneDeep, get, set, unset } from 'lodash';
+import { cloneDeep } from 'lodash';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject, ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
@@ -8,7 +8,16 @@ import { DbService } from '../db/db.service';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { exceptionForConnectorError } from '../remote-service/connectors/error';
-import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
+import {
+  BaseJsonTableSpec,
+  clearRecordId,
+  ConnectorFile,
+  IdPath,
+  readRecordId,
+  readRecordIdAsString,
+  recordWithId,
+  writeRecordId,
+} from '../remote-service/connectors/types';
 import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { assertUnreachable } from '../utils/asserts';
@@ -322,7 +331,7 @@ export class PublishFromGitService {
                     await this.dispatchCreateBatch(creates, connector, tableSpec, workbookId, repoId, hasLaterPhase);
                   }
                 } else {
-                  const idField = tableSpec.idColumnRemoteId || 'id';
+                  const idField = tableSpec.idColumnRemoteId;
                   const updates = await this.parseAndResolveUpdatePhaseOps(
                     repoId,
                     tablePath,
@@ -572,7 +581,7 @@ export class PublishFromGitService {
     phaseDir: string,
     phase: 'edit' | 'backfill',
     files: { name: string; content: string }[],
-    idField: string,
+    idField: IdPath,
   ): Promise<UpdatePhaseOperation[]> {
     type Pending = {
       filename: string;
@@ -596,8 +605,7 @@ export class PublishFromGitService {
         continue;
       }
       const envelope = parsed as PhaseFileEnvelope;
-      const idVal = get(envelope.content, idField);
-      const remoteId = typeof idVal === 'string' || typeof idVal === 'number' ? String(idVal) : null;
+      const remoteId = readRecordIdAsString(envelope.content as Record<string, unknown>, idField);
       pending.push({
         filename: file.name,
         relPath,
@@ -625,7 +633,7 @@ export class PublishFromGitService {
         // had an id we leave it untouched so its native type (e.g. numeric
         // Postgres id) is preserved in git.
         const cloned = cloneDeep(p.content) as Record<string, unknown>;
-        set(cloned, idField, looked);
+        writeRecordId(cloned, idField, looked);
         p.content = cloned as ParsedContent;
       }
     }
@@ -652,7 +660,7 @@ export class PublishFromGitService {
     repoId: string,
     hasLaterPhase: Set<string>,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
     const rawRecordContents = entries.map((e) => e.content);
     const resolvedRecordContents = await this.refResolverService.resolveBatchPseudoRefs(
       workbookId,
@@ -738,7 +746,7 @@ export class PublishFromGitService {
   private async refreshUpdatedEntries(
     connector: Connector<string, JsonSafeObject>,
     tableSpec: BaseJsonTableSpec,
-    idField: string,
+    idField: IdPath,
     entriesWithOps: { entry: UpdatePhaseOperation; resolvedContent: ParsedContent }[],
     workbookId: string,
     phase: 'edit' | 'backfill',
@@ -758,9 +766,9 @@ export class PublishFromGitService {
     try {
       await connector.pullRecordFilesByIds(tableSpec, [...new Set(ids)], ({ files }) => {
         for (const file of files) {
-          const remoteId = get(file, idField);
-          if (typeof remoteId === 'string' || typeof remoteId === 'number') {
-            refreshedById.set(String(remoteId), file as ParsedContent);
+          const remoteId = readRecordIdAsString(file as Record<string, unknown>, idField);
+          if (remoteId !== null) {
+            refreshedById.set(remoteId, file as ParsedContent);
           }
         }
         return Promise.resolve();
@@ -810,13 +818,12 @@ export class PublishFromGitService {
     repoId: string,
     hasLaterPhase: Set<string>,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
 
     const rawOps = entries.map((e) => {
       const entryContent = cloneDeep(e.content as Record<string, unknown>);
-      const idValue = get(entryContent, idField);
-      if (isScratchPendingPublishId(idValue)) {
-        unset(entryContent, idField);
+      if (isScratchPendingPublishId(readRecordId(entryContent, idField))) {
+        clearRecordId(entryContent, idField);
       }
       return entryContent as ParsedContent;
     });
@@ -847,10 +854,10 @@ export class PublishFromGitService {
       const { entry, resolvedOp } = entriesWithOps[i];
       const returned = (returnedRecords[i] ?? resolvedOp) as Record<string, unknown>;
 
-      const realId = get(returned, idField);
-      if (realId && (typeof realId === 'string' || typeof realId === 'number')) {
+      const realId = readRecordIdAsString(returned, idField);
+      if (realId !== null) {
         const { folderPath, filename } = parsePath(entry.relPath);
-        fileIndexUpdates.push({ workbookId, folderPath, filename, recordId: String(realId) });
+        fileIndexUpdates.push({ workbookId, folderPath, filename, recordId: realId });
       }
 
       refUpdates.push({ path: entry.relPath, content: returned });
@@ -902,8 +909,8 @@ export class PublishFromGitService {
   ): Promise<void> {
     if (entries.length === 0) return;
 
-    const idField = tableSpec.idColumnRemoteId || 'id';
-    const filters = entries.map((e) => set({}, idField, e.remoteId) as ConnectorFile);
+    const idField = tableSpec.idColumnRemoteId;
+    const filters = entries.map((e) => recordWithId(idField, e.remoteId) as ConnectorFile);
 
     await connector.deleteRecords(tableSpec, filters);
 

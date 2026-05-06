@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
 
@@ -200,7 +200,7 @@ export async function buildAffinityJsonTableSpec(
     slug: id.wsId,
     name: list.name,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId,
     // Nest user-created lists under a top-level "Lists" folder in the workbook
     // tree. Mirrors the `parentPath: 'Lists'` grouping in the picker — but the
@@ -258,7 +258,7 @@ export async function buildAffinityPersonsTableSpec(
     slug: id.wsId,
     name: 'People',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     // No `entity.` prefix — tenant records are flat. firstName chosen over
     // lastName because lastName is nullable in Affinity.
     titleColumnRemoteId: ['firstName'],
@@ -302,7 +302,7 @@ export async function buildAffinityCompaniesTableSpec(
     slug: id.wsId,
     name: 'Companies',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
@@ -334,7 +334,7 @@ export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTable
     slug: id.wsId,
     name: 'Opportunities',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
@@ -400,7 +400,7 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Notes',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['type'],
     basePath: [],
     generatedAt: new Date().toISOString(),
@@ -435,7 +435,7 @@ export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSp
     slug: id.wsId,
     name: 'Entity Files',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),

@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { MocoEntityType } from './moco-types';
 
 /**
@@ -433,7 +433,7 @@ export function buildMocoJsonTableSpec(id: EntityId, entityType: MocoEntityType)
     slug: id.wsId,
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: getTitleColumnRemoteId(entityType).slice(1),
     mainContentColumnRemoteId: getMainContentColumnRemoteId(entityType).slice(1),
     basePath: [],

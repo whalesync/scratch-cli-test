@@ -1,7 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { HubspotApiClient } from './hubspot-api-client';
 import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './hubspot-types';
 
@@ -125,7 +125,7 @@ export async function buildHubspotJsonTableSpec(
     slug: id.wsId,
     name: displayName,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId,
     slugFieldPath: config?.titleFieldPath,
     basePath: [],

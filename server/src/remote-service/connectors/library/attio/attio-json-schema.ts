@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AttioApiClient } from './attio-api-client';
 import { AttioAttribute, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
 
@@ -75,7 +75,7 @@ export async function buildAttioObjectTableSpec(
     slug: id.wsId,
     name: display.plural,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id.record_id'),
     // All three v1 objects (companies, people, deals) expose a `name` attribute
     // suitable for filenames — for people it's the `personal-name` type, for
     // companies/deals it's plain text.
@@ -127,7 +127,7 @@ export async function buildAttioListTableSpec(
     slug: id.wsId,
     name: listName,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id.entry_id'),
     // List entries don't carry a name of their own; the parent_record_id is
     // the closest stable identifier for filenames + display.
     titleColumnRemoteId: ['parent_record_id'],

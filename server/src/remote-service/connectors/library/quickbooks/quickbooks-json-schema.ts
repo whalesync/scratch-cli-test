@@ -1,4 +1,4 @@
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { QBO_SCHEMA_MAP } from './quickbooks-schemas';
 import { ENTITY_CONFIG, QuickBooksEntityType } from './quickbooks-types';
 
@@ -18,7 +18,7 @@ export function buildQuickBooksJsonTableSpec(id: EntityId, entityType: QuickBook
     slug: entityType.toLowerCase(),
     name: config.displayName,
     schema,
-    idColumnRemoteId: 'Id',
+    idColumnRemoteId: idPath('Id'),
     titleColumnRemoteId: [config.titleField],
     basePath: [],
     generatedAt: new Date().toISOString(),

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::extract::{Path, State};
 use axum::response::Response;
 use axum::Json;
@@ -11,6 +9,7 @@ use crate::service::error::AppError;
 use crate::service::git::repo::GitRepo;
 use crate::service::state::AppState;
 use crate::shared::index as idx;
+use crate::shared::json_path::{read_record_id_as_string, DEFAULT_ID_PATH};
 
 pub async fn build_index(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let result = tokio::task::spawn_blocking({
@@ -25,8 +24,9 @@ pub async fn build_index(State(state): State<AppState>, Path(id): Path<String>) 
             // Walk the entire tree and collect all blob paths + OIDs
             let blobs = collect_blobs(&git_repo.repo, tree_oid)?;
 
-            // First pass: build FK map from .scratch/**/schema.json files
-            let mut fk_map: HashMap<String, Vec<idx::FkField>> = HashMap::new();
+            // First pass: build per-folder schema metadata (FK fields + id path)
+            // from .scratch/**/schema.json blobs.
+            let mut schema_maps = idx::SchemaMaps::default();
             for (path, oid) in &blobs {
                 let Some(scratch_rest) = path.strip_prefix(".scratch/") else {
                     continue;
@@ -51,10 +51,7 @@ pub async fn build_index(State(state): State<AppState>, Path(id): Path<String>) 
                 let Ok(schema) = serde_json::from_str::<Value>(text) else {
                     continue;
                 };
-                let fk_fields = idx::extract_fk_fields(&schema);
-                if !fk_fields.is_empty() {
-                    fk_map.insert(folder_key, fk_fields);
-                }
+                schema_maps.record_schema(folder_key, &schema);
             }
 
             // Second pass: index data files and build FK reference entries
@@ -89,15 +86,12 @@ pub async fn build_index(State(state): State<AppState>, Path(id): Path<String>) 
                     continue;
                 };
 
-                // Extract remote_id (handle both string and numeric ids)
-                let remote_id = value.get("id").and_then(|v| {
-                    v.as_str()
-                        .map(|s| s.to_string())
-                        .or_else(|| v.as_i64().map(|n| n.to_string()))
-                });
+                // Extract remote_id at the schema's id path (defaults to DEFAULT_ID_PATH for
+                // connectors that don't declare one).
+                let remote_id = read_record_id_as_string(&value, schema_maps.id_path(&folder));
 
                 // FK references
-                if let Some(fk_fields) = fk_map.get(&folder) {
+                if let Some(fk_fields) = schema_maps.fk_map.get(&folder) {
                     for fk in fk_fields {
                         if let Some(ref_val) = idx::get_by_path(&value, &fk.field_path) {
                             let targets: Vec<String> = match ref_val {
@@ -343,10 +337,18 @@ pub fn index_single_file_on_main(
     }
 
     let db_path = state.index_db_path(id);
-    let fk_fields = load_fk_fields_for_folder(state, id, folder).unwrap_or_default();
+    let (id_path, fk_fields) = load_schema_for_folder(state, id, folder)
+        .unwrap_or_else(|_| (DEFAULT_ID_PATH.to_string(), vec![]));
 
-    idx::upsert_single_file(&db_path, folder, filename, file_content, &fk_fields)
-        .map_err(|e| crate::service::error::AppError::internal(e.to_string()))
+    idx::upsert_single_file(
+        &db_path,
+        folder,
+        filename,
+        file_content,
+        &id_path,
+        &fk_fields,
+    )
+    .map_err(|e| crate::service::error::AppError::internal(e.to_string()))
 }
 
 /// Remove a file from the SQLite index (called when a file is deleted from main).
@@ -366,13 +368,15 @@ pub fn remove_file_from_index(
         .map_err(|e| crate::service::error::AppError::internal(e.to_string()))
 }
 
-/// Read FK field definitions for a specific folder from the main branch in git.
+/// Read both the id path and FK field definitions for a specific folder
+/// from the main branch in git. Returns `(DEFAULT_ID_PATH, [])` when the
+/// schema is missing or the path isn't declared.
 #[allow(dead_code)]
-fn load_fk_fields_for_folder(
+fn load_schema_for_folder(
     state: &AppState,
     id: &str,
     folder: &str,
-) -> anyhow::Result<Vec<idx::FkField>> {
+) -> anyhow::Result<(String, Vec<idx::FkField>)> {
     let git_repo = GitRepo::open(&state.repos_dir, id)?;
     let schema_path = if folder.is_empty() {
         ".scratch/schema.json".to_string()
@@ -381,10 +385,11 @@ fn load_fk_fields_for_folder(
     };
 
     let Some(text) = git_repo.get_file_content("main", &schema_path)? else {
-        return Ok(vec![]);
+        return Ok((DEFAULT_ID_PATH.to_string(), vec![]));
     };
     let schema: serde_json::Value = serde_json::from_str(&text)?;
-    Ok(idx::extract_fk_fields(&schema))
+    let id_path = idx::extract_id_path(&schema).unwrap_or_else(|| DEFAULT_ID_PATH.to_string());
+    Ok((id_path, idx::extract_fk_fields(&schema)))
 }
 
 /// Recursively collect all blob (file) entries from a git tree as `(path, ObjectId)` pairs.

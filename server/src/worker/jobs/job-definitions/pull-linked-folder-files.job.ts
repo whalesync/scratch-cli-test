@@ -7,7 +7,12 @@ import {
   type WorkbookId,
 } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
-import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
+import {
+  type BaseJsonTableSpec,
+  type ConnectorFile,
+  idPath,
+  readRecordIdAsString,
+} from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
@@ -459,7 +464,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const nameOverride =
       'nameFieldOverride' in options ? (options as Record<string, unknown>).nameFieldOverride : undefined;
     if (typeof idOverride === 'string') {
-      tableSpec.idColumnRemoteId = idOverride;
+      tableSpec.idColumnRemoteId = idPath(idOverride);
     }
     if (typeof nameOverride === 'string') {
       tableSpec.titleColumnRemoteId = [nameOverride];
@@ -737,8 +742,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const { files, connectorProgress } = callbackParams;
 
       // Resolve filenames (DB query) — needed for proper file naming
-      // eslint-disable-next-line @typescript-eslint/no-base-to-string
-      const recordIds = files.map((f) => String((f as Record<string, unknown>)[tableSpec.idColumnRemoteId] || ''));
+      const recordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idColumnRemoteId) ?? '');
       const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
         dataFolder.workbookId,
         dataFolder.path?.replace(/^\//, '') ?? '',
@@ -863,8 +867,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           });
           continue;
         }
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        const recordId = String(parsedRecord[tableSpec.idColumnRemoteId] || '');
+        const recordId = readRecordIdAsString(parsedRecord, tableSpec.idColumnRemoteId) ?? '';
         builtFiles.push({
           path: `${stagingFolder}/${f.path}`,
           content: f.content,
@@ -1095,8 +1098,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const assetEntries = builtFiles.flatMap((f) => {
         const normalizedPath = f.path.startsWith('/') ? f.path.slice(1) : f.path;
         const recordContent = f.parsedRecord as Record<string, unknown>;
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        const recordRemoteId = String(recordContent[folderCtx.tableSpec.idColumnRemoteId] || '') || undefined;
+        const recordRemoteId = readRecordIdAsString(recordContent, folderCtx.tableSpec.idColumnRemoteId) ?? undefined;
         return this.assetExtractorService.extractAssets(folderCtx.connector, {
           workbookId: folderCtx.dataFolder.workbookId,
           service: folderCtx.dataFolder.connectorService,

@@ -19,7 +19,7 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, idPath, TablePreview } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { ShopifyApiClient, ShopifyError } from './shopify-api-client';
 import { ShopifyCredentials } from './shopify-types';
@@ -203,7 +203,7 @@ export class ShopifyConnector extends Connector {
       slug: entityType,
       name: config.displayName,
       schema: resolvedSchema,
-      idColumnRemoteId: 'id',
+      idColumnRemoteId: idPath('id'),
       generatedAt: new Date().toISOString(),
     };
 

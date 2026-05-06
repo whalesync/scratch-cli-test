@@ -1,7 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AudiencefulField } from './audienceful-types';
 
 /**
@@ -16,7 +16,7 @@ export function buildAudiencefulJsonTableSpec(id: EntityId, customFields: Audien
     slug: id.wsId,
     name: 'People',
     schema,
-    idColumnRemoteId: 'uid',
+    idColumnRemoteId: idPath('uid'),
     titleColumnRemoteId: ['email'],
     mainContentColumnRemoteId: ['notes'],
     basePath: [],

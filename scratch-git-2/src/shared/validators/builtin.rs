@@ -2,6 +2,8 @@ use super::{
     FieldValidationContext, RecordValidationContext, RecordValidationResult, ValidationLevel,
     ValidationResult,
 };
+use crate::shared::index::extract_id_path;
+use crate::shared::json_path::id_path_root;
 
 /// Validates that a field value's string length is between optional `min` and `max` characters.
 /// Non-string values are coerced to their JSON representation for length measurement.
@@ -136,8 +138,12 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
     // ── Required check ────────────────────────────────────────────────────────
     if let Some(required) = schema_obj.get("required").and_then(|v| v.as_array()) {
         // The id column is assigned by the remote service on first publish.
-        // New records (no master) won't have it yet — skip the required check for it.
-        let id_column = ctx.schema.get("idColumnRemoteId").and_then(|v| v.as_str());
+        // New records (no master) won't have it yet — skip the required check
+        // for it. `idColumnRemoteId` is a dot path (e.g. `"id.record_id"` for
+        // Attio); compare against its first segment because the JSON Schema's
+        // `required` array only lists top-level field names.
+        let id_path = extract_id_path(&ctx.schema);
+        let id_column_root = id_path.as_deref().map(id_path_root);
         let is_new_record = ctx.master_record.is_none();
 
         for field_val in required {
@@ -146,7 +152,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 None => continue,
             };
 
-            if is_new_record && id_column == Some(field_name) {
+            if is_new_record && id_column_root == Some(field_name) {
                 continue;
             }
 
@@ -333,13 +339,53 @@ mod tests {
     #[test]
     fn id_column_required_skipped_for_new_record() {
         // New record (master=None): id not yet assigned by remote — no required error.
+        let ctx = record_ctx(json!({"name": "Alice"}), None, schema_with_id_column());
+        let results = enforce_schema(&ctx);
+        assert!(
+            results.is_empty(),
+            "id column should not error on new records"
+        );
+    }
+
+    /// Mirrors Attio: `idColumnRemoteId` is a dot path into the id triple, but
+    /// the JSON Schema's `required` only lists the top-level `id` object. The
+    /// validator must compare against the path's first segment.
+    fn schema_with_dot_path_id_column() -> serde_json::Value {
+        json!({
+            "idColumnRemoteId": "id.record_id",
+            "schema": {
+                "required": ["id", "values"],
+                "properties": {
+                    "id": {
+                        "type": "object",
+                        "properties": {
+                            "workspace_id": { "type": "string" },
+                            "object_id": { "type": "string" },
+                            "record_id": { "type": "string" }
+                        }
+                    },
+                    "values": { "type": "object" }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn id_column_dot_path_skipped_for_new_record() {
+        // New Attio-shaped record: no `id` triple yet (the connector hasn't
+        // assigned one). The required check on the top-level `id` must be
+        // skipped because `idColumnRemoteId` points into it.
         let ctx = record_ctx(
-            json!({"name": "Alice"}),
+            json!({"values": {}}),
             None,
-            schema_with_id_column(),
+            schema_with_dot_path_id_column(),
         );
         let results = enforce_schema(&ctx);
-        assert!(results.is_empty(), "id column should not error on new records");
+        assert!(
+            results.is_empty(),
+            "id triple should not error on new records when idColumnRemoteId is a dot path; got {} violations",
+            results.len()
+        );
     }
 
     #[test]
@@ -354,7 +400,10 @@ mod tests {
         let required_error = results
             .iter()
             .find(|r| r.field_path == "id" && r.level == ValidationLevel::Error);
-        assert!(required_error.is_some(), "expected a required error for 'id'");
+        assert!(
+            required_error.is_some(),
+            "expected a required error for 'id'"
+        );
     }
 
     #[test]

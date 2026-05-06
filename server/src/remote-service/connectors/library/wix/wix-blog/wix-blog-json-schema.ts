@@ -7,7 +7,7 @@ import {
   ForeignKeyOptionSchema,
   READONLY_FLAG,
 } from '../../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../../types';
 
 /**
  * Build a BaseJsonTableSpec for Wix Blog draft posts.
@@ -123,7 +123,7 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Blog Posts',
     schema,
-    idColumnRemoteId: '_id',
+    idColumnRemoteId: idPath('_id'),
     titleColumnRemoteId: ['title'],
     mainContentColumnRemoteId: ['richContent'],
     basePath: [],

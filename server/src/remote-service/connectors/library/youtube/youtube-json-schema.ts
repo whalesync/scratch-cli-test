@@ -1,7 +1,7 @@
 import { Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { FOREIGN_KEY_OPTIONS, ForeignKeyOptionSchema, READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
  * Build a BaseJsonTableSpec from a YouTube channel.
@@ -91,7 +91,7 @@ export function buildYouTubeJsonTableSpec(id: EntityId, channelId: string, chann
     slug: id.wsId,
     name: channelTitle,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['snippet', 'title'],
     mainContentColumnRemoteId: ['snippet', 'description'],
     basePath: [],

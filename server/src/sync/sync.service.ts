@@ -32,7 +32,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
-import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import { BaseJsonTableSpec, IdPath, idPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
@@ -716,11 +716,11 @@ export class SyncService {
 
   /**
    * Extracts the idColumnRemoteId from a DataFolder's schema.
-   * Falls back to 'id' if the schema doesn't specify an idColumnRemoteId.
+   * Falls back to `idPath('id')` if the schema doesn't specify an idColumnRemoteId.
    */
-  private getIdColumnFromSchema(schema: unknown): string {
+  private getIdColumnFromSchema(schema: unknown): IdPath {
     const jsonSchema = schema as BaseJsonTableSpec | null;
-    return jsonSchema?.idColumnRemoteId ?? 'id';
+    return jsonSchema?.idColumnRemoteId ?? idPath('id');
   }
 
   /**
@@ -2057,7 +2057,7 @@ export class SyncService {
  * @param idColumnRemoteId - The column ID to use as the record ID (from schema.idColumnRemoteId)
  * @returns A SyncRecord with the ID extracted from the specified column
  */
-function parseFileToRecord(file: FileContent, idColumnRemoteId: string): SyncRecord {
+function parseFileToRecord(file: FileContent, idColumnRemoteId: IdPath): SyncRecord {
   const fields: Record<string, unknown> = {};
 
   if (file.content) {
@@ -2066,17 +2066,13 @@ function parseFileToRecord(file: FileContent, idColumnRemoteId: string): SyncRec
     Object.assign(fields, parsed);
   }
 
-  // Extract the record ID from the specified column
-  const recordId = get(fields, idColumnRemoteId);
-  if (recordId === undefined || recordId === null) {
-    throw new Error(`Record in file ${file.path} is missing required ID field: ${idColumnRemoteId}`);
-  }
-  if (typeof recordId !== 'string' && typeof recordId !== 'number') {
-    throw new Error(`Record ID field ${idColumnRemoteId} in file ${file.path} must be a string or number`);
+  const recordId = readRecordIdAsString(fields, idColumnRemoteId);
+  if (recordId === null) {
+    throw new Error(`Record in file ${file.path} is missing or has non-stringable id at path: ${idColumnRemoteId}`);
   }
 
   return {
-    id: String(recordId),
+    id: recordId,
     filePath: file.path,
     fields,
   };

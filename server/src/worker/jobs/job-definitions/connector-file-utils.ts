@@ -1,4 +1,8 @@
-import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
+import {
+  type BaseJsonTableSpec,
+  type ConnectorFile,
+  readRecordIdAsString,
+} from '../../../remote-service/connectors/types';
 import { formatJsonWithPrettier } from '../../../utils/json-formatter';
 import type { JsonSafeObject } from '../../../utils/objects';
 import { deduplicateFileName, normalizeFileName } from '../../../workbook/util';
@@ -43,7 +47,7 @@ export function buildGitFilesFromConnectorFiles(
     const record = records[i];
     const parsedRecord = record as JsonSafeObject;
     const content = formatJsonWithPrettier(parsedRecord as Record<string, unknown>);
-    const recordId = String(record[idColumnRemoteId]);
+    const recordId = readRecordIdAsString(record, idColumnRemoteId) ?? '';
 
     let fileName = existingFileNames.get(recordId);
 

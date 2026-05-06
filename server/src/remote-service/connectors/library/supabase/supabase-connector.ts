@@ -18,6 +18,7 @@ import { sanitizeForTableWsId } from '../../ids';
 import { FOREIGN_KEY_OPTIONS, MAX_LENGTH } from '../../json-schema';
 import { Service } from '../../service-constants';
 import {
+  idPath,
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,
   type ConnectorFile,
@@ -310,7 +311,7 @@ export class SupabaseConnector extends Connector {
         slug: tableName,
         name: tableName,
         schema: tableSchema,
-        idColumnRemoteId: primaryKey,
+        idColumnRemoteId: idPath(primaryKey),
         basePath: [schema],
         generatedAt: new Date().toISOString(),
       };

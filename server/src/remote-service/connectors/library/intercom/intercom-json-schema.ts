@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Articles (static schema)
@@ -77,7 +77,7 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
     slug: id.wsId,
     name: 'Articles',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['title'],
     mainContentColumnRemoteId: ['body'],
     slugFieldPath: 'title',
@@ -136,7 +136,7 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
     slug: id.wsId,
     name: 'Collections',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
     slugFieldPath: 'name',
     basePath: [],
@@ -280,7 +280,7 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
     slug: id.wsId,
     name: 'Conversations',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['title'],
     slugFieldPath: 'source.subject',
     basePath: [],

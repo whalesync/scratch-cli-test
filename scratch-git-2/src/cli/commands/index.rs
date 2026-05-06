@@ -280,7 +280,13 @@ pub fn refresh_record_index_command(
     )?;
     // Expand --folder args: enumerate .json files in each folder and merge into path_filters.
     if !input_folders.is_empty() {
-        let folder_paths = expand_folders_to_paths(&workspace_dir, &workspace_marker, connection_filter, input_folders, &layout)?;
+        let folder_paths = expand_folders_to_paths(
+            &workspace_dir,
+            &workspace_marker,
+            connection_filter,
+            input_folders,
+            &layout,
+        )?;
         for (conn, paths) in folder_paths {
             path_filters.entry(conn).or_default().extend(paths);
         }
@@ -664,7 +670,9 @@ fn expand_folders_to_paths(
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) && name_str.ends_with(".json") {
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+                && name_str.ends_with(".json")
+            {
                 conn_paths.insert(format!("{folder_rel}/{name_str}"));
             }
         }
@@ -1302,26 +1310,24 @@ pub fn validate_record_command(
     let workspace_dir = layout.workbook_materialization_path();
 
     // Split folder into connection name + subfolder path.
-    let (connection_name, subfolder): (Option<String>, Option<String>) =
-        if let Some(f) = folder {
-            let slash = f.find('/');
-            let conn = match slash {
-                Some(i) => f[..i].to_string(),
-                None => f.to_string(),
-            };
-            let sub = match slash {
-                Some(i) => f[i + 1..].to_string(),
-                None => String::new(),
-            };
-            (Some(conn), Some(sub))
-        } else {
-            (None, None)
+    let (connection_name, subfolder): (Option<String>, Option<String>) = if let Some(f) = folder {
+        let slash = f.find('/');
+        let conn = match slash {
+            Some(i) => f[..i].to_string(),
+            None => f.to_string(),
         };
+        let sub = match slash {
+            Some(i) => f[i + 1..].to_string(),
+            None => String::new(),
+        };
+        (Some(conn), Some(sub))
+    } else {
+        (None, None)
+    };
 
     // Load validation config: inline > disk > empty.
     let entries: Vec<validators::ValidatorEntry> = if let Some(json) = validation_json {
-        serde_json::from_str(json)
-            .map_err(|e| anyhow::anyhow!("invalid --validation JSON: {e}"))?
+        serde_json::from_str(json).map_err(|e| anyhow::anyhow!("invalid --validation JSON: {e}"))?
     } else if let (Some(conn), Some(sub)) = (&connection_name, &subfolder) {
         let scratch_dir = layout.connection_scratch_path(conn);
         let val_path = if sub.is_empty() {
@@ -1362,9 +1368,7 @@ pub fn validate_record_command(
 
     // Parse inline master once (reused for all files when --master is given).
     let inline_master: Option<serde_json::Value> = master_json
-        .map(|j| {
-            serde_json::from_str(j).map_err(|e| anyhow::anyhow!("invalid --master JSON: {e}"))
-        })
+        .map(|j| serde_json::from_str(j).map_err(|e| anyhow::anyhow!("invalid --master JSON: {e}")))
         .transpose()?;
 
     let mut all_violations: Vec<validators::DryRunViolation> = Vec::new();
@@ -1399,9 +1403,8 @@ pub fn validate_record_command(
             };
             let bytes = std::fs::read(&record_path)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", record_path.display()))?;
-            let record: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-                anyhow::anyhow!("invalid JSON in {}: {e}", record_path.display())
-            })?;
+            let record: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|e| anyhow::anyhow!("invalid JSON in {}: {e}", record_path.display()))?;
 
             // Master: inline override takes priority; otherwise try disk.
             let disk_master: Option<serde_json::Value> = if master_json.is_none() {

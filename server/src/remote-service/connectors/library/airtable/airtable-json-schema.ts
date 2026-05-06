@@ -11,7 +11,7 @@ import {
   REMOTE_FIELD_ID,
   SUGGESTED_TRANSFORMER,
 } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
 
 /**
@@ -64,7 +64,7 @@ export function buildAirtableJsonTableSpec(
     slug: id.wsId,
     name: table.name,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId,
     mainContentColumnRemoteId,
     basePath: [base.name],

@@ -116,7 +116,8 @@ describeIfKey('AttioConnector — live API', () => {
       const table = objectTables.find((t) => t.id.remoteId[0] === slug)!;
       const spec = await connector.fetchJsonTableSpec(table.id);
 
-      expect(spec.idColumnRemoteId).toBe('id');
+      // Dot-path id: Attio records carry an id triple, so the path drills into the leaf.
+      expect(spec.idColumnRemoteId).toBe('id.record_id');
       expect(spec.titleColumnRemoteId).toEqual(['values', 'name']);
 
       const props = (spec.schema as { properties: Record<string, unknown> }).properties;
@@ -144,7 +145,8 @@ describeIfKey('AttioConnector — live API', () => {
       }
 
       const spec = await connector.fetchJsonTableSpec(listTables[0].id);
-      expect(spec.idColumnRemoteId).toBe('id');
+      // List entries are addressed by their entry_id leaf inside the id triple.
+      expect(spec.idColumnRemoteId).toBe('id.entry_id');
       expect(spec.titleColumnRemoteId).toEqual(['parent_record_id']);
 
       const props = (spec.schema as { properties: Record<string, unknown> }).properties;

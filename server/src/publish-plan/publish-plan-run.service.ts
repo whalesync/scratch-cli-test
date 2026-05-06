@@ -614,7 +614,7 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
     const rawContents = entries.map((e) => e.content).filter(Boolean);
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents, (asset) =>
       connector.resolveAssetReference(asset),
@@ -703,7 +703,7 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
 
     const rawOps = entries
       .map((e) => {
@@ -806,7 +806,7 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId || 'id';
+    const idField = tableSpec.idColumnRemoteId;
     const filters: { [key: string]: string }[] = [];
     const validEntries: PublishOperation[] = [];
 

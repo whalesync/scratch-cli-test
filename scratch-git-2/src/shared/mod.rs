@@ -1,5 +1,6 @@
 pub mod git_path;
 pub mod index;
+pub mod json_path;
 pub mod layout;
 pub mod merge;
 pub mod plan_publish;

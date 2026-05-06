@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { StripeEntityType } from './stripe-types';
 
 /**
@@ -575,7 +575,7 @@ export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityT
     slug: id.wsId,
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: getTitleColumnRemoteId(entityType),
     slugFieldPath: getSlugFieldPath(entityType),
     basePath: [],

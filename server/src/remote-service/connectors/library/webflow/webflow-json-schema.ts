@@ -16,7 +16,7 @@ import {
   SUGGESTED_IN_TRANSFORMER,
   SUGGESTED_TRANSFORMER,
 } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
  * Convert a Webflow field to a TypeBox JSON Schema.
@@ -245,7 +245,7 @@ export function buildWebflowJsonTableSpec(
     schema,
     titleColumnRemoteId,
     mainContentColumnRemoteId,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     slugFieldPath: 'fieldData.slug',
     basePath: [site.displayName ?? site.shortName ?? ''],
     generatedAt: new Date().toISOString(),
@@ -305,7 +305,7 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Webflow.Site
     slug: id.wsId,
     name: 'Assets',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['displayName'],
     basePath: [site.displayName ?? site.shortName ?? ''],
     generatedAt: new Date().toISOString(),

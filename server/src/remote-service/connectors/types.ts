@@ -1,6 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import type { EntityId } from '@spinner/shared-types';
 import { PostgresColumnType } from '@spinner/shared-types';
+import { get, set, unset } from 'lodash';
 
 // Re-export from shared-types for backwards compatibility
 export { PostgresColumnType };
@@ -22,15 +23,84 @@ export type TablePreview = {
   metadata?: Record<string, unknown>;
 };
 
+/**
+ * A lodash-style dot path into a record file pointing at the value used as
+ * its remote id (e.g. `'id'` for flat ids, `'id.record_id'` for Attio's id
+ * triple). Branded so callers must construct it via `idPath(...)` and can't
+ * accidentally pass a plain string.
+ */
+export type IdPath = string & { readonly __idPath: unique symbol };
+
+/**
+ * Construct an `IdPath` from a lodash-style dot path string. Use at every site
+ * a connector schema declares its `idColumnRemoteId`.
+ */
+export function idPath(path: string): IdPath {
+  return path as IdPath;
+}
+
+/**
+ * Read the raw value at a record's id path. Preserves the native JSON type so
+ * callers that need to detect special markers (e.g. pending-publish sentinels)
+ * or write the value back into a file via `lodash.set` see exactly what's on
+ * disk. Use `readRecordIdAsString` when you need a string for index/lookup.
+ */
+export function readRecordId(record: Record<string, unknown>, idPath: IdPath): unknown {
+  return get(record, idPath);
+}
+
+/**
+ * Read a record's id and coerce it to a string for use as a file-index key,
+ * remote-id lookup, or filename. Returns `null` if the value at the path is
+ * missing or is neither a string nor a finite number — callers that want a
+ * string fallback typically write `readRecordIdAsString(...) ?? ''`.
+ */
+export function readRecordIdAsString(record: Record<string, unknown>, idPath: IdPath): string | null {
+  const v = readRecordId(record, idPath);
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  return null;
+}
+
+/**
+ * Write a value at a record's id path. Mutates the record in place. Use when
+ * recovering an id that was missing from the file content (filename-index
+ * fallback) so the connector and git see a consistent value before the write.
+ */
+export function writeRecordId(record: Record<string, unknown>, idPath: IdPath, value: string | number): void {
+  set(record, idPath, value);
+}
+
+/**
+ * Remove the value at a record's id path. Mutates the record in place. Used
+ * to strip pending-publish sentinels off newly-created records before they
+ * reach the connector's create endpoint.
+ */
+export function clearRecordId(record: Record<string, unknown>, idPath: IdPath): void {
+  unset(record, idPath);
+}
+
+/**
+ * Build a fresh object containing only the id at its id path. Used to
+ * construct id-only stubs for connector update/delete filters where the full
+ * record body isn't needed (the connector reads the id leaf from the stub).
+ */
+export function recordWithId(idPath: IdPath, value: string | number): Record<string, unknown> {
+  return set({}, idPath, value);
+}
+
 export type BaseJsonTableSpec = {
   id: EntityId;
   slug: string;
   name: string;
   schema: TSchema;
-  // The remoteId of the column that should be used as the id column for visualizing records
-  // This is used to identify the record in the connector.
-  // This is usually the id column, but it can be different for some connectors id vs Id, etc.
-  idColumnRemoteId: string;
+  /**
+   * Lodash-style dot path into a record file that locates its remote id.
+   * Most connectors use a flat `idPath('id')`; Attio uses `idPath('id.record_id')`
+   * (and `idPath('id.entry_id')` for list entries) because its id is an object.
+   * Read with `lodash/get`, never bracket access.
+   */
+  idColumnRemoteId: IdPath;
   // The remoteId of the column that should be used as the title/header column for visualizing records
   titleColumnRemoteId?: EntityId['remoteId'];
   // The remoteId of the column that should be used as the main content/body in MD view

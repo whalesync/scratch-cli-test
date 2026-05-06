@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { READONLY_FLAG } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { BrevoContactAttribute } from './brevo-types';
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ export function buildBrevoContactsJsonTableSpec(id: EntityId, attributes: BrevoC
     slug: id.wsId,
     name: 'Contacts',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['email'],
     slugFieldPath: 'email',
     basePath: [],
@@ -113,7 +113,7 @@ export function buildBrevoTemplatesJsonTableSpec(id: EntityId): BaseJsonTableSpe
     slug: id.wsId,
     name: 'Email Templates',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
     slugFieldPath: 'name',
     basePath: [],
@@ -175,7 +175,7 @@ export function buildBrevoMailingListsJsonTableSpec(id: EntityId): BaseJsonTable
     slug: id.wsId,
     name: 'Mailing Lists',
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
     slugFieldPath: 'name',
     basePath: [],

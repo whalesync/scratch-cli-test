@@ -12,7 +12,7 @@ import {
   SUGGESTED_TRANSFORMER,
   VIRTUAL_FIELDS,
 } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 /**
  * Read-only property types that cannot be updated via the Notion API.
@@ -131,7 +131,7 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
     slug: id.wsId,
     name: sanitizeForTableWsId(tableTitle),
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

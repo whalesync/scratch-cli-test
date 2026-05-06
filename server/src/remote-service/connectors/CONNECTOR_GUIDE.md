@@ -127,7 +127,7 @@ type BaseJsonTableSpec = {
   slug: string;
   name: string;
   schema: TSchema; // TypeBox JSON Schema
-  idColumnRemoteId: string; // Field used as record ID
+  idColumnRemoteId: IdPath; // Lodash dot-path to the record's remote id (e.g. idPath('id') or idPath('id.record_id'))
   titleColumnRemoteId?: EntityId['remoteId'];
   mainContentColumnRemoteId?: EntityId['remoteId'];
   slugFieldPath?: string; // Lodash dot-path for filename slug (e.g. 'fieldData.slug')
@@ -240,7 +240,7 @@ Build a `BaseJsonTableSpec` with a TypeBox JSON Schema describing every field. P
 
 Key considerations:
 
-- Set `idColumnRemoteId` to the field that uniquely identifies records (e.g., `'id'`, `'recordId'`)
+- Set `idColumnRemoteId` to a lodash dot-path that locates the record's remote id, wrapped in the `idPath()` constructor — e.g. `idPath('id')` for flat ids, `idPath('id.record_id')` when the API returns an id object (Attio). The path is read with `lodash.get` everywhere; never with bracket access. Helpers `readRecordId`, `readRecordIdAsString`, `writeRecordId`, `clearRecordId`, and `recordWithId` (in `connectors/types.ts`) are the canonical accessors — use them instead of raw lodash so future readers see the intent at every call site.
 - Optionally set `titleColumnRemoteId` (display name), `mainContentColumnRemoteId` (markdown body), `slugFieldPath` (lodash dot-path for filename slug, e.g. `'fieldData.slug'`)
 - Annotate fields with `x-scratch-*` extensions (see [Section 5](#5-json-schema-extensions))
 

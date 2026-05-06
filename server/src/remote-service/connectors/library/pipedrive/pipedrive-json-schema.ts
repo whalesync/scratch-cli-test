@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
-import { BaseJsonTableSpec, EntityId } from '../../types';
+import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { PipedriveApiClient } from './pipedrive-api-client';
 import { ENTITY_CONFIG, ENTITY_DISPLAY_NAMES, PipedriveEntityType, PipedriveField } from './pipedrive-types';
 
@@ -220,7 +220,7 @@ export async function buildPipedriveJsonTableSpec(
     slug: id.wsId,
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
-    idColumnRemoteId: config.idField,
+    idColumnRemoteId: idPath(config.idField),
     titleColumnRemoteId: [config.titleField],
     basePath: [],
     generatedAt: new Date().toISOString(),

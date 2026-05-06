@@ -1,7 +1,11 @@
 import type { PrismaClient } from '@prisma/client';
 import { type DataFolderId, JobType, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
-import type { BaseJsonTableSpec, ConnectorFile } from '../../../remote-service/connectors/types';
+import {
+  type BaseJsonTableSpec,
+  type ConnectorFile,
+  readRecordIdAsString,
+} from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 // Non type imports
@@ -220,8 +224,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         fileCount: files.length,
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-base-to-string
-      const batchRecordIds = files.map((f) => String((f as Record<string, unknown>)[tableSpec.idColumnRemoteId] || ''));
+      const batchRecordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idColumnRemoteId) ?? '');
       const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
         dataFolder.workbookId,
         dataFolder.path?.replace(/^\//, '') ?? '',
@@ -287,8 +290,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
             const assetEntries = builtFiles.flatMap((f) => {
               const normalizedPath = f.path.startsWith('/') ? f.path.slice(1) : f.path;
               const recordContent = f.parsedRecord as Record<string, unknown>;
-              // eslint-disable-next-line @typescript-eslint/no-base-to-string
-              const recordRemoteId = String(recordContent[tableSpec.idColumnRemoteId] || '') || undefined;
+              const recordRemoteId = readRecordIdAsString(recordContent, tableSpec.idColumnRemoteId) ?? undefined;
               return this.assetExtractorService.extractAssets(connector, {
                 workbookId: dataFolder.workbookId,
                 service: dataFolder.connectorService as Service,

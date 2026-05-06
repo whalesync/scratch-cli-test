@@ -11,6 +11,7 @@ use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::json_path::{read_record_id_as_string, DEFAULT_ID_PATH};
 use super::layout::WorkspaceLayout;
 
 // ── Path helpers ─────────────────────────────────────────────────────────────
@@ -89,22 +90,57 @@ pub struct FkField {
     pub target_table_id: String,
 }
 
-/// Load FK field definitions from schema.json files stored in master_dir/.scratch/{folder}/schema.json.
-/// Returns a map from relative folder path (e.g. "public/posts") to FK fields.
-fn load_fk_map(master_dir: &Path) -> anyhow::Result<HashMap<String, Vec<FkField>>> {
-    let mut map: HashMap<String, Vec<FkField>> = HashMap::new();
-    let scratch_dir = master_dir.join(".scratch");
-    if !scratch_dir.exists() {
-        return Ok(map);
-    }
-    collect_fk_fields(&scratch_dir, &scratch_dir, &mut map)?;
-    Ok(map)
+/// Per-folder schema metadata read from the `.scratch/{folder}/schema.json`
+/// tree. Built once per index rebuild and consulted while walking record
+/// files. Public so the git-blob-based service route in `service/routes/index.rs`
+/// can populate the same struct rather than carrying parallel maps.
+#[derive(Default)]
+pub struct SchemaMaps {
+    pub fk_map: HashMap<String, Vec<FkField>>,
+    pub id_path_map: HashMap<String, String>,
 }
 
-fn collect_fk_fields(
+impl SchemaMaps {
+    /// Resolve the dot path to the remote id for a given folder, falling back
+    /// to [`DEFAULT_ID_PATH`] when the folder's schema doesn't declare one.
+    pub fn id_path(&self, folder: &str) -> &str {
+        self.id_path_map
+            .get(folder)
+            .map(|s| s.as_str())
+            .unwrap_or(DEFAULT_ID_PATH)
+    }
+
+    /// Record the FK fields and id path extracted from one folder's schema.
+    /// `extract_fk_fields` is called only when the schema has at least one FK
+    /// to keep the map small; `extract_id_path` is recorded whenever the
+    /// schema declares one.
+    pub fn record_schema(&mut self, folder: String, schema: &Value) {
+        let fk_fields = extract_fk_fields(schema);
+        if !fk_fields.is_empty() {
+            self.fk_map.insert(folder.clone(), fk_fields);
+        }
+        if let Some(id_path) = extract_id_path(schema) {
+            self.id_path_map.insert(folder, id_path);
+        }
+    }
+}
+
+/// Load schema-derived metadata (FK fields + id paths) from schema.json files
+/// stored in `master_dir/.scratch/{folder}/schema.json`.
+fn load_schema_maps(master_dir: &Path) -> anyhow::Result<SchemaMaps> {
+    let mut maps = SchemaMaps::default();
+    let scratch_dir = master_dir.join(".scratch");
+    if !scratch_dir.exists() {
+        return Ok(maps);
+    }
+    collect_schema_maps(&scratch_dir, &scratch_dir, &mut maps)?;
+    Ok(maps)
+}
+
+fn collect_schema_maps(
     scratch_root: &Path,
     dir: &Path,
-    map: &mut HashMap<String, Vec<FkField>>,
+    maps: &mut SchemaMaps,
 ) -> anyhow::Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(());
@@ -112,7 +148,7 @@ fn collect_fk_fields(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_fk_fields(scratch_root, &path, map)?;
+            collect_schema_maps(scratch_root, &path, maps)?;
         } else if path
             .file_name()
             .map(|n| n == "schema.json")
@@ -130,13 +166,23 @@ fn collect_fk_fields(
             let Ok(schema) = serde_json::from_str::<Value>(&raw) else {
                 continue;
             };
-            let fk_fields = extract_fk_fields(&schema);
-            if !fk_fields.is_empty() {
-                map.insert(folder_rel, fk_fields);
-            }
+            maps.record_schema(folder_rel, &schema);
         }
     }
     Ok(())
+}
+
+/// Extract the `idColumnRemoteId` dot path from a schema.json object.
+///
+/// The path tells the index where in each record file the remote id lives —
+/// `"id"` for flat ids, `"id.record_id"` for Attio's id triple, etc. Returns
+/// `None` if the schema doesn't declare one; callers should fall back to
+/// [`DEFAULT_ID_PATH`].
+pub fn extract_id_path(outer: &Value) -> Option<String> {
+    outer
+        .get("idColumnRemoteId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Extract FK field definitions from a schema.json object.
@@ -214,9 +260,9 @@ pub fn build(master_dir: &Path, db_path: &Path) -> anyhow::Result<usize> {
     conn.execute_batch("BEGIN")
         .map_err(|e| anyhow::anyhow!("failed to begin transaction: {e}"))?;
 
-    let fk_map = load_fk_map(master_dir)?;
+    let schema_maps = load_schema_maps(master_dir)?;
     let mut count = 0usize;
-    index_dir(master_dir, master_dir, &conn, &fk_map, &mut count)?;
+    index_dir(master_dir, master_dir, &conn, &schema_maps, &mut count)?;
 
     conn.execute_batch("COMMIT")
         .map_err(|e| anyhow::anyhow!("failed to commit transaction: {e}"))?;
@@ -300,7 +346,7 @@ fn index_dir(
     root: &Path,
     dir: &Path,
     conn: &Connection,
-    fk_map: &HashMap<String, Vec<FkField>>,
+    schema_maps: &SchemaMaps,
     count: &mut usize,
 ) -> anyhow::Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -313,13 +359,13 @@ fn index_dir(
             if name.starts_with('.') {
                 continue;
             }
-            index_dir(root, &path, conn, fk_map, count)?;
+            index_dir(root, &path, conn, schema_maps, count)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             if name == "schema.json" {
                 continue;
             }
-            index_file(root, &path, conn, fk_map, count)?;
+            index_file(root, &path, conn, schema_maps, count)?;
         }
     }
     Ok(())
@@ -329,7 +375,7 @@ fn index_file(
     root: &Path,
     path: &Path,
     conn: &Connection,
-    fk_map: &HashMap<String, Vec<FkField>>,
+    schema_maps: &SchemaMaps,
     count: &mut usize,
 ) -> anyhow::Result<()> {
     let raw = match std::fs::read_to_string(path) {
@@ -340,11 +386,6 @@ fn index_file(
         Ok(v) => v,
         Err(_) => return Ok(()),
     };
-
-    let remote_id = value
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
 
     let parent = path.parent().unwrap_or(root);
     let folder = parent
@@ -358,13 +399,15 @@ fn index_file(
         .to_string_lossy()
         .to_string();
 
+    let remote_id = read_record_id_as_string(&value, schema_maps.id_path(&folder));
+
     conn.execute(
         "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
         params![folder, filename, remote_id],
     )
     .map_err(|e| anyhow::anyhow!("failed to upsert {}/{}: {e}", folder, filename))?;
 
-    if let Some(fk_fields) = fk_map.get(&folder) {
+    if let Some(fk_fields) = schema_maps.fk_map.get(&folder) {
         for fk in fk_fields {
             if let Some(ref_val) = get_by_path(&value, &fk.field_path) {
                 // Collect FK values as strings; numbers are coerced (e.g. Postgres integer IDs)
@@ -433,12 +476,15 @@ fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
 /// - Deletes + re-inserts `file_references` rows for this file
 /// - Never touches other rows
 ///
+/// `id_path`  — dot path into the record where its remote id lives (from the
+///              folder's schema; pass [`DEFAULT_ID_PATH`] when unknown).
 /// `fk_fields` — FK field definitions for this file's folder (pass empty slice if none).
 pub fn upsert_single_file(
     db_path: &Path,
     folder: &str,
     filename: &str,
     json_content: &str,
+    id_path: &str,
     fk_fields: &[FkField],
 ) -> anyhow::Result<()> {
     if let Some(parent) = db_path.parent() {
@@ -451,11 +497,7 @@ pub fn upsert_single_file(
     let value: Value = serde_json::from_str(json_content)
         .map_err(|e| anyhow::anyhow!("failed to parse JSON for {}/{}: {e}", folder, filename))?;
 
-    let remote_id = value.get("id").and_then(|v| {
-        v.as_str()
-            .map(|s| s.to_string())
-            .or_else(|| v.as_i64().map(|n| n.to_string()))
-    });
+    let remote_id = read_record_id_as_string(&value, id_path);
 
     conn.execute(
         "INSERT OR REPLACE INTO file_index (folder, filename, remote_id) VALUES (?1, ?2, ?3)",
