@@ -1,7 +1,9 @@
 # ── CLI RELEASE JOBS ──
 
-# PROD RELEASE JOBS (prod branch)
-.release_rust_prod_job:
+# Shared zigbuild setup: cross-compile outputs live under target/<triple>/ plus
+# host artifacts in target/release — use cargo_cross (see gitlab-ci/common.yml),
+# not the native cargo cache.
+.release_rust_cli_zigbuild:
   stage: deploy
   image: unawareguitar/hasty-dolphin:latest
   variables:
@@ -9,7 +11,14 @@
     CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
   dependencies: []
   cache:
-    - !reference [.caches, cargo]
+    - !reference [.caches, cargo_cross]
+  before_script:
+    - apt-get update -qq && apt-get install -y git-restore-mtime || pip install git-restore-mtime
+    - git restore-mtime
+
+# PROD RELEASE JOBS (prod branch)
+.release_rust_prod_job:
+  extends: .release_rust_cli_zigbuild
   script:
     - chmod +x scratch-git-2/scripts/release_public.sh
     - scratch-git-2/scripts/release_public.sh $RELEASE_TYPE
@@ -44,14 +53,7 @@ release-rust-cli-major:
 
 # TEST RELEASE JOBS (master branch, excludes scheduled pipelines)
 .release_rust_test_job:
-  stage: deploy
-  image: unawareguitar/hasty-dolphin:latest
-  variables:
-    GIT_DEPTH: 0
-    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-  dependencies: []
-  cache:
-    - !reference [.caches, cargo]
+  extends: .release_rust_cli_zigbuild
   script:
     - chmod +x scratch-git-2/scripts/release_test.sh
     - scratch-git-2/scripts/release_test.sh $RELEASE_TYPE
