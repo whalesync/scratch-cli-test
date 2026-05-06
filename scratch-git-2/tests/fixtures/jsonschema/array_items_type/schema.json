@@ -1,0 +1,12 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "scores": {
+        "type": "array",
+        "description": "Array where each item must be a number",
+        "items": { "type": "number" }
+      }
+    }
+  }
+}

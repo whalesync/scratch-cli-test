@@ -1,0 +1,15 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "address": {
+        "type": "object",
+        "description": "A nested object field",
+        "properties": {
+          "street": { "type": "string" },
+          "city": { "type": "string" }
+        }
+      }
+    }
+  }
+}

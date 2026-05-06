@@ -1,0 +1,15 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "categories": {
+        "type": "array",
+        "description": "Multi-select field — each item must be a listed value",
+        "items": {
+          "type": "string",
+          "enum": ["News", "Sports", "Tech", "Finance"]
+        }
+      }
+    }
+  }
+}

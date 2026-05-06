@@ -1,0 +1,8 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "price": { "type": "number", "description": "A numeric field" }
+    }
+  }
+}

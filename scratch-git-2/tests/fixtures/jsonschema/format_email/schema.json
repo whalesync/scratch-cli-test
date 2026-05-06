@@ -1,0 +1,8 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "email": { "type": "string", "format": "email", "description": "An email address" }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "active": { "type": "boolean", "description": "A boolean flag" }
+    }
+  }
+}

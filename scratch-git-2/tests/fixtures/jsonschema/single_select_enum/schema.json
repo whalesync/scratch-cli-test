@@ -1,0 +1,11 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "description": "Single-select field — only listed values are valid",
+        "enum": ["Draft", "Published", "Archived", null]
+      }
+    }
+  }
+}

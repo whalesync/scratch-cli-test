@@ -1,0 +1,8 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string", "description": "Non-nullable string — null is not in the type union" }
+    }
+  }
+}

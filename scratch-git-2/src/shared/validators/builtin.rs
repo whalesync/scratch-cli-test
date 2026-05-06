@@ -135,6 +135,62 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
         None => return results,
     };
 
+    // ── JSONSchema validation ─────────────────────────────────────────────────
+    // Runs first so that the hand-rolled required/readonly checks below can
+    // overwrite any overlapping field_path entries via INSERT OR REPLACE.
+    //
+    // For new records (no master), strip the id column from the required array
+    // before passing to JSONSchema — the remote service assigns the id on first
+    // publish, so missing id is expected and must not be flagged.
+    {
+        let modified: Option<serde_json::Value> = if ctx.master_record.is_none() {
+            ctx.schema
+                .get("idColumnRemoteId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.split('.').next())
+                .map(|id_seg| {
+                    let mut m = schema_obj.clone();
+                    if let Some(req) = m.get_mut("required").and_then(|v| v.as_array_mut()) {
+                        req.retain(|v| v.as_str() != Some(id_seg));
+                    }
+                    m
+                })
+        } else {
+            None
+        };
+        let effective: &serde_json::Value = modified.as_ref().unwrap_or(schema_obj);
+
+        if let Ok(validator) = jsonschema::options()
+            .should_validate_formats(true)
+            .build(effective)
+        {
+            for error in validator.iter_errors(&ctx.record) {
+                // Skip required errors — the hand-rolled required check below
+                // handles these with better precision: null and empty string are
+                // also treated as missing, which JSON Schema does not catch.
+                if matches!(
+                    error.kind(),
+                    jsonschema::error::ValidationErrorKind::Required { .. }
+                ) {
+                    continue;
+                }
+                let pointer = error.instance_path().to_string();
+                let field_path = if pointer.is_empty() {
+                    "(record)".to_string()
+                } else {
+                    pointer.trim_start_matches('/').replace('/', ".")
+                };
+                results.push(RecordValidationResult {
+                    field_path,
+                    level: ValidationLevel::Error,
+                    message: Some(error.to_string()),
+                    description: None,
+                    fixable: false,
+                });
+            }
+        }
+    }
+
     // ── Required check ────────────────────────────────────────────────────────
     if let Some(required) = schema_obj.get("required").and_then(|v| v.as_array()) {
         // The id column is assigned by the remote service on first publish.
@@ -225,6 +281,16 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 }
             }
         }
+    }
+
+    // Deduplicate by field_path: hand-rolled checks run last and take precedence
+    // over JSONSchema errors for the same field (better messages, null/empty-string
+    // awareness). Reverse so retain keeps the last occurrence of each field_path.
+    {
+        let mut seen = std::collections::HashSet::new();
+        results.reverse();
+        results.retain(|r| seen.insert(r.field_path.clone()));
+        results.reverse();
     }
 
     results
