@@ -1,4 +1,5 @@
 /target
+target-cli-integration/
 .cargo-cli-integration/
 repos/
 cli-binaries/

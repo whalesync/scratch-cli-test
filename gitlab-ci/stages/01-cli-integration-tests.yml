@@ -8,9 +8,10 @@ include:
 # Jest suites in scratch-cli-tests/ shell out to the Rust scratchmd binary
 # against a remote Scratch stack. The job builds scratchmd here (rust:slim-
 # bookworm) and passes SCRATCH_CLI_BINARY so global-setup does not run cargo.
-# Uses an isolated CARGO_HOME under scratch-git-2 (no GitLab cargo cache, no
-# shared .cargo with other jobs). Env vars come from the GitLab File variable
-# CLI_INTEGRATION_TEST_CONFIG (copied to scratch-cli-tests/.env.integration).
+# Uses .caches.cargo_cli_integration only (separate registry + target tree from
+# other Rust jobs). CARGO_HOME / CARGO_TARGET_DIR / SCRATCH_CLI_BINARY must stay
+# aligned with gitlab-ci/common.yml. Integration env comes from the GitLab File
+# variable CLI_INTEGRATION_TEST_CONFIG (copied to scratch-cli-tests/.env.integration).
 # Triggered only by the scheduled pipeline named "Scheduled CLI Tests"
 # (PIPELINE_NAME).
 # =============================================================================
@@ -25,13 +26,17 @@ include:
   image: rust:slim-bookworm
   interruptible: true
   variables:
-    # Job-local registry/git checkouts — not shared with other CI jobs or cache.
-    CARGO_HOME: "${CI_PROJECT_DIR}/scratch-git-2/.cargo-cli-integration"
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo-cli-integration"
+    CARGO_TARGET_DIR: "${CI_PROJECT_DIR}/scratch-git-2/target-cli-integration"
     # Prebuilt in script/; global-setup skips cargo when this is set.
-    SCRATCH_CLI_BINARY: "${CI_PROJECT_DIR}/scratch-git-2/target/release/scratchmd"
+    SCRATCH_CLI_BINARY: "${CI_PROJECT_DIR}/scratch-git-2/target-cli-integration/release/scratchmd"
+  cache:
+    - !reference [.caches, cargo_cli_integration]
   timeout: 45m
   before_script:
-    - apt-get update && apt-get install -y pkg-config libssl-dev git ca-certificates curl gnupg && rm -rf /var/lib/apt/lists/*
+    - apt-get update && apt-get install -y pkg-config libssl-dev git ca-certificates curl gnupg python3-pip && rm -rf /var/lib/apt/lists/*
+    - pip3 install --break-system-packages git-restore-mtime 2>/dev/null || pip3 install git-restore-mtime || true
+    - git -C "${CI_PROJECT_DIR}" restore-mtime || true
     - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     - apt-get update && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
     - corepack enable && corepack prepare yarn@1.22.22 --activate

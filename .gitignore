@@ -57,6 +57,9 @@ repos/
 # Test report artifacts
 junit.xml
 
+# CLI integration CI: isolated cargo home at repo root (see gitlab-ci/common.yml)
+.cargo-cli-integration/
+
 # Cargo workspace build directory
 /target
 

@@ -273,3 +273,21 @@ include:
       - scratch-git-2/target/.rustc_info.json
       - scratch-git-2/target/CACHEDIR.TAG
     policy: pull-push
+  # Isolated from .cargo / target used by other CI jobs (scheduled CLI integration
+  # only). Jobs MUST set CARGO_HOME and CARGO_TARGET_DIR to the paths below.
+  cargo_cli_integration:
+    key:
+      files:
+        - scratch-git-2/Cargo.lock
+      prefix: cli-integration
+    fallback_keys:
+      - scratch-git-2-cargo-cli-integration
+    unprotect: true
+    paths:
+      - .cargo-cli-integration/registry/cache
+      - .cargo-cli-integration/registry/index
+      - .cargo-cli-integration/git
+      - scratch-git-2/target-cli-integration/release
+      - scratch-git-2/target-cli-integration/.rustc_info.json
+      - scratch-git-2/target-cli-integration/CACHEDIR.TAG
+    policy: pull-push
