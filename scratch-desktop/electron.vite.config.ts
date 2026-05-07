@@ -20,6 +20,14 @@ export default defineConfig({
       },
     },
     plugins: [react()],
+    optimizeDeps: {
+      include: ['@spinner/shared-types'],
+    },
+    build: {
+      commonjsOptions: {
+        include: [/node_modules/, /packages\/shared-types/],
+      },
+    },
     css: {
       modules: {
         localsConvention: 'camelCaseOnly',

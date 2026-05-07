@@ -9,13 +9,19 @@
  * Data access uses a dedicated PostgreSQL role created during setup.
  */
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, type ConnectorPullOptions } from '@spinner/shared-types';
+import {
+  connectorMetadata,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_MAX_LENGTH,
+  X_SCRATCH_READONLY,
+  type ConnectorPullOptions,
+} from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
-import { FOREIGN_KEY_OPTIONS, MAX_LENGTH } from '../../json-schema';
 import { Service } from '../../service-constants';
 import {
   idPath,
@@ -42,10 +48,6 @@ import { extractProjectRef } from './supabase-setup-utils';
 import { SupabaseCredentials, SupabaseProjectConfig } from './supabase-types';
 
 const READ_BATCH_SIZE = 500;
-
-/** JSON Schema extension keys (from CONNECTOR_GUIDE.md). */
-const READONLY_FLAG = 'x-scratch-readonly';
-const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 
 // ---------------------------------------------------------------------------
 // Connector
@@ -280,22 +282,22 @@ export class SupabaseConnector extends Connector {
         const { schema: colSchema, pgType } = mapPgType(col.data_type, col.udt_name, isNullable);
 
         // Annotate with connector data type
-        const annotated = { ...colSchema, [CONNECTOR_DATA_TYPE]: pgType } as TSchema;
+        const annotated = { ...colSchema, [X_SCRATCH_CONNECTOR_DATA_TYPE]: pgType } as TSchema;
 
         // Preserve VARCHAR(n)/CHAR(n) length limits from information_schema
         if (col.character_maximum_length !== null) {
-          (annotated as Record<string, unknown>)[MAX_LENGTH] = col.character_maximum_length;
+          (annotated as Record<string, unknown>)[X_SCRATCH_MAX_LENGTH] = col.character_maximum_length;
         }
 
         // Generated/identity columns are read-only
         if (isGeneratedColumn(col) || col.is_updatable === 'NO') {
-          (annotated as Record<string, unknown>)[READONLY_FLAG] = true;
+          (annotated as Record<string, unknown>)[X_SCRATCH_READONLY] = true;
         }
 
         // Annotate foreign key columns
         const linkedTableId = fkMap.get(col.column_name);
         if (linkedTableId) {
-          (annotated as Record<string, unknown>)[FOREIGN_KEY_OPTIONS] = { linkedTableId };
+          (annotated as Record<string, unknown>)[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId };
         }
 
         schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(annotated) : annotated;

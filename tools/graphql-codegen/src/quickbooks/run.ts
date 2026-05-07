@@ -418,7 +418,7 @@ function generateOutputFile(
  * All schemas have additionalProperties: true to handle undocumented fields.
  */
 import { type TSchema, Type } from '@sinclair/typebox';
-import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
+import { CONNECTOR_DATA_TYPE, FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '@spinner/shared-types';
 import { QuickBooksEntityType } from './quickbooks-types';
 `;
 

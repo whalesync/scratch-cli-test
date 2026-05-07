@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
+import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { MocoEntityType } from './moco-types';
 
@@ -71,7 +71,7 @@ function buildCompanySchema(): TSchema {
 
   return Type.Object(
     {
-      id: Type.Number({ description: 'Unique identifier (read-only)', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Unique identifier (read-only)', [X_SCRATCH_READONLY]: true }),
       type: Type.Union([Type.Literal('customer'), Type.Literal('supplier'), Type.Literal('organization')], {
         description: 'Company type (required)',
       }),
@@ -107,7 +107,7 @@ function buildCompanySchema(): TSchema {
       user: Type.Optional(
         Type.Object(
           { id: Type.Number(), firstname: Type.String(), lastname: Type.String() },
-          { description: 'Assigned user (read-only, use user_id for create/update)', [READONLY_FLAG]: true },
+          { description: 'Assigned user (read-only, use user_id for create/update)', [X_SCRATCH_READONLY]: true },
         ),
       ),
       footer: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'HTML footer for invoices' })),
@@ -133,17 +133,17 @@ function buildCompanySchema(): TSchema {
       default_invoice_due_days: Type.Optional(Type.Number({ description: 'Invoice payment terms (days)' })),
       // Related entities (read-only)
       projects: Type.Optional(
-        Type.Array(projectRefSchema, { description: 'Associated projects (read-only)', [READONLY_FLAG]: true }),
+        Type.Array(projectRefSchema, { description: 'Associated projects (read-only)', [X_SCRATCH_READONLY]: true }),
       ),
       created_at: Type.String({
         description: 'Created timestamp (read-only)',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       updated_at: Type.String({
         description: 'Updated timestamp (read-only)',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     { $id: 'moco/companies', title: 'Companies' },
@@ -156,7 +156,7 @@ function buildCompanySchema(): TSchema {
 function buildContactSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.Number({ description: 'Unique identifier (read-only)', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Unique identifier (read-only)', [X_SCRATCH_READONLY]: true }),
       gender: Type.Union([Type.Literal('F'), Type.Literal('M'), Type.Literal('U')], {
         description: 'Gender (required): F=Female, M=Male, U=Unknown',
       }),
@@ -184,7 +184,7 @@ function buildContactSchema(): TSchema {
       avatar_url: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Profile image URL (read-only)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       tags: Type.Optional(Type.Array(Type.String(), { description: 'Tags/labels' })),
@@ -200,26 +200,26 @@ function buildContactSchema(): TSchema {
           },
           {
             description: 'Associated company (read-only, use company_id for create/update)',
-            [READONLY_FLAG]: true,
-            [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
+            [X_SCRATCH_READONLY]: true,
+            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
           },
         ),
       ),
       user: Type.Optional(
         Type.Object(
           { id: Type.Number(), firstname: Type.String(), lastname: Type.String() },
-          { description: 'Assigned user (read-only, use user_id for create/update)', [READONLY_FLAG]: true },
+          { description: 'Assigned user (read-only, use user_id for create/update)', [X_SCRATCH_READONLY]: true },
         ),
       ),
       created_at: Type.String({
         description: 'Created timestamp (read-only)',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       updated_at: Type.String({
         description: 'Updated timestamp (read-only)',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     { $id: 'moco/contacts', title: 'Contacts' },
@@ -269,7 +269,7 @@ function buildProjectSchema(): TSchema {
 
   return Type.Object(
     {
-      id: Type.Number({ description: 'Unique identifier (read-only)', [READONLY_FLAG]: true }),
+      id: Type.Number({ description: 'Unique identifier (read-only)', [X_SCRATCH_READONLY]: true }),
       identifier: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Project identifier/code' })),
       name: Type.String({ description: 'Project name (required)' }),
       active: Type.Boolean({ description: 'Active status' }),
@@ -323,13 +323,13 @@ function buildProjectSchema(): TSchema {
       leader: Type.Optional(
         Type.Union([userRefSchema, Type.Null()], {
           description: 'Project leader (read-only, use leader_id for create/update)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       co_leader: Type.Optional(
         Type.Union([userRefSchema, Type.Null()], {
           description: 'Co-leader (read-only, use co_leader_id for create/update)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       customer: Type.Optional(
@@ -337,71 +337,73 @@ function buildProjectSchema(): TSchema {
           { id: Type.Number(), name: Type.String() },
           {
             description: 'Customer company (read-only, use customer_id for create/update)',
-            [READONLY_FLAG]: true,
-            [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
+            [X_SCRATCH_READONLY]: true,
+            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'companies' },
           },
         ),
       ),
       deal: Type.Optional(
         Type.Union([Type.Object({ id: Type.Number(), name: Type.String() }), Type.Null()], {
           description: 'Associated deal (read-only, use deal_id for create/update)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       project_group: Type.Optional(
         Type.Union([Type.Object({ id: Type.Number(), name: Type.String() }), Type.Null()], {
           description: 'Project group (read-only, use project_group_id for create/update)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       contact: Type.Optional(
         Type.Union([contactRefSchema, Type.Null()], {
           description: 'Primary contact (read-only, use contact_id for create/update)',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
         }),
       ),
       secondary_contact: Type.Optional(
         Type.Union([contactRefSchema, Type.Null()], {
           description: 'Secondary contact (read-only, use secondary_contact_id for create/update)',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
         }),
       ),
       billing_contact: Type.Optional(
         Type.Union([contactRefSchema, Type.Null()], {
           description: 'Billing contact (read-only, use billing_contact_id for create/update)',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'contacts' },
         }),
       ),
       // Nested arrays (read-only)
-      tasks: Type.Optional(Type.Array(taskSchema, { description: 'Project tasks (read-only)', [READONLY_FLAG]: true })),
+      tasks: Type.Optional(
+        Type.Array(taskSchema, { description: 'Project tasks (read-only)', [X_SCRATCH_READONLY]: true }),
+      ),
       contracts: Type.Optional(
-        Type.Array(contractSchema, { description: 'User contracts (read-only)', [READONLY_FLAG]: true }),
+        Type.Array(contractSchema, { description: 'User contracts (read-only)', [X_SCRATCH_READONLY]: true }),
       ),
       // Other read-only fields
       customer_report_url: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer report URL (read-only)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       archived_on: Type.Optional(
         Type.Union([Type.String({ format: 'date' }), Type.Null()], {
           description: 'Archive date (read-only)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       created_at: Type.String({
         description: 'Created timestamp (read-only)',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       updated_at: Type.String({
         description: 'Updated timestamp (read-only)',
         format: 'date-time',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     { $id: 'moco/projects', title: 'Projects' },

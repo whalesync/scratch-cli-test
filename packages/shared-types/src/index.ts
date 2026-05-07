@@ -10,9 +10,7 @@ export * from './enums';
 // Database entity types
 export * from './db';
 
-export * from './connector-account-types';
-export * from './connector-metadata';
-export * from './connector-types';
+export * from './connector';
 export * from './file-types';
 export * from './ids';
 export * from './job-types';

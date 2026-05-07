@@ -1,12 +1,12 @@
 import { Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import {
-  ASSET_FIELD,
   AssetFieldOptions,
-  FOREIGN_KEY_OPTIONS,
   ForeignKeyOptionSchema,
-  READONLY_FLAG,
-} from '../../../json-schema';
+  X_SCRATCH_ASSET_FIELD,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../../types';
 
 /**
@@ -16,58 +16,60 @@ import { BaseJsonTableSpec, EntityId, idPath } from '../../../types';
 export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      _id: Type.Optional(Type.String({ description: 'Unique post identifier', [READONLY_FLAG]: true })),
+      _id: Type.Optional(Type.String({ description: 'Unique post identifier', [X_SCRATCH_READONLY]: true })),
       title: Type.Optional(Type.String({ description: 'Post title' })),
       excerpt: Type.Optional(Type.String({ description: 'Post excerpt/summary' })),
       featured: Type.Optional(Type.Boolean({ description: 'Featured post flag' })),
       commentingEnabled: Type.Optional(Type.Boolean({ description: 'Comments enabled flag' })),
-      minutesToRead: Type.Optional(Type.Integer({ description: 'Estimated reading time', [READONLY_FLAG]: true })),
-      wordCount: Type.Optional(Type.Integer({ description: 'Word count', [READONLY_FLAG]: true })),
+      minutesToRead: Type.Optional(Type.Integer({ description: 'Estimated reading time', [X_SCRATCH_READONLY]: true })),
+      wordCount: Type.Optional(Type.Integer({ description: 'Word count', [X_SCRATCH_READONLY]: true })),
       firstPublishedDate: Type.Optional(
-        Type.String({ description: 'First publish date', format: 'date-time', [READONLY_FLAG]: true }),
+        Type.String({ description: 'First publish date', format: 'date-time', [X_SCRATCH_READONLY]: true }),
       ),
       lastPublishedDate: Type.Optional(
-        Type.String({ description: 'Last publish date', format: 'date-time', [READONLY_FLAG]: true }),
+        Type.String({ description: 'Last publish date', format: 'date-time', [X_SCRATCH_READONLY]: true }),
       ),
-      slug: Type.Optional(Type.String({ description: 'SEO slug', [READONLY_FLAG]: true })),
+      slug: Type.Optional(Type.String({ description: 'SEO slug', [X_SCRATCH_READONLY]: true })),
       seoSlug: Type.Optional(Type.String({ description: 'SEO slug' })),
-      url: Type.Optional(Type.String({ description: 'Post URL', format: 'uri', [READONLY_FLAG]: true })),
-      status: Type.Optional(Type.String({ description: 'Post status: DRAFT, PUBLISHED, etc.', [READONLY_FLAG]: true })),
+      url: Type.Optional(Type.String({ description: 'Post URL', format: 'uri', [X_SCRATCH_READONLY]: true })),
+      status: Type.Optional(
+        Type.String({ description: 'Post status: DRAFT, PUBLISHED, etc.', [X_SCRATCH_READONLY]: true }),
+      ),
       memberId: Type.Optional(
         Type.String({
           description: 'Author member ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_members' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_members' },
         }),
       ),
       hashtags: Type.Optional(Type.Array(Type.String(), { description: 'Post hashtags' })),
       categoryIds: Type.Optional(
         Type.Array(Type.String(), {
           description: 'Category IDs',
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_blog_categories' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_blog_categories' },
         }),
       ),
       tagIds: Type.Optional(
         Type.Array(Type.String(), {
           description: 'Tag IDs',
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_blog_tags' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_blog_tags' },
         }),
       ),
       relatedPostIds: Type.Optional(
         Type.Array(Type.String(), {
           description: 'Related post IDs',
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: id.wsId },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: id.wsId },
         }),
       ),
       pricingPlanIds: Type.Optional(
         Type.Array(Type.String(), {
           description: 'Pricing plan IDs',
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_pricing_plans' },
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'wix_pricing_plans' },
         }),
       ),
       language: Type.Optional(Type.String({ description: 'Post language code' })),
       translationId: Type.Optional(
-        Type.String({ description: 'Translation ID for multilingual', [READONLY_FLAG]: true }),
+        Type.String({ description: 'Translation ID for multilingual', [X_SCRATCH_READONLY]: true }),
       ),
       richContent: Type.Optional(
         Type.Object(
@@ -88,7 +90,7 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
           },
           {
             description: 'Hero/cover image',
-            [ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
+            [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
           },
         ),
       ),
@@ -138,7 +140,7 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${READONLY_FLAG}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${X_SCRATCH_READONLY}`) === true;
 }
 
 /**
@@ -148,7 +150,7 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  * @returns True if the field is a foreign key, false otherwise.
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Has(tableSpec.schema, `/properties/${field}/${FOREIGN_KEY_OPTIONS}`) !== undefined;
+  return ValuePointer.Has(tableSpec.schema, `/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined;
 }
 
 /**
@@ -158,7 +160,7 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
  * @returns The foreign key options, or undefined if the field is not a foreign key.
  */
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
-  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${FOREIGN_KEY_OPTIONS}`) as
+  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
     | ForeignKeyOptionSchema
     | undefined;
 }

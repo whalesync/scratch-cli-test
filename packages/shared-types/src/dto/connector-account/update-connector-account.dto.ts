@@ -1,5 +1,5 @@
 import { IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
-import { DecryptedCredentials } from '../../connector-account-types';
+import { DecryptedCredentials } from '../../connector/credentials';
 
 export class UpdateConnectorAccountDto {
   @IsString()

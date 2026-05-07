@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../../json-schema';
+import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
 import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
 import { HubspotConnector } from '../hubspot-connector';
 import companiesSchemaFixture from './__fixtures__/companies-schema.fixture.json';
@@ -52,19 +52,19 @@ function buildTableSpec(objectType: string, propertyDefs: Record<string, { reado
   for (const [name, cfg] of Object.entries(propertyDefs)) {
     const annotations: Record<string, unknown> = {
       description: name,
-      [REMOTE_FIELD_ID]: name,
-      [CONNECTOR_DATA_TYPE]: 'hubspot/string',
+      [X_SCRATCH_REMOTE_FIELD_ID]: name,
+      [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'hubspot/string',
     };
-    if (cfg.readonly) annotations[READONLY_FLAG] = true;
+    if (cfg.readonly) annotations[X_SCRATCH_READONLY] = true;
     propertiesSchema[name] = Type.Union([Type.String(), Type.Null()], annotations);
   }
 
   const schema = Type.Object({
-    id: Type.String({ [READONLY_FLAG]: true }),
+    id: Type.String({ [X_SCRATCH_READONLY]: true }),
     properties: Type.Object(propertiesSchema, { description: 'HubSpot properties' }),
-    createdAt: Type.String({ [READONLY_FLAG]: true }),
-    updatedAt: Type.String({ [READONLY_FLAG]: true }),
-    archived: Type.Boolean({ [READONLY_FLAG]: true }),
+    createdAt: Type.String({ [X_SCRATCH_READONLY]: true }),
+    updatedAt: Type.String({ [X_SCRATCH_READONLY]: true }),
+    archived: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
   });
 
   return {

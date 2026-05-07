@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { READONLY_FLAG } from '../../json-schema';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 
 // ---------------------------------------------------------------------------
@@ -12,8 +12,8 @@ import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      id: Type.String({ description: 'Article ID', [READONLY_FLAG]: true }),
-      workspace_id: Type.String({ description: 'Workspace ID', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Article ID', [X_SCRATCH_READONLY]: true }),
+      workspace_id: Type.String({ description: 'Workspace ID', [X_SCRATCH_READONLY]: true }),
       title: Type.String({ description: 'Article title' }),
       description: Type.Union([Type.String(), Type.Null()], { description: 'Article description' }),
       body: Type.Union([Type.String(), Type.Null()], { description: 'Article body (HTML)' }),
@@ -23,19 +23,19 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
       }),
       url: Type.Union([Type.String(), Type.Null()], {
         description: 'Public URL',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       parent_id: Type.Union([Type.Number(), Type.Null()], {
         description: 'Parent collection or section ID',
       }),
       parent_ids: Type.Array(Type.Number(), {
         description: 'All parent collection/section IDs',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       parent_type: Type.Union([Type.String(), Type.Null()], {
         description: 'Parent type (collection or section)',
       }),
-      default_locale: Type.String({ description: 'Default locale', [READONLY_FLAG]: true }),
+      default_locale: Type.String({ description: 'Default locale', [X_SCRATCH_READONLY]: true }),
       translated_content: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {
         description: 'Translated content by locale',
       }),
@@ -43,27 +43,27 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
         [
           Type.Object(
             {
-              type: Type.String({ [READONLY_FLAG]: true }),
-              views: Type.Number({ [READONLY_FLAG]: true }),
-              conversations: Type.Number({ [READONLY_FLAG]: true }),
-              reactions: Type.Number({ [READONLY_FLAG]: true }),
-              happy_reaction_percentage: Type.Number({ [READONLY_FLAG]: true }),
-              neutral_reaction_percentage: Type.Number({ [READONLY_FLAG]: true }),
-              sad_reaction_percentage: Type.Number({ [READONLY_FLAG]: true }),
+              type: Type.String({ [X_SCRATCH_READONLY]: true }),
+              views: Type.Number({ [X_SCRATCH_READONLY]: true }),
+              conversations: Type.Number({ [X_SCRATCH_READONLY]: true }),
+              reactions: Type.Number({ [X_SCRATCH_READONLY]: true }),
+              happy_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
+              neutral_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
+              sad_reaction_percentage: Type.Number({ [X_SCRATCH_READONLY]: true }),
             },
-            { [READONLY_FLAG]: true },
+            { [X_SCRATCH_READONLY]: true },
           ),
           Type.Null(),
         ],
-        { description: 'Article statistics', [READONLY_FLAG]: true },
+        { description: 'Article statistics', [X_SCRATCH_READONLY]: true },
       ),
       created_at: Type.Number({
         description: 'Creation timestamp (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       updated_at: Type.Number({
         description: 'Last updated timestamp (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     {
@@ -96,17 +96,17 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
 export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      id: Type.String({ description: 'Collection ID', [READONLY_FLAG]: true }),
-      workspace_id: Type.String({ description: 'Workspace ID', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Collection ID', [X_SCRATCH_READONLY]: true }),
+      workspace_id: Type.String({ description: 'Workspace ID', [X_SCRATCH_READONLY]: true }),
       name: Type.String({ description: 'Collection name' }),
       description: Type.Union([Type.String(), Type.Null()], { description: 'Collection description' }),
       icon: Type.Union([Type.String(), Type.Null()], { description: 'Icon identifier' }),
-      order: Type.Number({ description: 'Sort order', [READONLY_FLAG]: true }),
+      order: Type.Number({ description: 'Sort order', [X_SCRATCH_READONLY]: true }),
       url: Type.Union([Type.String(), Type.Null()], {
         description: 'Public URL',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
-      default_locale: Type.String({ description: 'Default locale', [READONLY_FLAG]: true }),
+      default_locale: Type.String({ description: 'Default locale', [X_SCRATCH_READONLY]: true }),
       translated_content: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {
         description: 'Translated content by locale',
       }),
@@ -118,11 +118,11 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
       }),
       created_at: Type.Number({
         description: 'Creation timestamp (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       updated_at: Type.Number({
         description: 'Last updated timestamp (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     {
@@ -150,25 +150,25 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
 
 const authorSchema = Type.Object(
   {
-    type: Type.String({ description: 'Author type', [READONLY_FLAG]: true }),
-    id: Type.String({ description: 'Author ID', [READONLY_FLAG]: true }),
-    name: Type.Union([Type.String(), Type.Null()], { description: 'Author name', [READONLY_FLAG]: true }),
-    email: Type.Union([Type.String(), Type.Null()], { description: 'Author email', [READONLY_FLAG]: true }),
+    type: Type.String({ description: 'Author type', [X_SCRATCH_READONLY]: true }),
+    id: Type.String({ description: 'Author ID', [X_SCRATCH_READONLY]: true }),
+    name: Type.Union([Type.String(), Type.Null()], { description: 'Author name', [X_SCRATCH_READONLY]: true }),
+    email: Type.Union([Type.String(), Type.Null()], { description: 'Author email', [X_SCRATCH_READONLY]: true }),
   },
-  { [READONLY_FLAG]: true },
+  { [X_SCRATCH_READONLY]: true },
 );
 
 const conversationPartSchema = Type.Object(
   {
-    type: Type.String({ [READONLY_FLAG]: true }),
-    id: Type.String({ [READONLY_FLAG]: true }),
-    part_type: Type.String({ description: 'Part type (comment, note, etc.)', [READONLY_FLAG]: true }),
-    body: Type.Union([Type.String(), Type.Null()], { description: 'Part body (HTML)', [READONLY_FLAG]: true }),
-    created_at: Type.Number({ description: 'Part creation timestamp (Unix)', [READONLY_FLAG]: true }),
-    updated_at: Type.Number({ description: 'Part update timestamp (Unix)', [READONLY_FLAG]: true }),
+    type: Type.String({ [X_SCRATCH_READONLY]: true }),
+    id: Type.String({ [X_SCRATCH_READONLY]: true }),
+    part_type: Type.String({ description: 'Part type (comment, note, etc.)', [X_SCRATCH_READONLY]: true }),
+    body: Type.Union([Type.String(), Type.Null()], { description: 'Part body (HTML)', [X_SCRATCH_READONLY]: true }),
+    created_at: Type.Number({ description: 'Part creation timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+    updated_at: Type.Number({ description: 'Part update timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
     author: authorSchema,
   },
-  { [READONLY_FLAG]: true },
+  { [X_SCRATCH_READONLY]: true },
 );
 
 /**
@@ -178,95 +178,98 @@ const conversationPartSchema = Type.Object(
 export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonTableSpec {
   const schema = Type.Object(
     {
-      id: Type.String({ description: 'Conversation ID', [READONLY_FLAG]: true }),
-      title: Type.Union([Type.String(), Type.Null()], { description: 'Conversation title', [READONLY_FLAG]: true }),
-      state: Type.String({ description: 'State (open, closed, snoozed)', [READONLY_FLAG]: true }),
-      open: Type.Boolean({ description: 'Whether the conversation is open', [READONLY_FLAG]: true }),
-      read: Type.Boolean({ description: 'Whether the conversation has been read', [READONLY_FLAG]: true }),
-      priority: Type.String({ description: 'Priority level', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Conversation ID', [X_SCRATCH_READONLY]: true }),
+      title: Type.Union([Type.String(), Type.Null()], {
+        description: 'Conversation title',
+        [X_SCRATCH_READONLY]: true,
+      }),
+      state: Type.String({ description: 'State (open, closed, snoozed)', [X_SCRATCH_READONLY]: true }),
+      open: Type.Boolean({ description: 'Whether the conversation is open', [X_SCRATCH_READONLY]: true }),
+      read: Type.Boolean({ description: 'Whether the conversation has been read', [X_SCRATCH_READONLY]: true }),
+      priority: Type.String({ description: 'Priority level', [X_SCRATCH_READONLY]: true }),
       admin_assignee_id: Type.Union([Type.Number(), Type.Null()], {
         description: 'Assigned admin ID',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       team_assignee_id: Type.Union([Type.String(), Type.Null()], {
         description: 'Assigned team ID',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       waiting_since: Type.Union([Type.Number(), Type.Null()], {
         description: 'Timestamp since waiting for admin reply',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       snoozed_until: Type.Union([Type.Number(), Type.Null()], {
         description: 'Timestamp when snoozed conversation reopens',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       source: Type.Object(
         {
-          type: Type.String({ [READONLY_FLAG]: true }),
-          id: Type.String({ [READONLY_FLAG]: true }),
-          delivered_as: Type.String({ description: 'Delivery method', [READONLY_FLAG]: true }),
-          subject: Type.String({ description: 'Subject line', [READONLY_FLAG]: true }),
-          body: Type.String({ description: 'Source message body (HTML)', [READONLY_FLAG]: true }),
+          type: Type.String({ [X_SCRATCH_READONLY]: true }),
+          id: Type.String({ [X_SCRATCH_READONLY]: true }),
+          delivered_as: Type.String({ description: 'Delivery method', [X_SCRATCH_READONLY]: true }),
+          subject: Type.String({ description: 'Subject line', [X_SCRATCH_READONLY]: true }),
+          body: Type.String({ description: 'Source message body (HTML)', [X_SCRATCH_READONLY]: true }),
           author: authorSchema,
-          url: Type.Union([Type.String(), Type.Null()], { [READONLY_FLAG]: true }),
-          redacted: Type.Boolean({ [READONLY_FLAG]: true }),
+          url: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+          redacted: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
         },
-        { description: 'The initiating message', [READONLY_FLAG]: true },
+        { description: 'The initiating message', [X_SCRATCH_READONLY]: true },
       ),
       contacts: Type.Object(
         {
-          type: Type.String({ [READONLY_FLAG]: true }),
+          type: Type.String({ [X_SCRATCH_READONLY]: true }),
           contacts: Type.Array(
             Type.Object({
-              type: Type.String({ [READONLY_FLAG]: true }),
-              id: Type.String({ [READONLY_FLAG]: true }),
+              type: Type.String({ [X_SCRATCH_READONLY]: true }),
+              id: Type.String({ [X_SCRATCH_READONLY]: true }),
             }),
-            { [READONLY_FLAG]: true },
+            { [X_SCRATCH_READONLY]: true },
           ),
         },
-        { description: 'Contacts involved', [READONLY_FLAG]: true },
+        { description: 'Contacts involved', [X_SCRATCH_READONLY]: true },
       ),
       tags: Type.Object(
         {
-          type: Type.String({ [READONLY_FLAG]: true }),
+          type: Type.String({ [X_SCRATCH_READONLY]: true }),
           tags: Type.Array(
             Type.Object({
-              type: Type.String({ [READONLY_FLAG]: true }),
-              id: Type.String({ [READONLY_FLAG]: true }),
-              name: Type.String({ [READONLY_FLAG]: true }),
+              type: Type.String({ [X_SCRATCH_READONLY]: true }),
+              id: Type.String({ [X_SCRATCH_READONLY]: true }),
+              name: Type.String({ [X_SCRATCH_READONLY]: true }),
             }),
-            { [READONLY_FLAG]: true },
+            { [X_SCRATCH_READONLY]: true },
           ),
         },
-        { description: 'Associated tags', [READONLY_FLAG]: true },
+        { description: 'Associated tags', [X_SCRATCH_READONLY]: true },
       ),
       custom_attributes: Type.Record(Type.String(), Type.Unknown(), {
         description: 'Custom attributes',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       conversation_rating: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {
         description: 'Conversation rating',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       statistics: Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {
         description: 'Conversation statistics',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       conversation_parts: Type.Object(
         {
-          type: Type.String({ [READONLY_FLAG]: true }),
-          conversation_parts: Type.Array(conversationPartSchema, { [READONLY_FLAG]: true }),
-          total_count: Type.Number({ [READONLY_FLAG]: true }),
+          type: Type.String({ [X_SCRATCH_READONLY]: true }),
+          conversation_parts: Type.Array(conversationPartSchema, { [X_SCRATCH_READONLY]: true }),
+          total_count: Type.Number({ [X_SCRATCH_READONLY]: true }),
         },
-        { description: 'Threaded replies, notes, and events', [READONLY_FLAG]: true },
+        { description: 'Threaded replies, notes, and events', [X_SCRATCH_READONLY]: true },
       ),
       created_at: Type.Number({
         description: 'Creation timestamp (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       updated_at: Type.Number({
         description: 'Last updated timestamp (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
     },
     {

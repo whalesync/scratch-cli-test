@@ -522,7 +522,7 @@ Custom `x-scratch-*` properties annotate fields in the TypeBox schema. Defined i
 Mark fields that should not be sent on create/update (computed fields, system timestamps, etc.).
 
 ```typescript
-import { READONLY_FLAG } from '../json-schema';
+import { READONLY_FLAG } from '@spinner/shared-types';
 
 // In your schema builder:
 const fieldSchema = Type.String();
@@ -534,7 +534,7 @@ fieldSchema[READONLY_FLAG] = true;
 Preserve the native API field type for display and transformation purposes.
 
 ```typescript
-import { CONNECTOR_DATA_TYPE } from '../json-schema';
+import { CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
 
 fieldSchema[CONNECTOR_DATA_TYPE] = 'RichText'; // Webflow
 fieldSchema[CONNECTOR_DATA_TYPE] = 'multipleAttachments'; // Airtable
@@ -545,7 +545,7 @@ fieldSchema[CONNECTOR_DATA_TYPE] = 'multipleAttachments'; // Airtable
 Preserve the maximum length of a string field as enforced by the external service (e.g. PostgreSQL `VARCHAR(n)` / `CHAR(n)`). The value is the maximum number of characters allowed.
 
 ```typescript
-import { MAX_LENGTH } from '../json-schema';
+import { MAX_LENGTH } from '@spinner/shared-types';
 
 fieldSchema[MAX_LENGTH] = 11; // VARCHAR(11)
 ```
@@ -555,7 +555,7 @@ fieldSchema[MAX_LENGTH] = 11; // VARCHAR(11)
 Define relationships between tables.
 
 ```typescript
-import { FOREIGN_KEY_OPTIONS } from '../json-schema';
+import { FOREIGN_KEY_OPTIONS } from '@spinner/shared-types';
 
 fieldSchema[FOREIGN_KEY_OPTIONS] = {
   linkedTableId: 'other_database_id',
@@ -567,7 +567,7 @@ fieldSchema[FOREIGN_KEY_OPTIONS] = {
 Hint that the system should auto-apply a transformation when this field is selected as a **source** in the sync editor.
 
 ```typescript
-import { SUGGESTED_TRANSFORMER } from '../json-schema';
+import { SUGGESTED_TRANSFORMER } from '@spinner/shared-types';
 
 fieldSchema[SUGGESTED_TRANSFORMER] = { type: 'notion_to_html' };
 ```
@@ -577,7 +577,7 @@ fieldSchema[SUGGESTED_TRANSFORMER] = { type: 'notion_to_html' };
 Hint that the system should auto-apply a transformation when this field is selected as a **destination** in the sync editor.
 
 ```typescript
-import { SUGGESTED_IN_TRANSFORMER } from '../json-schema';
+import { SUGGESTED_IN_TRANSFORMER } from '@spinner/shared-types';
 
 fieldSchema[SUGGESTED_IN_TRANSFORMER] = { type: 'html_to_notion' };
 ```
@@ -587,7 +587,7 @@ fieldSchema[SUGGESTED_IN_TRANSFORMER] = { type: 'html_to_notion' };
 Store the remote field ID from the external service (e.g., Airtable `fldXXX`, Webflow hex hash, Notion property ID).
 
 ```typescript
-import { REMOTE_FIELD_ID } from '../json-schema';
+import { REMOTE_FIELD_ID } from '@spinner/shared-types';
 
 fieldSchema[REMOTE_FIELD_ID] = 'fld12345abc';
 ```
@@ -597,8 +597,8 @@ fieldSchema[REMOTE_FIELD_ID] = 'fld12345abc';
 Define human-readable shortcuts for complex nested fields. Each virtual field provides a display label and a pre-configured transformer.
 
 ```typescript
-import { VIRTUAL_FIELDS } from '../json-schema';
-import { VirtualFieldDef } from '../json-schema';
+import { VIRTUAL_FIELDS } from '@spinner/shared-types';
+import { VirtualFieldDef } from '@spinner/shared-types';
 
 fieldSchema[VIRTUAL_FIELDS] = [
   {
@@ -614,7 +614,7 @@ fieldSchema[VIRTUAL_FIELDS] = [
 Mark a field as containing file/media assets that should be indexed. Used by the asset extraction system.
 
 ```typescript
-import { ASSET_FIELD, AssetFieldOptions } from '../json-schema';
+import { ASSET_FIELD, AssetFieldOptions } from '@spinner/shared-types';
 
 fieldSchema[ASSET_FIELD] = {
   idPath: 'id', // JSONPath to stable ID within each item (null = use URL hash)
@@ -627,7 +627,7 @@ fieldSchema[ASSET_FIELD] = {
 Mark a table whose records ARE assets (e.g., WordPress media, Webflow Assets). Unlike `x-scratch-asset-field`, this annotates the entire table spec rather than individual fields.
 
 ```typescript
-import { ASSET_TABLE, AssetTableOptions } from '../json-schema';
+import { ASSET_TABLE, AssetTableOptions } from '@spinner/shared-types';
 
 tableSpec[ASSET_TABLE] = {
   urlPath: 'source_url',

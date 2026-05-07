@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import { CONNECTOR_DATA_TYPE, READONLY_FLAG, REMOTE_FIELD_ID } from '../../json-schema';
+import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { HubspotApiClient } from './hubspot-api-client';
 import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './hubspot-types';
@@ -16,12 +16,12 @@ export function hubspotPropertyToJsonSchema(property: HubspotProperty): TSchema 
 
   const annotations: Record<string, unknown> = {
     description: property.label,
-    [REMOTE_FIELD_ID]: property.name,
-    [CONNECTOR_DATA_TYPE]: connectorDataType,
+    [X_SCRATCH_REMOTE_FIELD_ID]: property.name,
+    [X_SCRATCH_CONNECTOR_DATA_TYPE]: connectorDataType,
   };
 
   if (isReadonly) {
-    annotations[READONLY_FLAG] = true;
+    annotations[X_SCRATCH_READONLY] = true;
   }
 
   return Type.Union([Type.String(), Type.Null()], annotations);
@@ -66,7 +66,7 @@ function buildAssociationsSchema(objectType: string): TSchema | null {
 
   return Type.Optional(
     Type.Object(assocProperties, {
-      [READONLY_FLAG]: true,
+      [X_SCRATCH_READONLY]: true,
       description: 'Associations with other HubSpot objects',
     }),
   );
@@ -95,11 +95,11 @@ export async function buildHubspotJsonTableSpec(
 
   // Build top-level record schema matching raw API response
   const topLevelProperties: Record<string, TSchema> = {
-    id: Type.String({ [READONLY_FLAG]: true, description: 'Record ID' }),
+    id: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Record ID' }),
     properties: Type.Object(propertiesSchema, { description: 'HubSpot properties' }),
-    createdAt: Type.String({ [READONLY_FLAG]: true, description: 'Created timestamp' }),
-    updatedAt: Type.String({ [READONLY_FLAG]: true, description: 'Updated timestamp' }),
-    archived: Type.Boolean({ [READONLY_FLAG]: true, description: 'Whether the record is archived' }),
+    createdAt: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Created timestamp' }),
+    updatedAt: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Updated timestamp' }),
+    archived: Type.Boolean({ [X_SCRATCH_READONLY]: true, description: 'Whether the record is archived' }),
   };
 
   // Add associations schema if this object type supports them
@@ -154,6 +154,7 @@ function isAlwaysReadonlyPropertyName(propertyName: string): boolean {
 export function isReadonlyHubspotProperty(propertyName: string, tableSpec: BaseJsonTableSpec): boolean {
   if (isAlwaysReadonlyPropertyName(propertyName)) return true;
   return (
-    ValuePointer.Get(tableSpec.schema, `/properties/properties/properties/${propertyName}/${READONLY_FLAG}`) === true
+    ValuePointer.Get(tableSpec.schema, `/properties/properties/properties/${propertyName}/${X_SCRATCH_READONLY}`) ===
+    true
   );
 }

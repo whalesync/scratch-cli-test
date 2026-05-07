@@ -1,5 +1,5 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { FOREIGN_KEY_OPTIONS, READONLY_FLAG } from '../../json-schema';
+import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { StripeEntityType } from './stripe-types';
 
@@ -75,7 +75,7 @@ function addressSchema(description: string): TSchema {
         }),
         Type.Null(),
       ],
-      { description, [READONLY_FLAG]: true },
+      { description, [X_SCRATCH_READONLY]: true },
     ),
   );
 }
@@ -84,7 +84,7 @@ function metadataSchema(): TSchema {
   return Type.Optional(
     Type.Record(Type.String(), Type.String(), {
       description: 'Key-value metadata',
-      [READONLY_FLAG]: true,
+      [X_SCRATCH_READONLY]: true,
     }),
   );
 }
@@ -94,8 +94,8 @@ function metadataSchema(): TSchema {
 function buildCustomerSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       name: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Customer name' })),
       email: Type.Optional(
         Type.Union([Type.String({ format: 'email' }), Type.Null()], { description: 'Email address' }),
@@ -125,20 +125,23 @@ function buildCustomerSchema(): TSchema {
             }),
             Type.Null(),
           ],
-          { description: 'Shipping information', [READONLY_FLAG]: true },
+          { description: 'Shipping information', [X_SCRATCH_READONLY]: true },
         ),
       ),
       metadata: metadataSchema(),
       currency: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Default currency', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Default currency', [X_SCRATCH_READONLY]: true }),
       ),
-      balance: Type.Optional(Type.Number({ description: 'Account balance in cents', [READONLY_FLAG]: true })),
-      delinquent: Type.Optional(Type.Boolean({ description: 'Has unpaid invoices', [READONLY_FLAG]: true })),
+      balance: Type.Optional(Type.Number({ description: 'Account balance in cents', [X_SCRATCH_READONLY]: true })),
+      delinquent: Type.Optional(Type.Boolean({ description: 'Has unpaid invoices', [X_SCRATCH_READONLY]: true })),
       default_source: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Default payment source ID', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], {
+          description: 'Default payment source ID',
+          [X_SCRATCH_READONLY]: true,
+        }),
       ),
       invoice_prefix: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Invoice prefix', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Invoice prefix', [X_SCRATCH_READONLY]: true }),
       ),
       invoice_settings: Type.Optional(
         Type.Union(
@@ -149,14 +152,14 @@ function buildCustomerSchema(): TSchema {
             }),
             Type.Null(),
           ],
-          { description: 'Invoice settings', [READONLY_FLAG]: true },
+          { description: 'Invoice settings', [X_SCRATCH_READONLY]: true },
         ),
       ),
       tax_exempt: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Tax exemption status', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Tax exemption status', [X_SCRATCH_READONLY]: true }),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/customers', title: 'Customers' },
   );
@@ -165,25 +168,27 @@ function buildCustomerSchema(): TSchema {
 function buildProductSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       name: Type.String({ description: 'Product name' }),
       description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Product description' })),
       active: Type.Boolean({ description: 'Whether the product is available for purchase' }),
       default_price: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Default price ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'prices' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'prices' },
         }),
       ),
-      images: Type.Optional(Type.Array(Type.String(), { description: 'Product image URLs', [READONLY_FLAG]: true })),
+      images: Type.Optional(
+        Type.Array(Type.String(), { description: 'Product image URLs', [X_SCRATCH_READONLY]: true }),
+      ),
       metadata: metadataSchema(),
       url: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Product URL' })),
-      type: Type.Optional(Type.String({ description: 'Product type', [READONLY_FLAG]: true })),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      updated: Type.Number({ description: 'Updated timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      type: Type.Optional(Type.String({ description: 'Product type', [X_SCRATCH_READONLY]: true })),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      updated: Type.Number({ description: 'Updated timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/products', title: 'Products' },
   );
@@ -192,25 +197,25 @@ function buildProductSchema(): TSchema {
 function buildPriceSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       product: Type.String({
         description: 'Product ID',
-        [READONLY_FLAG]: true,
-        [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'products' },
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'products' },
       }),
       active: Type.Boolean({ description: 'Whether the price is active' }),
       currency: Type.String({ description: 'Three-letter ISO currency code' }),
       unit_amount: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Price in cents', [READONLY_FLAG]: true }),
+        Type.Union([Type.Number(), Type.Null()], { description: 'Price in cents', [X_SCRATCH_READONLY]: true }),
       ),
       unit_amount_decimal: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Price in cents as decimal string',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
-      type: Type.String({ description: 'Price type (one_time or recurring)', [READONLY_FLAG]: true }),
+      type: Type.String({ description: 'Price type (one_time or recurring)', [X_SCRATCH_READONLY]: true }),
       recurring: Type.Optional(
         Type.Union(
           [
@@ -221,17 +226,17 @@ function buildPriceSchema(): TSchema {
             }),
             Type.Null(),
           ],
-          { description: 'Recurring pricing details', [READONLY_FLAG]: true },
+          { description: 'Recurring pricing details', [X_SCRATCH_READONLY]: true },
         ),
       ),
-      billing_scheme: Type.Optional(Type.String({ description: 'Billing scheme', [READONLY_FLAG]: true })),
+      billing_scheme: Type.Optional(Type.String({ description: 'Billing scheme', [X_SCRATCH_READONLY]: true })),
       nickname: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Price nickname' })),
       metadata: metadataSchema(),
       lookup_key: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Lookup key', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Lookup key', [X_SCRATCH_READONLY]: true }),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/prices', title: 'Prices' },
   );
@@ -240,64 +245,64 @@ function buildPriceSchema(): TSchema {
 function buildSubscriptionSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       customer: Type.String({
         description: 'Customer ID',
-        [READONLY_FLAG]: true,
-        [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
       }),
       status: Type.String({
         description:
           'Subscription status (active, past_due, unpaid, canceled, incomplete, incomplete_expired, trialing, paused)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       current_period_start: Type.Number({
         description: 'Current period start (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       current_period_end: Type.Number({
         description: 'Current period end (Unix)',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       cancel_at_period_end: Type.Boolean({
         description: 'Will cancel at end of period',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       canceled_at: Type.Optional(
         Type.Union([Type.Number(), Type.Null()], {
           description: 'Cancellation timestamp (Unix)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       ended_at: Type.Optional(
         Type.Union([Type.Number(), Type.Null()], {
           description: 'End timestamp (Unix)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
-      start_date: Type.Number({ description: 'Start date (Unix)', [READONLY_FLAG]: true }),
+      start_date: Type.Number({ description: 'Start date (Unix)', [X_SCRATCH_READONLY]: true }),
       trial_start: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Trial start (Unix)', [READONLY_FLAG]: true }),
+        Type.Union([Type.Number(), Type.Null()], { description: 'Trial start (Unix)', [X_SCRATCH_READONLY]: true }),
       ),
       trial_end: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Trial end (Unix)', [READONLY_FLAG]: true }),
+        Type.Union([Type.Number(), Type.Null()], { description: 'Trial end (Unix)', [X_SCRATCH_READONLY]: true }),
       ),
       default_payment_method: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Default payment method ID',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       latest_invoice: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Latest invoice ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
         }),
       ),
-      collection_method: Type.Optional(Type.String({ description: 'Collection method', [READONLY_FLAG]: true })),
-      currency: Type.String({ description: 'Currency code', [READONLY_FLAG]: true }),
+      collection_method: Type.Optional(Type.String({ description: 'Collection method', [X_SCRATCH_READONLY]: true })),
+      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
       metadata: metadataSchema(),
       items: Type.Optional(
         Type.Object(
@@ -332,11 +337,11 @@ function buildSubscriptionSchema(): TSchema {
             has_more: Type.Optional(Type.Boolean()),
             url: Type.Optional(Type.String()),
           },
-          { description: 'Subscription line items', [READONLY_FLAG]: true },
+          { description: 'Subscription line items', [X_SCRATCH_READONLY]: true },
         ),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/subscriptions', title: 'Subscriptions' },
   );
@@ -345,60 +350,60 @@ function buildSubscriptionSchema(): TSchema {
 function buildInvoiceSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       customer: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
         }),
       ),
       subscription: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Subscription ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'subscriptions' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'subscriptions' },
         }),
       ),
       status: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Invoice status (draft, open, paid, uncollectible, void)',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
-      currency: Type.String({ description: 'Currency code', [READONLY_FLAG]: true }),
-      amount_due: Type.Number({ description: 'Amount due in cents', [READONLY_FLAG]: true }),
-      amount_paid: Type.Number({ description: 'Amount paid in cents', [READONLY_FLAG]: true }),
-      amount_remaining: Type.Number({ description: 'Amount remaining in cents', [READONLY_FLAG]: true }),
-      subtotal: Type.Number({ description: 'Subtotal in cents', [READONLY_FLAG]: true }),
-      total: Type.Number({ description: 'Total in cents', [READONLY_FLAG]: true }),
+      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
+      amount_due: Type.Number({ description: 'Amount due in cents', [X_SCRATCH_READONLY]: true }),
+      amount_paid: Type.Number({ description: 'Amount paid in cents', [X_SCRATCH_READONLY]: true }),
+      amount_remaining: Type.Number({ description: 'Amount remaining in cents', [X_SCRATCH_READONLY]: true }),
+      subtotal: Type.Number({ description: 'Subtotal in cents', [X_SCRATCH_READONLY]: true }),
+      total: Type.Number({ description: 'Total in cents', [X_SCRATCH_READONLY]: true }),
       tax: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Tax amount in cents', [READONLY_FLAG]: true }),
+        Type.Union([Type.Number(), Type.Null()], { description: 'Tax amount in cents', [X_SCRATCH_READONLY]: true }),
       ),
       number: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Invoice number', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Invoice number', [X_SCRATCH_READONLY]: true }),
       ),
       description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Invoice description' })),
       due_date: Type.Optional(
-        Type.Union([Type.Number(), Type.Null()], { description: 'Due date (Unix)', [READONLY_FLAG]: true }),
+        Type.Union([Type.Number(), Type.Null()], { description: 'Due date (Unix)', [X_SCRATCH_READONLY]: true }),
       ),
-      paid: Type.Boolean({ description: 'Whether the invoice is paid', [READONLY_FLAG]: true }),
-      period_start: Type.Number({ description: 'Period start (Unix)', [READONLY_FLAG]: true }),
-      period_end: Type.Number({ description: 'Period end (Unix)', [READONLY_FLAG]: true }),
+      paid: Type.Boolean({ description: 'Whether the invoice is paid', [X_SCRATCH_READONLY]: true }),
+      period_start: Type.Number({ description: 'Period start (Unix)', [X_SCRATCH_READONLY]: true }),
+      period_end: Type.Number({ description: 'Period end (Unix)', [X_SCRATCH_READONLY]: true }),
       hosted_invoice_url: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Hosted invoice page URL',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       invoice_pdf: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Invoice PDF URL', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Invoice PDF URL', [X_SCRATCH_READONLY]: true }),
       ),
-      collection_method: Type.Optional(Type.String({ description: 'Collection method', [READONLY_FLAG]: true })),
+      collection_method: Type.Optional(Type.String({ description: 'Collection method', [X_SCRATCH_READONLY]: true })),
       metadata: metadataSchema(),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/invoices', title: 'Invoices' },
   );
@@ -407,48 +412,50 @@ function buildInvoiceSchema(): TSchema {
 function buildPaymentIntentSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       customer: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
         }),
       ),
-      amount: Type.Number({ description: 'Amount in cents', [READONLY_FLAG]: true }),
-      amount_received: Type.Number({ description: 'Amount received in cents', [READONLY_FLAG]: true }),
-      currency: Type.String({ description: 'Currency code', [READONLY_FLAG]: true }),
+      amount: Type.Number({ description: 'Amount in cents', [X_SCRATCH_READONLY]: true }),
+      amount_received: Type.Number({ description: 'Amount received in cents', [X_SCRATCH_READONLY]: true }),
+      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
       status: Type.String({
         description: 'Payment intent status',
-        [READONLY_FLAG]: true,
+        [X_SCRATCH_READONLY]: true,
       }),
       description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Description' })),
       payment_method: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Payment method ID',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       invoice: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Invoice ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
         }),
       ),
-      capture_method: Type.Optional(Type.String({ description: 'Capture method', [READONLY_FLAG]: true })),
-      confirmation_method: Type.Optional(Type.String({ description: 'Confirmation method', [READONLY_FLAG]: true })),
+      capture_method: Type.Optional(Type.String({ description: 'Capture method', [X_SCRATCH_READONLY]: true })),
+      confirmation_method: Type.Optional(
+        Type.String({ description: 'Confirmation method', [X_SCRATCH_READONLY]: true }),
+      ),
       metadata: metadataSchema(),
       latest_charge: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Latest charge ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'charges' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'charges' },
         }),
       ),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/payment_intents', title: 'Payment Intents' },
   );
@@ -457,56 +464,56 @@ function buildPaymentIntentSchema(): TSchema {
 function buildChargeSchema(): TSchema {
   return Type.Object(
     {
-      id: Type.String({ description: 'Unique identifier', [READONLY_FLAG]: true }),
-      object: Type.String({ description: 'Object type', [READONLY_FLAG]: true }),
+      id: Type.String({ description: 'Unique identifier', [X_SCRATCH_READONLY]: true }),
+      object: Type.String({ description: 'Object type', [X_SCRATCH_READONLY]: true }),
       customer: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Customer ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'customers' },
         }),
       ),
-      amount: Type.Number({ description: 'Amount in cents', [READONLY_FLAG]: true }),
-      amount_captured: Type.Number({ description: 'Amount captured in cents', [READONLY_FLAG]: true }),
-      amount_refunded: Type.Number({ description: 'Amount refunded in cents', [READONLY_FLAG]: true }),
-      currency: Type.String({ description: 'Currency code', [READONLY_FLAG]: true }),
-      status: Type.String({ description: 'Charge status (succeeded, pending, failed)', [READONLY_FLAG]: true }),
-      paid: Type.Boolean({ description: 'Whether the charge was paid', [READONLY_FLAG]: true }),
-      captured: Type.Boolean({ description: 'Whether the charge was captured', [READONLY_FLAG]: true }),
-      refunded: Type.Boolean({ description: 'Whether the charge was refunded', [READONLY_FLAG]: true }),
-      disputed: Type.Boolean({ description: 'Whether the charge is disputed', [READONLY_FLAG]: true }),
+      amount: Type.Number({ description: 'Amount in cents', [X_SCRATCH_READONLY]: true }),
+      amount_captured: Type.Number({ description: 'Amount captured in cents', [X_SCRATCH_READONLY]: true }),
+      amount_refunded: Type.Number({ description: 'Amount refunded in cents', [X_SCRATCH_READONLY]: true }),
+      currency: Type.String({ description: 'Currency code', [X_SCRATCH_READONLY]: true }),
+      status: Type.String({ description: 'Charge status (succeeded, pending, failed)', [X_SCRATCH_READONLY]: true }),
+      paid: Type.Boolean({ description: 'Whether the charge was paid', [X_SCRATCH_READONLY]: true }),
+      captured: Type.Boolean({ description: 'Whether the charge was captured', [X_SCRATCH_READONLY]: true }),
+      refunded: Type.Boolean({ description: 'Whether the charge was refunded', [X_SCRATCH_READONLY]: true }),
+      disputed: Type.Boolean({ description: 'Whether the charge is disputed', [X_SCRATCH_READONLY]: true }),
       description: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Charge description' })),
       payment_intent: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Payment intent ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'payment_intents' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'payment_intents' },
         }),
       ),
       payment_method: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Payment method ID',
-          [READONLY_FLAG]: true,
+          [X_SCRATCH_READONLY]: true,
         }),
       ),
       invoice: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
           description: 'Invoice ID',
-          [READONLY_FLAG]: true,
-          [FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
+          [X_SCRATCH_READONLY]: true,
+          [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'invoices' },
         }),
       ),
       receipt_email: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Receipt email', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Receipt email', [X_SCRATCH_READONLY]: true }),
       ),
       receipt_url: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Receipt URL', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Receipt URL', [X_SCRATCH_READONLY]: true }),
       ),
       failure_code: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Failure code', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Failure code', [X_SCRATCH_READONLY]: true }),
       ),
       failure_message: Type.Optional(
-        Type.Union([Type.String(), Type.Null()], { description: 'Failure message', [READONLY_FLAG]: true }),
+        Type.Union([Type.String(), Type.Null()], { description: 'Failure message', [X_SCRATCH_READONLY]: true }),
       ),
       billing_details: Type.Optional(
         Type.Union(
@@ -531,12 +538,12 @@ function buildChargeSchema(): TSchema {
             }),
             Type.Null(),
           ],
-          { description: 'Billing details', [READONLY_FLAG]: true },
+          { description: 'Billing details', [X_SCRATCH_READONLY]: true },
         ),
       ),
       metadata: metadataSchema(),
-      created: Type.Number({ description: 'Created timestamp (Unix)', [READONLY_FLAG]: true }),
-      livemode: Type.Boolean({ description: 'Live mode flag', [READONLY_FLAG]: true }),
+      created: Type.Number({ description: 'Created timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
+      livemode: Type.Boolean({ description: 'Live mode flag', [X_SCRATCH_READONLY]: true }),
     },
     { $id: 'stripe/charges', title: 'Charges' },
   );
