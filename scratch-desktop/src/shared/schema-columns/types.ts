@@ -20,6 +20,5 @@ export interface ColumnDefinition {
 
 export interface NormalizedRecordRow {
   __filename: string;
-  raw: Record<string, unknown>;
-  display: Record<string, string>;
+  __raw: Record<string, unknown>;
 }

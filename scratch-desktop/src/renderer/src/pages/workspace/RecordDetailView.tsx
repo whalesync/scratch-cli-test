@@ -32,7 +32,7 @@ interface DiffRecordColumn {
 }
 
 interface DiffRecordData {
-  row: Record<string, unknown> & {
+  row: {
     __rowStatus:
       | 'added'
       | 'addedUnpublished'
@@ -48,6 +48,7 @@ interface DiffRecordData {
     __masterFields: Record<string, unknown>;
     __filename: string;
     __parseError?: string;
+    __raw: Record<string, unknown>;
   };
   columns: DiffRecordColumn[];
   workingData: Record<string, unknown> | null;
@@ -57,7 +58,7 @@ interface DiffRecordData {
 }
 
 interface RecordDetailViewProps {
-  rows: Array<Record<string, unknown>>;
+  rows: Array<{ __filename: string; __raw: Record<string, unknown>; [key: string]: unknown }>;
   selectedIndex: number;
   folderPath: string;
   workspacePath: string;
@@ -86,7 +87,7 @@ interface RecordDetailViewProps {
 
 function rowHasUnreviewedChanges(
   row:
-    | (Record<string, unknown> & {
+    | {
         __rowStatus?:
           | 'added'
           | 'addedUnpublished'
@@ -97,7 +98,8 @@ function rowHasUnreviewedChanges(
           | 'unchanged'
           | 'invalidJson';
         __changedFields?: string[];
-      })
+        [key: string]: unknown;
+      }
     | null
     | undefined,
 ): boolean {
@@ -112,7 +114,8 @@ function rowHasUnreviewedChanges(
 
 function getRecordName(row: Record<string, unknown>, titleColumnId: string | null): string {
   if (titleColumnId) {
-    const val = row[titleColumnId];
+    const raw = (row as { __raw?: Record<string, unknown> }).__raw;
+    const val = raw ? getByPath(raw, titleColumnId) : undefined;
     if (typeof val === 'string' && val !== '') return val;
     if (typeof val === 'number' || typeof val === 'boolean') return String(val);
   }

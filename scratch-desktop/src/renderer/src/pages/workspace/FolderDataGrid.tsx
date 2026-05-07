@@ -34,6 +34,7 @@ import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'luci
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
+import { getByPath } from '../../../../shared/schema-columns';
 import type { ValidationResultRow } from '../../../../shared/validation-types';
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
@@ -58,7 +59,7 @@ type RowStatus =
   | 'unchanged'
   | 'invalidJson';
 
-interface DiffRow extends Record<string, unknown> {
+interface DiffRow {
   __rowStatus: RowStatus;
   __changedFields: string[];
   __fromFields: Record<string, unknown>;
@@ -66,6 +67,7 @@ interface DiffRow extends Record<string, unknown> {
   __masterFields: Record<string, unknown>;
   __filename: string;
   __parseError?: string;
+  __raw: Record<string, unknown>;
 }
 
 interface DiffGridResult {
@@ -316,6 +318,20 @@ function toDisplayString(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Immutably sets a value at a dot-separated path, returning a shallow clone of the affected objects. */
+function setByPath(obj: Record<string, unknown>, dotPath: string, value: unknown): Record<string, unknown> {
+  const parts = dotPath.split('.');
+  if (parts.length === 1) {
+    return { ...obj, [parts[0]]: value };
+  }
+  const [head, ...rest] = parts;
+  const child =
+    typeof obj[head] === 'object' && obj[head] !== null && !Array.isArray(obj[head])
+      ? (obj[head] as Record<string, unknown>)
+      : {};
+  return { ...obj, [head]: setByPath(child, rest.join('.'), value) };
+}
+
 function diffValuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a == null && b == null;
@@ -435,9 +451,10 @@ function applyAcceptedCellChange(
       ? prevRow.__unpublishedFields
       : [...prevRow.__unpublishedFields, fieldName];
 
+  const nextRaw = setByPath(prevRow.__raw, fieldName, nextValue);
   const nextRow: DiffRow = {
     ...prevRow,
-    [fieldName]: nextValue,
+    __raw: nextRaw,
     __changedFields: prevRow.__changedFields.filter((f) => f !== fieldName),
     __fromFields: nextFromFields,
     __unpublishedFields: nextUnpublishedFields,
@@ -473,7 +490,7 @@ function getCellDiffState(row: DiffRow, fieldName: string, colDef: ColumnDefinit
     return {
       diffKind: 'unreviewed',
       fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, row[fieldName], colDef),
+      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), colDef),
     };
   }
   if (isUnpublished) {
@@ -481,7 +498,7 @@ function getCellDiffState(row: DiffRow, fieldName: string, colDef: ColumnDefinit
     return {
       diffKind: 'unpublished',
       fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, row[fieldName], colDef),
+      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), colDef),
     };
   }
   return { diffKind: null, fromValue: '', classification: null };
@@ -1277,7 +1294,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         row,
         filename: record.__filename,
         fieldName: columnId,
-        value: toDisplayString(record[columnId]),
+        value: toDisplayString(getByPath(record.__raw, columnId)),
         fromValue,
         diffKind,
         classification,
@@ -1620,7 +1637,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const colDef = columnDefsMap.get(colId);
       const isReadOnly = colDef?.attributes.readOnly === true;
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
-      const val = r[colId];
+      const val = getByPath(r.__raw, colId);
       const { diffKind } = getCellDiffState(r, colId, colDef);
       const diffTheme =
         diffKind === 'unreviewed'

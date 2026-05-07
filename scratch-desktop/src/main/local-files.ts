@@ -14,7 +14,7 @@ import { parse } from 'yaml';
 
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
-import { buildColumnDefinitions, projectRecordToNormalizedRow } from '../shared/schema-columns';
+import { buildColumnDefinitions, getByPath } from '../shared/schema-columns';
 import { getFilenamesWithErrors, listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
@@ -358,7 +358,7 @@ export type DiffGridFilter =
   | { scope: 'column'; kind: DiffGridFilterKind; columnId: string; columnTitle: string }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
-export interface DiffRow extends Record<string, unknown> {
+export interface DiffRow {
   __rowStatus: RowStatus;
   /** Fields where working != dirty (unreviewed changes). */
   __changedFields: string[];
@@ -371,6 +371,8 @@ export interface DiffRow extends Record<string, unknown> {
   __filename: string;
   /** Set when __rowStatus is invalidJson (which branch failed is encoded in the string). */
   __parseError?: string;
+  /** The full nested record (working version). */
+  __raw: Record<string, unknown>;
 }
 
 export interface InvalidJsonFileEntry {
@@ -494,7 +496,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
     allNames = allNames.filter((name) => allowed.has(name));
   }
 
-  // Read, parse, and project all matching files through schema-driven columns
+  // Read and parse all matching JSON files
   let allRows: NormalizedRecordRow[] = [];
   const invalidJsonFiles: Array<{ filename: string; error: string }> = [];
 
@@ -509,7 +511,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
             invalidJsonFiles.push({ filename: name, error: parsed.error });
             return null;
           }
-          return projectRecordToNormalizedRow(parsed.raw, columns, name);
+          return { __filename: name, __raw: parsed.raw } satisfies NormalizedRecordRow;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           invalidJsonFiles.push({ filename: name, error: message });
@@ -526,9 +528,7 @@ export async function readGridData(folderPath: string, opts: ReadGridDataOptions
   // Filter rows by column values (match against raw values)
   if (opts.filter) {
     const filterEntries = Object.entries(opts.filter);
-    allRows = allRows.filter((row) =>
-      filterEntries.every(([col, expected]) => col in row.raw && row.raw[col] === expected),
-    );
+    allRows = allRows.filter((row) => filterEntries.every(([col, expected]) => getByPath(row.__raw, col) === expected));
   }
 
   const total = allRows.length;
@@ -578,28 +578,6 @@ export async function readSchema(workspacePath: string, folderName: string): Pro
 
 // ── Internal helpers ──
 
-/**
- * Flattens a nested object into dot-separated keys.
- * `{ id: "a", fields: { field1: "b" } }` → `{ id: "a", "fields.field1": "b" }`
- * Arrays and non-plain-object values are kept as leaf values (not recursed into).
- *
- * When `leafPaths` is provided, any key path in the set is kept as a leaf value
- * even if the value is a plain object. This prevents flattening schema-leaf columns
- * (e.g. `originalSource` wrapped in `anyOf`) that should render as JSON.
- */
-function flattenObject(obj: Record<string, unknown>, prefix = '', leafPaths?: Set<string>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    const flatKey = prefix ? `${prefix}.${key}` : key;
-    if (typeof value === 'object' && value !== null && !Array.isArray(value) && !leafPaths?.has(flatKey)) {
-      Object.assign(result, flattenObject(value as Record<string, unknown>, flatKey, leafPaths));
-    } else {
-      result[flatKey] = value;
-    }
-  }
-  return result;
-}
-
 function parseTopLevelJsonObject(
   content: string,
 ): { ok: true; raw: Record<string, unknown> } | { ok: false; error: string } {
@@ -617,12 +595,12 @@ function parseTopLevelJsonObject(
 type JsonFileSnapshot =
   | { kind: 'missing' }
   | { kind: 'invalid'; error: string }
-  | { kind: 'ok'; flat: Record<string, unknown>; raw: Record<string, unknown> };
+  | { kind: 'ok'; raw: Record<string, unknown> };
 
 function sortNormalizedRows(rows: NormalizedRecordRow[], column: string, order: 'asc' | 'desc'): NormalizedRecordRow[] {
   return [...rows].sort((a, b) => {
-    const va = a.raw[column];
-    const vb = b.raw[column];
+    const va = getByPath(a.__raw, column);
+    const vb = getByPath(b.__raw, column);
 
     // Missing values sort last regardless of order
     if (va === undefined && vb === undefined) return 0;
@@ -633,9 +611,8 @@ function sortNormalizedRows(rows: NormalizedRecordRow[], column: string, order: 
     if (typeof va === 'number' && typeof vb === 'number') {
       cmp = va - vb;
     } else {
-      // Use pre-computed display strings for stable, locale-aware comparison
-      const sa = a.display[column] ?? '';
-      const sb = b.display[column] ?? '';
+      const sa = typeof va === 'string' ? va : (JSON.stringify(va) ?? '');
+      const sb = typeof vb === 'string' ? vb : (JSON.stringify(vb) ?? '');
       cmp = sa.localeCompare(sb, undefined, { sensitivity: 'base', numeric: true });
     }
 
@@ -893,7 +870,7 @@ async function commitReviewedDirtyFile(folderPath: string, workspacePath: string
   }
 }
 
-async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): Promise<JsonFileSnapshot> {
+async function readJsonFileSnapshot(filePath: string): Promise<JsonFileSnapshot> {
   let content: string;
   try {
     content = await readFile(filePath, 'utf-8');
@@ -905,13 +882,10 @@ async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): 
   if (!parsed.ok) {
     return { kind: 'invalid', error: parsed.error };
   }
-  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths), raw: parsed.raw };
+  return { kind: 'ok', raw: parsed.raw };
 }
 
-async function readFolderSnapshots(
-  folderPath: string,
-  leafPaths?: Set<string>,
-): Promise<Map<string, JsonFileSnapshot>> {
+async function readFolderSnapshots(folderPath: string): Promise<Map<string, JsonFileSnapshot>> {
   const result = new Map<string, JsonFileSnapshot>();
   let names: string[];
   try {
@@ -923,7 +897,7 @@ async function readFolderSnapshots(
     const batch = names.slice(i, i + BATCH_CONCURRENCY);
     await Promise.all(
       batch.map(async (name) => {
-        const snap = await readJsonFileSnapshot(join(folderPath, name), leafPaths);
+        const snap = await readJsonFileSnapshot(join(folderPath, name));
         result.set(name, snap);
       }),
     );
@@ -955,7 +929,7 @@ export interface DiffGridSummary {
 }
 
 function makeDiffRow(
-  base: Record<string, unknown>,
+  raw: Record<string, unknown>,
   status: RowStatus,
   changedFields: string[],
   fromFields: Record<string, unknown>,
@@ -964,78 +938,65 @@ function makeDiffRow(
   filename: string,
   parseError?: string,
 ): DiffRow {
-  const row: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(base)) row[k] = v;
-  row['__rowStatus'] = status;
-  row['__changedFields'] = changedFields;
-  row['__fromFields'] = fromFields;
-  row['__unpublishedFields'] = unpublishedFields;
-  row['__masterFields'] = masterFields;
-  row['__filename'] = filename;
-  if (parseError !== undefined) {
-    row['__parseError'] = parseError;
-  }
-  return row as DiffRow;
+  return {
+    __raw: raw,
+    __rowStatus: status,
+    __changedFields: changedFields,
+    __fromFields: fromFields,
+    __unpublishedFields: unpublishedFields,
+    __masterFields: masterFields,
+    __filename: filename,
+    ...(parseError !== undefined ? { __parseError: parseError } : {}),
+  };
 }
 
-function compareFlattenedRecordVersions(
-  workingRow: Record<string, unknown> | undefined,
-  dirtyRow: Record<string, unknown> | undefined,
-  masterRow: Record<string, unknown> | undefined,
+function compareRecordVersions(
+  workingRaw: Record<string, unknown> | undefined,
+  dirtyRaw: Record<string, unknown> | undefined,
+  masterRaw: Record<string, unknown> | undefined,
+  columnPaths: string[],
   filename: string,
-): { row: DiffRow; columns: string[] } | null {
-  const columnSet = new Set<string>();
-
-  if (workingRow && !dirtyRow) {
-    const allFields = Object.keys(workingRow);
-    for (const k of allFields) columnSet.add(k);
-    return { row: makeDiffRow(workingRow, 'added', allFields, {}, [], {}, filename), columns: Array.from(columnSet) };
+): DiffRow | null {
+  if (workingRaw && !dirtyRaw) {
+    return makeDiffRow(workingRaw, 'added', columnPaths, {}, [], {}, filename);
   }
 
-  if (!workingRow && dirtyRow) {
-    for (const k of Object.keys(dirtyRow)) columnSet.add(k);
-    return { row: makeDiffRow(dirtyRow, 'deleted', [], dirtyRow, [], {}, filename), columns: Array.from(columnSet) };
+  if (!workingRaw && dirtyRaw) {
+    return makeDiffRow(dirtyRaw, 'deleted', [], dirtyRaw, [], {}, filename);
   }
 
-  if (!workingRow && !dirtyRow && masterRow) {
-    for (const k of Object.keys(masterRow)) columnSet.add(k);
-    return {
-      row: makeDiffRow(masterRow, 'deletedUnpublished', [], {}, [], masterRow, filename),
-      columns: Array.from(columnSet),
-    };
+  if (!workingRaw && !dirtyRaw && masterRaw) {
+    return makeDiffRow(masterRaw, 'deletedUnpublished', [], {}, [], masterRaw, filename);
   }
 
-  if (workingRow && dirtyRow) {
-    const comparableMasterRow = masterRow ?? {};
-    const allKeysArr: string[] = Array.from(
-      new Set<string>(Object.keys(workingRow).concat(Object.keys(dirtyRow)).concat(Object.keys(comparableMasterRow))),
-    );
-
+  if (workingRaw && dirtyRaw) {
     const changedFields: string[] = [];
     const fromFields: Record<string, unknown> = {};
     const unpublishedFields: string[] = [];
     const masterFields: Record<string, unknown> = {};
 
-    for (const k of allKeysArr) {
-      columnSet.add(k);
-      const wStr = JSON.stringify(workingRow[k] as object);
-      const dStr = JSON.stringify(dirtyRow[k] as object);
-      const mStr = JSON.stringify(comparableMasterRow[k] as object);
+    for (const colPath of columnPaths) {
+      const wVal = getByPath(workingRaw, colPath);
+      const dVal = getByPath(dirtyRaw, colPath);
+      const mVal = masterRaw ? getByPath(masterRaw, colPath) : undefined;
+      const wStr = JSON.stringify(wVal);
+      const dStr = JSON.stringify(dVal);
+      const mStr = JSON.stringify(mVal);
 
       if (wStr !== dStr) {
-        changedFields.push(k);
-        fromFields[k] = dirtyRow[k];
+        changedFields.push(colPath);
+        fromFields[colPath] = dVal;
         // Capture the master value too — once the user accepts this change, the
         // field flips to "unpublished" and the popover renders the master value
         // as "Last published". Without this we'd lose that baseline at accept time.
-        masterFields[k] = comparableMasterRow[k];
+        masterFields[colPath] = mVal;
       } else if (dStr !== mStr) {
-        unpublishedFields.push(k);
-        masterFields[k] = comparableMasterRow[k];
+        unpublishedFields.push(colPath);
+        masterFields[colPath] = mVal;
       }
     }
 
-    const isNewRecord = !masterRow;
+    const isNewRecord = !masterRaw;
     const status: RowStatus = isNewRecord
       ? changedFields.length > 0
         ? 'added'
@@ -1046,18 +1007,15 @@ function compareFlattenedRecordVersions(
           ? 'unpublished'
           : 'unchanged';
 
-    return {
-      row: makeDiffRow(
-        workingRow,
-        status,
-        changedFields,
-        fromFields,
-        isNewRecord ? [] : unpublishedFields,
-        masterFields,
-        filename,
-      ),
-      columns: Array.from(columnSet),
-    };
+    return makeDiffRow(
+      workingRaw,
+      status,
+      changedFields,
+      fromFields,
+      isNewRecord ? [] : unpublishedFields,
+      masterFields,
+      filename,
+    );
   }
 
   return null;
@@ -1067,8 +1025,9 @@ function compareRecordSnapshots(
   w: JsonFileSnapshot,
   d: JsonFileSnapshot,
   m: JsonFileSnapshot,
+  columnPaths: string[],
   filename: string,
-): { row: DiffRow; columns: string[] } | null {
+): DiffRow | null {
   if (w.kind === 'invalid' || d.kind === 'invalid' || m.kind === 'invalid') {
     const parseParts: string[] = [];
     if (w.kind === 'invalid') parseParts.push(`working: ${w.error}`);
@@ -1076,21 +1035,14 @@ function compareRecordSnapshots(
     if (m.kind === 'invalid') parseParts.push(`published: ${m.error}`);
     const parseError = parseParts.join('; ');
     const base: Record<string, unknown> =
-      w.kind === 'ok' ? w.flat : d.kind === 'ok' ? d.flat : m.kind === 'ok' ? m.flat : {};
-    const columnSet = new Set<string>();
-    for (const k of Object.keys(base)) {
-      columnSet.add(k);
-    }
-    return {
-      row: makeDiffRow(base, 'invalidJson', [], {}, [], {}, filename, parseError),
-      columns: Array.from(columnSet),
-    };
+      w.kind === 'ok' ? w.raw : d.kind === 'ok' ? d.raw : m.kind === 'ok' ? m.raw : {};
+    return makeDiffRow(base, 'invalidJson', [], {}, [], {}, filename, parseError);
   }
 
-  const wRow = w.kind === 'ok' ? w.flat : undefined;
-  const dRow = d.kind === 'ok' ? d.flat : undefined;
-  const mRow = m.kind === 'ok' ? m.flat : undefined;
-  return compareFlattenedRecordVersions(wRow, dRow, mRow, filename);
+  const wRaw = w.kind === 'ok' ? w.raw : undefined;
+  const dRaw = d.kind === 'ok' ? d.raw : undefined;
+  const mRaw = m.kind === 'ok' ? m.raw : undefined;
+  return compareRecordVersions(wRaw, dRaw, mRaw, columnPaths, filename);
 }
 
 function pickDisplayRecordData(
@@ -1159,19 +1111,17 @@ export async function readDiffGridDataPage(
   const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
   const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
 
-  // Load schema first so we can derive leaf column IDs for schema-aware flattening.
-  // This prevents object-type leaf columns (e.g. anyOf-wrapped objects) from being
-  // recursively flattened into sub-keys that don't match any column definition.
+  // Load schema to derive column paths for schema-driven diffing.
   const relPath = relative(workspacePath, folderPath);
   const schema = await readConnectionSchema(workspacePath, relPath);
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
-  const leafPaths = new Set(schemaColumns.map((c) => c.id));
+  const schemaColumnPaths = schemaColumns.map((c) => c.id);
 
   const [workingFiles, dirtyFiles, masterFiles, { filenames: errorFilenameList, field_paths: errorFieldPaths }] =
     await Promise.all([
-      readFolderSnapshots(workingPath, leafPaths),
-      readFolderSnapshots(dirtyPath, leafPaths),
-      readFolderSnapshots(masterPath, leafPaths),
+      readFolderSnapshots(workingPath),
+      readFolderSnapshots(dirtyPath),
+      readFolderSnapshots(masterPath),
       getFilenamesWithErrors(workspacePath, folderPath),
     ]);
 
@@ -1183,21 +1133,32 @@ export async function readDiffGridDataPage(
       Array.from(workingFiles.keys()).concat(Array.from(dirtyFiles.keys())).concat(Array.from(masterFiles.keys())),
     ),
   );
-  const columnSet = new Set<string>();
   const rows: DiffRow[] = [];
 
   for (const name of allNamesArr) {
-    const compared = compareRecordSnapshots(
+    // When no schema exists, fall back to top-level keys of the first available record.
+    let columnPaths = schemaColumnPaths;
+    if (columnPaths.length === 0) {
+      const wSnap = workingFiles.get(name);
+      const dSnap = dirtyFiles.get(name);
+      const mSnap = masterFiles.get(name);
+      const firstRaw =
+        (wSnap?.kind === 'ok' ? wSnap.raw : null) ??
+        (dSnap?.kind === 'ok' ? dSnap.raw : null) ??
+        (mSnap?.kind === 'ok' ? mSnap.raw : null) ??
+        {};
+      columnPaths = Object.keys(firstRaw);
+    }
+    const row = compareRecordSnapshots(
       workingFiles.get(name) ?? missingSnapshot,
       dirtyFiles.get(name) ?? missingSnapshot,
       masterFiles.get(name) ?? missingSnapshot,
+      columnPaths,
       name,
     );
-    if (!compared) {
-      continue;
+    if (row) {
+      rows.push(row);
     }
-    for (const column of compared.columns) columnSet.add(column);
-    rows.push(compared.row);
   }
 
   const summary: DiffGridSummary = {
@@ -1225,24 +1186,17 @@ export async function readDiffGridDataPage(
   const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
   const pagedRows = sortedRows.slice(offset, offset + limit);
 
-  // Derive column definitions from schema; fall back to data-union columns as ColumnDefinition shells
+  // Derive column definitions from schema; fall back to top-level keys from data
   let columns: ColumnDefinition[];
   if (schema) {
-    const schemaCols = buildColumnDefinitions(schema);
-    // Include any data-union columns not in the schema (e.g. unmapped fields)
-    const schemaIdSet = new Set(schemaCols.map((c) => c.id));
-    const extraIds = Array.from(columnSet)
-      .filter((id) => !schemaIdSet.has(id))
-      .sort((a, b) => a.localeCompare(b));
-    const extraCols: ColumnDefinition[] = extraIds.map((id) => ({
-      id,
-      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
-      dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
-    }));
-    columns = [...schemaCols, ...extraCols];
+    columns = buildColumnDefinitions(schema);
   } else {
-    const sortedIds = Array.from(columnSet).sort((a, b) => a.localeCompare(b));
+    // No schema — collect top-level keys from all records
+    const keySet = new Set<string>();
+    for (const row of rows) {
+      for (const k of Object.keys(row.__raw)) keySet.add(k);
+    }
+    const sortedIds = Array.from(keySet).sort((a, b) => a.localeCompare(b));
     columns = sortedIds.map((id) => ({
       id,
       displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
@@ -1295,7 +1249,7 @@ function filterMatchesDiffRow(row: DiffRow, filter: DiffGridFilter, errorFilenam
       return true;
     }
 
-    const rawValue = row[filter.columnId];
+    const rawValue = getByPath(row.__raw, filter.columnId);
     const textValue =
       rawValue == null
         ? ''
@@ -1373,7 +1327,7 @@ function sortDiffRows(rows: DiffRow[], sortBy?: string, sortOrder?: 'asc' | 'des
   return [...rows].sort((a, b) => {
     let primary = 0;
     if (sortBy && sortOrder) {
-      primary = compareSortableValues(a[sortBy], b[sortBy], sortOrder);
+      primary = compareSortableValues(getByPath(a.__raw, sortBy), getByPath(b.__raw, sortBy), sortOrder);
     }
 
     if (primary !== 0) {
@@ -1396,16 +1350,26 @@ export async function readDiffRecordData(
   const relPath = relative(workspacePath, folderPath);
   const schema = await readConnectionSchema(workspacePath, relPath);
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
-  const leafPaths = new Set(schemaColumns.map((c) => c.id));
 
   const [w, d, m] = await Promise.all([
-    readJsonFileSnapshot(workingFile, leafPaths),
-    readJsonFileSnapshot(dirtyFile, leafPaths),
-    readJsonFileSnapshot(masterFile, leafPaths),
+    readJsonFileSnapshot(workingFile),
+    readJsonFileSnapshot(dirtyFile),
+    readJsonFileSnapshot(masterFile),
   ]);
 
-  const compared = compareRecordSnapshots(w, d, m, filename);
-  if (!compared) {
+  // Derive column paths for diffing — schema-driven, falling back to top-level keys
+  const columnPaths =
+    schemaColumns.length > 0
+      ? schemaColumns.map((c) => c.id)
+      : Object.keys(
+          (w.kind === 'ok' ? w.raw : null) ??
+            (d.kind === 'ok' ? d.raw : null) ??
+            (m.kind === 'ok' ? m.raw : null) ??
+            {},
+        );
+
+  const row = compareRecordSnapshots(w, d, m, columnPaths, filename);
+  if (!row) {
     return null;
   }
 
@@ -1413,21 +1377,14 @@ export async function readDiffRecordData(
   const dirtyData = d.kind === 'ok' ? d.raw : null;
   const masterData = m.kind === 'ok' ? m.raw : null;
 
-  // Derive ColumnDefinition[] from schema, falling back to data-union columns
+  // Derive ColumnDefinition[] from schema, falling back to top-level keys from data
   let columns: ColumnDefinition[];
   if (schema) {
-    const schemaCols = buildColumnDefinitions(schema);
-    const schemaIdSet = new Set(schemaCols.map((c) => c.id));
-    const extraIds = compared.columns.filter((id) => !schemaIdSet.has(id));
-    const extraCols: ColumnDefinition[] = extraIds.map((id) => ({
-      id,
-      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
-      dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
-    }));
-    columns = [...schemaCols, ...extraCols];
+    columns = buildColumnDefinitions(schema);
   } else {
-    columns = compared.columns.map((id) => ({
+    const keySet = new Set<string>(columnPaths);
+    const sortedIds = Array.from(keySet).sort((a, b) => a.localeCompare(b));
+    columns = sortedIds.map((id) => ({
       id,
       displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
       dataType: 'unknown' as const,
@@ -1436,7 +1393,7 @@ export async function readDiffRecordData(
   }
 
   return {
-    row: compared.row,
+    row,
     columns,
     workingData,
     dirtyData,
