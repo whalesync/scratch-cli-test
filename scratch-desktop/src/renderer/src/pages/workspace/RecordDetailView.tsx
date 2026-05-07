@@ -650,6 +650,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     const changedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__changedFields);
     const unpublishedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__unpublishedFields);
     const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
+    const readOnlyFields = new Set(recordData.columns.filter((c) => c.attributes.readOnly).map((c) => c.id));
     const visibleFields = columnOrder.filter((fieldName) => recordColumnIdSet.has(fieldName));
     const hiddenFields = showAllFields
       ? recordData.columns.map((c) => c.id).filter((id) => !columnOrder.includes(id))
@@ -659,6 +660,8 @@ export const RecordDetailView = memo(function RecordDetailView({
     return orderedFields.map((fieldName) => {
       const isUnreviewed = changedFields.has(fieldName);
       const isUnpublished = unpublishedFields.has(fieldName);
+      const isReadOnly = readOnlyFields.has(fieldName);
+      const isEditable = !isDeleted && !isReadOnly;
       const diffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
       const value = toDisplayString(getByPath(displayData, fieldName));
       const fromValue = isUnreviewed
@@ -675,11 +678,12 @@ export const RecordDetailView = memo(function RecordDetailView({
         fromValue,
         diffKind,
         displayMode: isUnreviewed ? 'diff' : 'current',
-        editing: !isDeleted && editingFieldName === fieldName,
+        editing: isEditable && editingFieldName === fieldName,
         referenceValue: diffKind !== null ? fromValue : undefined,
-        onClick: isDeleted ? undefined : () => beginFieldEdit(fieldName),
-        onEditCommit: isDeleted ? undefined : (nextValue: string) => commitFieldEdit(fieldName, value, nextValue),
-        onEditCancel: isDeleted ? undefined : () => cancelFieldEdit(fieldName),
+        readOnly: isReadOnly,
+        onClick: isEditable ? () => beginFieldEdit(fieldName) : undefined,
+        onEditCommit: isEditable ? (nextValue: string) => commitFieldEdit(fieldName, value, nextValue) : undefined,
+        onEditCancel: isEditable ? () => cancelFieldEdit(fieldName) : undefined,
         onApprove: isDeleted || !isUnreviewed ? undefined : () => handleAcceptCellChange(fieldName, value, 'approve'),
         onUndo: isDeleted
           ? undefined
