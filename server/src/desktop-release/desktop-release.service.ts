@@ -30,6 +30,7 @@ interface GitHubRelease {
   name: string;
   html_url: string;
   draft: boolean;
+  prerelease: boolean;
   published_at: string;
   assets: GitHubReleaseAsset[];
 }
@@ -108,7 +109,7 @@ export class DesktopReleaseService implements OnModuleDestroy {
     const cached = await this.readFromCache(kind, channel);
     if (cached) return cached;
 
-    const release = await this.fetchLatestRelease(kind, lookup.matchTag);
+    const release = await this.fetchLatestRelease(kind, lookup.matchTag, channel);
     if (!release) {
       throw new NotFoundException(lookup.notFoundMessage);
     }
@@ -170,6 +171,7 @@ export class DesktopReleaseService implements OnModuleDestroy {
   private async fetchLatestRelease(
     kind: ReleaseKind,
     matchTag: (tag: string) => boolean,
+    channel: Channel,
   ): Promise<GitHubRelease | null> {
     try {
       for (let page = 1; page <= MAX_RELEASE_PAGES; page++) {
@@ -187,7 +189,9 @@ export class DesktopReleaseService implements OnModuleDestroy {
           return null;
         }
         const releases = (await res.json()) as GitHubRelease[];
-        const match = releases.find((r) => !r.draft && matchTag(r.tag_name));
+        const match = releases.find(
+          (r) => !r.draft && (channel !== 'production' || !r.prerelease) && matchTag(r.tag_name),
+        );
         if (match) return match;
         if (releases.length < RELEASES_PER_PAGE) break;
       }

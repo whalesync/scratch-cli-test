@@ -7,7 +7,7 @@
 # Or from scratch-desktop/:
 #   yarn build:mac:local-signed
 #
-# Default env file: scratch-desktop/.env.notarize-test
+# Default env file: scratch-desktop/.env.signing-credentials
 # Override: ENV_FILE=/path/to/file.sh ... build_mac_local_signed.sh
 #
 # Required in that file (KEY=value per line, # comments allowed):
@@ -60,7 +60,7 @@ verify_signed_app() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRATCH_DESKTOP="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="${ENV_FILE:-$SCRATCH_DESKTOP/.env.notarize-test}"
+ENV_FILE="${ENV_FILE:-$SCRATCH_DESKTOP/.env.signing-credentials}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: Env file not found: $ENV_FILE" >&2
