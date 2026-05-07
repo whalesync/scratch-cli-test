@@ -17,15 +17,13 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),
+        '@spinner/shared-types': resolve('../packages/shared-types/src/index.ts'),
       },
     },
     plugins: [react()],
-    optimizeDeps: {
-      include: ['@spinner/shared-types'],
-    },
     build: {
       commonjsOptions: {
-        include: [/node_modules/, /packages\/shared-types/],
+        include: [/node_modules/],
       },
     },
     css: {
