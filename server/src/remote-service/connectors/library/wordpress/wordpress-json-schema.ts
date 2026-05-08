@@ -11,7 +11,7 @@ import {
 import { isArray } from 'lodash';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
-import { buildWordPressPostsDefaultView } from './wordpress-default-view';
+import { buildWordPressDefaultView } from './wordpress-default-view';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
 /**
@@ -305,7 +305,7 @@ export function buildWordPressJsonTableSpec(
     generatedAt: new Date().toISOString(),
   };
 
-  spec.defaultView = buildWordPressPostsDefaultView();
+  spec.defaultView = buildWordPressDefaultView(schema);
 
   return spec;
 }

@@ -1069,8 +1069,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         if (!cancelled) {
           setSchema(meta.schema);
           setAvailableViewNames(meta.availableViewNames ?? []);
-          // Always default to the generated fallback view — on-disk views are still in development.
-          if (meta.schema) {
+          // Use the on-disk "default" view if available; otherwise fall back to the generated view.
+          const hasDefaultView = (meta.availableViewNames ?? []).includes('default');
+          if (hasDefaultView && meta.view) {
+            setTableView(meta.view);
+            setViewSource('default');
+          } else if (meta.schema) {
             setTableView(createFallbackTableView(meta.schema));
             setViewSource('Generated');
           } else {
